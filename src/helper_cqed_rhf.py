@@ -5,6 +5,21 @@ References:
     [Haugland:2020:041043], [DePrince:2021:094112], and [McTague:2021:ChemRxiv] 
     JJF Note: This implementation utilizes only electronic dipole contributions 
     and ignore superflous nuclear dipole terms!
+
+TO-DO: Implement the level-shifted version that Daniel presented where the Fock matrix has the form
+\begin{multline}
+    F_{QED-HF} = F_{HF} + \frac{1}{2} \lambda \cdot q \cdot \lambda 
+
+    -   <\mu_{nuc}>/N_e \cdot \lambda}  d
+
+    + 1/2 (<\mu_{nuc}>/N_e \cdot \lambda )^2 S
+
+    - d P d
+
+    + (<\mu_{nuc}>/N_e \cdot \lambda ) (d P S + S P d)
+
+    - (<\mu_{nuc} / N_e \cdot \lambda)^2 SPS
+
 """
 
 __authors__ = ["Jon McTague", "Jonathan Foley"]
