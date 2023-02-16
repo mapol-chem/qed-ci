@@ -267,6 +267,7 @@ def cqed_rhf(lambda_vector, molecule_string, psi4_options_dict):
         "CQED-RHF C": C,
         "CQED-RHF DENSITY MATRIX": D,
         "CQED-RHF EPS": e,
+        "CQED-RHF FOCK MATRIX": F,
         "PSI4 WFN": wfn,
         "CQED-RHF DIPOLE MOMENT": mu_exp_el + mu_nuc,
         "NUCLEAR DIPOLE MOMENT": mu_nuc,
