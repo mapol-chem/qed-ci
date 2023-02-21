@@ -14,8 +14,8 @@ __license__ = "BSD-3-Clause"
 __date__ = "2021-08-19"
 
 # ==> Import Psi4, NumPy, and helper_CQED_RHF <==
-import psi4
 import numpy as np
+import psi4
 from helper_cqed_rhf import *
 
 # Set Psi4 & NumPy Memory Options
@@ -48,14 +48,19 @@ symmetry c1
 
 
 # create a shifted string of h2o coordinates here!
+h2o_string_shifted = """
 
+0 1
+ #   O      0.000000000000   0.000000000000  -0.068516219320
+ #   H      0.000000000000  -0.790689573744   0.543701060715
+ #   H      0.000000000000   0.790689573744   0.543701060715
+    O      0.000000000000   0.000000000000  100000.93148378068
+    H      0.000000000000  -0.790689573744  100001.543701060715
+    H      0.000000000000   0.790689573744  100001.543701060715
+no_reorient
+symmetry c1
+"""
 
-#h2o_string = """
-#O
-#H 1 1.1
-#H 1 1.1 2 104
-#symmetry c1
-#"""
 
 # energy for H2O from hilbert package described in [DePrince:2021:094112]
 expected_h2o_e = -76.016355284146
@@ -68,16 +73,17 @@ lam_h2o = np.array([0.0, 0.0, 0.05])
 h2o_dict_origin = cqed_rhf(lam_h2o, h2o_string, h2o_options_dict)
 
 # run cqed_rhf on H2O shifted 100 units along z
-#h2o_dict_shifted = cqed_rhf(lam_h2o, h2o_string_shifted, h2o_options_dict)
+h2o_dict_shifted = cqed_rhf(lam_h2o, h2o_string_shifted, h2o_options_dict)
 
 
 F_origin = h2o_dict_origin["CQED-RHF FOCK MATRIX"]
+F_shifted = h2o_dict_shifted["CQED-RHF FOCK MATRIX"]
 
 # need another call to cqed_rhf with shifted h2o coordinates
 # catch the output in a dictionary called h2o_dict_shifted
 # get F_shifted = h2o_dict_shifted["CQED-RHF FOCK MATRIX"]
 
-# assert np.allclose(F_origin, F_shifted, 1e-8)
+assert np.allclose(F_origin, F_shifted, 1e-12, 1e-12)
 
 # parse dictionary for ordinary RHF and CQED-RHF energy
 h2o_cqed_rhf_e = h2o_dict_origin["CQED-RHF ENERGY"]

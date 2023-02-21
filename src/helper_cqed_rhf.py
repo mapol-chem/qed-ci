@@ -76,7 +76,10 @@ def cqed_rhf(lambda_vector, molecule_string, psi4_options_dict):
     # Grab data from wavfunction
     # number of doubly occupied orbitals
     ndocc = wfn.nalpha()
-
+    #n_electrons
+    n_e = ndocc*2;
+    print("number of electrons: %d electrons \n" %(n_e) )
+    
     # grab all transformation vectors and store to a numpy array
     C = np.asarray(wfn.Ca())
 
@@ -121,6 +124,11 @@ def cqed_rhf(lambda_vector, molecule_string, psi4_options_dict):
     # \lambda_vecto \cdot < \mu > where <\mu> contains ONLY electronic contributions
     l_dot_mu_exp = np.dot(lambda_vector, mu_exp_el)
 
+    l_dot_mu_nu_exp = np.dot(lambda_vector, mu_nuc)
+    l_dot_mu_nu_exp = l_dot_mu_nu_exp/n_e
+    #scale d=\lambda \cdot \mu_el by expectation value of mu_nu
+    scaled_d_el = l_dot_mu_nu_exp * l_dot_mu_el
+
     # quadrupole arrays
     Q_ao_xx = np.asarray(mints.ao_quadrupole()[0])
     Q_ao_xy = np.asarray(mints.ao_quadrupole()[1])
@@ -160,6 +168,10 @@ def cqed_rhf(lambda_vector, molecule_string, psi4_options_dict):
     A.power(-0.5, 1.0e-16)
     A = np.asarray(A)
 
+    #scale overlap matrix by expectation value of mu_nu
+    scaled_S = l_dot_mu_nu_exp**2 * S 
+    H = H - scaled_d_el + 0.5 * scaled_S
+
     print("\nStart SCF iterations:\n")
     t = time.time()
     E = 0.0
@@ -195,10 +207,18 @@ def cqed_rhf(lambda_vector, molecule_string, psi4_options_dict):
         # Pauli-Fierz 2-e dipole-dipole terms, line 2 of Eq. (12) in [McTague:2021:ChemRxiv]
         #M = np.einsum("pq,rs,rs->pq", l_dot_mu_el, l_dot_mu_el, D)
         N = np.einsum("pr,qs,rs->pq", l_dot_mu_el, l_dot_mu_el, D)
+        
+        #<mu_nu>/N_e \cdot \lambda * (dPS +SPD)
+        dps = np.einsum("ij,jk,kl->il", l_dot_mu_el, D, S) + np.einsum("ij,jk,kl->il", S, D, l_dot_mu_el)
+        dps = dps * l_dot_mu_nu_exp
+        
+        #(<mu_nu>/N_e \cdot \lambda)^2 * SPS
+        sps = np.einsum("ij,jk,kl->il", S, D, S)
+        sps = sps * l_dot_mu_nu_exp**2
 
         # Build fock matrix: [Szabo:1996] Eqn. 3.154, pp. 141
         # plus Pauli-Fierz terms Eq. (12) in [McTague:2021:ChemRxiv]
-        F = H + 2 * J - K - N
+        F = H + 2 * J - K - N + dps - sps
 
         diis_e = np.einsum("ij,jk,kl->il", F, D, S) - np.einsum("ij,jk,kl->il", S, D, F)
         diis_e = A.dot(diis_e).dot(A)
@@ -239,7 +259,7 @@ def cqed_rhf(lambda_vector, molecule_string, psi4_options_dict):
         d_c = 0.5 * l_dot_mu_exp**2
 
         # update Core Hamiltonian
-        H = H_0 + Q_PF 
+        H = H_0 + Q_PF - scaled_d_el + 0.5 * scaled_S 
 
         if SCF_ITER == maxiter:
             psi4.core.clean()
