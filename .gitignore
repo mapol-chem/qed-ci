@@ -3,3 +3,4 @@ src/*.pyc
 src/*.swp
 src/output.dat
 src/timer.dat
+src/.ipynb*
