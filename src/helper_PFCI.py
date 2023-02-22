@@ -14,6 +14,8 @@ __copyright__ = "(c) 2014-2023, The Psi4NumPy Developers, Foley Lab, Mapol Proje
 __license__ = "GNU-GPL-3"
 __date__ = "2023-01-21"
 
+import psi4
+from helper_cqed_rhf import cqed_rhf
 from itertools import combinations
 
 def compute_excitation_level(ket, ndocc):
@@ -428,15 +430,63 @@ class PFHamiltonianGenerator:
     class for Full CI matrix elements
     """
 
-    def __init__(self, H_spin, pf_mo_spin_eri, g_spin, omega, N_photon):
+    def __init__(self, H_spin, pf_mo_spin_eri, g_spin, omega, N_photon, molecule_string, psi4_options_dict, lambda_vector):
         """
         Constructor for matrix elements of the PF Hamiltonian
         """
+
+        cqed_rhf_dict = cqed_rhf(lambda_vector, molecule_string, psi4_options_dict)
+        print("RAN CQED-RHF!")
+        print(cqed_rhf_dict["RHF ENERGY"])
+
+        # get the psi4 wavefunction object
+        p4_wfn = cqed_rhf_dict["PSI4 WFN"]
+        # get the cqed-rhf MO coefficients
+        C = cqed_rhf_dict["CQED-RHF C"]
+
+        # collect rhf wfn object as dictionary
+        wfn_dict = psi4.core.Wavefunction.to_file(p4_wfn)
+        # update wfn_dict with orbitals from CQED-RHF
+        wfn_dict["matrix"]["Ca"] = C
+        wfn_dict["matrix"]["Cb"] = C
+        # update wfn object
+        p4_wfn = psi4.core.Wavefunction.from_file(wfn_dict)
+        Ca = p4_wfn.Ca()
+        
+        # get 1-e arrays in ao basis
+        self.d_ao = cqed_rhf_dict["d MATRIX IN AO BASIS"]
+
+        self.q_ao = cqed_rhf_dict["q MATRIX IN AO BASIS"]
+        self.H_core_ao = cqed_rhf_dict["H-CORE IN AO BASIS"]
+        d_expectation_value = cqed_rhf_dict["d_E EXPECTATION VALUE"]
+
+        # build H_spin 
+        H = np.einsum('uj,vi,uv', Ca, Ca, self.H_core_ao -d_expectation_value * self.d_ao + self.q_ao)
+        H = np.repeat(H, 2, axis=0)
+        H = np.repeat(H, 2, axis=1)
+        
+        # Make H block diagonal
+        spin_ind = np.arange(H.shape[0], dtype=np.int) % 2
+        H *= (spin_ind.reshape(-1, 1) == spin_ind)
+        print("BUILT H_spin")
+        print(H)
+        print("COMPARING TO OLD H_spin")
+        print(H_spin)
+
+
+        
         self.Hspin = H_spin
         self.antiSym2eInt = pf_mo_spin_eri
         self.gspin = g_spin
         self.omega = omega
         self.Np = N_photon
+
+
+
+
+        
+
+
 
 
     def generatePFMatrix(self, detList):

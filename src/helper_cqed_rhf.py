@@ -293,5 +293,9 @@ def cqed_rhf(lambda_vector, molecule_string, psi4_options_dict):
         "NUCLEAR DIPOLE MOMENT": mu_nuc,
         "DIPOLE ENERGY": d_c,
         "NUCLEAR REPULSION ENERGY": Enuc,
+        "d MATRIX IN AO BASIS" : l_dot_mu_el,
+        "q MATRIX IN AO BASIS" : Q_PF,
+        "H-CORE IN AO BASIS" : T+V,
+        "d_E EXPECTATION VALUE" : l_dot_mu_exp
     }
     return cqed_rhf_dict
