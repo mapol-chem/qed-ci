@@ -25,7 +25,85 @@ def compute_excitation_level(ket, ndocc):
         if ket[i] > homo:
             level += 1
     return level
+def spin_idx_to_spat_idx_and_spin(P):
+    """ function to take the numeric label of a spin orbital
+        and return the spatial index and the spin index separately.
+        Starts counting from 0:
         
+        Arguments
+        ---------
+        P : int
+            spin orbital label
+        
+        Returns
+        -------
+        [p, spin] : numpy array of ints
+            p is the spatial orbital index and spin is the spin index.
+            spin = 1  -> alpha
+            spin = -1 -> beta
+            
+        Example
+        -------
+        >>> spin_idx_to_spat_idx_and_spin(0)
+        >>> [0, 1]
+        >>> spin_idx_to_spat_idx_and_spin(3)
+        >>> [1, -1]
+        
+    """
+    spin = 1
+    if P % 2 == 0:
+        p = P / 2
+        spin = 1
+    else:
+        p = (P-1) / 2
+        spin = -1
+    return np.array([p, spin], dtype=int)
+
+
+def map_spatial_to_spin(tei_spatial, I, J, K, L):
+    """ function to take two electron integrals in the spatial orbital basis
+        in chemist notation along with 4 indices I, J, K, L and return
+        the corresponding two electron integral in the spin orbital basis
+        in phycisit notation, <IJ||KL>
+    
+    """
+    # Phys to Chem: <IJ||KL> -> [IK|JL] - [IL|JK]
+    i_s = spin_idx_to_spat_idx_and_spin(I)
+    k_s = spin_idx_to_spat_idx_and_spin(K)
+    j_s = spin_idx_to_spat_idx_and_spin(J)
+    l_s = spin_idx_to_spat_idx_and_spin(L)
+    
+    #print(i_s[1])
+    # (ik|jl)
+    spat_ikjl = tei_spatial[i_s[0], k_s[0], j_s[0], l_s[0]] * ( i_s[1] == k_s[1] ) *  ( j_s[1] == l_s[1] )
+    
+    # (il|jk)
+    spat_iljk = tei_spatial[i_s[0], l_s[0], j_s[0], k_s[0]] * ( i_s[1] == l_s[1] ) *  ( j_s[1] == k_s[1] )
+    
+    return spat_ikjl - spat_iljk
+
+def map_spatial_dipole_to_spin(mu, I, J, K, L):
+    """ function to take the dipole matrix (a 1-electron matrix) 
+        and return the product of dipole matrix elements such that it matches
+        the <IJ||KL> convention.  
+    
+    """
+    # Phys to Chem: <IJ||KL> -> [IK|JL] - [IL|JK]
+    i_s = spin_idx_to_spat_idx_and_spin(I)
+    k_s = spin_idx_to_spat_idx_and_spin(K)
+    j_s = spin_idx_to_spat_idx_and_spin(J)
+    l_s = spin_idx_to_spat_idx_and_spin(L)
+    
+    #print(i_s[1])
+    # (ik|jl)
+    spat_ikjl = mu[i_s[0], k_s[0]] * mu[j_s[0], l_s[0]] * ( i_s[1] == k_s[1] ) *  ( j_s[1] == l_s[1] )
+    
+    # (il|jk)
+    spat_iljk = mu[i_s[0], l_s[0]] * mu[j_s[0], k_s[0]] * ( i_s[1] == l_s[1] ) *  ( j_s[1] == k_s[1] )
+    
+    return spat_ikjl - spat_iljk
+
+       
 
 class Determinant:
     """
@@ -429,8 +507,11 @@ class PFHamiltonianGenerator:
     """
     class for Full CI matrix elements
     """
+    
 
-    def __init__(self, H_spin, pf_mo_spin_eri, g_spin, omega, N_photon, molecule_string, psi4_options_dict, lambda_vector):
+
+
+    def __init__(self, N_photon, molecule_string, psi4_options_dict, lambda_vector,omega_val):
         """
         Constructor for matrix elements of the PF Hamiltonian
         """
@@ -452,7 +533,7 @@ class PFHamiltonianGenerator:
         # update wfn object
         p4_wfn = psi4.core.Wavefunction.from_file(wfn_dict)
         Ca = p4_wfn.Ca()
-        
+        nmo = p4_wfn.nmo() 
         # get 1-e arrays in ao basis
         self.d_ao = cqed_rhf_dict["d MATRIX IN AO BASIS"]
 
@@ -460,33 +541,47 @@ class PFHamiltonianGenerator:
         self.H_core_ao = cqed_rhf_dict["H-CORE IN AO BASIS"]
         d_expectation_value = cqed_rhf_dict["d_E EXPECTATION VALUE"]
 
-        # build H_spin 
-        H = np.einsum('uj,vi,uv', Ca, Ca, self.H_core_ao -d_expectation_value * self.d_ao + self.q_ao)
-        H = np.repeat(H, 2, axis=0)
-        H = np.repeat(H, 2, axis=1)
+        # build H_spin
+        #spatial part of 1-e integrals
+        H_spin = np.einsum('uj,vi,uv', Ca, Ca, self.H_core_ao -d_expectation_value * self.d_ao + self.q_ao)
+        H_spin= np.repeat(H_spin, 2, axis=0)
+        H_spin = np.repeat(H_spin, 2, axis=1)
+        #spin part of 1-e integrals 
+        spin_ind = np.arange(H_spin.shape[0], dtype=np.int) % 2
+        #product of spatial and spin parts
+        H_spin *= (spin_ind.reshape(-1, 1) == spin_ind)
+
+   
+        # ERIs in spin-orbital basis in physicist convention
+        mints = psi4.core.MintsHelper(p4_wfn.basisset())
+        l_dot_mu_el_cmo = np.einsum('uj,vi,uv', Ca, Ca, self.d_ao)
+        self.antiSym2eInt = np.asarray(mints.mo_spin_eri(Ca, Ca))
+        nso = 2 * nmo
+        TDI_spin = np.zeros((nso, nso, nso, nso))
+        # get the dipole-dipole integrals in the spin-orbital basis with physicist convention
+        for i in range(nso):
+            for j in range(nso):
+                for k in range(nso):
+                    for l in range(nso):
+                        TDI_spin[i, j, k, l] = map_spatial_dipole_to_spin(l_dot_mu_el_cmo, i, j, k, l)
+                        
+        # add dipole-dipole integrals to ERIs
+        self.antiSym2eInt += TDI_spin
         
-        # Make H block diagonal
-        spin_ind = np.arange(H.shape[0], dtype=np.int) % 2
-        H *= (spin_ind.reshape(-1, 1) == spin_ind)
-        print("BUILT H_spin")
-        print(H)
-        print("COMPARING TO OLD H_spin")
-        print(H_spin)
-
-
+        #build g matrix
+        g = -np.sqrt(omega_val / 2) * l_dot_mu_el_cmo
+        g = np.repeat(g, 2, axis=0)
+        g = np.repeat(g, 2, axis=1)
+        #product of spatial and spin parts
+        g *= (spin_ind.reshape(-1, 1) == spin_ind)
         
         self.Hspin = H_spin
-        self.antiSym2eInt = pf_mo_spin_eri
-        self.gspin = g_spin
-        self.omega = omega
+        self.gspin = g 
+        #self.antiSym2eInt = pf_mo_spin_eri
+        #assert np.allclose(self.antiSym2eInt2, self.antiSym2eInt, 1e-12, 1e-12)
+
+        self.omega = omega_val
         self.Np = N_photon
-
-
-
-
-        
-
-
 
 
     def generatePFMatrix(self, detList):

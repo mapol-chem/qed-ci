@@ -78,7 +78,6 @@ def cqed_rhf(lambda_vector, molecule_string, psi4_options_dict):
     ndocc = wfn.nalpha()
     #n_electrons
     n_e = ndocc*2;
-    print("number of electrons: %d electrons \n" %(n_e) )
     
     # grab all transformation vectors and store to a numpy array
     C = np.asarray(wfn.Ca())
