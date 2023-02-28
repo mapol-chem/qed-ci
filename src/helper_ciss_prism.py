@@ -19,7 +19,7 @@ import psi4
 import numpy as np
 import scipy.linalg as la
 import time
-from helper_cqed_rhf import cqed_rhf
+from helper_cqed_rhf_partitioned_fock import cqed_rhf
 
 
 def cs_cqed_cis(lambda_vector, omega_val, molecule_string, psi4_options_dict):
@@ -234,9 +234,9 @@ def cs_cqed_cis(lambda_vector, omega_val, molecule_string, psi4_options_dict):
     H_CISS_JC = np.zeros((ndocc * nvirt * 2 + 2, ndocc * nvirt * 2 + 2), dtype=complex)
 
     # Just the DSE contribution to the CISS-PF Hamiltonian
-    H_CISS_DSE = np.zeros((ndocc * nvirt * 2 + 2, ndocc * nvirt * 2 + 2))
+    H_CISS_DSE = np.zeros((ndocc * nvirt * 2 + 2, ndocc * nvirt * 2 + 2), dtype=complex)
     # Just the bilinear coupling contribution to the CISS-PF Hamiltonian
-    H_CISS_BLC = np.zeros((ndocc * nvirt * 2 + 2, ndocc * nvirt * 2 + 2))
+    H_CISS_BLC = np.zeros((ndocc * nvirt * 2 + 2, ndocc * nvirt * 2 + 2), dtype=complex)
 
     # build the supermatrix
     # g coupling
