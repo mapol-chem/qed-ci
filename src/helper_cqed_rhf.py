@@ -5,21 +5,6 @@ References:
     [Haugland:2020:041043], [DePrince:2021:094112], and [McTague:2021:ChemRxiv] 
     JJF Note: This implementation utilizes only electronic dipole contributions 
     and ignore superflous nuclear dipole terms!
-
-TO-DO: Implement the level-shifted version that Daniel presented where the Fock matrix has the form
-\begin{multline}
-    F_{QED-HF} = F_{HF} + \frac{1}{2} \lambda \cdot q \cdot \lambda 
-
-    -   <\mu_{nuc}>/N_e \cdot \lambda}  d
-
-    + 1/2 (<\mu_{nuc}>/N_e \cdot \lambda )^2 S
-
-    - d P d
-
-    + (<\mu_{nuc}>/N_e \cdot \lambda ) (d P S + S P d)
-
-    - (<\mu_{nuc} / N_e \cdot \lambda)^2 SPS
-
 """
 
 __authors__ = ["Jon McTague", "Jonathan Foley"]
@@ -76,9 +61,7 @@ def cqed_rhf(lambda_vector, molecule_string, psi4_options_dict):
     # Grab data from wavfunction
     # number of doubly occupied orbitals
     ndocc = wfn.nalpha()
-    #n_electrons
-    n_e = ndocc*2;
-    
+
     # grab all transformation vectors and store to a numpy array
     C = np.asarray(wfn.Ca())
 
@@ -123,11 +106,6 @@ def cqed_rhf(lambda_vector, molecule_string, psi4_options_dict):
     # \lambda_vecto \cdot < \mu > where <\mu> contains ONLY electronic contributions
     l_dot_mu_exp = np.dot(lambda_vector, mu_exp_el)
 
-    l_dot_mu_nu_exp = np.dot(lambda_vector, mu_nuc)
-    l_dot_mu_nu_exp = l_dot_mu_nu_exp/n_e
-    #scale d=\lambda \cdot \mu_el by expectation value of mu_nu
-    scaled_d_el = l_dot_mu_nu_exp * l_dot_mu_el
-
     # quadrupole arrays
     Q_ao_xx = np.asarray(mints.ao_quadrupole()[0])
     Q_ao_xy = np.asarray(mints.ao_quadrupole()[1])
@@ -167,10 +145,6 @@ def cqed_rhf(lambda_vector, molecule_string, psi4_options_dict):
     A.power(-0.5, 1.0e-16)
     A = np.asarray(A)
 
-    #scale overlap matrix by expectation value of mu_nu
-    scaled_S = l_dot_mu_nu_exp**2 * S 
-    H = H - scaled_d_el + 0.5 * scaled_S
-
     print("\nStart SCF iterations:\n")
     t = time.time()
     E = 0.0
@@ -206,18 +180,10 @@ def cqed_rhf(lambda_vector, molecule_string, psi4_options_dict):
         # Pauli-Fierz 2-e dipole-dipole terms, line 2 of Eq. (12) in [McTague:2021:ChemRxiv]
         #M = np.einsum("pq,rs,rs->pq", l_dot_mu_el, l_dot_mu_el, D)
         N = np.einsum("pr,qs,rs->pq", l_dot_mu_el, l_dot_mu_el, D)
-        
-        #<mu_nu>/N_e \cdot \lambda * (dPS +SPD)
-        dps = np.einsum("ij,jk,kl->il", l_dot_mu_el, D, S) + np.einsum("ij,jk,kl->il", S, D, l_dot_mu_el)
-        dps = dps * l_dot_mu_nu_exp
-        
-        #(<mu_nu>/N_e \cdot \lambda)^2 * SPS
-        sps = np.einsum("ij,jk,kl->il", S, D, S)
-        sps = sps * l_dot_mu_nu_exp**2
 
         # Build fock matrix: [Szabo:1996] Eqn. 3.154, pp. 141
         # plus Pauli-Fierz terms Eq. (12) in [McTague:2021:ChemRxiv]
-        F = H + 2 * J - K - N + dps - sps
+        F = H + 2 * J - K - N
 
         diis_e = np.einsum("ij,jk,kl->il", F, D, S) - np.einsum("ij,jk,kl->il", S, D, F)
         diis_e = A.dot(diis_e).dot(A)
@@ -258,7 +224,7 @@ def cqed_rhf(lambda_vector, molecule_string, psi4_options_dict):
         d_c = 0.5 * l_dot_mu_exp**2
 
         # update Core Hamiltonian
-        H = H_0 + Q_PF - scaled_d_el + 0.5 * scaled_S 
+        H = H_0 + Q_PF 
 
         if SCF_ITER == maxiter:
             psi4.core.clean()
@@ -280,21 +246,25 @@ def cqed_rhf(lambda_vector, molecule_string, psi4_options_dict):
     # does this agree with the final SCF energy when you subtract off nuclear contribut
     assert np.isclose(SCF_E - Enuc, PF_E_el, 1e-9)
 
+    # transform \lambda \cdot \mu to CMO basis
+    l_dot_mu_cmo = np.dot(C.T, l_dot_mu_el).dot(C)
+
     cqed_rhf_dict = {
         "RHF ENERGY": psi4_rhf_energy,
         "CQED-RHF ENERGY": SCF_E,
         "CQED-RHF C": C,
         "CQED-RHF DENSITY MATRIX": D,
         "CQED-RHF EPS": e,
-        "CQED-RHF FOCK MATRIX": F,
         "PSI4 WFN": wfn,
-        "CQED-RHF DIPOLE MOMENT": mu_exp_el + mu_nuc,
+        "CQED-RHF ELECTRONIC DIPOLE MOMENT": mu_exp_el,
         "NUCLEAR DIPOLE MOMENT": mu_nuc,
-        "DIPOLE ENERGY": d_c,
+        "DIPOLE ENERGY (1/2 (\lambda \cdot <\mu>_e)^2)": d_c,
         "NUCLEAR REPULSION ENERGY": Enuc,
-        "d MATRIX IN AO BASIS" : l_dot_mu_el,
-        "q MATRIX IN AO BASIS" : Q_PF,
-        "H-CORE IN AO BASIS" : T+V,
-        "d_E EXPECTATION VALUE" : l_dot_mu_exp
+        "PF 1-E SCALED DIPOLE MATRIX AO" : d_PF,
+        "PF 1-E DIPOLE MATRIX AO" : l_dot_mu_el,
+        "PF 1-E DIPOLE MATRIX MO" : l_dot_mu_cmo,
+        "PF 1-E QUADRUPOLE MATRIX AO" : Q_PF,
+        "1-E KINETIC MATRIX AO" : T,
+        "1-E POTENTIAL MATRIX AO" : V
     }
     return cqed_rhf_dict
