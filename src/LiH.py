@@ -42,7 +42,6 @@ numpy_memory = 2
 mol_str = """
 Li
 H 1 1.0
-2 1
 symmetry c1
 """
 
