@@ -136,7 +136,7 @@ def cqed_rhf(lambda_vector, molecule_string, psi4_options_dict):
 
     # Add Pauli-Fierz terms to H_core
     # Eq. (11) in [McTague:2021:ChemRxiv]
-    H = H_0 + Q_PF 
+    H = H_0 + Q_PF
 
     # Overlap for DIIS
     S = mints.ao_overlap()
@@ -223,8 +223,10 @@ def cqed_rhf(lambda_vector, molecule_string, psi4_options_dict):
         # Pauli-Fierz (\lambda \cdot <\mu>_e ) ^ 2
         d_c = 0.5 * l_dot_mu_exp**2
 
+        d_PF = -1 * l_dot_mu_exp * l_dot_mu_el
+
         # update Core Hamiltonian
-        H = H_0 + Q_PF 
+        H = H_0 + Q_PF
 
         if SCF_ITER == maxiter:
             psi4.core.clean()
@@ -257,7 +259,9 @@ def cqed_rhf(lambda_vector, molecule_string, psi4_options_dict):
         "CQED-RHF EPS": e,
         "PSI4 WFN": wfn,
         "CQED-RHF ELECTRONIC DIPOLE MOMENT": mu_exp_el,
+        "EXPECTATION VALUE OF d" : l_dot_mu_exp,
         "NUCLEAR DIPOLE MOMENT": mu_nuc,
+        "CQED-RHF DIPOLE MOMENT" : mu_exp_el + mu_nuc,
         "DIPOLE ENERGY (1/2 (\lambda \cdot <\mu>_e)^2)": d_c,
         "NUCLEAR REPULSION ENERGY": Enuc,
         "PF 1-E SCALED DIPOLE MATRIX AO" : d_PF,
