@@ -516,72 +516,143 @@ class PFHamiltonianGenerator:
         Constructor for matrix elements of the PF Hamiltonian
         """
 
+        # now compute cqed-rhf to get transformation vectors with cavity
         cqed_rhf_dict = cqed_rhf(lambda_vector, molecule_string, psi4_options_dict)
-        print("RAN CQED-RHF!")
-        print(cqed_rhf_dict["RHF ENERGY"])
 
-        # get the psi4 wavefunction object
-        p4_wfn = cqed_rhf_dict["PSI4 WFN"]
-        # get the cqed-rhf MO coefficients
-        C = cqed_rhf_dict["CQED-RHF C"]
+        # Parse
+        p4_wfn = self.parseArrays(cqed_rhf_dict)
 
-        # collect rhf wfn object as dictionary
-        wfn_dict = psi4.core.Wavefunction.to_file(p4_wfn)
-        # update wfn_dict with orbitals from CQED-RHF
-        wfn_dict["matrix"]["Ca"] = C
-        wfn_dict["matrix"]["Cb"] = C
-        # update wfn object
-        p4_wfn = psi4.core.Wavefunction.from_file(wfn_dict)
-        Ca = p4_wfn.Ca()
-        nmo = p4_wfn.nmo() 
-        # get 1-e arrays in ao basis
-        self.d_ao = cqed_rhf_dict["d MATRIX IN AO BASIS"]
+        # build 1H in spin orbital basis
+        self.build1HSO()
 
-        self.q_ao = cqed_rhf_dict["q MATRIX IN AO BASIS"]
-        self.H_core_ao = cqed_rhf_dict["H-CORE IN AO BASIS"]
-        d_expectation_value = cqed_rhf_dict["d_E EXPECTATION VALUE"]
+        # build 2eInt in cqed-rhf basis
+        mints = psi4.core.MintsHelper(p4_wfn.basisset())
+        self.eri_so = np.asarray(mints.mo_spin_eri(self.Ca, self.Ca))
 
-        # build H_spin
-        #spatial part of 1-e integrals
-        H_spin = np.einsum('uj,vi,uv', Ca, Ca, self.H_core_ao -d_expectation_value * self.d_ao + self.q_ao)
-        H_spin= np.repeat(H_spin, 2, axis=0)
-        H_spin = np.repeat(H_spin, 2, axis=1)
-        #spin part of 1-e integrals 
-        spin_ind = np.arange(H_spin.shape[0], dtype=np.int) % 2
-        #product of spatial and spin parts
-        H_spin *= (spin_ind.reshape(-1, 1) == spin_ind)
+        # form the 2H in spin orbital basis
+        self.build2DSO()
+
+        # build G
+        self.buildGSO()
+
+        # build Constant matrices
+        self.buildConstantMatrices()
+
+        # Generate Determinates
+
+        # Build Matrix
+
+        # Diagonalize
 
    
-        # ERIs in spin-orbital basis in physicist convention
-        mints = psi4.core.MintsHelper(p4_wfn.basisset())
-        l_dot_mu_el_cmo = np.einsum('uj,vi,uv', Ca, Ca, self.d_ao)
-        self.antiSym2eInt = np.asarray(mints.mo_spin_eri(Ca, Ca))
-        nso = 2 * nmo
-        TDI_spin = np.zeros((nso, nso, nso, nso))
-        # get the dipole-dipole integrals in the spin-orbital basis with physicist convention
-        for i in range(nso):
-            for j in range(nso):
-                for k in range(nso):
-                    for l in range(nso):
-                        TDI_spin[i, j, k, l] = map_spatial_dipole_to_spin(l_dot_mu_el_cmo, i, j, k, l)
-                        
-        # add dipole-dipole integrals to ERIs
-        self.antiSym2eInt += TDI_spin
+
         
-        #build g matrix
-        g = -np.sqrt(omega_val / 2) * l_dot_mu_el_cmo
-        g = np.repeat(g, 2, axis=0)
-        g = np.repeat(g, 2, axis=1)
-        #product of spatial and spin parts
-        g *= (spin_ind.reshape(-1, 1) == spin_ind)
-        
-        self.Hspin = H_spin
-        self.gspin = g 
+
         #self.antiSym2eInt = pf_mo_spin_eri
         #assert np.allclose(self.antiSym2eInt2, self.antiSym2eInt, 1e-12, 1e-12)
 
         self.omega = omega_val
         self.Np = N_photon
+
+
+    def parseArrays(self, cqed_rhf_dict):
+        # grab quantities from cqed_rhf_dict
+        self.rhf_reference_energy = cqed_rhf_dict["RHF ENERGY"]
+        self.cqed_reference_energy = cqed_rhf_dict["CQED-RHF ENERGY"]
+        self.C = cqed_rhf_dict["CQED-RHF C"]
+        self.dc = cqed_rhf_dict["DIPOLE ENERGY (1/2 (\lambda \cdot <\mu>_e)^2)"]
+        self.T_ao = cqed_rhf_dict["1-E KINETIC MATRIX AO"]
+        self.V_ao = cqed_rhf_dict["1-E POTENTIAL MATRIX AO"]
+        self.q_PF_ao = cqed_rhf_dict["PF 1-E QUADRUPOLE MATRIX AO"]
+        self.d_PF_ao = cqed_rhf_dict["PF 1-E SCALED DIPOLE MATRIX AO"]
+        self.d_cmo = cqed_rhf_dict["PF 1-E DIPOLE MATRIX MO"]
+        wfn = cqed_rhf_dict["PSI4 WFN"]
+        self.d_exp = cqed_rhf_dict["EXPECTATION VALUE OF d"]
+        self.Enuc = cqed_rhf_dict["NUCLEAR REPULSION ENERGY"]
+
+
+        # collect rhf wfn object as dictionary
+        wfn_dict = psi4.core.Wavefunction.to_file(wfn)
+        
+        # update wfn_dict with orbitals from CQED-RHF
+        wfn_dict["matrix"]["Ca"] = self.C
+        wfn_dict["matrix"]["Cb"] = self.C
+        
+        # update wfn object
+        wfn = psi4.core.Wavefunction.from_file(wfn_dict)
+        
+        # Grab data from wavfunction class
+        self.Ca = wfn.Ca()
+        self.ndocc = wfn.doccpi()[0]
+        self.nmo = wfn.nmo()
+        self.nso = 2 * self.nmo
+
+        return wfn 
+
+
+    def build1HSO(self):
+        """ Will build the 1-electron arrays in 
+            the spin orbital basis that contribute to the A+\Delta blocks
+        
+        """ 
+        self.H_1e_ao = self.T_ao + self.V_ao + self.q_PF_ao + self.d_PF_ao
+        # build H_spin
+        #spatial part of 1-e integrals
+        _H_spin = np.einsum('uj,vi,uv', self.Ca, self.Ca, self.H_1e_ao)
+        _H_spin= np.repeat(_H_spin, 2, axis=0)
+        _H_spin = np.repeat(_H_spin, 2, axis=1)
+        #spin part of 1-e integrals 
+        spin_ind = np.arange(_H_spin.shape[0], dtype=np.int) % 2
+        #product of spatial and spin parts
+        self.H_1e_so = _H_spin * (spin_ind.reshape(-1, 1) == spin_ind)
+
+    def build2DSO(self):
+        """ Will build the 2-electron arrays in the spin orbital basis
+            that contribute to the A+\Delta blocks
+            
+        """
+
+        self.TDI_spin = np.zeros((self.nso, self.nso, self.nso, self.nso))
+        # get the dipole-dipole integrals in the spin-orbital basis with physicist convention
+        for i in range(self.nso):
+            for j in range(self.nso):
+                for k in range(self.nso):
+                    for l in range(self.nso):
+                        self.TDI_spin[i, j, k, l] = map_spatial_dipole_to_spin(self.d_cmo, i, j, k, l)
+                        
+        # add dipole-dipole integrals to ERIs
+        self.tei_so = self.eri_so + self.TDI_spin
+
+    def buildGSO(self):
+        """
+        Will build the 1-electron arrays in the spin orbital basis
+        that contribute to the G blocks
+        """
+
+        #build g matrix
+        _g = -np.sqrt(self.omega / 2) * self.d_cmo
+        _g = np.repeat(_g, 2, axis=0)
+        _g = np.repeat(_g, 2, axis=1)
+
+        spin_ind = np.arange(_g.shape[0], dtype=np.int) % 2
+        #product of spatial and spin parts
+        self.g_so = _g * (spin_ind.reshape(-1, 1) == spin_ind)
+
+    def buildConstantMatrices(self):
+        """
+        Will build <G> * I, E_nuc * I, omega * I, and d_c * I
+        """
+
+        _I = np.identity(self.nso)
+
+        self.G_exp_so = np.sqrt(self.omega/2) * self.d_exp * _I 
+        self.Omega_so = self.omega * _I
+        self.Enuc_so = self.Enuc * _I
+        self.dc_so = self.dc * _I 
+
+
+
+
 
 
     def generatePFMatrix(self, detList):
