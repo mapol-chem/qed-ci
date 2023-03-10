@@ -518,6 +518,7 @@ class PFHamiltonianGenerator:
 
         # now compute cqed-rhf to get transformation vectors with cavity
         cqed_rhf_dict = cqed_rhf(lambda_vector, molecule_string, psi4_options_dict)
+        self.omega = omega_val
 
         # Parse
         p4_wfn = self.parseArrays(cqed_rhf_dict)
@@ -532,15 +533,17 @@ class PFHamiltonianGenerator:
         # form the 2H in spin orbital basis
         self.build2DSO()
 
-        # build G
+        # build the array to build G in the so basis
         self.buildGSO()
+
+        # build the determinant list
+        self.generateDeterminants(psi4_options_dict)
 
         # build Constant matrices
         self.buildConstantMatrices()
 
-        # Generate Determinates
-
         # Build Matrix
+        self.generatePFHMatrix()
 
         # Diagonalize
 
@@ -604,7 +607,7 @@ class PFHamiltonianGenerator:
         #spin part of 1-e integrals 
         spin_ind = np.arange(_H_spin.shape[0], dtype=np.int) % 2
         #product of spatial and spin parts
-        self.H_1e_so = _H_spin * (spin_ind.reshape(-1, 1) == spin_ind)
+        self.Hspin = _H_spin * (spin_ind.reshape(-1, 1) == spin_ind)
 
     def build2DSO(self):
         """ Will build the 2-electron arrays in the spin orbital basis
@@ -621,7 +624,7 @@ class PFHamiltonianGenerator:
                         self.TDI_spin[i, j, k, l] = map_spatial_dipole_to_spin(self.d_cmo, i, j, k, l)
                         
         # add dipole-dipole integrals to ERIs
-        self.tei_so = self.eri_so + self.TDI_spin
+        self.antiSym2eInt = self.eri_so + self.TDI_spin
 
     def buildGSO(self):
         """
@@ -643,55 +646,54 @@ class PFHamiltonianGenerator:
         Will build <G> * I, E_nuc * I, omega * I, and d_c * I
         """
 
-        _I = np.identity(self.nso)
+        _I = np.identity(self.numDets)
 
         self.G_exp_so = np.sqrt(self.omega/2) * self.d_exp * _I 
         self.Omega_so = self.omega * _I
         self.Enuc_so = self.Enuc * _I
-        self.dc_so = self.dc * _I 
+        self.dc_so = self.dc * _I
 
 
-
-
-
-
-    def generatePFMatrix(self, detList):
+    def generateDeterminants(self, options_dict):
         """
-        Generate the Pauli-Fierz Hamiltonian matrix
+        Generates the determinant list for building the CI matrix
         """
-        numDet = len(detList)
-        numP = self.Np + 1
-        PF_H_Matrix = np.zeros((numP * numDet, numP * numDet))
-        for s in range(numP):
-            for i in range(numDet):
-                si = s * numDet + i
-                for t in range(numP):
-                    for j in range(numDet):
-                        tj = t * numDet + j
+        self.dets = []
+        self.numDets = 0
+        for alpha in combinations(range(self.nmo), self.ndocc):
+            # alpha_ex_level = compute_excitation_level(alpha, self.ndocc)
+            for beta in combinations(range(self.nmo), self.ndocc):
+                # beta_ex_level = compute_excitation_level(beta, self.ndocc)
+                # if alpha_ex_level + beta_ex_level == 1:
+                # print(F' adding alpha: {alpha} and beta: {beta}\n')
+                self.dets.append(Determinant(alphaObtList=alpha, betaObtList=beta))
+                self.numDets += 1
 
-                        #print(F's:{s}, i:{i}, si:{si}, t:{t}, j:{j}, tj:{tj}')
-                        # diagonal in electronic and photonic
-                        if s==t and i==j:
-                            PF_H_Matrix[si, tj] = self.calcMatrixElement_delta_s_t(detList[i], detList[j]) + self.omega * s
-                        # diagonal in photonic only
-                        elif s==t and i!=j:
-                            PF_H_Matrix[si, tj] = self.calcMatrixElement_delta_s_t(detList[i], detList[j])
-
-                        # diagonal in electronic, off-diagonal in photonic
-                        elif s==t+1:
-                            print(F'DiffIn1Phot -> s:{s}, i:{i}, si:{si}, t:{t}, j:{j}, tj:{tj}')
-                            PF_H_Matrix[si, tj] = self.calcMatrixElement_delta_s_t_pm_1(detList[i], detList[j]) * np.sqrt(t+1)
-                        elif s == t-1:
-                            print(F'DiffIn1Phot -> s:{s}, i:{i}, si:{si}, t:{t}, j:{j}, tj:{tj}')
-                            PF_H_Matrix[si, tj] = self.calcMatrixElement_delta_s_t_pm_1(detList[i], detList[j]) * np.sqrt(t)
-                        
-
-        return PF_H_Matrix
-        
-
-    def calcMatrixElement_delta_s_t(self, det1, det2):
+    def generatePFHMatrix(self):
         """
-        Calculate a matrix element by two determinants assuming photonic bra is equal to photonic ket: <s|t> -> <s|s>
+        Generate H_PF CI Matrix
+        """
+
+        self.ApDmatrix = np.zeros((self.numDets,self.numDets))
+        self.Gmatrix = np.zeros((self.numDets, self.numDets))
+
+        self.H_PF = np.zeros((2 * self.numDets, 2 * self.numDets))
+
+        for i in range(self.numDets):
+            for j in range(i + 1):
+                self.ApDmatrix[i, j] = self.calcApDMatrixElement(self.dets[i], self.dets[j])
+                self.ApDmatrix[j, i] = self.ApDmatrix[i, j]
+                self.Gmatrix[i, j] = self.calcGMatrixElement(self.dets[i], self.dets[j])
+                self.Gmatrix[j, i] = self.Gmatrix[i, j]
+
+        self.H_PF[:self.numDets, :self.numDets] = self.ApDmatrix + self.Enuc_so + self.dc_so
+        self.H_PF[self.numDets:, self.numDets:] = self.ApDmatrix + self.Enuc_so + self.dc_so + self.Omega_so
+        self.H_PF[self.numDets:, :self.numDets] = self.Gmatrix + self.G_exp_so
+        self.H_PF[:self.numDets, self.numDets:] = self.Gmatrix + self.G_exp_so
+
+    def calcApDMatrixElement(self, det1, det2):
+        """
+        Calculate a matrix element by two determinants
         """
         
         numUniqueOrbitals = None
@@ -709,11 +711,10 @@ class PFHamiltonianGenerator:
                 return 0.0
         else:
             return 0.0
-    
-    def calcMatrixElement_delta_s_t_pm_1(self, det1, det2):
+        
+    def calcGMatrixElement(self, det1, det2):
         """
-        Calculate a matrix element by two determinants assuming photonic bra 
-        differs from photonic ket by \pm 1 (<s|b + b^\dagger|t> -> \delta_{s,t+1} + \delta_{s,t-1})
+        Calculate a matrix element by two determinants
         """
         
         numUniqueOrbitals = None
@@ -721,14 +722,16 @@ class PFHamiltonianGenerator:
             numUniqueOrbitals = det1.numberOfTotalDiffOrbitals(det2)
             if numUniqueOrbitals == 0:
                 #print(F' cal matrix element for {det1} and {det2}\n')
-                return self.calcMatrixElementDiffIn1phot(det1)
-            if numUniqueOrbitals == 1:
-                return self.calcMatrixElementDiffIn1el1phot(det1, det2)
+                return self.calcGMatrixElementIdentialDet(det1)
+            elif numUniqueOrbitals == 1:
+                return self.calcGMatrixElementDiffIn1(det1, det2)
             else:
                 # 
                 return 0.0
         else:
             return 0.0
+
+
 
     def calcMatrixElementDiffIn2(self, det1, det2):
         """
@@ -752,31 +755,29 @@ class PFHamiltonianGenerator:
         for n in common:
             Relem += self.antiSym2eInt[m, n, p, n]
         return sign * (Helem + Relem)
+    
+    def calcGMatrixElementDiffIn1(self, det1, det2):
+        """
+        Calculate a matrix element by two determinants where the determinants differ by 1 spin orbitals
+        """
 
-    def calcMatrixElementDiffIn1el1phot(self, det1, det2):
-        """
-        Calculate a matrix element between two determinants where the determinants
-        differ by 1 electronic spin orbital and 1 photon state...
-        Note: Needs generalizing before we can do arbitrary photonic states
-        """
         unique1, unique2, sign = det1.getUniqueOrbitalsInMixIndexListsPlusSign(det2)
         m = unique1[0]
         p = unique2[0]
-        Gelem = self.gspin[m, p]
+        Gelem = self.g_so[m, p]
+        return sign * Gelem 
 
-        return sign * Gelem
+    def calcGMatrixElementIdentialDet(self, det):
+        """
+        Calculate a matrix element by two determinants where they are identical
+        """
 
-    def calcMatrixElementDiffIn1phot(self, det):
-        """
-        Calculate a matrix element between two determinants that are idetnical
-        in the electronic spin orbital occupation and differ by 1 photon state....
-        Note: Needs generalizing before we can do arbitrary photonic states
-        """
         spinObtList = det.getOrbitalMixedIndexList()
         Gelem = 0.0
         for m in spinObtList:
-            Gelem += self.gspin[m, m]
-        return Gelem
+            Gelem += self.g_so[m, m]
+       
+        return Gelem 
 
 
     def calcMatrixElementIdentialDet(self, det):
