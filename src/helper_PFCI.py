@@ -635,7 +635,7 @@ class PFHamiltonianGenerator:
         self.g_so = _g * (spin_ind.reshape(-1, 1) == spin_ind)
         if self.ignore_coupling==True:
             self.g_so *= 0
-            
+
 
     def buildConstantMatrices(self):
         """
@@ -644,10 +644,13 @@ class PFHamiltonianGenerator:
 
         _I = np.identity(self.numDets)
         self.Enuc_so = self.Enuc * _I
-        if self.ignore_coupling==False:
-            self.G_exp_so = np.sqrt(self.omega/2) * self.d_exp * _I 
-            self.Omega_so = self.omega * _I
-            self.dc_so = self.dc * _I
+        self.G_exp_so = np.sqrt(self.omega/2) * self.d_exp * _I 
+        self.Omega_so = self.omega * _I
+        self.dc_so = self.dc * _I
+        if self.ignore_coupling==True:
+            self.G_exp_so *= 0
+            self.Omega_so *= 0
+            self.dc_so *= 0
 
         
         
@@ -660,13 +663,13 @@ class PFHamiltonianGenerator:
         self.dets = []
         self.numDets = 0
         for alpha in combinations(range(self.nmo), self.ndocc):
-            # alpha_ex_level = compute_excitation_level(alpha, self.ndocc)
+            alpha_ex_level = compute_excitation_level(alpha, self.ndocc)
             for beta in combinations(range(self.nmo), self.ndocc):
-                # beta_ex_level = compute_excitation_level(beta, self.ndocc)
-                # if alpha_ex_level + beta_ex_level == 1:
-                # print(F' adding alpha: {alpha} and beta: {beta}\n')
-                self.dets.append(Determinant(alphaObtList=alpha, betaObtList=beta))
-                self.numDets += 1
+                beta_ex_level = compute_excitation_level(beta, self.ndocc)
+                if alpha_ex_level + beta_ex_level <= 1:
+                    #print(F' adding alpha: {alpha} and beta: {beta}\n')
+                    self.dets.append(Determinant(alphaObtList=alpha, betaObtList=beta))
+                    self.numDets += 1
 
     def generatePFHMatrix(self):
         """
