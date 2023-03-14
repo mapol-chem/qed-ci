@@ -511,12 +511,14 @@ class PFHamiltonianGenerator:
 
 
 
-    def __init__(self, N_photon, molecule_string, psi4_options_dict, lambda_vector,omega_val):
+    def __init__(self, N_photon, molecule_string, psi4_options_dict, lambda_vector,omega_val, ignore_coupling=False):
         """
         Constructor for matrix elements of the PF Hamiltonian
         """
 
         # now compute cqed-rhf to get transformation vectors with cavity
+        self.ignore_coupling = ignore_coupling
+        self.N_p = N_photon
         cqed_rhf_dict = cqed_rhf(lambda_vector, molecule_string, psi4_options_dict)
         self.omega = omega_val
 
@@ -545,17 +547,6 @@ class PFHamiltonianGenerator:
         # Build Matrix
         self.generatePFHMatrix()
 
-        # Diagonalize
-
-   
-
-        
-
-        #self.antiSym2eInt = pf_mo_spin_eri
-        #assert np.allclose(self.antiSym2eInt2, self.antiSym2eInt, 1e-12, 1e-12)
-
-        self.omega = omega_val
-        self.Np = N_photon
 
 
     def parseArrays(self, cqed_rhf_dict):
@@ -598,7 +589,9 @@ class PFHamiltonianGenerator:
             the spin orbital basis that contribute to the A+\Delta blocks
         
         """ 
-        self.H_1e_ao = self.T_ao + self.V_ao + self.q_PF_ao + self.d_PF_ao
+        self.H_1e_ao = self.T_ao + self.V_ao
+        if self.ignore_coupling==False: 
+            self.H_1e_ao += self.q_PF_ao + self.d_PF_ao
         # build H_spin
         #spatial part of 1-e integrals
         _H_spin = np.einsum('uj,vi,uv', self.Ca, self.Ca, self.H_1e_ao)
@@ -614,14 +607,14 @@ class PFHamiltonianGenerator:
             that contribute to the A+\Delta blocks
             
         """
-
         self.TDI_spin = np.zeros((self.nso, self.nso, self.nso, self.nso))
-        # get the dipole-dipole integrals in the spin-orbital basis with physicist convention
-        for i in range(self.nso):
-            for j in range(self.nso):
-                for k in range(self.nso):
-                    for l in range(self.nso):
-                        self.TDI_spin[i, j, k, l] = map_spatial_dipole_to_spin(self.d_cmo, i, j, k, l)
+        if self.ignore_coupling==False:
+            # get the dipole-dipole integrals in the spin-orbital basis with physicist convention
+            for i in range(self.nso):
+                for j in range(self.nso):
+                    for k in range(self.nso):
+                        for l in range(self.nso):
+                            self.TDI_spin[i, j, k, l] = map_spatial_dipole_to_spin(self.d_cmo, i, j, k, l)
                         
         # add dipole-dipole integrals to ERIs
         self.antiSym2eInt = self.eri_so + self.TDI_spin
@@ -640,6 +633,9 @@ class PFHamiltonianGenerator:
         spin_ind = np.arange(_g.shape[0], dtype=np.int) % 2
         #product of spatial and spin parts
         self.g_so = _g * (spin_ind.reshape(-1, 1) == spin_ind)
+        if self.ignore_coupling==True:
+            self.g_so *= 0
+            
 
     def buildConstantMatrices(self):
         """
@@ -647,11 +643,14 @@ class PFHamiltonianGenerator:
         """
 
         _I = np.identity(self.numDets)
-
-        self.G_exp_so = np.sqrt(self.omega/2) * self.d_exp * _I 
-        self.Omega_so = self.omega * _I
         self.Enuc_so = self.Enuc * _I
-        self.dc_so = self.dc * _I
+        if self.ignore_coupling==False:
+            self.G_exp_so = np.sqrt(self.omega/2) * self.d_exp * _I 
+            self.Omega_so = self.omega * _I
+            self.dc_so = self.dc * _I
+
+        
+        
 
 
     def generateDeterminants(self, options_dict):
