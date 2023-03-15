@@ -652,10 +652,6 @@ class PFHamiltonianGenerator:
             self.Omega_so *= 0
             self.dc_so *= 0
 
-        
-        
-
-
     def generateDeterminants(self, options_dict):
         """
         Generates the determinant list for building the CI matrix
@@ -733,8 +729,6 @@ class PFHamiltonianGenerator:
         else:
             return 0.0
 
-
-
     def calcMatrixElementDiffIn2(self, det1, det2):
         """
         Calculate a matrix element by two determinants where the determinants differ by 2 spin orbitals
@@ -797,3 +791,25 @@ class PFHamiltonianGenerator:
             for n in range(m + 1, length):
                 Relem += self.antiSym2eInt[spinObtList[m], spinObtList[n], spinObtList[m], spinObtList[n]]
         return Helem + Relem
+    
+    def cal1RDM(self):
+        """ 
+        Calculate the 1RDM from a QED-CIS calculation
+        """
+
+        # step 1: run qed-cis calculation and return
+        #         - the C vector of the desired state
+        #         - the list of i,a pairs that define the C vector
+
+        # step 2: compute reference 1-RDM - diagonal for p,q \in ndocc * |c^0_0|^2 + |c^1_0|^2 
+
+        # step 3: start loop over orbital indices p,q:
+        #         - start loop over i,a pairs in the ket
+        #         - for each det |\phi_i^a>:
+        #             - removeAlphaOrbital(q)
+        #             - addAlphaOrbital(p)
+        #             - start loop over j,b pairs in bra
+        #                 - compare bra to ket with numUniqueOrbitals = bra.numberOfTotalDiffOrbitals(ket)
+        #                 - if numUniqueOrbitals == 0: -> 1RDM += np.conj(C[j,b]) * C[i,a]
+
+
