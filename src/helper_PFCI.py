@@ -792,10 +792,39 @@ class PFHamiltonianGenerator:
                 Relem += self.antiSym2eInt[spinObtList[m], spinObtList[n], spinObtList[m], spinObtList[n]]
         return Helem + Relem
     
-    def cal1RDM(self):
+    def cal1RDM(self, c_vec_n):
         """ 
         Calculate the 1RDM from a QED-CIS calculation
+
+        Arguments
+        ---------
+        c_vec_n : np.array of CISS coefficients for a given state 
         """
+
+        # need to reshape c_vec_n so we can make a column and row vector out of it
+
+        # first break c_vec_n into two slices
+        n_ss = len(c_vec_n)
+        n_s = int(n_ss/2)
+        
+        #first spans the |R,0> and |S,0> states
+        c_n0 = c_vec_n[:n_s]
+        # second spans the |R,1> and |R,1> states
+        c_n1 = c_vec_n[n_s:]
+
+        # make row vectors 
+        _c_n0r = np.reshape(c_n0, (n_s,1))
+        _c_n1r = np.reshape(c_n1, (n_s,1))
+
+        # get density matrix for each block
+        _D0 = np.outer(np.conj(_c_n0r.T), _c_n0r)
+        _D1 = np.outer(np.conj(_c_n1r.T), _c_n1r)
+
+        # 1-RDM for the reference states with elements 
+        # D_pq =  |c_0^0|^2 <\phi_0,0|p^{\dagger} q|\phi_0,0> + |c_0^1|^2 <\phi_0,1|p^{\dagger} q|\phi_0,1>
+        #      => (|c_0^0|^2+|c_0^1|^2) <\phi_0|p^{\dagger} q|\phi_0> 
+        _D1_ref 
+        
 
         # step 1: run qed-cis calculation and return
         #         - the C vector of the desired state
