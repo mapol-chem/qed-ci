@@ -803,27 +803,92 @@ class PFHamiltonianGenerator:
 
         # need to reshape c_vec_n so we can make a column and row vector out of it
 
-        # first break c_vec_n into two slices
-        n_ss = len(c_vec_n)
-        n_s = int(n_ss/2)
+        # get some basic quantities first
+        _nmo = self.nmo
+        _ndocc = self.ndocc
+        _nvirt = _nmo - _ndocc
+
+        # total number of states in {|R,0>, |R,1>, |S,0>, |S,1>}
+        _n_ss = len(c_vec_n)
+        # total number of states in {|R,0>, |S,0>} and in {|R,1>, |S,1>}
+        _n_s = int(_n_ss/2)
         
+        # right now the CI configurations are odered like the following:
+        #|R,0>, |R,1>, |S1,0>, |S1,1>, |S2,0>, |S2,1>, ...
+        # where |S1> denotes the first singly-excited derminant, |S2> the second, etc
+        # so the configurations with 0 photon occupation have even indices and
+        # the configurations with 1 photon occupation have odd indices.
+        _pvac_idx = np.arange(0, _n_ss, 2)
+        _pone_idx = np.arange(1, _n_ss, 2)
+
         #first spans the |R,0> and |S,0> states
-        c_n0 = c_vec_n[:n_s]
+        c_n0 = c_vec_n[_pvac_idx]
         # second spans the |R,1> and |R,1> states
-        c_n1 = c_vec_n[n_s:]
+        c_n1 = c_vec_n[_pone_idx]
+
+        # now each vector spans the |R> + {|S>} basis for a given photon state.
+        # for the {|S>}, let's generate a list of the excitations in the order
+        # of the |S> basis
+        excitations = []
+        for i in range(_ndocc):
+            for a in range(_nvirt):
+                _A = a + _ndocc
+                excitations.append((i,_A))
+
 
         # make row vectors 
-        _c_n0r = np.reshape(c_n0, (n_s,1))
-        _c_n1r = np.reshape(c_n1, (n_s,1))
+        _c_n0r = np.reshape(c_n0, (_n_s,1))
+        _c_n1r = np.reshape(c_n1, (_n_s,1))
 
         # get density matrix for each block
         _D0 = np.outer(np.conj(_c_n0r.T), _c_n0r)
         _D1 = np.outer(np.conj(_c_n1r.T), _c_n1r)
 
-        # 1-RDM for the reference states with elements 
+        # _D1_RR : 1-RDM term for the reference states with elements 
         # D_pq =  |c_0^0|^2 <\phi_0,0|p^{\dagger} q|\phi_0,0> + |c_0^1|^2 <\phi_0,1|p^{\dagger} q|\phi_0,1>
         #      => (|c_0^0|^2+|c_0^1|^2) <\phi_0|p^{\dagger} q|\phi_0> 
-        _D1_ref 
+        _D1_RR = np.zeros((_nmo,_nmo))
+        for i in range(_ndocc):
+            _D1_RR[i,i] = _D0[0,0] + _D1[0,0]
+
+        # _D1_RS : 1-RDM terms between <R,n|p^{\dagger} q|S,n>
+        # only surviving terms are <R,n|i^{\dagger} a|\Phi_i^a,n>
+        # so we will loop through the excitations to get the surviving elements
+        # The 1-RDM terms between <S,n|p^{\dagger} q|R,n> are just the transpose
+        # of this, so we will capture these terms in _D1_RS as well!
+        _D1_RS = np.zeros((_nmo, _nmo))
+        for i in range(len(excitations)):
+            # offset the ket index by 1 since loop starts at i=0 but _D0[0,0] and _D1[0,0]
+            # will be reference elements
+            _ket_I = i+1
+            _p = excitations[i][0]
+            _q = excitations[i][1]
+            _D1_RS[_p, _q] = _D0[0, _ket_I] + _D1[0, _ket_I] 
+            _D1_RS[_q, _p] = _D1_RS[_p, _q] #<== Transpose terms!
+
+
+        # _D1_SS : 1-RDM terms between <\Phi_i^a,n|p^{dagger} q|\Phi_j^b,n>
+        # which will survive only when i==j for elements 1D_a,b or a==b for elements 1D_ij
+        _D1_SS = np.zeros((_nmo, _nmo))
+        for _I in range(len(excitations)):
+            _ket_I = _I + 1
+            _i = excitations[_I][0]
+            _a = excitations[_I][1]
+            
+            for _J in range(len(excitations)):
+                _ket_J = _J + 1
+                _j = excitations[_J][0]
+                _b = excitations[_J][1]
+                _D1_SS[_a, _b] += (_D0[_ket_I, _ket_J] + _D1[_ket_I, _ket_J]) * (_i == _j)
+                _D1_SS[_i, _j] += (_D0[_ket_I, _ket_J] + _D1[_ket_I, _ket_J]) * (_a == _b)
+
+
+
+
+
+
+
+
         
 
         # step 1: run qed-cis calculation and return
