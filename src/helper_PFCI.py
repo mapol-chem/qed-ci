@@ -879,6 +879,8 @@ class PFHamiltonianGenerator:
         """
 
         # need to reshape c_vec_n so we can make a column and row vector out of it
+        # 𝛾𝑝𝑞=𝛿𝑝𝑞 𝜒(𝑝)+𝑐^𝑝_𝑞(𝜋(𝑝)𝜒(𝑞)+𝜒(𝑝)𝜋(𝑞))+∑_i c_i^p c_q^i 𝜋(𝑝)𝜋(𝑞)−∑_a c_q^a c_a^p 𝜒(𝑝)𝜒(q)
+        # 𝜒(𝑝) and 𝜋(𝑝)= 1 when p belongs to occupied / unoccupied orbitals, respectively
 
         # get some basic quantities first
         _nmo = self.nmo
@@ -907,11 +909,16 @@ class PFHamiltonianGenerator:
         # now each vector spans the |R> + {|S>} basis for a given photon state.
         # for the {|S>}, let's generate a list of the excitations in the order
         # of the |S> basis
+        _pi = np.zeros(_nmo)
+        _xi = np.zeros(_nmo)
+
+
         excitations = []
         for _i in range(_ndocc):
             for _a in range(_nvirt):
                 _A = _a + _ndocc
-                excitations.append((_i, _A))
+                excitations.append((_i, _A))     
+
 
         # make row vectors from CIS coefficients
         _c_n0r = np.reshape(c_n0, (_n_s, 1))
@@ -961,6 +968,85 @@ class PFHamiltonianGenerator:
                 _D1_SS[_i, _j] += (_D0[_ket_I, _ket_J] + _D1[_ket_I, _ket_J]) * (
                     _a == _b
                 )
-
         _D1 = _D1_RR + _D1_RS + _D1_SS
+        return _D1
+    
+    def calc1RDM_b(self, c_vec):
+        """
+        Calculate the 1RDM from a QED-CIS calculation
+
+        Arguments
+        ---------
+        c_vec_n : np.array of CISS coefficients for a given state
+        """
+
+        # need to reshape c_vec_n so we can make a column and row vector out of it
+        # 𝛾𝑝𝑞=𝛿𝑝𝑞 𝜒(𝑝)+𝑐^𝑝_𝑞(𝜋(𝑝)𝜒(𝑞)+𝜒(𝑝)𝜋(𝑞))+∑_i c_i^p c_q^i 𝜋(𝑝)𝜋(𝑞)−∑_a c_q^a c_a^p 𝜒(𝑝)𝜒(q)
+        # 𝜒(𝑝) and 𝜋(𝑝)= 1 when p belongs to occupied / unoccupied orbitals, respectively
+
+        # get some basic quantities first
+        _nmo = self.nmo
+        _ndocc = self.ndocc
+        _nvirt = _nmo - _ndocc
+
+        # total number of states in {|R,0>, |R,1>, |S,0>, |S,1>}
+        _n_ss = len(c_vec_n)
+        # total number of states in {|R,0>, |S,0>} and in {|R,1>, |S,1>}
+        _n_s = int(_n_ss / 2)
+
+        # right now the CI configurations are odered like the following:
+        # |R,0>, |R,1>, |S1,0>, |S1,1>, |S2,0>, |S2,1>, ...
+        # where |S1> denotes the first singly-excited derminant, |S2> the second, etc
+        # so the configurations with 0 photon occupation have even indices and
+        # the configurations with 1 photon occupation have odd indices.
+
+        _pvac_idx = np.arange(0, _n_ss, 2)  # <== indices for C coeffs for |0> states
+        _pone_idx = np.arange(1, _n_ss, 2)  # <== indices for C coeffs for |1> states
+
+        # CIS coefficients spanning the |R,0> and |S,0> states
+        c_n0 = c_vec_n[_pvac_idx]
+        # CIS coefficients spanning the |R,1> and |R,1> states
+        c_n1 = c_vec_n[_pone_idx]
+
+        # now each vector spans the |R> + {|S>} basis for a given photon state.
+        # for the {|S>}, let's generate a list of the excitations in the order
+        # of the |S> basis
+        _pi = np.zeros(_nmo)
+        _xi = np.zeros(_nmo)
+
+
+        excitations = []
+        C0_ia = np.zeros((_ndocc, _nvirt))
+        C1_ia = np.zeros((_ndocc, _nvirt))
+        _idx = 1
+        for _i in range(_ndocc):
+            _xi[i] = 1
+            for _a in range(_nvirt):
+                _A = _a + _ndocc
+                _pi[_A] = 1
+                excitations.append((_i, _A))
+                C0_ia[_i, _A] = c_n0[_idx]
+                C1_ia[_i, _A] = c_n1[_idx]
+
+
+        _D1 = np.zeros(_nmo, _nmo)
+        for _i in range(_ndocc):
+            _D1[_i, _i] = c_n0[0] * c_n0[0] + c_n1[0] * c_n1[0]
+        
+        for _p in range(_nmo):
+            for _q in range(_nmo):
+                _D1[_p, _q] += c_n0[0] * C0_ia[_p, _q] * _pi[_p] * _xi[_q]
+                _D1[_p, _q] += c_n0[0] * C0_ia[_p, _q] * _xi[_p] * _pi[_q]
+                _D1[_p, _q] += c_n1[0] * C1_ia[_p, _q] * _pi[_p] * _xi[_q]
+                _D1[_p, _q] += c_n1[0] * C1_ia[_p, _q] * _xi[_p] * _pi[_q]
+
+                for _i in range(_ndocc):
+                    _D1[_p, _q] += C0_ia[_p, _i] * C0_ia[_i, _q] * _pi[_p] * _pi[_q]
+                    _D1[_p, _q] += C1_ia[_p, _i] * C1_ia[_i, _q] * _pi[_p] * _pi[_q]
+
+                for _a in range(_nvirt):
+                    _A = _a + _ndocc
+                    _D1[_p, _q] -= C0_ia[_a, _q] * C0_ia[_p, _a] * _xi[_p] * _xi[_q]
+                    _D1[_p, _q] -= C1_ia[_a, _q] * C1_ia[_p, _a] * _xi[_p] * _xi[_q]
+
         return _D1
