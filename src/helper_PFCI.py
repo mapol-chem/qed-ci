@@ -16,7 +16,6 @@ __date__ = "2023-01-21"
 
 import psi4
 from helper_cqed_rhf import cqed_rhf
-from helper_cs_cqed_cis import *
 from itertools import combinations
 
 
@@ -27,6 +26,12 @@ def compute_excitation_level(ket, ndocc):
         if ket[i] > homo:
             level += 1
     return level
+
+
+def returnNotMatches(a, b):
+    a = set(a)
+    b = set(b)
+    return list(a - b) + list(b - a)
 
 
 def spin_idx_to_spat_idx_and_spin(P):
@@ -570,33 +575,25 @@ class PFHamiltonianGenerator:
         psi4_options_dict,
         lambda_vector,
         omega_val,
+        n_act_el,
+        n_act_orb,
         ignore_coupling=False,
+        cas=False,
     ):
         """
         Constructor for matrix elements of the PF Hamiltonian
         """
-
+        self.cas = cas
+        self.n_act_el = n_act_el
+        self.n_act_orb = n_act_orb
         # now compute cqed-rhf to get transformation vectors with cavity
         self.ignore_coupling = ignore_coupling
         self.N_p = N_photon
+        cqed_rhf_dict = cqed_rhf(lambda_vector, molecule_string, psi4_options_dict)
         self.omega = omega_val
 
-        # run cqed-rhf
-        cqed_rhf_dict = cqed_rhf(lambda_vector, molecule_string, psi4_options_dict)
-
-        # Parse output of CQED-RHF 
+        # Parse
         p4_wfn = self.parseArrays(cqed_rhf_dict)
-
-        # run cqed-cis to get CIS vectors
-        cqed_cis_dict = cs_cqed_cis(lambda_vector, omega_val, molecule_string, psi4_options_dict)
-        _c_vecs = cqed_cis_dict["CQED-CIS L VECTORS"]
-
-        # pass in cqed-cis vector for desired CIS state to get the corresponding 1RDM
-        RDM1 = self.calc1RDM(_c_vecs[:,0])
-        print(" Printing 1RDM")
-        print(RDM1)
-
-        print(" TRACE OF 1RDM IS ", np.trace(RDM1))
 
         # build 1H in spin orbital basis
         self.build1HSO()
@@ -667,7 +664,7 @@ class PFHamiltonianGenerator:
         _H_spin = np.repeat(_H_spin, 2, axis=0)
         _H_spin = np.repeat(_H_spin, 2, axis=1)
         # spin part of 1-e integrals
-        spin_ind = np.arange(_H_spin.shape[0], dtype=np.int) % 2
+        spin_ind = np.arange(_H_spin.shape[0], dtype=int) % 2
         # product of spatial and spin parts
         self.Hspin = _H_spin * (spin_ind.reshape(-1, 1) == spin_ind)
 
@@ -701,7 +698,7 @@ class PFHamiltonianGenerator:
         _g = np.repeat(_g, 2, axis=0)
         _g = np.repeat(_g, 2, axis=1)
 
-        spin_ind = np.arange(_g.shape[0], dtype=np.int) % 2
+        spin_ind = np.arange(_g.shape[0], dtype=int) % 2
         # product of spatial and spin parts
         self.g_so = _g * (spin_ind.reshape(-1, 1) == spin_ind)
         if self.ignore_coupling == True:
@@ -727,15 +724,69 @@ class PFHamiltonianGenerator:
         Generates the determinant list for building the CI matrix
         """
         self.dets = []
+        self.detlists = []
         self.numDets = 0
-        for alpha in combinations(range(self.nmo), self.ndocc):
-            alpha_ex_level = compute_excitation_level(alpha, self.ndocc)
-            for beta in combinations(range(self.nmo), self.ndocc):
-                beta_ex_level = compute_excitation_level(beta, self.ndocc)
-                if alpha_ex_level + beta_ex_level <= 1:
-                    # print(F' adding alpha: {alpha} and beta: {beta}\n')
+        self.excitation_index = []
+        if self.cas == False:
+            docc_list = list(x for x in range(self.ndocc))
+            print(docc_list)
+            for alpha in combinations(range(self.nmo), self.ndocc):
+                alpha_ex_level = compute_excitation_level(alpha, self.ndocc)
+                for beta in combinations(range(self.nmo), self.ndocc):
+                    beta_ex_level = compute_excitation_level(beta, self.ndocc)
+                    if alpha_ex_level + beta_ex_level <= 1:
+                        # print(F' adding alpha: {alpha} and beta: {beta}\n')
+                        self.dets.append(
+                            Determinant(alphaObtList=alpha, betaObtList=beta)
+                        )
+                        self.numDets += 1
+                    if alpha_ex_level + beta_ex_level == 1:
+                        alphalist = list(alpha)
+                        betalist = list(beta)
+                        if beta_ex_level == 1:
+                            print("betalist")
+                            print(betalist)
+                            new_list = returnNotMatches(docc_list, betalist)
+                            new_list = [x * 2 + 1 for x in new_list]
+                        else:
+                            print("alphalist")
+                            print(alphalist)
+                            new_list = returnNotMatches(docc_list, alphalist)
+                            new_list = [x * 2 for x in new_list]
+
+                        print(new_list)
+                        self.excitation_index.append(
+                            new_list[0] * 2 * (self.nmo - self.ndocc)
+                            + new_list[1]
+                            - 2 * self.ndocc
+                        )
+                        # print(alphalist)
+                        # print(betalist)
+                        jointlist = alphalist + betalist
+                        self.detlists.append(jointlist)
+
+        else:
+            n_in_orb = self.ndocc - self.n_act_el // 2
+            n_ac_el_half = self.n_act_el // 2
+            inactive_list = list(x for x in range(n_in_orb))
+            print("Generating all determinants in active space")
+            for alpha in combinations(range(self.n_act_orb), n_ac_el_half):
+                alphalist = list(alpha)
+                alphalist = [x + n_in_orb for x in alphalist]
+                alphalist[0:0] = inactive_list
+                alpha = tuple(alphalist)
+                for beta in combinations(range(self.n_act_orb), n_ac_el_half):
+                    betalist = list(beta)
+                    betalist = [x + n_in_orb for x in betalist]
+                    betalist[0:0] = inactive_list
+                    beta = tuple(betalist)
                     self.dets.append(Determinant(alphaObtList=alpha, betaObtList=beta))
                     self.numDets += 1
+        for i in range(len(self.dets)):
+            print(self.dets[i])
+        for i in range(len(self.detlists)):
+            print(self.detlists[i])
+        print(self.excitation_index)
 
     def generatePFHMatrix(self):
         """
@@ -743,35 +794,56 @@ class PFHamiltonianGenerator:
         """
 
         self.ApDmatrix = np.zeros((self.numDets, self.numDets))
+        # one-electron only version of A+\Delta
+        self.apdmatrix = np.zeros((self.numDets, self.numDets))
+
         self.Gmatrix = np.zeros((self.numDets, self.numDets))
 
         self.H_PF = np.zeros((2 * self.numDets, 2 * self.numDets))
+        # one-electron version of Hamiltonian
+        self.H_1E = np.zeros((2 * self.numDets, 2 * self.numDets))
 
         for i in range(self.numDets):
             for j in range(i + 1):
                 self.ApDmatrix[i, j] = self.calcApDMatrixElement(
                     self.dets[i], self.dets[j]
                 )
+                self.apdmatrix[i, j] = self.calcApDMatrixElement(
+                    self.dets[i], self.dets[j], OneEpTwoE=False
+                )
                 self.ApDmatrix[j, i] = self.ApDmatrix[i, j]
+                self.apdmatrix[j, i] = self.apdmatrix[i, j]
                 self.Gmatrix[i, j] = self.calcGMatrixElement(self.dets[i], self.dets[j])
                 self.Gmatrix[j, i] = self.Gmatrix[i, j]
 
+        # full hamiltonian
         self.H_PF[: self.numDets, : self.numDets] = (
             self.ApDmatrix + self.Enuc_so + self.dc_so
         )
+        # 1-e piece
+        self.H_1E[: self.numDets, : self.numDets] = (
+            self.apdmatrix + self.Enuc_so + self.dc_so
+        )
+
+        # full Hamiltonian
         self.H_PF[self.numDets :, self.numDets :] = (
             self.ApDmatrix + self.Enuc_so + self.dc_so + self.Omega_so
+        )
+
+        # 1-e piece
+        self.H_1E[self.numDets :, self.numDets :] = (
+            self.apdmatrix + self.Enuc_so + self.dc_so + self.Omega_so
         )
         self.H_PF[self.numDets :, : self.numDets] = self.Gmatrix + self.G_exp_so
         self.H_PF[: self.numDets, self.numDets :] = self.Gmatrix + self.G_exp_so
 
-    def calcApDMatrixElement(self, det1, det2):
+    def calcApDMatrixElement(self, det1, det2, OneEpTwoE=True):
         """
         Calculate a matrix element by two determinants
         """
 
         numUniqueOrbitals = None
-        if det1.diff2OrLessOrbitals(det2):
+        if det1.diff2OrLessOrbitals(det2) and OneEpTwoE:
             numUniqueOrbitals = det1.numberOfTotalDiffOrbitals(det2)
             if numUniqueOrbitals == 0:
                 # print(F' cal matrix element for {det1} and {det2}\n')
@@ -783,6 +855,15 @@ class PFHamiltonianGenerator:
             else:
                 #
                 return 0.0
+        elif det1.diff2OrLessOrbitals(det2):
+            numUniqueOrbitals = det1.numberOfTotalDiffOrbitals(det2)
+            if numUniqueOrbitals == 0:
+                return self.calcMatrixElementIdentialDet(det1, omit2E=True)
+            elif numUniqueOrbitals == 1:
+                return self.calcMatrixElementDiffIn1(det1, det2, omit2E=True)
+            else:
+                return 0.0
+
         else:
             return 0.0
 
@@ -813,7 +894,7 @@ class PFHamiltonianGenerator:
         unique1, unique2, sign = det1.getUniqueOrbitalsInMixIndexListsPlusSign(det2)
         return sign * self.antiSym2eInt[unique1[0], unique1[1], unique2[0], unique2[1]]
 
-    def calcMatrixElementDiffIn1(self, det1, det2):
+    def calcMatrixElementDiffIn1(self, det1, det2, omit2E=False):
         """
         Calculate a matrix element by two determinants where the determinants differ by 1 spin orbitals
         """
@@ -823,9 +904,14 @@ class PFHamiltonianGenerator:
         p = unique2[0]
         Helem = self.Hspin[m, p]
         common = det1.getCommonOrbitalsInMixedSpinIndexList(det2)
-        Relem = 0.0
-        for n in common:
-            Relem += self.antiSym2eInt[m, n, p, n]
+
+        if omit2E == False:
+            Relem = 0.0
+            for n in common:
+                Relem += self.antiSym2eInt[m, n, p, n]
+
+        else:
+            Relem = 0.0
         return sign * (Helem + Relem)
 
     def calcGMatrixElementDiffIn1(self, det1, det2):
@@ -851,7 +937,7 @@ class PFHamiltonianGenerator:
 
         return Gelem
 
-    def calcMatrixElementIdentialDet(self, det):
+    def calcMatrixElementIdentialDet(self, det, omit2E=False):
         """
         Calculate a matrix element by two determinants where they are identical
         """
@@ -861,192 +947,14 @@ class PFHamiltonianGenerator:
         for m in spinObtList:
             Helem += self.Hspin[m, m]
         length = len(spinObtList)
-        Relem = 0.0
-        for m in range(length - 1):
-            for n in range(m + 1, length):
-                Relem += self.antiSym2eInt[
-                    spinObtList[m], spinObtList[n], spinObtList[m], spinObtList[n]
-                ]
+        if omit2E == False:
+            Relem = 0.0
+            for m in range(length - 1):
+                for n in range(m + 1, length):
+                    Relem += self.antiSym2eInt[
+                        spinObtList[m], spinObtList[n], spinObtList[m], spinObtList[n]
+                    ]
+        else:
+            Relem = 0.0
+
         return Helem + Relem
-
-    def calc1RDM(self, c_vec_n):
-        """
-        Calculate the 1RDM from a QED-CIS calculation
-
-        Arguments
-        ---------
-        c_vec_n : np.array of CISS coefficients for a given state
-        """
-
-        # need to reshape c_vec_n so we can make a column and row vector out of it
-        # 𝛾𝑝𝑞=𝛿𝑝𝑞 𝜒(𝑝)+𝑐^𝑝_𝑞(𝜋(𝑝)𝜒(𝑞)+𝜒(𝑝)𝜋(𝑞))+∑_i c_i^p c_q^i 𝜋(𝑝)𝜋(𝑞)−∑_a c_q^a c_a^p 𝜒(𝑝)𝜒(q)
-        # 𝜒(𝑝) and 𝜋(𝑝)= 1 when p belongs to occupied / unoccupied orbitals, respectively
-
-        # get some basic quantities first
-        _nmo = self.nmo
-        _ndocc = self.ndocc
-        _nvirt = _nmo - _ndocc
-
-        # total number of states in {|R,0>, |R,1>, |S,0>, |S,1>}
-        _n_ss = len(c_vec_n)
-        # total number of states in {|R,0>, |S,0>} and in {|R,1>, |S,1>}
-        _n_s = int(_n_ss / 2)
-
-        # right now the CI configurations are odered like the following:
-        # |R,0>, |R,1>, |S1,0>, |S1,1>, |S2,0>, |S2,1>, ...
-        # where |S1> denotes the first singly-excited derminant, |S2> the second, etc
-        # so the configurations with 0 photon occupation have even indices and
-        # the configurations with 1 photon occupation have odd indices.
-
-        _pvac_idx = np.arange(0, _n_ss, 2)  # <== indices for C coeffs for |0> states
-        _pone_idx = np.arange(1, _n_ss, 2)  # <== indices for C coeffs for |1> states
-
-        # CIS coefficients spanning the |R,0> and |S,0> states
-        c_n0 = c_vec_n[_pvac_idx]
-        # CIS coefficients spanning the |R,1> and |R,1> states
-        c_n1 = c_vec_n[_pone_idx]
-
-        # now each vector spans the |R> + {|S>} basis for a given photon state.
-        # for the {|S>}, let's generate a list of the excitations in the order
-        # of the |S> basis
-        _pi = np.zeros(_nmo)
-        _xi = np.zeros(_nmo)
-
-
-        excitations = []
-        for _i in range(_ndocc):
-            for _a in range(_nvirt):
-                _A = _a + _ndocc
-                excitations.append((_i, _A))     
-
-
-        # make row vectors from CIS coefficients
-        _c_n0r = np.reshape(c_n0, (_n_s, 1))
-        _c_n1r = np.reshape(c_n1, (_n_s, 1))
-
-        # get CIS density matrix for each block 
-        _D0 = np.outer(np.conj(_c_n0r.T), _c_n0r)
-        _D1 = np.outer(np.conj(_c_n1r.T), _c_n1r)
-
-        # _D1_RR : 1-RDM term for the reference states with elements
-        # D_pq =  |c_0^0|^2 <\phi_0,0|p^{\dagger} q|\phi_0,0> + |c_0^1|^2 <\phi_0,1|p^{\dagger} q|\phi_0,1>
-        #      => (|c_0^0|^2+|c_0^1|^2) <\phi_0|p^{\dagger} q|\phi_0>
-        _D1_RR = np.zeros((_nmo, _nmo))
-        for _i in range(_ndocc):
-            _D1_RR[_i, _i] = _D0[0, 0] + _D1[0, 0]
-
-        # _D1_RS : 1-RDM terms between <R,n|p^{\dagger} q|S,n>
-        # only surviving terms are <R,n|i^{\dagger} a|\Phi_i^a,n>
-        # so we will loop through the excitations to get the surviving elements
-        # The 1-RDM terms between <S,n|p^{\dagger} q|R,n> are just the transpose
-        # of this, so we will capture these terms in _D1_RS as well!
-        _D1_RS = np.zeros((_nmo, _nmo))
-        for _I in range(len(excitations)):
-            # offset the ket index by 1
-            # excitation index 0 -> density matrix (row/column) index 1
-            _ket_I = _I + 1
-            _i = excitations[_I][0]
-            _a = excitations[_I][1]
-            _D1_RS[_i, _a] = _D0[0, _ket_I] + _D1[0, _ket_I]
-            _D1_RS[_a, _i] = _D1_RS[_i, _a]  # <== Transpose terms!
-
-        # _D1_SS : 1-RDM terms between <\Phi_i^a,n|p^{dagger} q|\Phi_j^b,n>
-        # which will survive only when i==j for elements 1D_a,b or a==b for elements 1D_ij
-        _D1_SS = np.zeros((_nmo, _nmo))
-        for _I in range(len(excitations)):
-            _ket_I = _I + 1
-            _i = excitations[_I][0]
-            _a = excitations[_I][1]
-
-            for _J in range(len(excitations)):
-                _ket_J = _J + 1
-                _j = excitations[_J][0]
-                _b = excitations[_J][1]
-                _D1_SS[_a, _b] += (_D0[_ket_I, _ket_J] + _D1[_ket_I, _ket_J]) * (
-                    _i == _j
-                )
-                _D1_SS[_i, _j] += (_D0[_ket_I, _ket_J] + _D1[_ket_I, _ket_J]) * (
-                    _a == _b
-                )
-        _D1 = _D1_RR + _D1_RS + _D1_SS
-        return _D1
-    
-    def calc1RDM_b(self, c_vec):
-        """
-        Calculate the 1RDM from a QED-CIS calculation
-
-        Arguments
-        ---------
-        c_vec_n : np.array of CISS coefficients for a given state
-        """
-
-        # need to reshape c_vec_n so we can make a column and row vector out of it
-        # 𝛾𝑝𝑞=𝛿𝑝𝑞 𝜒(𝑝)+𝑐^𝑝_𝑞(𝜋(𝑝)𝜒(𝑞)+𝜒(𝑝)𝜋(𝑞))+∑_i c_i^p c_q^i 𝜋(𝑝)𝜋(𝑞)−∑_a c_q^a c_a^p 𝜒(𝑝)𝜒(q)
-        # 𝜒(𝑝) and 𝜋(𝑝)= 1 when p belongs to occupied / unoccupied orbitals, respectively
-
-        # get some basic quantities first
-        _nmo = self.nmo
-        _ndocc = self.ndocc
-        _nvirt = _nmo - _ndocc
-
-        # total number of states in {|R,0>, |R,1>, |S,0>, |S,1>}
-        _n_ss = len(c_vec_n)
-        # total number of states in {|R,0>, |S,0>} and in {|R,1>, |S,1>}
-        _n_s = int(_n_ss / 2)
-
-        # right now the CI configurations are odered like the following:
-        # |R,0>, |R,1>, |S1,0>, |S1,1>, |S2,0>, |S2,1>, ...
-        # where |S1> denotes the first singly-excited derminant, |S2> the second, etc
-        # so the configurations with 0 photon occupation have even indices and
-        # the configurations with 1 photon occupation have odd indices.
-
-        _pvac_idx = np.arange(0, _n_ss, 2)  # <== indices for C coeffs for |0> states
-        _pone_idx = np.arange(1, _n_ss, 2)  # <== indices for C coeffs for |1> states
-
-        # CIS coefficients spanning the |R,0> and |S,0> states
-        c_n0 = c_vec_n[_pvac_idx]
-        # CIS coefficients spanning the |R,1> and |R,1> states
-        c_n1 = c_vec_n[_pone_idx]
-
-        # now each vector spans the |R> + {|S>} basis for a given photon state.
-        # for the {|S>}, let's generate a list of the excitations in the order
-        # of the |S> basis
-        _pi = np.zeros(_nmo)
-        _xi = np.zeros(_nmo)
-
-
-        excitations = []
-        C0_ia = np.zeros((_ndocc, _nvirt))
-        C1_ia = np.zeros((_ndocc, _nvirt))
-        _idx = 1
-        for _i in range(_ndocc):
-            _xi[i] = 1
-            for _a in range(_nvirt):
-                _A = _a + _ndocc
-                _pi[_A] = 1
-                excitations.append((_i, _A))
-                C0_ia[_i, _A] = c_n0[_idx]
-                C1_ia[_i, _A] = c_n1[_idx]
-
-
-        _D1 = np.zeros(_nmo, _nmo)
-        for _i in range(_ndocc):
-            _D1[_i, _i] = c_n0[0] * c_n0[0] + c_n1[0] * c_n1[0]
-        
-        for _p in range(_nmo):
-            for _q in range(_nmo):
-                _D1[_p, _q] += c_n0[0] * C0_ia[_p, _q] * _pi[_p] * _xi[_q]
-                _D1[_p, _q] += c_n0[0] * C0_ia[_p, _q] * _xi[_p] * _pi[_q]
-                _D1[_p, _q] += c_n1[0] * C1_ia[_p, _q] * _pi[_p] * _xi[_q]
-                _D1[_p, _q] += c_n1[0] * C1_ia[_p, _q] * _xi[_p] * _pi[_q]
-
-                for _i in range(_ndocc):
-                    _D1[_p, _q] += C0_ia[_p, _i] * C0_ia[_i, _q] * _pi[_p] * _pi[_q]
-                    _D1[_p, _q] += C1_ia[_p, _i] * C1_ia[_i, _q] * _pi[_p] * _pi[_q]
-
-                for _a in range(_nvirt):
-                    _A = _a + _ndocc
-                    _D1[_p, _q] -= C0_ia[_a, _q] * C0_ia[_p, _a] * _xi[_p] * _xi[_q]
-                    _D1[_p, _q] -= C1_ia[_a, _q] * C1_ia[_p, _a] * _xi[_p] * _xi[_q]
-
-        return _D1
