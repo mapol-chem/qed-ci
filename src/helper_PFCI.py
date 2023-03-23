@@ -27,6 +27,7 @@ def compute_excitation_level(ket, ndocc):
             level += 1
     return level
 
+    
 
 def returnNotMatches(a, b):
     a = set(a)
@@ -621,6 +622,7 @@ class PFHamiltonianGenerator:
         # grab quantities from cqed_rhf_dict
         self.rhf_reference_energy = cqed_rhf_dict["RHF ENERGY"]
         self.cqed_reference_energy = cqed_rhf_dict["CQED-RHF ENERGY"]
+        self.cqed_one_energy = cqed_rhf_dict["CQED-RHF ONE-ENERGY"]
         self.C = cqed_rhf_dict["CQED-RHF C"]
         self.dc = cqed_rhf_dict["DIPOLE ENERGY (1/2 (\lambda \cdot <\mu>_e)^2)"]
         self.T_ao = cqed_rhf_dict["1-E KINETIC MATRIX AO"]
@@ -725,6 +727,7 @@ class PFHamiltonianGenerator:
         """
         self.dets = []
         self.detlists = []
+        self.singdetsign = []
         self.numDets = 0
         self.excitation_index = []
         if self.cas == False:
@@ -784,9 +787,14 @@ class PFHamiltonianGenerator:
                     self.numDets += 1
         for i in range(len(self.dets)):
             print(self.dets[i])
+            unique1, unique2, sign = self.dets[i].getUniqueOrbitalsInMixIndexListsPlusSign(self.dets[0])
+            print(unique1,unique2,sign)
+            if i>0:
+                self.singdetsign.append(sign)
         for i in range(len(self.detlists)):
             print(self.detlists[i])
         print(self.excitation_index)
+        print(self.singdetsign)
 
     def generatePFHMatrix(self):
         """

@@ -254,6 +254,7 @@ def cqed_rhf(lambda_vector, molecule_string, psi4_options_dict):
     cqed_rhf_dict = {
         "RHF ENERGY": psi4_rhf_energy,
         "CQED-RHF ENERGY": SCF_E,
+        "CQED-RHF ONE-ENERGY": SCF_1E,
         "CQED-RHF C": C,
         "CQED-RHF DENSITY MATRIX": D,
         "CQED-RHF EPS": e,
