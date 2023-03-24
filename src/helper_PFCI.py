@@ -580,6 +580,7 @@ class PFHamiltonianGenerator:
         n_act_orb,
         ignore_coupling=False,
         cas=False,
+        natural_orbital=False
     ):
         """
         Constructor for matrix elements of the PF Hamiltonian
@@ -610,13 +611,17 @@ class PFHamiltonianGenerator:
         self.buildGSO()
 
         # build the determinant list
-        self.generateDeterminants(psi4_options_dict)
+        self.generateCISDeterminants()
 
         # build Constant matrices
-        self.buildConstantMatrices()
+        self.buildConstantMatrices("cis")
 
         # Build Matrix
-        self.generatePFHMatrix()
+        self.generatePFHMatrix("cis")
+
+        
+
+         
 
     def parseArrays(self, cqed_rhf_dict):
         # grab quantities from cqed_rhf_dict
@@ -649,6 +654,8 @@ class PFHamiltonianGenerator:
         self.ndocc = wfn.doccpi()[0]
         self.nmo = wfn.nmo()
         self.nso = 2 * self.nmo
+
+        self.docc_list = [i for i in range(self.ndocc)]
 
         return wfn
 
@@ -706,144 +713,192 @@ class PFHamiltonianGenerator:
         if self.ignore_coupling == True:
             self.g_so *= 0
 
-    def buildConstantMatrices(self):
+    def buildConstantMatrices(self, ci_level):
         """
         Will build <G> * I, E_nuc * I, omega * I, and d_c * I
         """
+        if ci_level=="cis" or ci_level=="CIS":
+            _I = np.identity(self.CISnumDets)
 
-        _I = np.identity(self.numDets)
+        elif ci_level=="cas" or ci_level=="CAS":
+            _I = np.identity(self.CASnumDets)
+        
+        else:
+            _I = np.identity(self.CISnumDets)
+
+
         self.Enuc_so = self.Enuc * _I
         self.G_exp_so = np.sqrt(self.omega / 2) * self.d_exp * _I
         self.Omega_so = self.omega * _I
         self.dc_so = self.dc * _I
+
         if self.ignore_coupling == True:
             self.G_exp_so *= 0
             self.Omega_so *= 0
             self.dc_so *= 0
 
-    def generateDeterminants(self, options_dict):
+    def generateCISTuple(self):
         """
-        Generates the determinant list for building the CI matrix
+        Generates the tuples that define the occupation strings for CIS
         """
-        self.dets = []
-        self.detlists = []
-        self.singdetsign = []
-        self.numDets = 0
-        self.excitation_index = []
-        if self.cas == False:
-            docc_list = list(x for x in range(self.ndocc))
-            print(docc_list)
-            for alpha in combinations(range(self.nmo), self.ndocc):
-                alpha_ex_level = compute_excitation_level(alpha, self.ndocc)
-                for beta in combinations(range(self.nmo), self.ndocc):
-                    beta_ex_level = compute_excitation_level(beta, self.ndocc)
-                    if alpha_ex_level + beta_ex_level <= 1:
-                        # print(F' adding alpha: {alpha} and beta: {beta}\n')
-                        self.dets.append(
-                            Determinant(alphaObtList=alpha, betaObtList=beta)
-                        )
-                        self.numDets += 1
-                    if alpha_ex_level + beta_ex_level == 1:
-                        alphalist = list(alpha)
-                        betalist = list(beta)
-                        if beta_ex_level == 1:
-                            print("betalist")
-                            print(betalist)
-                            new_list = returnNotMatches(docc_list, betalist)
-                            new_list = [x * 2 + 1 for x in new_list]
-                        else:
-                            print("alphalist")
-                            print(alphalist)
-                            new_list = returnNotMatches(docc_list, alphalist)
-                            new_list = [x * 2 for x in new_list]
+        cis_dets = []
+        cis_dets.append(tuple(self.docc_list))
+        for i in range(self.ndocc-1,0,-1):
+            for a in range(self.ndocc, self.nmo):
+                ket = np.copy(self.docc_list)
+                ket[i] = a
+                ket = np.sort(ket)
+                ket_tuple = tuple(ket)
+                cis_dets.append(ket_tuple)
+                
+        return cis_dets
 
-                        print(new_list)
-                        self.excitation_index.append(
-                            new_list[0] * 2 * (self.nmo - self.ndocc)
-                            + new_list[1]
-                            - 2 * self.ndocc
-                        )
-                        # print(alphalist)
-                        # print(betalist)
-                        jointlist = alphalist + betalist
-                        self.detlists.append(jointlist)
+    def generateCISDeterminants(self):
+        """
+        Generates the determinant list for building the CIS matrix
+        """
+        self.CISdets = []
+        self.CISdetlists = []
+        self.CISsingdetsign = []
+        self.CISnumDets = 0
+        self.CISexcitation_index = []
 
-        else:
-            n_in_orb = self.ndocc - self.n_act_el // 2
-            n_ac_el_half = self.n_act_el // 2
-            inactive_list = list(x for x in range(n_in_orb))
-            print("Generating all determinants in active space")
-            for alpha in combinations(range(self.n_act_orb), n_ac_el_half):
-                alphalist = list(alpha)
-                alphalist = [x + n_in_orb for x in alphalist]
-                alphalist[0:0] = inactive_list
-                alpha = tuple(alphalist)
-                for beta in combinations(range(self.n_act_orb), n_ac_el_half):
+        # get list of tuples definining CIS occupations, including the reference
+        cis_tuples = self.generateCISTuple()
+        # loop through these occupations, compute excitation level, create determinants,
+        # and keep track of excitation index
+        for alpha in cis_tuples:
+            alpha_ex_level = compute_excitation_level(alpha, self.ndocc)
+
+            for beta in cis_tuples:
+                beta_ex_level = compute_excitation_level(beta, self.ndocc)
+                if alpha_ex_level + beta_ex_level <= 1:
+                    self.CISdets.append(
+                        Determinant(alphaObtList=alpha, betaObtList=beta)
+                    )
+                    self.CISnumDets += 1
+                if alpha_ex_level + beta_ex_level == 1:
+                    alphalist = list(alpha)
                     betalist = list(beta)
-                    betalist = [x + n_in_orb for x in betalist]
-                    betalist[0:0] = inactive_list
-                    beta = tuple(betalist)
-                    self.dets.append(Determinant(alphaObtList=alpha, betaObtList=beta))
-                    self.numDets += 1
-        for i in range(len(self.dets)):
-            print(self.dets[i])
-            unique1, unique2, sign = self.dets[i].getUniqueOrbitalsInMixIndexListsPlusSign(self.dets[0])
+                    if beta_ex_level == 1:
+                        new_list = returnNotMatches(self.docc_list, betalist)
+                        new_list = [x * 2 + 1 for x in new_list]
+                    else:
+                        new_list = returnNotMatches(self.docc_list, alphalist)
+                        new_list = [x * 2 for x in new_list]
+
+                    self.CISexcitation_index.append(
+                        new_list[0] * 2 * (self.nmo - self.ndocc)
+                        + new_list[1]
+                        - 2 * self.ndocc
+                    )
+                    jointlist = alphalist + betalist
+                    self.CISdetlists.append(jointlist)
+
+        for i in range(len(self.CISdets)):
+            unique1, unique2, sign = self.CISdets[i].getUniqueOrbitalsInMixIndexListsPlusSign(self.CISdets[0])
+            if i>0:
+                self.CISsingdetsign.append(sign)
+
+ 
+
+    def generateCASCIDeterminants(self):
+        """
+        Generates the determinant list for building the CASCI matrix 
+        """
+        self.CASdets = []
+        self.CASdetlists = []
+        self.CASsingdetsign = []
+        self.CASnumDets = 0
+        self.CASexcitation_index = []
+
+
+        n_in_orb = self.ndocc - self.n_act_el // 2
+        n_ac_el_half = self.n_act_el // 2
+        inactive_list = list(x for x in range(n_in_orb))
+
+        print("Generating all determinants in active space")
+        for alpha in combinations(range(self.n_act_orb), n_ac_el_half):
+            alphalist = list(alpha)
+            alphalist = [x + n_in_orb for x in alphalist]
+            alphalist[0:0] = inactive_list
+            alpha = tuple(alphalist)
+
+            for beta in combinations(range(self.n_act_orb), n_ac_el_half):
+                betalist = list(beta)
+                betalist = [x + n_in_orb for x in betalist]
+                betalist[0:0] = inactive_list
+                beta = tuple(betalist)
+                self.CASdets.append(Determinant(alphaObtList=alpha, betaObtList=beta))
+                self.CASnumDets += 1
+                
+        for i in range(len(self.CASdets)):
+            print(self.CASdets[i])
+            unique1, unique2, sign = self.CASdets[i].getUniqueOrbitalsInMixIndexListsPlusSign(self.CASdets[0])
             print(unique1,unique2,sign)
             if i>0:
-                self.singdetsign.append(sign)
-        for i in range(len(self.detlists)):
-            print(self.detlists[i])
-        print(self.excitation_index)
-        print(self.singdetsign)
+                self.CASsingdetsign.append(sign)
 
-    def generatePFHMatrix(self):
+
+    def generatePFHMatrix(self, ci_level):
         """
         Generate H_PF CI Matrix
         """
+        if ci_level=="CIS" or ci_level=="cis":
+            _dets = self.CISdets.copy()
+            _numDets = self.CISnumDets
 
-        self.ApDmatrix = np.zeros((self.numDets, self.numDets))
+        elif ci_level=="CAS" or ci_level=="cas":
+            _dets = self.CASdets.copy()
+            _numDets = self.CASnumDets
+
+        else:
+            _dets = self.CISdets.copy()
+            _numDets = self.CISnumDets
+
+        self.ApDmatrix = np.zeros((_numDets, _numDets))
         # one-electron only version of A+\Delta
-        self.apdmatrix = np.zeros((self.numDets, self.numDets))
+        self.apdmatrix = np.zeros((_numDets, _numDets))
 
-        self.Gmatrix = np.zeros((self.numDets, self.numDets))
+        self.Gmatrix = np.zeros((_numDets, _numDets))
 
-        self.H_PF = np.zeros((2 * self.numDets, 2 * self.numDets))
+        self.H_PF = np.zeros((2 * _numDets, 2 * _numDets))
         # one-electron version of Hamiltonian
-        self.H_1E = np.zeros((2 * self.numDets, 2 * self.numDets))
+        self.H_1E = np.zeros((2 * _numDets, 2 * _numDets))
 
-        for i in range(self.numDets):
+        for i in range(_numDets):
             for j in range(i + 1):
                 self.ApDmatrix[i, j] = self.calcApDMatrixElement(
-                    self.dets[i], self.dets[j]
+                    _dets[i], _dets[j]
                 )
                 self.apdmatrix[i, j] = self.calcApDMatrixElement(
-                    self.dets[i], self.dets[j], OneEpTwoE=False
+                    _dets[i], _dets[j], OneEpTwoE=False
                 )
                 self.ApDmatrix[j, i] = self.ApDmatrix[i, j]
                 self.apdmatrix[j, i] = self.apdmatrix[i, j]
-                self.Gmatrix[i, j] = self.calcGMatrixElement(self.dets[i], self.dets[j])
+                self.Gmatrix[i, j] = self.calcGMatrixElement(_dets[i], _dets[j])
                 self.Gmatrix[j, i] = self.Gmatrix[i, j]
 
         # full hamiltonian
-        self.H_PF[: self.numDets, : self.numDets] = (
+        self.H_PF[: _numDets, : _numDets] = (
             self.ApDmatrix + self.Enuc_so + self.dc_so
         )
         # 1-e piece
-        self.H_1E[: self.numDets, : self.numDets] = (
+        self.H_1E[: _numDets, : _numDets] = (
             self.apdmatrix + self.Enuc_so + self.dc_so
         )
 
         # full Hamiltonian
-        self.H_PF[self.numDets :, self.numDets :] = (
+        self.H_PF[_numDets :, _numDets :] = (
             self.ApDmatrix + self.Enuc_so + self.dc_so + self.Omega_so
         )
 
         # 1-e piece
-        self.H_1E[self.numDets :, self.numDets :] = (
+        self.H_1E[_numDets :, _numDets :] = (
             self.apdmatrix + self.Enuc_so + self.dc_so + self.Omega_so
         )
-        self.H_PF[self.numDets :, : self.numDets] = self.Gmatrix + self.G_exp_so
-        self.H_PF[: self.numDets, self.numDets :] = self.Gmatrix + self.G_exp_so
+        self.H_PF[_numDets :, : _numDets] = self.Gmatrix + self.G_exp_so
+        self.H_PF[: _numDets, _numDets :] = self.Gmatrix + self.G_exp_so
 
     def calcApDMatrixElement(self, det1, det2, OneEpTwoE=True):
         """
@@ -966,3 +1021,85 @@ class PFHamiltonianGenerator:
             Relem = 0.0
 
         return Helem + Relem
+    
+
+    def calc1RDMfromCIS(self, c_vec):
+        _nDets = self.CISnumDets
+        _nSingles = _nDets - 1
+        self.nvirt = self.nmo - self.ndocc
+
+
+        # get different terms in c_vector
+        _c00 = c_vec[0]
+        _c10 = c_vec[1:_nDets]
+        _c01 = c_vec[_nDets]
+        _c11 = c_vec[_nDets+1:]
+
+
+        # initialize different blocks of 1RDM
+        self.Dij = np.zeros((2*self.ndocc, 2*self.ndocc))
+        self.Dab = np.zeros((2*self.nvirt, 2*self.nvirt))
+        self.Dia = np.zeros((2*self.ndocc, 2*self.nvirt))
+
+        # arrange the _c10 and _c11 elements in arrays 
+        # indexed by spin orbital excitation labels
+        # keeping track of the sign!
+        _c10_nso = np.zeros(4 * self.ndocc * self.nvirt)
+        _c11_nso = np.zeros(4 * self.ndocc * self.nvirt)
+
+        for n in range(_nSingles):
+            ia = self.CISexcitation_index[n]
+            _a = ia % (2 * self.nvirt)
+            _i = (ia - _a) // (2 * self.nvirt)
+            _c10_nso[ia] = _c10[n] * self.CISsingdetsign[n]
+            _c11_nso[ia] = _c11[n] * self.CISsingdetsign[n]
+
+        
+        # build _Dij block
+        for i in range(2*self.ndocc):
+            for j in range(2*self.ndocc):
+                self.Dij[i,j] = (_c00 * _c00 + _c01 * _c01) * (i==j)
+                self.Dij[i,j] += (np.dot( _c10.T, _c10) + np.dot( _c11.T, _c11)) * (i==j)
+                dum = 0
+                for a in range(2*self.nvirt):
+                    ia = i * 2 * self.nvirt + a
+                    ja = j * 2 * self.nvirt + a
+                    dum += np.conj(_c10_nso[ia]) * _c10_nso[ja]
+                    dum += np.conj(_c11_nso[ia]) * _c11_nso[ja]
+                self.Dij[i, j] -= dum
+
+        for a in range(2*self.nvirt):
+            for b in range(2*self.nvirt):
+                dum = 0.0
+                for i in range(2*self.ndocc):
+                    ia = i * 2*self.nvirt + a
+                    ib = i * 2*self.nvirt + b
+                    dum += np.conj(_c10_nso[ia]) * _c10_nso[ib]
+                    dum += np.conj(_c11_nso[ia]) * _c11_nso[ib]
+                    
+                self.Dab[a,b] += dum
+
+
+        for i in range(2*self.ndocc):
+            for a in range(2*self.nvirt):
+                ia = i * 2*self.nvirt + a
+                self.Dia[i,a] =  np.conj(_c10_nso[ia]) * _c00
+                self.Dia[i,a] += np.conj(_c11_nso[ia]) * _c01
+
+        _D1 = np.concatenate((self.Dij, self.Dia), axis=1)
+        _D2 = np.concatenate((self.Dia.T, self.Dab), axis=1)
+        self.D1 = np.concatenate((_D1, _D2), axis=0)
+
+
+
+         
+
+        
+
+
+
+
+
+
+
+
