@@ -263,7 +263,7 @@ def cqed_rhf(lambda_vector, molecule_string, psi4_options_dict):
         "EXPECTATION VALUE OF d" : l_dot_mu_exp,
         "NUCLEAR DIPOLE MOMENT": mu_nuc,
         "CQED-RHF DIPOLE MOMENT" : mu_exp_el + mu_nuc,
-        "DIPOLE ENERGY (1/2 (\lambda \cdot <\mu>_e)^2)": d_c,
+        "DIPOLE ENERGY (1/2 (lambda cdot <mu>_e)^2)": d_c,
         "NUCLEAR REPULSION ENERGY": Enuc,
         "PF 1-E SCALED DIPOLE MATRIX AO" : d_PF,
         "PF 1-E DIPOLE MATRIX AO" : l_dot_mu_el,

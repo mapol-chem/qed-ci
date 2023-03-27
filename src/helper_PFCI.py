@@ -27,13 +27,6 @@ def compute_excitation_level(ket, ndocc):
             level += 1
     return level
 
-    
-
-def returnNotMatches(a, b):
-    a = set(a)
-    b = set(b)
-    return list(a - b) + list(b - a)
-
 
 def spin_idx_to_spat_idx_and_spin(P):
     """function to take the numeric label of a spin orbital
@@ -580,7 +573,7 @@ class PFHamiltonianGenerator:
         n_act_orb,
         ignore_coupling=False,
         cas=False,
-        natural_orbital=False
+        natural_orbital=False,
     ):
         """
         Constructor for matrix elements of the PF Hamiltonian
@@ -619,17 +612,13 @@ class PFHamiltonianGenerator:
         # Build Matrix
         self.generatePFHMatrix("cis")
 
-        
-
-         
-
     def parseArrays(self, cqed_rhf_dict):
         # grab quantities from cqed_rhf_dict
         self.rhf_reference_energy = cqed_rhf_dict["RHF ENERGY"]
         self.cqed_reference_energy = cqed_rhf_dict["CQED-RHF ENERGY"]
         self.cqed_one_energy = cqed_rhf_dict["CQED-RHF ONE-ENERGY"]
         self.C = cqed_rhf_dict["CQED-RHF C"]
-        self.dc = cqed_rhf_dict["DIPOLE ENERGY (1/2 (\lambda \cdot <\mu>_e)^2)"]
+        self.dc = cqed_rhf_dict["DIPOLE ENERGY (1/2 (lambda cdot <mu>_e)^2)"]
         self.T_ao = cqed_rhf_dict["1-E KINETIC MATRIX AO"]
         self.V_ao = cqed_rhf_dict["1-E POTENTIAL MATRIX AO"]
         self.q_PF_ao = cqed_rhf_dict["PF 1-E QUADRUPOLE MATRIX AO"]
@@ -654,6 +643,7 @@ class PFHamiltonianGenerator:
         self.ndocc = wfn.doccpi()[0]
         self.nmo = wfn.nmo()
         self.nso = 2 * self.nmo
+        self.nvirt = self.nmo - self.ndocc
 
         self.docc_list = [i for i in range(self.ndocc)]
 
@@ -679,7 +669,7 @@ class PFHamiltonianGenerator:
 
     def build2DSO(self):
         """Will build the 2-electron arrays in the spin orbital basis
-        that contribute to the A+\Delta blocks
+        that contribute to the A+Delta blocks
 
         """
         self.TDI_spin = np.zeros((self.nso, self.nso, self.nso, self.nso))
@@ -717,15 +707,14 @@ class PFHamiltonianGenerator:
         """
         Will build <G> * I, E_nuc * I, omega * I, and d_c * I
         """
-        if ci_level=="cis" or ci_level=="CIS":
+        if ci_level == "cis" or ci_level == "CIS":
             _I = np.identity(self.CISnumDets)
 
-        elif ci_level=="cas" or ci_level=="CAS":
+        elif ci_level == "cas" or ci_level == "CAS":
             _I = np.identity(self.CASnumDets)
-        
+
         else:
             _I = np.identity(self.CISnumDets)
-
 
         self.Enuc_so = self.Enuc * _I
         self.G_exp_so = np.sqrt(self.omega / 2) * self.d_exp * _I
@@ -743,14 +732,14 @@ class PFHamiltonianGenerator:
         """
         cis_dets = []
         cis_dets.append(tuple(self.docc_list))
-        for i in range(self.ndocc-1,0,-1):
+        for i in range(self.ndocc - 1, 0, -1):
             for a in range(self.ndocc, self.nmo):
                 ket = np.copy(self.docc_list)
                 ket[i] = a
                 ket = np.sort(ket)
                 ket_tuple = tuple(ket)
                 cis_dets.append(ket_tuple)
-                
+
         return cis_dets
 
     def generateCISDeterminants(self):
@@ -780,38 +769,31 @@ class PFHamiltonianGenerator:
                 if alpha_ex_level + beta_ex_level == 1:
                     alphalist = list(alpha)
                     betalist = list(beta)
-                    if beta_ex_level == 1:
-                        new_list = returnNotMatches(self.docc_list, betalist)
-                        new_list = [x * 2 + 1 for x in new_list]
-                    else:
-                        new_list = returnNotMatches(self.docc_list, alphalist)
-                        new_list = [x * 2 for x in new_list]
 
-                    self.CISexcitation_index.append(
-                        new_list[0] * 2 * (self.nmo - self.ndocc)
-                        + new_list[1]
-                        - 2 * self.ndocc
-                    )
                     jointlist = alphalist + betalist
                     self.CISdetlists.append(jointlist)
 
         for i in range(len(self.CISdets)):
-            unique1, unique2, sign = self.CISdets[i].getUniqueOrbitalsInMixIndexListsPlusSign(self.CISdets[0])
-            if i>0:
+            # compare singly-excited determinant on the bra to reference ket
+            # this order makes unique2[0] -> i and unique1[0] -> a
+            unique1, unique2, sign = self.CISdets[
+                i
+            ].getUniqueOrbitalsInMixIndexListsPlusSign(self.CISdets[0])
+            if i > 0:
                 self.CISsingdetsign.append(sign)
-
- 
+                _i = unique2[0]
+                _a = unique1[0]
+                _ia = 2 * self.nvirt * _i + _a - 2 * self.ndocc
+                self.CISexcitation_index.append(_ia)
 
     def generateCASCIDeterminants(self):
         """
-        Generates the determinant list for building the CASCI matrix 
+        Generates the determinant list for building the CASCI matrix
         """
         self.CASdets = []
         self.CASdetlists = []
         self.CASsingdetsign = []
         self.CASnumDets = 0
-        self.CASexcitation_index = []
-
 
         n_in_orb = self.ndocc - self.n_act_el // 2
         n_ac_el_half = self.n_act_el // 2
@@ -831,24 +813,25 @@ class PFHamiltonianGenerator:
                 beta = tuple(betalist)
                 self.CASdets.append(Determinant(alphaObtList=alpha, betaObtList=beta))
                 self.CASnumDets += 1
-                
+
         for i in range(len(self.CASdets)):
             print(self.CASdets[i])
-            unique1, unique2, sign = self.CASdets[i].getUniqueOrbitalsInMixIndexListsPlusSign(self.CASdets[0])
-            print(unique1,unique2,sign)
-            if i>0:
+            unique1, unique2, sign = self.CASdets[
+                i
+            ].getUniqueOrbitalsInMixIndexListsPlusSign(self.CASdets[0])
+            print(unique1, unique2, sign)
+            if i > 0:
                 self.CASsingdetsign.append(sign)
-
 
     def generatePFHMatrix(self, ci_level):
         """
         Generate H_PF CI Matrix
         """
-        if ci_level=="CIS" or ci_level=="cis":
+        if ci_level == "CIS" or ci_level == "cis":
             _dets = self.CISdets.copy()
             _numDets = self.CISnumDets
 
-        elif ci_level=="CAS" or ci_level=="cas":
+        elif ci_level == "CAS" or ci_level == "cas":
             _dets = self.CASdets.copy()
             _numDets = self.CASnumDets
 
@@ -868,9 +851,7 @@ class PFHamiltonianGenerator:
 
         for i in range(_numDets):
             for j in range(i + 1):
-                self.ApDmatrix[i, j] = self.calcApDMatrixElement(
-                    _dets[i], _dets[j]
-                )
+                self.ApDmatrix[i, j] = self.calcApDMatrixElement(_dets[i], _dets[j])
                 self.apdmatrix[i, j] = self.calcApDMatrixElement(
                     _dets[i], _dets[j], OneEpTwoE=False
                 )
@@ -880,25 +861,21 @@ class PFHamiltonianGenerator:
                 self.Gmatrix[j, i] = self.Gmatrix[i, j]
 
         # full hamiltonian
-        self.H_PF[: _numDets, : _numDets] = (
-            self.ApDmatrix + self.Enuc_so + self.dc_so
-        )
+        self.H_PF[:_numDets, :_numDets] = self.ApDmatrix + self.Enuc_so + self.dc_so
         # 1-e piece
-        self.H_1E[: _numDets, : _numDets] = (
-            self.apdmatrix + self.Enuc_so + self.dc_so
-        )
+        self.H_1E[:_numDets, :_numDets] = self.apdmatrix + self.Enuc_so + self.dc_so
 
         # full Hamiltonian
-        self.H_PF[_numDets :, _numDets :] = (
+        self.H_PF[_numDets:, _numDets:] = (
             self.ApDmatrix + self.Enuc_so + self.dc_so + self.Omega_so
         )
 
         # 1-e piece
-        self.H_1E[_numDets :, _numDets :] = (
+        self.H_1E[_numDets:, _numDets:] = (
             self.apdmatrix + self.Enuc_so + self.dc_so + self.Omega_so
         )
-        self.H_PF[_numDets :, : _numDets] = self.Gmatrix + self.G_exp_so
-        self.H_PF[: _numDets, _numDets :] = self.Gmatrix + self.G_exp_so
+        self.H_PF[_numDets:, :_numDets] = self.Gmatrix + self.G_exp_so
+        self.H_PF[:_numDets, _numDets:] = self.Gmatrix + self.G_exp_so
 
     def calcApDMatrixElement(self, det1, det2, OneEpTwoE=True):
         """
@@ -1021,27 +998,24 @@ class PFHamiltonianGenerator:
             Relem = 0.0
 
         return Helem + Relem
-    
 
     def calc1RDMfromCIS(self, c_vec):
         _nDets = self.CISnumDets
         _nSingles = _nDets - 1
         self.nvirt = self.nmo - self.ndocc
 
-
         # get different terms in c_vector
         _c00 = c_vec[0]
         _c10 = c_vec[1:_nDets]
         _c01 = c_vec[_nDets]
-        _c11 = c_vec[_nDets+1:]
-
+        _c11 = c_vec[_nDets + 1 :]
 
         # initialize different blocks of 1RDM
-        self.Dij = np.zeros((2*self.ndocc, 2*self.ndocc))
-        self.Dab = np.zeros((2*self.nvirt, 2*self.nvirt))
-        self.Dia = np.zeros((2*self.ndocc, 2*self.nvirt))
+        self.Dij = np.zeros((2 * self.ndocc, 2 * self.ndocc))
+        self.Dab = np.zeros((2 * self.nvirt, 2 * self.nvirt))
+        self.Dia = np.zeros((2 * self.ndocc, 2 * self.nvirt))
 
-        # arrange the _c10 and _c11 elements in arrays 
+        # arrange the _c10 and _c11 elements in arrays
         # indexed by spin orbital excitation labels
         # keeping track of the sign!
         _c10_nso = np.zeros(4 * self.ndocc * self.nvirt)
@@ -1054,52 +1028,62 @@ class PFHamiltonianGenerator:
             _c10_nso[ia] = _c10[n] * self.CISsingdetsign[n]
             _c11_nso[ia] = _c11[n] * self.CISsingdetsign[n]
 
-        
         # build _Dij block
-        for i in range(2*self.ndocc):
-            for j in range(2*self.ndocc):
-                self.Dij[i,j] = (_c00 * _c00 + _c01 * _c01) * (i==j)
-                self.Dij[i,j] += (np.dot( _c10.T, _c10) + np.dot( _c11.T, _c11)) * (i==j)
+        for i in range(2 * self.ndocc):
+            for j in range(2 * self.ndocc):
+                self.Dij[i, j] = (_c00 * _c00 + _c01 * _c01) * (i == j)
+                self.Dij[i, j] += (np.dot(_c10.T, _c10) + np.dot(_c11.T, _c11)) * (
+                    i == j
+                )
                 dum = 0
-                for a in range(2*self.nvirt):
+                for a in range(2 * self.nvirt):
                     ia = i * 2 * self.nvirt + a
                     ja = j * 2 * self.nvirt + a
                     dum += np.conj(_c10_nso[ia]) * _c10_nso[ja]
                     dum += np.conj(_c11_nso[ia]) * _c11_nso[ja]
                 self.Dij[i, j] -= dum
 
-        for a in range(2*self.nvirt):
-            for b in range(2*self.nvirt):
+        for a in range(2 * self.nvirt):
+            for b in range(2 * self.nvirt):
                 dum = 0.0
-                for i in range(2*self.ndocc):
-                    ia = i * 2*self.nvirt + a
-                    ib = i * 2*self.nvirt + b
+                for i in range(2 * self.ndocc):
+                    ia = i * 2 * self.nvirt + a
+                    ib = i * 2 * self.nvirt + b
                     dum += np.conj(_c10_nso[ia]) * _c10_nso[ib]
                     dum += np.conj(_c11_nso[ia]) * _c11_nso[ib]
-                    
-                self.Dab[a,b] += dum
 
+                self.Dab[a, b] += dum
 
-        for i in range(2*self.ndocc):
-            for a in range(2*self.nvirt):
-                ia = i * 2*self.nvirt + a
-                self.Dia[i,a] =  np.conj(_c10_nso[ia]) * _c00
-                self.Dia[i,a] += np.conj(_c11_nso[ia]) * _c01
+        for i in range(2 * self.ndocc):
+            for a in range(2 * self.nvirt):
+                ia = i * 2 * self.nvirt + a
+                self.Dia[i, a] = np.conj(_c10_nso[ia]) * _c00
+                self.Dia[i, a] += np.conj(_c11_nso[ia]) * _c01
 
         _D1 = np.concatenate((self.Dij, self.Dia), axis=1)
         _D2 = np.concatenate((self.Dia.T, self.Dab), axis=1)
+
+        # spin-orbital 1RDM
         self.D1 = np.concatenate((_D1, _D2), axis=0)
 
-
-
-         
-
+        # now build spatial orbital 1RDM
+        _D_aa = np.zeros((self.nmo,self.nmo))
+        _D_bb = np.zeros((self.nmo,self.nmo))
         
+        for p in range(self.D1.shape[0]):
+            for q in range(self.D1.shape[1]):
+                
+                i=p%2
+                j=(p-i)//2
+                
+                k=q%2
+                l=(q-k)//2
+                
+                if i==0 and k==0:
+                    _D_aa[j,l]=self.D1[p,q]
+                    
+                if i==1 and k==1:
+                    _D_bb[j,l]=self.D1[p,q]
 
-
-
-
-
-
-
-
+        # spatial orbital 1RDM
+        self.D1_spatial = _D_aa + _D_bb    
