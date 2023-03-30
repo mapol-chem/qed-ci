@@ -564,30 +564,21 @@ class PFHamiltonianGenerator:
 
     def __init__(
         self,
-        N_photon,
         molecule_string,
         psi4_options_dict,
-        lambda_vector,
-        omega_val,
-        n_act_el,
-        n_act_orb,
-        ignore_coupling=False,
-        cas=False,
-        natural_orbital=False,
+        cavity_options
     ):
         """
         Constructor for matrix elements of the PF Hamiltonian
         """
-        self.cas = cas
-        self.n_act_el = n_act_el
-        self.n_act_orb = n_act_orb
-        # now compute cqed-rhf to get transformation vectors with cavity
-        self.ignore_coupling = ignore_coupling
-        self.N_p = N_photon
-        cqed_rhf_dict = cqed_rhf(lambda_vector, molecule_string, psi4_options_dict)
-        self.omega = omega_val
+        # look at cavity options first
+        cavity_options = {k.lower(): v for k, v in cavity_options.items()}
+        self.parseCavityOptions(cavity_options)
 
-        # Parse
+        # run cqed-rhf to generate orbital basis
+        cqed_rhf_dict = cqed_rhf(self.lambda_vector, molecule_string, psi4_options_dict)
+
+        # Parse output of cqed-rhf calculation
         p4_wfn = self.parseArrays(cqed_rhf_dict)
 
         # build 1H in spin orbital basis
@@ -604,13 +595,79 @@ class PFHamiltonianGenerator:
         self.buildGSO()
 
         # build the determinant list
-        self.generateCISDeterminants()
+        if self.ci_level == "cis":
+            self.generateCISDeterminants()
+        elif self.ci_level == "cas":
+            self.generateCASCIDeterminants()
+        elif self.ci_level == "fci":
+            self.generateFCIDeterminants()
 
         # build Constant matrices
-        self.buildConstantMatrices("cis")
+        self.buildConstantMatrices(self.ci_level)
 
         # Build Matrix
-        self.generatePFHMatrix("cis")
+        self.generatePFHMatrix(self.ci_level)
+
+        dres = self.Davidson(self.H_PF, self.davidson_roots, self.davidson_threshold)
+        self.cis_e = dres["DAVIDSON EIGENVALUES"]
+        self.cis_c = dres["DAVIDSON EIGENVECTORS"]
+
+
+    def parseCavityOptions(self, cavity_dictionary):
+        """
+        Parse the cavity dictionary for important parameters for the QED-CI calculation
+        """
+        if "omega_value" in cavity_dictionary:
+            self.omega = cavity_dictionary["omega_value"]
+        else:
+            self.omega = 0
+
+        if "lambda_vector" in cavity_dictionary:
+            self.lambda_vector = cavity_dictionary["lambda_vector"]
+        else:
+            self.lambda_vector = np.array([0, 0, 0])
+        if "number_of_photons" in cavity_dictionary:
+            self.N_p = cavity_dictionary["number_of_photons"]
+        else:
+            self.N_p = 1
+        if "ci_level" in cavity_dictionary:
+            self.ci_level = cavity_dictionary["ci_level"]
+        else:
+            self.ci_level = "cis"
+        if "ignore_coupling" in cavity_dictionary:
+            self.ignore_coupling = cavity_dictionary["ignore_coupling"]
+        else:
+            self.ignore_coupling = False
+        if "natural_orbitals" in cavity_dictionary:
+            self.natural_orbitals = cavity_dictionary["natural_orbitals"]
+        else:
+            self.natural_orbitals = False
+
+        if "davidson_roots" in cavity_dictionary:
+            self.davidson_roots = cavity_dictionary["davidson_roots"]
+        else:
+            self.davidson_roots = 3
+
+        if "davidson_threshold" in cavity_dictionary:
+            self.davidson_threshold = cavity_dictionary["davidson_threshold"]
+        else:
+            self.davidson_threshold = 1e-5
+
+
+        # only need nact and nels if ci_level == "CAS"
+        if self.ci_level == "cas" or self.ci_level == "CAS":
+            if "nact_orbs" in cavity_dictionary:
+                self.n_act_orb = cavity_dictionary["nact_orbs"]
+            else:
+                self.n_act_orb = 0
+            if "nact_els" in cavity_dictionary:
+                self.n_act_el = cavity_dictionary["nact_els"]
+            else:
+                self.n_act_el = 0
+
+        else:
+            self.n_act_orb = 0
+            self.n_act_el = 0
 
     def parseArrays(self, cqed_rhf_dict):
         # grab quantities from cqed_rhf_dict
@@ -651,7 +708,7 @@ class PFHamiltonianGenerator:
 
     def build1HSO(self):
         """Will build the 1-electron arrays in
-        the spin orbital basis that contribute to the A+\Delta blocks
+        the spin orbital basis that contribute to the A+Delta blocks
 
         """
         self.H_1e_ao = self.T_ao + self.V_ao
@@ -713,6 +770,9 @@ class PFHamiltonianGenerator:
         elif ci_level == "cas" or ci_level == "CAS":
             _I = np.identity(self.CASnumDets)
 
+        elif ci_level == "fci" or ci_level == "FCI":
+            _I = np.identity(self.FCInumDets)
+
         else:
             _I = np.identity(self.CISnumDets)
 
@@ -741,13 +801,23 @@ class PFHamiltonianGenerator:
                 cis_dets.append(ket_tuple)
 
         return cis_dets
-
+    
+    def generateFCIDeterminants(self):
+        """
+        Generates the determinant list for building the FCI matrix
+        """
+        self.FCIDets = []
+        self.FCInumDets = 0
+        for alpha in combinations(range(self.nmo), self.ndocc):
+            for beta in combinations(range(self.nmo), self.ndocc):
+                self.FCIDets.append(Determinant(alphaObtList=alpha, betaObtList=beta))
+                self.FCInumDets += 1
+            
     def generateCISDeterminants(self):
         """
         Generates the determinant list for building the CIS matrix
         """
         self.CISdets = []
-        self.CISdetlists = []
         self.CISsingdetsign = []
         self.CISnumDets = 0
         self.CISexcitation_index = []
@@ -766,12 +836,6 @@ class PFHamiltonianGenerator:
                         Determinant(alphaObtList=alpha, betaObtList=beta)
                     )
                     self.CISnumDets += 1
-                if alpha_ex_level + beta_ex_level == 1:
-                    alphalist = list(alpha)
-                    betalist = list(beta)
-
-                    jointlist = alphalist + betalist
-                    self.CISdetlists.append(jointlist)
 
         for i in range(len(self.CISdets)):
             # compare singly-excited determinant on the bra to reference ket
@@ -834,6 +898,10 @@ class PFHamiltonianGenerator:
         elif ci_level == "CAS" or ci_level == "cas":
             _dets = self.CASdets.copy()
             _numDets = self.CASnumDets
+
+        elif ci_level == "FCI" or ci_level == "fci":
+            _dets = self.FCIDets.copy()
+            _numDets = self.FCInumDets
 
         else:
             _dets = self.CISdets.copy()
@@ -1086,4 +1154,125 @@ class PFHamiltonianGenerator:
                     _D_bb[j,l]=self.D1[p,q]
 
         # spatial orbital 1RDM
-        self.D1_spatial = _D_aa + _D_bb    
+        self.D1_spatial = _D_aa + _D_bb 
+
+    def Davidson(self, H, nroots, threshold):
+        H_diag = np.diag(H)
+        H_dim = len(H[:,0])
+
+        L = 2*nroots
+        init_dim = 2*nroots
+
+        # When L exceeds Lmax we will collapse the guess space so our sub-space
+        # diagonalization problem does not grow too large
+        Lmax = 6*nroots
+
+        # An array to hold the excitation energies
+        theta = [0.0] * L
+
+        #generate initial guess
+        Q_idx = H_diag.argsort()[:init_dim]
+        #print(Q_idx)
+        Q = np.eye(H_dim)[:, Q_idx]
+        #print(Q)
+        #print(np.shape(Q)) 
+
+        maxiter =20
+        for a in range(0, maxiter):
+            print("\n")
+            #orthonormalization of basis vectors by QR
+            Q, R = np.linalg.qr(Q)
+            print(Q.shape)
+            L = Q.shape[1]#dynamic dimension of subspace
+            print('iteration', a+1, 'dimension', L)
+            theta_old = theta[:nroots]
+            #print("CI Iter # {:>6} L = {}".format(EOMCCSD_iter, L))
+            # singma build
+            S = np.zeros_like(Q)
+            S = np.einsum("pq,qi->pi", H, Q)  
+
+            # Build the subspace Hamiltonian
+            G = np.dot(Q.T, S)
+            # Diagonalize it, and sort the eigenvector/eigenvalue pairs
+            theta, alpha = np.linalg.eig(G)
+            idx = theta.argsort()[:nroots]
+            theta = theta[idx]
+            alpha = alpha[:, idx]
+            # This vector will hold the new guess vectors to add to our space
+            add_Q = []
+            w = np.zeros((H_dim,nroots))
+            residual_norm = np.zeros((nroots))
+            unconverged_idx = []
+            convergence_check = np.zeros((nroots),dtype=str)
+            conv = 0
+            for j in range(nroots):
+                # Compute a residual vector "w" for each root we seek
+                w[:,j] = np.dot(S, alpha[:, j]) - theta[j] * np.dot(Q, alpha[:, j])
+                residual_norm[j] = np.sqrt(np.dot(w[:,j].T,w[:,j]))
+                if (residual_norm[j] < threshold):
+                    conv += 1
+                    convergence_check[j] = 'Yes'
+                else:
+                    unconverged_idx.append(j)
+                    convergence_check[j] = 'No'
+            print(unconverged_idx) 
+            
+            print('root','residual norm','Eigenvalue','Convergence')
+            for j in range(nroots):
+                print(j+1,residual_norm[j],theta[j],convergence_check[j])
+
+
+            if (conv == nroots):
+                print("converged!")
+                break
+            
+            
+            preconditioned_w = np.zeros((H_dim,len(unconverged_idx)))
+            #print('wshape',w.shape)
+            if(len(unconverged_idx) >0):
+                for n in range(H_dim):
+                    for k in range(len(unconverged_idx)):
+                    # Precondition the residual vector to form a correction vector
+                        dum = (theta[unconverged_idx[k]] - H_diag[n])
+                        
+                        if np.abs(dum) <1e-20:
+                            #print('error!!!!!!!!!!!')
+                            preconditioned_w[n,k] = 0.0
+                        else:
+                            preconditioned_w[n,k] = w[n,unconverged_idx[k]] /dum
+                        #print(preconditioned_w[n,k],n,k)
+                add_Q.append(preconditioned_w)
+                #print(add_Q)
+            
+            if (Lmax-L < len(unconverged_idx)):
+                unconverged_w = np.zeros((H_dim,len(unconverged_idx)))
+                Q=np.dot(Q, alpha)
+                
+                for i in range(len(unconverged_idx)):
+                    unconverged_w[:,i]=w[:,unconverged_idx[i]] 
+                
+                #Q=np.append(Q,unconverged_w)
+                #print(Q)
+                #print(unconverged_w)
+                Q = np.concatenate((Q,unconverged_w),axis=1)
+                print(Q.shape)
+                #Q=np.column_stack(Qtup)
+                
+                # These vectors will give the same eigenvalues at the next
+                # iteration so to avoid a false convergence we reset the theta
+                # vector to theta_old
+                theta = theta_old
+            else:
+                # if not we add the preconditioned residuals to the guess
+                # space, and continue. Note that the set will be orthogonalized
+                # at the start of the next iteration
+                Qtup = tuple(Q[:, i] for i in range(L)) + tuple(add_Q)
+                Q = np.column_stack(Qtup)
+                #print(Q)
+
+        davidson_dict = {
+        "DAVIDSON EIGENVALUES": theta,
+        "DAVIDSON EIGENVECTORS": alpha,
+        }
+
+        return davidson_dict
