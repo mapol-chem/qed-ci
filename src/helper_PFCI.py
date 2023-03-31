@@ -1192,7 +1192,7 @@ class PFHamiltonianGenerator:
         #print(np.shape(Q)) 
 
         maxiter =20
-        for a in range(0, maxiter):
+        for a in range(0, num_iter):
             print("\n")
             #orthonormalization of basis vectors by QR
             Q, R = np.linalg.qr(Q)
