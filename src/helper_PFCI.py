@@ -1239,7 +1239,9 @@ class PFHamiltonianGenerator:
             if (conv == nroots):
                 print("converged!")
                 break
-            
+if (con < nroots and a+1==num_iter):
+    print('maxiter reached, try to increase maxiter or subspace size')
+    break
             
             preconditioned_w = np.zeros((H_dim,len(unconverged_idx)))
             #print('wshape',w.shape)
