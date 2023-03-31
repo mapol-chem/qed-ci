@@ -608,7 +608,7 @@ class PFHamiltonianGenerator:
 
         indim = self.davidson_indim * self.davidson_roots
         maxdim = self.davidson_maxdim * self.davidson_roots
-        if (init_dim > H_dim or maxdim > H_dim):
+        if (indim > H_dim or maxdim > H_dim):
             print('subspace size is too large, try to set maxdim and indim <',H_dim//self.davidson_roots)
             sys.exit()
 
