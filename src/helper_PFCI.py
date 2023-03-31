@@ -608,7 +608,7 @@ class PFHamiltonianGenerator:
         # Build Matrix
         self.generatePFHMatrix(self.ci_level)
 
-        dres = self.Davidson(self.H_PF, self.davidson_roots, self.davidson_threshold)
+        dres = self.Davidson(self.H_PF, self.davidson_roots, self.davidson_threshold,self.davidson_indim,self.davidson_maxdim,self.davidson_maxiter)
         self.cis_e = dres["DAVIDSON EIGENVALUES"]
         self.cis_c = dres["DAVIDSON EIGENVECTORS"]
 
