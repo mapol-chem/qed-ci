@@ -804,7 +804,7 @@ class PFHamiltonianGenerator:
         """
         cis_dets = []
         cis_dets.append(tuple(self.docc_list))
-        for i in range(self.ndocc - 1, 0, -1):
+        for i in range(self.ndocc - 1, -1, -1):
             for a in range(self.ndocc, self.nmo):
                 ket = np.copy(self.docc_list)
                 ket[i] = a
@@ -836,6 +836,8 @@ class PFHamiltonianGenerator:
 
         # get list of tuples definining CIS occupations, including the reference
         cis_tuples = self.generateCISTuple()
+        #print("printing CIS tuples")
+        #print(cis_tuples)
         # loop through these occupations, compute excitation level, create determinants,
         # and keep track of excitation index
         for alpha in cis_tuples:
