@@ -15,6 +15,7 @@ __license__ = "GNU-GPL-3"
 __date__ = "2023-01-21"
 
 import psi4
+import sys
 from helper_cqed_rhf import cqed_rhf
 from itertools import combinations
 
@@ -653,15 +654,15 @@ class PFHamiltonianGenerator:
         else:
             self.davidson_threshold = 1e-5
         if "davidson_indim" in cavity_dictionary:
-            self.davidson_indim = cavity_dictionary["davidson_indim]
+            self.davidson_indim = cavity_dictionary["davidson_indim"]
         else:
             self.davidson_indim = 4
         if "davidson_maxdim" in cavity_dictionary:
-            self.davidson_maxdim = cavity_dictionary["davidson_maxdim]
+            self.davidson_maxdim = cavity_dictionary["davidson_maxdim"]
         else:
             self.davidson_maxdim = 20
         if "davidson_maxiter" in cavity_dictionary:
-            self.davidson_maxiter = cavity_dictionary["davidson_maxiter]
+            self.davidson_maxiter = cavity_dictionary["davidson_maxiter"]
         else:
             self.davidson_maxiter = 100    
 
@@ -1179,7 +1180,7 @@ class PFHamiltonianGenerator:
         Lmax = maxdim*nroots
         if (init_dim > H_dim or Lmax > H_dim):
             print('subspace size is too large, try smaller size')
-            break
+            sys.exit()
 
         # An array to hold the excitation energies
         theta = [0.0] * L
@@ -1191,7 +1192,7 @@ class PFHamiltonianGenerator:
         #print(Q)
         #print(np.shape(Q)) 
 
-        maxiter =20
+        num_iter = 20
         for a in range(0, num_iter):
             print("\n")
             #orthonormalization of basis vectors by QR
@@ -1239,9 +1240,10 @@ class PFHamiltonianGenerator:
             if (conv == nroots):
                 print("converged!")
                 break
-if (con < nroots and a+1==num_iter):
-    print('maxiter reached, try to increase maxiter or subspace size')
-    break
+
+            if (conv < nroots and a+1==num_iter):
+                print('maxiter reached, try to increase maxiter or subspace size')
+                break
             
             preconditioned_w = np.zeros((H_dim,len(unconverged_idx)))
             #print('wshape',w.shape)
@@ -1285,7 +1287,8 @@ if (con < nroots and a+1==num_iter):
                 Qtup = tuple(Q[:, i] for i in range(L)) + tuple(add_Q)
                 Q = np.column_stack(Qtup)
                 #print(Q)
-Q=np.dot(Q, alpha)
+        Q=np.dot(Q, alpha)
+        
         davidson_dict = {
         "DAVIDSON EIGENVALUES": theta,
         "DAVIDSON EIGENVECTORS": Q,
