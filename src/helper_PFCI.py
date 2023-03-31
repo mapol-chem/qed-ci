@@ -1172,7 +1172,7 @@ class PFHamiltonianGenerator:
         H_dim = len(H[:,0])
 
         L = 2*nroots
-        init_dim = 2*nroots
+        init_dim = indim*nroots
 
         # When L exceeds Lmax we will collapse the guess space so our sub-space
         # diagonalization problem does not grow too large
