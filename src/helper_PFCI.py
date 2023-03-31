@@ -1283,7 +1283,7 @@ class PFHamiltonianGenerator:
                 Qtup = tuple(Q[:, i] for i in range(L)) + tuple(add_Q)
                 Q = np.column_stack(Qtup)
                 #print(Q)
-
+Q=np.dot(Q, alpha)
         davidson_dict = {
         "DAVIDSON EIGENVALUES": theta,
         "DAVIDSON EIGENVECTORS": Q,
