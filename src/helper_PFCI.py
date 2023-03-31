@@ -1167,7 +1167,7 @@ class PFHamiltonianGenerator:
         # spatial orbital 1RDM
         self.D1_spatial = _D_aa + _D_bb 
 
-    def Davidson(self, H, nroots, threshold):
+    def Davidson(self, H, nroots, threshold,indim,maxdim,maxiter):
         H_diag = np.diag(H)
         H_dim = len(H[:,0])
 
