@@ -598,18 +598,30 @@ class PFHamiltonianGenerator:
         # build the determinant list
         if self.ci_level == "cis":
             self.generateCISDeterminants()
+            H_dim = self.CISnumDets * 2 
         elif self.ci_level == "cas":
             self.generateCASCIDeterminants()
+            H_dim = self.CASnumDets * 2 
         elif self.ci_level == "fci":
             self.generateFCIDeterminants()
+            H_dim = self.FCInumDets * 2 
+
+        indim = self.davidson_indim * self.davidson_roots
+        maxdim = self.davidson_maxdim * self.davidson_roots
+        if (init_dim > H_dim or maxdim > H_dim):
+            print('subspace size is too large, try to set maxdim and indim <',H_dim//self.davidson_roots)
+            sys.exit()
+
 
         # build Constant matrices
         self.buildConstantMatrices(self.ci_level)
 
         # Build Matrix
         self.generatePFHMatrix(self.ci_level)
-
-        dres = self.Davidson(self.H_PF, self.davidson_roots, self.davidson_threshold,self.davidson_indim,self.davidson_maxdim,self.davidson_maxiter)
+        
+        
+        
+        dres = self.Davidson(self.H_PF, self.davidson_roots, self.davidson_threshold, indim, maxdim,self.davidson_maxiter)
         self.cis_e = dres["DAVIDSON EIGENVALUES"]
         self.cis_c = dres["DAVIDSON EIGENVECTORS"]
 
@@ -1174,21 +1186,18 @@ class PFHamiltonianGenerator:
         H_diag = np.diag(H)
         H_dim = len(H[:,0])
 
-        L = 2*nroots
-        init_dim = indim*nroots
+        L = indim 
 
         # When L exceeds Lmax we will collapse the guess space so our sub-space
         # diagonalization problem does not grow too large
-        Lmax = maxdim*nroots
-        if (init_dim > H_dim or Lmax > H_dim):
-            print('subspace size is too large, try smaller size')
-            sys.exit()
+        Lmax = maxdim
+        
 
         # An array to hold the excitation energies
         theta = [0.0] * L
 
         #generate initial guess
-        Q_idx = H_diag.argsort()[:init_dim]
+        Q_idx = H_diag.argsort()[:indim]
         #print(Q_idx)
         Q = np.eye(H_dim)[:, Q_idx]
         #print(Q)
