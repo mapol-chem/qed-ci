@@ -1176,7 +1176,10 @@ class PFHamiltonianGenerator:
 
         # When L exceeds Lmax we will collapse the guess space so our sub-space
         # diagonalization problem does not grow too large
-        Lmax = 6*nroots
+        Lmax = maxdim*nroots
+        if (init_dim > H_dim or Lmax > H_dim):
+            print('subspace size is too large, try smaller size')
+            break
 
         # An array to hold the excitation energies
         theta = [0.0] * L
