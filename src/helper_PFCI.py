@@ -652,7 +652,18 @@ class PFHamiltonianGenerator:
             self.davidson_threshold = cavity_dictionary["davidson_threshold"]
         else:
             self.davidson_threshold = 1e-5
-
+        if "davidson_indim" in cavity_dictionary:
+            self.davidson_indim = cavity_dictionary["davidson_indim]
+        else:
+            self.davidson_indim = 4
+        if "davidson_maxdim" in cavity_dictionary:
+            self.davidson_maxdim = cavity_dictionary["davidson_maxdim]
+        else:
+            self.davidson_maxdim = 20
+        if "davidson_maxiter" in cavity_dictionary:
+            self.davidson_maxiter = cavity_dictionary["davidson_maxiter]
+        else:
+            self.davidson_maxiter = 100    
 
         # only need nact and nels if ci_level == "CAS"
         if self.ci_level == "cas" or self.ci_level == "CAS":
