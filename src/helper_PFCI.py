@@ -1286,7 +1286,7 @@ class PFHamiltonianGenerator:
 
         davidson_dict = {
         "DAVIDSON EIGENVALUES": theta,
-        "DAVIDSON EIGENVECTORS": alpha,
+        "DAVIDSON EIGENVECTORS": Q,
         }
 
         return davidson_dict
