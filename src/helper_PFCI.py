@@ -1203,14 +1203,14 @@ class PFHamiltonianGenerator:
         #print(Q)
         #print(np.shape(Q)) 
 
-        num_iter = 20
+        num_iter = maxiter
         for a in range(0, num_iter):
             print("\n")
             #orthonormalization of basis vectors by QR
             Q, R = np.linalg.qr(Q)
             print(Q.shape)
             L = Q.shape[1]#dynamic dimension of subspace
-            print('iteration', a+1, 'dimension', L)
+            print('iteration', a+1, 'subspace dimension', L)
             theta_old = theta[:nroots]
             #print("CI Iter # {:>6} L = {}".format(EOMCCSD_iter, L))
             # singma build
