@@ -89,12 +89,9 @@ def test_h2o_qed_fci_no_cavity():
 
     # molecule string for H2O
     h2o_string = """
-    
-    0 1
-        O      0.000000000000   0.000000000000  -0.068516219320
-        H      0.000000000000  -0.790689573744   0.543701060715
-        H      0.000000000000   0.790689573744   0.543701060715
-    no_reorient
+    O
+    H 1 1.1
+    H 1 1.1 2 104
     symmetry c1
     """
 
@@ -106,8 +103,11 @@ def test_h2o_qed_fci_no_cavity():
     expected_g   = -75.0129801827
     excpected_e1 = -74.7364625844
 
-    actual_e0 = test_pf.cis_e[0] # <== ground state
-    actual_e1 = test_pf.cis_e[4]
+    actual_g = test_pf.cis_e[0] # <== ground state
+    actual_e1 = test_pf.cis_e[2] # <== first excited state
+
+    assert np.isclose(actual_g, expected_g)
+    assert np.isclose(actual_e1, excpected_e1)
 
 
 def test_mghp_qed_cis_no_cavity():
