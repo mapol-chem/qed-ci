@@ -70,6 +70,46 @@ def test_mgf_qed_rhf():
     mgf_cqed_rhf_e = mgf_dict_origin["CQED-RHF ENERGY"]
     assert psi4.compare_values(mgf_cqed_rhf_e,expected_mgf_e)
 
+def test_h2o_qed_fci_no_cavity():
+
+    options_dict = {
+        "basis": "sto-3g",
+        "scf_type": "pk",
+        "e_convergence": 1e-10,
+        "d_convergence": 1e-10,
+    }
+
+    cavity_dict = {
+        'omega_value' : 0.0,
+        'lambda_vector' : np.array([0, 0, 0]),
+        'ci_level' : 'fci',
+        'davidson_roots' : 4,
+        'davidson_threshold' : 1e-8
+    }
+
+    # molecule string for H2O
+    h2o_string = """
+    
+    0 1
+        O      0.000000000000   0.000000000000  -0.068516219320
+        H      0.000000000000  -0.790689573744   0.543701060715
+        H      0.000000000000   0.790689573744   0.543701060715
+    no_reorient
+    symmetry c1
+    """
+
+    test_pf = PFHamiltonianGenerator(
+        h2o_string,
+        options_dict,
+        cavity_dict
+    )
+    expected_g   = -75.0129801827
+    excpected_e1 = -74.7364625844
+
+    actual_e0 = test_pf.cis_e[0] # <== ground state
+    actual_e1 = test_pf.cis_e[4]
+
+
 def test_mghp_qed_cis_no_cavity():
     # options for mgf
     mol_str = """
