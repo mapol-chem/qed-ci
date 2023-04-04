@@ -919,11 +919,11 @@ class PFHamiltonianGenerator:
                 self.CASnumDets += 1
 
         for i in range(len(self.CASdets)):
-            print(self.CASdets[i])
+            #print(self.CASdets[i])
             unique1, unique2, sign = self.CASdets[
                 i
             ].getUniqueOrbitalsInMixIndexListsPlusSign(self.CASdets[0])
-            print(unique1, unique2, sign)
+            #print(unique1, unique2, sign)
             if i > 0:
                 self.CASsingdetsign.append(sign)
 
@@ -1199,7 +1199,6 @@ class PFHamiltonianGenerator:
     def Davidson(self, H, nroots, threshold,indim,maxdim,maxiter):
         H_diag = np.diag(H)
         H_dim = len(H[:,0])
-
         L = indim 
 
         # When L exceeds Lmax we will collapse the guess space so our sub-space
@@ -1233,8 +1232,10 @@ class PFHamiltonianGenerator:
 
             # Build the subspace Hamiltonian
             G = np.dot(Q.T, S)
+            #print(np.allclose(G, G.T, 1e-12, 1e-12))    
             # Diagonalize it, and sort the eigenvector/eigenvalue pairs
-            theta, alpha = np.linalg.eig(G)
+            theta, alpha = np.linalg.eigh(G)
+            print(theta)
             idx = theta.argsort()[:nroots]
             theta = theta[idx]
             alpha = alpha[:, idx]
