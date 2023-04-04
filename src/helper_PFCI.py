@@ -753,19 +753,33 @@ class PFHamiltonianGenerator:
         that contribute to the A+Delta blocks
 
         """
+        # try a more efficient way of computing the 2-e d terms
+        _d_spin = np.copy(self.d_cmo)
+        _d_spin = np.repeat(_d_spin, 2, axis=0)
+        _d_spin = np.repeat(_d_spin, 2, axis=1)
+        spin_ind = np.arange(_d_spin.shape[0], dtype=int) % 2
+        self.d_spin = _d_spin * (spin_ind.reshape(-1, 1) == spin_ind)
+
         self.TDI_spin = np.zeros((self.nso, self.nso, self.nso, self.nso))
+        TDI_fast = np.zeros_like(self.TDI_spin)
+
+        t1 = np.einsum("ik,jl->ijkl", self.d_spin, self.d_spin)
+        t2 = np.einsum("il,jk->ijkl", self.d_spin, self.d_spin)
+        TDI_fast = t1-t2
         if self.ignore_coupling == False:
+            self.TDI_spin = np.copy(TDI_fast)
             # get the dipole-dipole integrals in the spin-orbital basis with physicist convention
-            for i in range(self.nso):
-                for j in range(self.nso):
-                    for k in range(self.nso):
-                        for l in range(self.nso):
-                            self.TDI_spin[i, j, k, l] = map_spatial_dipole_to_spin(
-                                self.d_cmo, i, j, k, l
-                            )
+            #for i in range(self.nso):
+            #    for j in range(self.nso):
+            #        for k in range(self.nso):
+            #            for l in range(self.nso):
+            #                self.TDI_spin[i, j, k, l] = map_spatial_dipole_to_spin(
+            #                    self.d_cmo, i, j, k, l
+            #                )
 
         # add dipole-dipole integrals to ERIs
         self.antiSym2eInt = self.eri_so + self.TDI_spin
+        #assert np.allclose(TDI_fast, self.TDI_spin)
 
     def buildGSO(self):
         """
