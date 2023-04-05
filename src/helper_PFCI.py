@@ -660,7 +660,10 @@ class PFHamiltonianGenerator:
             self.davidson_roots = cavity_dictionary["davidson_roots"]
         else:
             self.davidson_roots = 3
-
+        if "davidson_guess" in cavity_dictionary:
+            self.davidson_guess = cavity_dictionary["davidson_guess"]
+        else:
+            self.davidson_guess = "unit guess"
         if "davidson_threshold" in cavity_dictionary:
             self.davidson_threshold = cavity_dictionary["davidson_threshold"]
         else:
@@ -846,9 +849,15 @@ class PFHamiltonianGenerator:
         """
         self.FCIDets = []
         self.FCInumDets = 0
+        self.detmap = []
         for alpha in combinations(range(self.nmo), self.ndocc):
             for beta in combinations(range(self.nmo), self.ndocc):
-                self.FCIDets.append(Determinant(alphaObtList=alpha, betaObtList=beta))
+                e = Determinant(alphaObtList=alpha, betaObtList=beta)
+                alphabit = e.obtIndexList2ObtBits(alpha)
+                betabit = e.obtIndexList2ObtBits(beta)
+                self.detmap.append([alphabit,betabit])
+
+                self.FCIDets.append(e)
                 self.FCInumDets += 1
             
     def generateCISDeterminants(self):
@@ -859,6 +868,7 @@ class PFHamiltonianGenerator:
         self.CISsingdetsign = []
         self.CISnumDets = 0
         self.CISexcitation_index = []
+        self.detmap = []
 
         # get list of tuples definining CIS occupations, including the reference
         cis_tuples = self.generateCISTuple()
@@ -872,9 +882,13 @@ class PFHamiltonianGenerator:
             for beta in cis_tuples:
                 beta_ex_level = compute_excitation_level(beta, self.ndocc)
                 if alpha_ex_level + beta_ex_level <= 1:
-                    self.CISdets.append(
-                        Determinant(alphaObtList=alpha, betaObtList=beta)
-                    )
+                    e = Determinant(alphaObtList=alpha, betaObtList=beta)
+                    self.CISdets.append(e)
+                    alphabit = e.obtIndexList2ObtBits(alpha)
+                    betabit = e.obtIndexList2ObtBits(beta)
+                    self.detmap.append([alphabit,betabit])
+
+
                     self.CISnumDets += 1
 
         for i in range(len(self.CISdets)):
@@ -898,6 +912,7 @@ class PFHamiltonianGenerator:
         self.CASdetlists = []
         self.CASsingdetsign = []
         self.CASnumDets = 0
+        self.detmap = []
 
         n_in_orb = self.ndocc - self.n_act_el // 2
         n_ac_el_half = self.n_act_el // 2
@@ -915,7 +930,11 @@ class PFHamiltonianGenerator:
                 betalist = [x + n_in_orb for x in betalist]
                 betalist[0:0] = inactive_list
                 beta = tuple(betalist)
-                self.CASdets.append(Determinant(alphaObtList=alpha, betaObtList=beta))
+                e = Determinant(alphaObtList=alpha, betaObtList=beta)
+                self.CASdets.append(e)
+                alphabit = e.obtIndexList2ObtBits(alpha)
+                betabit = e.obtIndexList2ObtBits(beta)
+                self.detmap.append([alphabit,betabit])
                 self.CASnumDets += 1
 
         for i in range(len(self.CASdets)):
@@ -926,6 +945,11 @@ class PFHamiltonianGenerator:
             #print(unique1, unique2, sign)
             if i > 0:
                 self.CASsingdetsign.append(sign)
+        #for i in range(len(self.detmap)):
+        #    print(self.detmap[i])
+        #    a,b = self.detmap[i]
+        #    print(Determinant.obtBits2ObtMixSpinIndexList(a,b))
+
 
     def generatePFHMatrix(self, ci_level):
         """
@@ -1212,7 +1236,12 @@ class PFHamiltonianGenerator:
         #generate initial guess
         Q_idx = H_diag.argsort()[:indim]
         #print(Q_idx)
-        Q = np.eye(H_dim)[:, Q_idx]
+        if self.davidson_guess == "unit guess":
+            print("use unit guess")
+            Q = np.eye(H_dim)[:, Q_idx]
+        else:    
+            print("use random guess")
+            Q = np.random.rand(H_dim,indim)
         #print(Q)
         #print(np.shape(Q)) 
 
@@ -1235,7 +1264,7 @@ class PFHamiltonianGenerator:
             #print(np.allclose(G, G.T, 1e-12, 1e-12))    
             # Diagonalize it, and sort the eigenvector/eigenvalue pairs
             theta, alpha = np.linalg.eigh(G)
-            print(theta)
+            #print(theta)
             idx = theta.argsort()[:nroots]
             theta = theta[idx]
             alpha = alpha[:, idx]
@@ -1314,7 +1343,27 @@ class PFHamiltonianGenerator:
                 Q = np.column_stack(Qtup)
                 #print(Q)
         Q=np.dot(Q, alpha)
-        
+        for i in range(Q.shape[1]):
+            print("state",i, "energy =",theta[i])
+            print("        amplitude","      position", "         most important determinants","             number of photon")
+            for j in range(Q.shape[0]):
+                if j<H_dim/2:
+                    if np.abs(Q[j][i]) >0.2:
+                        a,b = self.detmap[j]
+                        alphalist = Determinant.obtBits2ObtIndexList(a)
+                        betalist = Determinant.obtBits2ObtIndexList(b)
+
+                        print("%20.12lf"%(Q[j][i]),"%9.3d"%(j),"      alpha",alphalist,"beta",betalist, "       0 photon")
+                if j>=H_dim/2:
+                    if np.abs(Q[j][i]) >0.2:
+                        a,b = self.detmap[j-H_dim//2]
+                        alphalist = Determinant.obtBits2ObtIndexList(a)
+                        betalist = Determinant.obtBits2ObtIndexList(b)
+
+                        print("%20.12lf"%(Q[j][i]),"%9.3d"%(j),"      alpha",alphalist,"beta",betalist, "       1 photon")
+
+
+
         davidson_dict = {
         "DAVIDSON EIGENVALUES": theta,
         "DAVIDSON EIGENVECTORS": Q,
