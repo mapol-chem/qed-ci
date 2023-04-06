@@ -577,35 +577,13 @@ class PFHamiltonianGenerator:
         cavity_options = {k.lower(): v for k, v in cavity_options.items()}
         self.parseCavityOptions(cavity_options)
 
-        t_hf_start = time.time()
-        # run cqed-rhf to generate orbital basis
-        cqed_rhf_dict = cqed_rhf(self.lambda_vector, molecule_string, psi4_options_dict)
-        t_hf_end = time.time()
-        print(F' Completed QED-RHF in {t_hf_end - t_hf_start} seconds')
-        # Parse output of cqed-rhf calculation
-        p4_wfn = self.parseArrays(cqed_rhf_dict)
+        # generate orbital basis
+        psi4_wfn_o = self.generateOrbitalBasis(molecule_string, psi4_options_dict)
 
-        # build 1H in spin orbital basis
-        self.build1HSO()
-        t_1H_end = time.time()
-        print(F' Completed 1HSO Build in {t_1H_end - t_hf_end} seconds')
-        # build 2eInt in cqed-rhf basis
-        mints = psi4.core.MintsHelper(p4_wfn.basisset())
-        self.eri_so = np.asarray(mints.mo_spin_eri(self.Ca, self.Ca))
-        t_eri_end = time.time()
-        print(F' Completed ERI Build in {t_eri_end - t_1H_end} seconds ')
+        # build arrays in orbital basis
+        self.buildArraysInOrbitalBasis(psi4_wfn_o)
 
-        # form the 2H in spin orbital basis
-        self.build2DSO()
-        t_2d_end = time.time()
-        print(F' Completed 2D build in {t_2d_end - t_eri_end} seconds')
-
-        # build the array to build G in the so basis
-        self.buildGSO()
-        t_1G_end = time.time()
-        print(F' Completed 1G build in {t_1G_end - t_2d_end} seconds')
-
-
+        t_det_start = time.time()
         # build the determinant list
         if self.ci_level == "cis":
             self.generateCISDeterminants()
@@ -618,7 +596,7 @@ class PFHamiltonianGenerator:
             H_dim = self.FCInumDets * 2 
 
         t_det_end = time.time()
-        print(F' Completed determinant list in {t_det_end - t_1G_end} seconds ')
+        print(F' Completed determinant list in {t_det_end - t_det_start} seconds ')
 
         indim = self.davidson_indim * self.davidson_roots
         maxdim = self.davidson_maxdim * self.davidson_roots
@@ -727,6 +705,7 @@ class PFHamiltonianGenerator:
         self.q_PF_ao = cqed_rhf_dict["PF 1-E QUADRUPOLE MATRIX AO"]
         self.d_PF_ao = cqed_rhf_dict["PF 1-E SCALED DIPOLE MATRIX AO"]
         self.d_cmo = cqed_rhf_dict["PF 1-E DIPOLE MATRIX MO"]
+        self.d_ao = cqed_rhf_dict["PF 1-E DIPOLE MATRIX AO"]
         wfn = cqed_rhf_dict["PSI4 WFN"]
         self.d_exp = cqed_rhf_dict["EXPECTATION VALUE OF d"]
         self.Enuc = cqed_rhf_dict["NUCLEAR REPULSION ENERGY"]
@@ -762,7 +741,7 @@ class PFHamiltonianGenerator:
             self.H_1e_ao += self.q_PF_ao + self.d_PF_ao
         # build H_spin
         # spatial part of 1-e integrals
-        _H_spin = np.einsum("uj,vi,uv", self.Ca, self.Ca, self.H_1e_ao)
+        _H_spin = np.einsum("uj,vi,uv", self.C, self.C, self.H_1e_ao)
         _H_spin = np.repeat(_H_spin, 2, axis=0)
         _H_spin = np.repeat(_H_spin, 2, axis=1)
         # spin part of 1-e integrals
@@ -782,26 +761,10 @@ class PFHamiltonianGenerator:
         spin_ind = np.arange(_d_spin.shape[0], dtype=int) % 2
         self.d_spin = _d_spin * (spin_ind.reshape(-1, 1) == spin_ind)
 
-        #self.TDI_spin = np.zeros((self.nso, self.nso, self.nso, self.nso))
-        #TDI_fast = np.zeros_like(self.TDI_spin)
-
         t1 = np.einsum("ik,jl->ijkl", self.d_spin, self.d_spin)
         t2 = np.einsum("il,jk->ijkl", self.d_spin, self.d_spin)
         self.TDI_spin = t1 - t2
-        #if self.ignore_coupling == False:
-        #    self.TDI_spin = np.copy(TDI_fast)
-            # get the dipole-dipole integrals in the spin-orbital basis with physicist convention
-            #for i in range(self.nso):
-            #    for j in range(self.nso):
-            #        for k in range(self.nso):
-            #            for l in range(self.nso):
-            #                self.TDI_spin[i, j, k, l] = map_spatial_dipole_to_spin(
-            #                    self.d_cmo, i, j, k, l
-            #                )
-
-        # add dipole-dipole integrals to ERIs
         self.antiSym2eInt = self.eri_so + self.TDI_spin
-        #assert np.allclose(TDI_fast, self.TDI_spin)
 
     def buildGSO(self):
         """
@@ -891,8 +854,6 @@ class PFHamiltonianGenerator:
 
         # get list of tuples definining CIS occupations, including the reference
         cis_tuples = self.generateCISTuple()
-        #print("printing CIS tuples")
-        #print(cis_tuples)
         # loop through these occupations, compute excitation level, create determinants,
         # and keep track of excitation index
         for alpha in cis_tuples:
@@ -1149,6 +1110,118 @@ class PFHamiltonianGenerator:
             Relem = 0.0
 
         return Helem + Relem
+    
+    def generateOrbitalBasis(self, molecule_string, psi4_options_dict):
+        """
+        Calculate the orbitals basis for the CI calculation
+        Needs to:
+            Determine the orbital type -
+            if cqed-rhf:
+               1. Run CQED-RHF
+               2. Update 
+            1. Build CIS determinant list
+            2. Obtain CIS vectors
+            3. Build CIS 1RDM
+            4. Diagonalize 1RDM -> vectors U
+            5. Dot original MO coefficients into vectors NO = C @ U
+        """
+
+        t_hf_start = time.time()
+        cqed_rhf_dict = cqed_rhf(self.lambda_vector, molecule_string, psi4_options_dict)
+        t_hf_end = time.time()
+        print(F' Completed QED-RHF in {t_hf_end - t_hf_start} seconds')
+
+        # Parse output of cqed-rhf calculation
+        psi4_wfn = self.parseArrays(cqed_rhf_dict)
+
+
+        if self.natural_orbitals: #<== need to run CIS
+            self.buildArraysInOrbitalBasis(psi4_wfn)
+            t_det_start = time.time()
+            self.generateCISDeterminants()
+            H_dim = self.CISnumDets * 2 
+            t_det_end = time.time()
+            print(F' Completed determinant list in {t_det_end - t_det_start} seconds ')
+            indim = self.davidson_indim * self.davidson_roots
+            maxdim = self.davidson_maxdim * self.davidson_roots
+            if (indim > H_dim or maxdim > H_dim):
+                print('subspace size is too large, try to set maxdim and indim <',H_dim//self.davidson_roots)
+                sys.exit()
+                
+            # build Constant matrices
+            self.buildConstantMatrices(self.ci_level)
+            t_const_end = time.time()
+            print(F' Completed constant offset matrix in {t_const_end - t_det_end} seconds')
+            
+            # Build Matrix
+            self.generatePFHMatrix(self.ci_level)
+            t_H_build = time.time()
+            print(F' Completed Hamiltonian build in {t_H_build - t_const_end} seconds')
+            dres = self.Davidson(self.H_PF, self.davidson_roots, self.davidson_threshold, indim, maxdim,self.davidson_maxiter)
+            self.cis_e = dres["DAVIDSON EIGENVALUES"]
+            self.cis_c = dres["DAVIDSON EIGENVECTORS"]
+            t_dav_end = time.time()
+            print(F' Completed Davidson iterations in {t_dav_end - t_H_build} seconds')
+
+            # get RDM from CIS ground-state - THIS CAN BE GENERALIZED TO 
+            # get RDM from different states!
+            self.calc1RDMfromCIS(self.cis_c[:, 0])
+            _eig, _vec = np.linalg.eigh(self.D1_spatial)
+            _idx = _eig.argsort()[::-1]
+            self.noocs = _eig[_idx]
+            self.no_vec = _vec[:,_idx]
+            self.nat_orbs = np.dot(self.C, self.no_vec)
+
+            # now we have the natural orbitals, make sure we update the quantities
+            # that use the orbitals
+            self.C = np.copy(self.nat_orbs)
+
+            # collect rhf wfn object as dictionary
+            wfn_dict = psi4.core.Wavefunction.to_file(psi4_wfn)
+            
+            # update wfn_dict with orbitals from CQED-RHF
+            wfn_dict["matrix"]["Ca"] = self.C
+            wfn_dict["matrix"]["Cb"] = self.C
+            
+            # update wfn object
+            psi4_wfn = psi4.core.Wavefunction.from_file(wfn_dict)
+            
+            # Grab data from wavfunction class
+            self.Ca = psi4_wfn.Ca()
+
+            # transform d_ao to d_cmo using natural orbitals
+            self.d_cmo = np.dot(self.C.T, self.d_ao).dot(self.C)
+
+        return psi4_wfn
+
+
+    def buildArraysInOrbitalBasis(self, p4_wfn):
+
+        if self.natural_orbitals:
+            ### finish
+            print("going to do natural orbital stuff")
+        else:
+            # build 1H in spin orbital basis
+            t_1H_start = time.time()
+            self.build1HSO()
+            t_1H_end = time.time()
+            print(F' Completed 1HSO Build in {t_1H_end - t_1H_start} seconds')
+            
+            # build 2eInt in cqed-rhf basis
+            mints = psi4.core.MintsHelper(p4_wfn.basisset())
+            self.eri_so = np.asarray(mints.mo_spin_eri(self.Ca, self.Ca))
+            t_eri_end = time.time()
+            print(F' Completed ERI Build in {t_eri_end - t_1H_end} seconds ')
+            
+            # form the 2H in spin orbital basis
+            self.build2DSO()
+            t_2d_end = time.time()
+            print(F' Completed 2D build in {t_2d_end - t_eri_end} seconds')
+            
+            # build the array to build G in the so basis
+            self.buildGSO()
+            t_1G_end = time.time()
+            print(F' Completed 1G build in {t_1G_end - t_2d_end} seconds')
 
     def calc1RDMfromCIS(self, c_vec):
         _nDets = self.CISnumDets
