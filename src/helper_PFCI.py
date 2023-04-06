@@ -18,6 +18,7 @@ import psi4
 import sys
 from helper_cqed_rhf import cqed_rhf
 from itertools import combinations
+import time
 
 
 def compute_excitation_level(ket, ndocc):
@@ -576,24 +577,34 @@ class PFHamiltonianGenerator:
         cavity_options = {k.lower(): v for k, v in cavity_options.items()}
         self.parseCavityOptions(cavity_options)
 
+        t_hf_start = time.time()
         # run cqed-rhf to generate orbital basis
         cqed_rhf_dict = cqed_rhf(self.lambda_vector, molecule_string, psi4_options_dict)
-
+        t_hf_end = time.time()
+        print(F' Completed QED-RHF in {t_hf_end - t_hf_start} seconds')
         # Parse output of cqed-rhf calculation
         p4_wfn = self.parseArrays(cqed_rhf_dict)
 
         # build 1H in spin orbital basis
         self.build1HSO()
-
+        t_1H_end = time.time()
+        print(F' Completed 1HSO Build in {t_1H_end - t_hf_end} seconds')
         # build 2eInt in cqed-rhf basis
         mints = psi4.core.MintsHelper(p4_wfn.basisset())
         self.eri_so = np.asarray(mints.mo_spin_eri(self.Ca, self.Ca))
+        t_eri_end = time.time()
+        print(F' Completed ERI Build in {t_eri_end - t_1H_end} seconds ')
 
         # form the 2H in spin orbital basis
         self.build2DSO()
+        t_2d_end = time.time()
+        print(F' Completed 2D build in {t_2d_end - t_eri_end} seconds')
 
         # build the array to build G in the so basis
         self.buildGSO()
+        t_1G_end = time.time()
+        print(F' Completed 1G build in {t_1G_end - t_2d_end} seconds')
+
 
         # build the determinant list
         if self.ci_level == "cis":
@@ -606,6 +617,9 @@ class PFHamiltonianGenerator:
             self.generateFCIDeterminants()
             H_dim = self.FCInumDets * 2 
 
+        t_det_end = time.time()
+        print(F' Completed determinant list in {t_det_end - t_1G_end} seconds ')
+
         indim = self.davidson_indim * self.davidson_roots
         maxdim = self.davidson_maxdim * self.davidson_roots
         if (indim > H_dim or maxdim > H_dim):
@@ -615,15 +629,20 @@ class PFHamiltonianGenerator:
 
         # build Constant matrices
         self.buildConstantMatrices(self.ci_level)
+        t_const_end = time.time()
+        print(F' Completed constant offset matrix in {t_const_end - t_det_end} seconds')
 
         # Build Matrix
         self.generatePFHMatrix(self.ci_level)
-        
+        t_H_build = time.time()
+        print(F' Completed Hamiltonian build in {t_H_build - t_const_end} seconds')
         
         
         dres = self.Davidson(self.H_PF, self.davidson_roots, self.davidson_threshold, indim, maxdim,self.davidson_maxiter)
         self.cis_e = dres["DAVIDSON EIGENVALUES"]
         self.cis_c = dres["DAVIDSON EIGENVECTORS"]
+        t_dav_end = time.time()
+        print(F' Completed Davidson iterations in {t_dav_end - t_H_build} seconds')
 
 
     def parseCavityOptions(self, cavity_dictionary):
@@ -763,14 +782,14 @@ class PFHamiltonianGenerator:
         spin_ind = np.arange(_d_spin.shape[0], dtype=int) % 2
         self.d_spin = _d_spin * (spin_ind.reshape(-1, 1) == spin_ind)
 
-        self.TDI_spin = np.zeros((self.nso, self.nso, self.nso, self.nso))
-        TDI_fast = np.zeros_like(self.TDI_spin)
+        #self.TDI_spin = np.zeros((self.nso, self.nso, self.nso, self.nso))
+        #TDI_fast = np.zeros_like(self.TDI_spin)
 
         t1 = np.einsum("ik,jl->ijkl", self.d_spin, self.d_spin)
         t2 = np.einsum("il,jk->ijkl", self.d_spin, self.d_spin)
-        TDI_fast = t1-t2
-        if self.ignore_coupling == False:
-            self.TDI_spin = np.copy(TDI_fast)
+        self.TDI_spin = t1 - t2
+        #if self.ignore_coupling == False:
+        #    self.TDI_spin = np.copy(TDI_fast)
             # get the dipole-dipole integrals in the spin-orbital basis with physicist convention
             #for i in range(self.nso):
             #    for j in range(self.nso):
