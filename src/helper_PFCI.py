@@ -577,10 +577,12 @@ class PFHamiltonianGenerator:
         cavity_options = {k.lower(): v for k, v in cavity_options.items()}
         self.parseCavityOptions(cavity_options)
 
-        # generate orbital basis
+        # generate orbital basis - if self.natural_orbitals == True then
+        # self.C and self.Ca will be the QED-CIS natural orbitals
+        # otherwise they will be the QED-RHF MOs
         psi4_wfn_o = self.generateOrbitalBasis(molecule_string, psi4_options_dict)
 
-        # build arrays in orbital basis
+        # build arrays in orbital basis from last step
         self.buildArraysInOrbitalBasis(psi4_wfn_o)
 
         t_det_start = time.time()
