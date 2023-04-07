@@ -1309,7 +1309,72 @@ class PFHamiltonianGenerator:
                     _D_bb[j,l]=self.D1[p,q]
 
         # spatial orbital 1RDM
-        self.D1_spatial = _D_aa + _D_bb 
+        self.D1_spatial = _D_aa + _D_bb
+
+    def computeS2(self, state_vec):
+        """
+        Given a state with vector state_vec, compute the expectation value of S^2 using
+        Eq. 2.2.38 of Helgaker:
+        S^2 = S_+ S_- + S_z(S_z - 1)
+
+        with 
+
+        S_+ = \sum_p a_{p,\alpha}^{\dagger} a_{p,\beta}
+        S_- = \sum_p a_{p,\beta}^{\dagger} a_{p,\alpha}
+        S_z = 1/2 \sum_p ( a_{p,\alpha}^{\dagger} a_{p,\alpha} - a_{p,\beta}^{\dagger} a_{p,\beta} )
+        
+        """
+
+    def computeSplusSminusPQ(self, bra_idx, ket_idx, state_vec, p, q):
+        """
+        
+        <bra|S_+(p)S_-(q)|ket> 
+
+        """
+        # copy bra and ket determinant
+        _bra = self.CISdets[bra_idx].copy()
+        _ket = self.CISdets[ket_idx].copy()
+
+        # S-(q) kills q_alpha and creates q_beta
+        a, b = _ket.getOrbitalIndexLists()
+        print(a, b)
+
+        # check to see if q_alpha is unnoccupied
+        if (q not in a):
+            return 0
+        else:
+            _ket.removeAlphaOrbital(q)
+        if (q not in b):
+            _ket.addBetaOrbital(q)
+        else:
+            return 0
+        
+        # act on updated ket with S+(p)
+        # S+(p) kills p_beta and creates p_alpha
+        
+        # get updated occupation list
+        a, b = _ket.getOrbitalIndexLists()
+        print(a, b)
+        if (p not in b):
+            return 0
+        else:
+            _ket.removeBetaOrbital(p)
+        if (p not in a):
+            _ket.addAlphaOrbital(p)
+        else:
+            return 0
+        
+        numUniqueOrbitals = _bra.numberOfTotalDiffOrbitals(_ket)
+        if numUniqueOrbitals==0:
+            u1, u2, sign = _bra.getUniqueOrbitalsInListsPlusSign(_ket)
+            return sign * state_vec[bra_idx] * state_vec[ket_idx]
+        else:
+            return 0
+        
+
+
+        
+
 
     def Davidson(self, H, nroots, threshold,indim,maxdim,maxiter):
         H_diag = np.diag(H)
