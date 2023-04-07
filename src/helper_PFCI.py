@@ -1144,26 +1144,27 @@ class PFHamiltonianGenerator:
             H_dim = self.CISnumDets * 2 
             t_det_end = time.time()
             print(F' Completed determinant list in {t_det_end - t_det_start} seconds ')
-            indim = self.davidson_indim * self.davidson_roots
-            maxdim = self.davidson_maxdim * self.davidson_roots
-            if (indim > H_dim or maxdim > H_dim):
-                print('subspace size is too large, try to set maxdim and indim <',H_dim//self.davidson_roots)
-                sys.exit()
+            #indim = self.davidson_indim * self.davidson_roots
+            #maxdim = self.davidson_maxdim * self.davidson_roots
+            #if (indim > H_dim or maxdim > H_dim):
+            #    print('subspace size is too large, try to set maxdim and indim <',H_dim//self.davidson_roots)
+            #    sys.exit()
                 
             # build Constant matrices
-            self.buildConstantMatrices(self.ci_level)
+            self.buildConstantMatrices("cis")
             t_const_end = time.time()
             print(F' Completed constant offset matrix in {t_const_end - t_det_end} seconds')
             
             # Build Matrix
-            self.generatePFHMatrix(self.ci_level)
+            self.generatePFHMatrix("cis")
             t_H_build = time.time()
             print(F' Completed Hamiltonian build in {t_H_build - t_const_end} seconds')
-            dres = self.Davidson(self.H_PF, self.davidson_roots, self.davidson_threshold, indim, maxdim,self.davidson_maxiter)
-            self.cis_e = dres["DAVIDSON EIGENVALUES"]
-            self.cis_c = dres["DAVIDSON EIGENVECTORS"]
-            t_dav_end = time.time()
-            print(F' Completed Davidson iterations in {t_dav_end - t_H_build} seconds')
+            #dres = self.Davidson(self.H_PF, self.davidson_roots, self.davidson_threshold, indim, maxdim,self.davidson_maxiter)
+            #self.cis_e = dres["DAVIDSON EIGENVALUES"]
+            #self.cis_c = dres["DAVIDSON EIGENVECTORS"]
+            #t_dav_end = time.time()
+            #print(F' Completed Davidson iterations in {t_dav_end - t_H_build} seconds')
+            self.cis_e, self.cis_c = np.linalg.eigh(self.H_PF)
 
             # get RDM from CIS ground-state - THIS CAN BE GENERALIZED TO 
             # get RDM from different states!
@@ -1199,31 +1200,27 @@ class PFHamiltonianGenerator:
 
     def buildArraysInOrbitalBasis(self, p4_wfn):
 
-        if self.natural_orbitals:
-            ### finish
-            print("going to do natural orbital stuff")
-        else:
-            # build 1H in spin orbital basis
-            t_1H_start = time.time()
-            self.build1HSO()
-            t_1H_end = time.time()
-            print(F' Completed 1HSO Build in {t_1H_end - t_1H_start} seconds')
-            
-            # build 2eInt in cqed-rhf basis
-            mints = psi4.core.MintsHelper(p4_wfn.basisset())
-            self.eri_so = np.asarray(mints.mo_spin_eri(self.Ca, self.Ca))
-            t_eri_end = time.time()
-            print(F' Completed ERI Build in {t_eri_end - t_1H_end} seconds ')
-            
-            # form the 2H in spin orbital basis
-            self.build2DSO()
-            t_2d_end = time.time()
-            print(F' Completed 2D build in {t_2d_end - t_eri_end} seconds')
-            
-            # build the array to build G in the so basis
-            self.buildGSO()
-            t_1G_end = time.time()
-            print(F' Completed 1G build in {t_1G_end - t_2d_end} seconds')
+        # build 1H in orbital basis
+        t_1H_start = time.time()
+        self.build1HSO()
+        t_1H_end = time.time()
+        print(F' Completed 1HSO Build in {t_1H_end - t_1H_start} seconds')
+        
+        # build 2eInt in cqed-rhf basis
+        mints = psi4.core.MintsHelper(p4_wfn.basisset())
+        self.eri_so = np.asarray(mints.mo_spin_eri(self.Ca, self.Ca))
+        t_eri_end = time.time()
+        print(F' Completed ERI Build in {t_eri_end - t_1H_end} seconds ')
+        
+        # form the 2H in spin orbital basis
+        self.build2DSO()
+        t_2d_end = time.time()
+        print(F' Completed 2D build in {t_2d_end - t_eri_end} seconds')
+        
+        # build the array to build G in the so basis
+        self.buildGSO()
+        t_1G_end = time.time()
+        print(F' Completed 1G build in {t_1G_end - t_2d_end} seconds')
 
     def calc1RDMfromCIS(self, c_vec):
         _nDets = self.CISnumDets
