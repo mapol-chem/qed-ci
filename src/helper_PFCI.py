@@ -1165,6 +1165,7 @@ class PFHamiltonianGenerator:
             #t_dav_end = time.time()
             #print(F' Completed Davidson iterations in {t_dav_end - t_H_build} seconds')
             self.cis_e, self.cis_c = np.linalg.eigh(self.H_PF)
+            self.classifySpinState()
 
             # get RDM from CIS ground-state - THIS CAN BE GENERALIZED TO 
             # get RDM from different states!
@@ -1372,10 +1373,6 @@ class PFHamiltonianGenerator:
             return 0
         
 
-
-        
-
-
     def Davidson(self, H, nroots, threshold,indim,maxdim,maxiter):
         H_diag = np.diag(H)
         H_dim = len(H[:,0])
@@ -1499,25 +1496,7 @@ class PFHamiltonianGenerator:
                 Q = np.column_stack(Qtup)
                 #print(Q)
         Q=np.dot(Q, alpha)
-        for i in range(Q.shape[1]):
-            print("state",i, "energy =",theta[i])
-            print("        amplitude","      position", "         most important determinants","             number of photon")
-            for j in range(Q.shape[0]):
-                if j<H_dim/2:
-                    if np.abs(Q[j][i]) >0.2:
-                        a,b = self.detmap[j]
-                        alphalist = Determinant.obtBits2ObtIndexList(a)
-                        betalist = Determinant.obtBits2ObtIndexList(b)
-
-                        print("%20.12lf"%(Q[j][i]),"%9.3d"%(j),"      alpha",alphalist,"beta",betalist, "       0 photon")
-                if j>=H_dim/2:
-                    if np.abs(Q[j][i]) >0.2:
-                        a,b = self.detmap[j-H_dim//2]
-                        alphalist = Determinant.obtBits2ObtIndexList(a)
-                        betalist = Determinant.obtBits2ObtIndexList(b)
-
-                        print("%20.12lf"%(Q[j][i]),"%9.3d"%(j),"      alpha",alphalist,"beta",betalist, "       1 photon")
-
+        
 
 
         davidson_dict = {
@@ -1526,3 +1505,32 @@ class PFHamiltonianGenerator:
         }
 
         return davidson_dict
+    
+    def classifySpinState(self):
+        Q = self.cis_c
+        theta = self.cis_e
+
+        H_dim = Q.shape[0]
+        print("H_dim is",H_dim)
+        print("dimensions of detmap", len(self.detmap))
+        for i in range(Q.shape[1]):
+            print("state",i, "energy =",theta[i])
+            print("        amplitude","      position", "         most important determinants","             number of photon")
+            for j in range(Q.shape[0]):
+                #print("j is ", j)
+                if j<H_dim/2:
+                    if np.abs(Q[j,i]) >0.2:
+                        a,b = self.detmap[j]
+                        alphalist = Determinant.obtBits2ObtIndexList(a)
+                        betalist = Determinant.obtBits2ObtIndexList(b)
+
+                        print("%20.12lf"%(Q[j,i]),"%9.3d"%(j),"      alpha",alphalist,"beta",betalist, "       0 photon")
+                if j>=H_dim/2:
+                    #print("offset j is ",(j-H_dim//2))
+                    if np.abs(Q[j,i]) >0.2:
+                        a,b = self.detmap[j-H_dim//2]
+                        alphalist = Determinant.obtBits2ObtIndexList(a)
+                        betalist = Determinant.obtBits2ObtIndexList(b)
+
+                        print("%20.12lf"%(Q[j,i]),"%9.3d"%(j),"      alpha",alphalist,"beta",betalist, "       1 photon")
+
