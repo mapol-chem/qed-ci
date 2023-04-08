@@ -1169,8 +1169,15 @@ class PFHamiltonianGenerator:
 
             # get RDM from CIS ground-state - THIS CAN BE GENERALIZED TO 
             # get RDM from different states!
-            self.calc1RDMfromCIS(self.cis_c[:, 0])
-            _eig, _vec = np.linalg.eigh(self.D1_spatial)
+            _D1_avg = np.zeros((self.nmo, self.nmo))
+            N_states = 4
+            for i in range(N_states):
+                _sidx = self.singlets[i]
+                self.calc1RDMfromCIS(self.cis_c[:, _sidx])
+                _D1_avg += self.D1_spatial / N_states
+
+
+            _eig, _vec = np.linalg.eigh(_D1_avg)
             _idx = _eig.argsort()[::-1]
             self.noocs = _eig[_idx]
             self.no_vec = _vec[:,_idx]
@@ -1507,30 +1514,68 @@ class PFHamiltonianGenerator:
         return davidson_dict
     
     def classifySpinState(self):
+        self.triplets = []
+        self.singlets = [item for item in range(2*self.CISnumDets)]
         Q = self.cis_c
         theta = self.cis_e
+        singlesDets = self.CISnumDets - 1
+        halfDets = singlesDets // 2
 
         H_dim = Q.shape[0]
         print("H_dim is",H_dim)
         print("dimensions of detmap", len(self.detmap))
         for i in range(Q.shape[1]):
             print("state",i, "energy =",theta[i])
+            needs_assignment = True
             print("        amplitude","      position", "         most important determinants","             number of photon")
-            for j in range(Q.shape[0]):
-                #print("j is ", j)
-                if j<H_dim/2:
-                    if np.abs(Q[j,i]) >0.2:
-                        a,b = self.detmap[j]
-                        alphalist = Determinant.obtBits2ObtIndexList(a)
-                        betalist = Determinant.obtBits2ObtIndexList(b)
+            for j in range(1, halfDets):
+                #if j<H_dim/2: 
+                # zero photon
+                j_off = j + halfDets
+                if np.abs(Q[j,i]) >0.2:
+                    a1, b1 = self.detmap[j]
+                    a2, b2 = self.detmap[j_off]
+                    alpha1 = Determinant.obtBits2ObtIndexList(a1)
+                    beta1 = Determinant.obtBits2ObtIndexList(b1)
+                    alpha2 = Determinant.obtBits2ObtIndexList(a2)
+                    beta2 = Determinant.obtBits2ObtIndexList(b2)
+                    if needs_assignment:
+                        if np.isclose(Q[j,i], -1*Q[j_off,i]):
+                            self.triplets.append(i)
+                            self.singlets.remove(i)
+                            needs_assignment = False
+                    
 
-                        print("%20.12lf"%(Q[j,i]),"%9.3d"%(j),"      alpha",alphalist,"beta",betalist, "       0 photon")
-                if j>=H_dim/2:
-                    #print("offset j is ",(j-H_dim//2))
-                    if np.abs(Q[j,i]) >0.2:
-                        a,b = self.detmap[j-H_dim//2]
-                        alphalist = Determinant.obtBits2ObtIndexList(a)
-                        betalist = Determinant.obtBits2ObtIndexList(b)
+                    print("%20.12lf"%(Q[j,i]),"%9.3d"%(j),"      alpha",alpha1,"beta",beta1, "       0 photon")
+                    print("%20.12lf"%(Q[j_off,i]),"%9.3d"%(j_off),"      alpha",alpha2,"beta",beta2, "       0 photon")
 
-                        print("%20.12lf"%(Q[j,i]),"%9.3d"%(j),"      alpha",alphalist,"beta",betalist, "       1 photon")
+                # one photon
+                j_o = j + singlesDets + 1
+                j_o_off = j_o + halfDets
+                if np.abs(Q[j_o, i]) > 0.2:
+                    a1, b1 = self.detmap[j]
+                    a2, b2 = self.detmap[j_off]
+                    alpha1 = Determinant.obtBits2ObtIndexList(a1)
+                    beta1 = Determinant.obtBits2ObtIndexList(b1)
+                    alpha2 = Determinant.obtBits2ObtIndexList(a2)
+                    beta2 = Determinant.obtBits2ObtIndexList(b2)
+                    if needs_assignment:
+                        if np.isclose(Q[j_o,i], -1*Q[j_o_off,i]):
+                            self.triplets.append(i)
+                            self.singlets.remove(i)
+                            needs_assignment = False
+                        
+                    print("%20.12lf"%(Q[j_o,i]),"%9.3d"%(j_o),"      alpha",alpha1,"beta",beta1, "       1 photon")
+                    print("%20.12lf"%(Q[j_o_off,i]),"%9.3d"%(j_o_off),"      alpha",alpha2,"beta",beta2, "       1 photon")
+                        
+                        
+
+                #if j>=H_dim/2:
+                #    #print("offset j is ",(j-H_dim//2))
+                #    if np.abs(Q[j,i]) >0.2:
+                #        a,b = self.detmap[j-H_dim//2]
+                #        alphalist = Determinant.obtBits2ObtIndexList(a)
+                #        betalist = Determinant.obtBits2ObtIndexList(b)
+
+                #print("%20.12lf"%(Q[j,i]),"%9.3d"%(j),"      alpha",alphalist,"beta",betalist, "       1 photon")
 
