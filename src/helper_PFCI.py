@@ -600,12 +600,6 @@ class PFHamiltonianGenerator:
         t_det_end = time.time()
         print(F' Completed determinant list in {t_det_end - t_det_start} seconds ')
 
-        indim = self.davidson_indim * self.davidson_roots
-        maxdim = self.davidson_maxdim * self.davidson_roots
-        if (indim > H_dim or maxdim > H_dim):
-            print('subspace size is too large, try to set maxdim and indim <',H_dim//self.davidson_roots)
-            sys.exit()
-
 
         # build Constant matrices
         self.buildConstantMatrices(self.ci_level)
@@ -617,12 +611,22 @@ class PFHamiltonianGenerator:
         t_H_build = time.time()
         print(F' Completed Hamiltonian build in {t_H_build - t_const_end} seconds')
         
+        if self.full_diagonalization:
+            self.CIeigs, self.CIvecs = np.linalg.eigh(self.H_PF)
         
-        dres = self.Davidson(self.H_PF, self.davidson_roots, self.davidson_threshold, indim, maxdim,self.davidson_maxiter)
-        self.cis_e = dres["DAVIDSON EIGENVALUES"]
-        self.cis_c = dres["DAVIDSON EIGENVECTORS"]
-        t_dav_end = time.time()
-        print(F' Completed Davidson iterations in {t_dav_end - t_H_build} seconds')
+        else:
+            indim = self.davidson_indim * self.davidson_roots
+            maxdim = self.davidson_maxdim * self.davidson_roots
+            if (indim > H_dim or maxdim > H_dim):
+                print('subspace size is too large, try to set maxdim and indim <',H_dim//self.davidson_roots)
+                sys.exit()
+
+
+            dres = self.Davidson(self.H_PF, self.davidson_roots, self.davidson_threshold, indim, maxdim,self.davidson_maxiter)
+            self.CIeigs = dres["DAVIDSON EIGENVALUES"]
+            self.CIvecs = dres["DAVIDSON EIGENVECTORS"]
+            t_dav_end = time.time()
+            print(F' Completed Davidson iterations in {t_dav_end - t_H_build} seconds')
 
 
     def parseCavityOptions(self, cavity_dictionary):
@@ -654,6 +658,17 @@ class PFHamiltonianGenerator:
             self.natural_orbitals = cavity_dictionary["natural_orbitals"]
         else:
             self.natural_orbitals = False
+
+        if self.natural_orbitals:
+            if "rdm_weights" in cavity_dictionary:
+                self.rdm_weights = cavity_dictionary["rdm_weights"]
+            else:
+                self.rdm_weights = np.array([1,1])
+
+        if "full_diagonalization" in cavity_dictionary:
+            self.full_diagonalization = cavity_dictionary["full_diagonalization"]
+        else:
+            self.full_diagonalization = False 
 
         if "davidson_roots" in cavity_dictionary:
             self.davidson_roots = cavity_dictionary["davidson_roots"]
@@ -1170,11 +1185,12 @@ class PFHamiltonianGenerator:
             # get RDM from CIS ground-state - THIS CAN BE GENERALIZED TO 
             # get RDM from different states!
             _D1_avg = np.zeros((self.nmo, self.nmo))
-            N_states = 4
+            N_states = len(self.rdm_weights)
+            _norm = np.sum(self.rdm_weights)
             for i in range(N_states):
                 _sidx = self.singlets[i]
                 self.calc1RDMfromCIS(self.cis_c[:, _sidx])
-                _D1_avg += self.D1_spatial / N_states
+                _D1_avg += self.rdm_weights[i] / _norm * self.D1_spatial 
 
 
             _eig, _vec = np.linalg.eigh(_D1_avg)
@@ -1327,11 +1343,12 @@ class PFHamiltonianGenerator:
 
         with 
 
-        S_+ = \sum_p a_{p,\alpha}^{\dagger} a_{p,\beta}
-        S_- = \sum_p a_{p,\beta}^{\dagger} a_{p,\alpha}
-        S_z = 1/2 \sum_p ( a_{p,\alpha}^{\dagger} a_{p,\alpha} - a_{p,\beta}^{\dagger} a_{p,\beta} )
+        S_+ = sum_p a_{p,alpha}^{dagger} a_{p,beta}
+        S_- = sum_p a_{p,beta}^{dagger} a_{p,alpha}
+        S_z = 1/2 sum_p ( a_{p,alpha}^{dagger} a_{p,alpha} - a_{p,beta}^{dagger} a_{p,beta} )
         
         """
+        pass
 
     def computeSplusSminusPQ(self, bra_idx, ket_idx, state_vec, p, q):
         """
