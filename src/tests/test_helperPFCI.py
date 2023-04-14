@@ -103,8 +103,8 @@ def test_h2o_qed_fci_no_cavity():
     expected_g   = -75.0129801827
     excpected_e1 = -74.7364625844
 
-    actual_g = test_pf.cis_e[0] # <== ground state
-    actual_e1 = test_pf.cis_e[2] # <== first excited state
+    actual_g = test_pf.CIeigs[0] # <== ground state
+    actual_e1 = test_pf.CIeigs[2] # <== first excited state
 
     assert np.isclose(actual_g, expected_g)
     assert np.isclose(actual_e1, excpected_e1)
@@ -150,8 +150,8 @@ def test_mghp_qed_cis_no_cavity():
     )
 
     #e_fci, wavefunctions = np.linalg.eigh(test_pf.H_PF)
-    actual_e0 = test_pf.cis_e[0] # <== ground state
-    actual_e1 = test_pf.cis_e[4] # <== root 5 is first singlet excited state
+    actual_e0 = test_pf.CIeigs[0] # <== ground state
+    actual_e1 = test_pf.CIeigs[4] # <== root 5 is first singlet excited state
 
     assert np.isclose(actual_e0, expected_mghp_eg)
     assert np.isclose(actual_e1, expected_mghp_e1)
@@ -197,9 +197,9 @@ def test_mghp_qed_cis_with_cavity():
     )
 
     #e_fci, wavefunctions = np.linalg.eigh(test_pf.H_PF)
-    actual_g = test_pf.cis_e[0] # <== ground state
-    actual_lp = test_pf.cis_e[2] # <== root 3 is LP
-    actual_up = test_pf.cis_e[5] # <== root 6 is UP
+    actual_g = test_pf.CIeigs[0] # <== ground state
+    actual_lp = test_pf.CIeigs[2] # <== root 3 is LP
+    actual_up = test_pf.CIeigs[5] # <== root 6 is UP
 
     assert np.isclose(actual_g, expected_mghp_g_e)
     assert np.isclose(actual_lp, expected_mghp_lp_e)
@@ -314,7 +314,7 @@ def test_build_1rdm_with_Davidson():
 
     e_fci, wavefunctions = np.linalg.eigh(test_pf.H_PF)
 
-    _tmp_g = test_pf.cis_c[:,0]
+    _tmp_g = test_pf.CIvecs[:,0]
 
 
     # note that this Davidson vector is likely shorter than the real eigenvector

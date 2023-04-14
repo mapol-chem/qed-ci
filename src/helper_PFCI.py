@@ -577,35 +577,15 @@ class PFHamiltonianGenerator:
         cavity_options = {k.lower(): v for k, v in cavity_options.items()}
         self.parseCavityOptions(cavity_options)
 
-        t_hf_start = time.time()
-        # run cqed-rhf to generate orbital basis
-        cqed_rhf_dict = cqed_rhf(self.lambda_vector, molecule_string, psi4_options_dict)
-        t_hf_end = time.time()
-        print(F' Completed QED-RHF in {t_hf_end - t_hf_start} seconds')
-        # Parse output of cqed-rhf calculation
-        p4_wfn = self.parseArrays(cqed_rhf_dict)
+        # generate orbital basis - if self.natural_orbitals == True then
+        # self.C and self.Ca will be the QED-CIS natural orbitals
+        # otherwise they will be the QED-RHF MOs
+        psi4_wfn_o = self.generateOrbitalBasis(molecule_string, psi4_options_dict)
 
-        # build 1H in spin orbital basis
-        self.build1HSO()
-        t_1H_end = time.time()
-        print(F' Completed 1HSO Build in {t_1H_end - t_hf_end} seconds')
-        # build 2eInt in cqed-rhf basis
-        mints = psi4.core.MintsHelper(p4_wfn.basisset())
-        self.eri_so = np.asarray(mints.mo_spin_eri(self.Ca, self.Ca))
-        t_eri_end = time.time()
-        print(F' Completed ERI Build in {t_eri_end - t_1H_end} seconds ')
+        # build arrays in orbital basis from last step
+        self.buildArraysInOrbitalBasis(psi4_wfn_o)
 
-        # form the 2H in spin orbital basis
-        self.build2DSO()
-        t_2d_end = time.time()
-        print(F' Completed 2D build in {t_2d_end - t_eri_end} seconds')
-
-        # build the array to build G in the so basis
-        self.buildGSO()
-        t_1G_end = time.time()
-        print(F' Completed 1G build in {t_1G_end - t_2d_end} seconds')
-
-
+        t_det_start = time.time()
         # build the determinant list
         if self.ci_level == "cis":
             self.generateCISDeterminants()
@@ -618,13 +598,7 @@ class PFHamiltonianGenerator:
             H_dim = self.FCInumDets * 2 
 
         t_det_end = time.time()
-        print(F' Completed determinant list in {t_det_end - t_1G_end} seconds ')
-
-        indim = self.davidson_indim * self.davidson_roots
-        maxdim = self.davidson_maxdim * self.davidson_roots
-        if (indim > H_dim or maxdim > H_dim):
-            print('subspace size is too large, try to set maxdim and indim <',H_dim//self.davidson_roots)
-            sys.exit()
+        print(F' Completed determinant list in {t_det_end - t_det_start} seconds ')
 
 
         # build Constant matrices
@@ -637,12 +611,22 @@ class PFHamiltonianGenerator:
         t_H_build = time.time()
         print(F' Completed Hamiltonian build in {t_H_build - t_const_end} seconds')
         
+        if self.full_diagonalization:
+            self.CIeigs, self.CIvecs = np.linalg.eigh(self.H_PF)
         
-        dres = self.Davidson(self.H_PF, self.davidson_roots, self.davidson_threshold, indim, maxdim,self.davidson_maxiter)
-        self.cis_e = dres["DAVIDSON EIGENVALUES"]
-        self.cis_c = dres["DAVIDSON EIGENVECTORS"]
-        t_dav_end = time.time()
-        print(F' Completed Davidson iterations in {t_dav_end - t_H_build} seconds')
+        else:
+            indim = self.davidson_indim * self.davidson_roots
+            maxdim = self.davidson_maxdim * self.davidson_roots
+            if (indim > H_dim or maxdim > H_dim):
+                print('subspace size is too large, try to set maxdim and indim <',H_dim//self.davidson_roots)
+                sys.exit()
+
+
+            dres = self.Davidson(self.H_PF, self.davidson_roots, self.davidson_threshold, indim, maxdim,self.davidson_maxiter)
+            self.CIeigs = dres["DAVIDSON EIGENVALUES"]
+            self.CIvecs = dres["DAVIDSON EIGENVECTORS"]
+            t_dav_end = time.time()
+            print(F' Completed Davidson iterations in {t_dav_end - t_H_build} seconds')
 
 
     def parseCavityOptions(self, cavity_dictionary):
@@ -674,6 +658,17 @@ class PFHamiltonianGenerator:
             self.natural_orbitals = cavity_dictionary["natural_orbitals"]
         else:
             self.natural_orbitals = False
+
+        if self.natural_orbitals:
+            if "rdm_weights" in cavity_dictionary:
+                self.rdm_weights = cavity_dictionary["rdm_weights"]
+            else:
+                self.rdm_weights = np.array([1,1])
+
+        if "full_diagonalization" in cavity_dictionary:
+            self.full_diagonalization = cavity_dictionary["full_diagonalization"]
+        else:
+            self.full_diagonalization = False 
 
         if "davidson_roots" in cavity_dictionary:
             self.davidson_roots = cavity_dictionary["davidson_roots"]
@@ -727,6 +722,7 @@ class PFHamiltonianGenerator:
         self.q_PF_ao = cqed_rhf_dict["PF 1-E QUADRUPOLE MATRIX AO"]
         self.d_PF_ao = cqed_rhf_dict["PF 1-E SCALED DIPOLE MATRIX AO"]
         self.d_cmo = cqed_rhf_dict["PF 1-E DIPOLE MATRIX MO"]
+        self.d_ao = cqed_rhf_dict["PF 1-E DIPOLE MATRIX AO"]
         wfn = cqed_rhf_dict["PSI4 WFN"]
         self.d_exp = cqed_rhf_dict["EXPECTATION VALUE OF d"]
         self.Enuc = cqed_rhf_dict["NUCLEAR REPULSION ENERGY"]
@@ -762,7 +758,7 @@ class PFHamiltonianGenerator:
             self.H_1e_ao += self.q_PF_ao + self.d_PF_ao
         # build H_spin
         # spatial part of 1-e integrals
-        _H_spin = np.einsum("uj,vi,uv", self.Ca, self.Ca, self.H_1e_ao)
+        _H_spin = np.einsum("uj,vi,uv", self.C, self.C, self.H_1e_ao)
         _H_spin = np.repeat(_H_spin, 2, axis=0)
         _H_spin = np.repeat(_H_spin, 2, axis=1)
         # spin part of 1-e integrals
@@ -782,26 +778,10 @@ class PFHamiltonianGenerator:
         spin_ind = np.arange(_d_spin.shape[0], dtype=int) % 2
         self.d_spin = _d_spin * (spin_ind.reshape(-1, 1) == spin_ind)
 
-        #self.TDI_spin = np.zeros((self.nso, self.nso, self.nso, self.nso))
-        #TDI_fast = np.zeros_like(self.TDI_spin)
-
         t1 = np.einsum("ik,jl->ijkl", self.d_spin, self.d_spin)
         t2 = np.einsum("il,jk->ijkl", self.d_spin, self.d_spin)
         self.TDI_spin = t1 - t2
-        #if self.ignore_coupling == False:
-        #    self.TDI_spin = np.copy(TDI_fast)
-            # get the dipole-dipole integrals in the spin-orbital basis with physicist convention
-            #for i in range(self.nso):
-            #    for j in range(self.nso):
-            #        for k in range(self.nso):
-            #            for l in range(self.nso):
-            #                self.TDI_spin[i, j, k, l] = map_spatial_dipole_to_spin(
-            #                    self.d_cmo, i, j, k, l
-            #                )
-
-        # add dipole-dipole integrals to ERIs
         self.antiSym2eInt = self.eri_so + self.TDI_spin
-        #assert np.allclose(TDI_fast, self.TDI_spin)
 
     def buildGSO(self):
         """
@@ -891,8 +871,6 @@ class PFHamiltonianGenerator:
 
         # get list of tuples definining CIS occupations, including the reference
         cis_tuples = self.generateCISTuple()
-        #print("printing CIS tuples")
-        #print(cis_tuples)
         # loop through these occupations, compute excitation level, create determinants,
         # and keep track of excitation index
         for alpha in cis_tuples:
@@ -1149,6 +1127,124 @@ class PFHamiltonianGenerator:
             Relem = 0.0
 
         return Helem + Relem
+    
+    def generateOrbitalBasis(self, molecule_string, psi4_options_dict):
+        """
+        Calculate the orbitals basis for the CI calculation
+        Needs to:
+            Determine the orbital type -
+            if cqed-rhf:
+               1. Run CQED-RHF
+               2. Update 
+            1. Build CIS determinant list
+            2. Obtain CIS vectors
+            3. Build CIS 1RDM
+            4. Diagonalize 1RDM -> vectors U
+            5. Dot original MO coefficients into vectors NO = C @ U
+        """
+
+        t_hf_start = time.time()
+        cqed_rhf_dict = cqed_rhf(self.lambda_vector, molecule_string, psi4_options_dict)
+        t_hf_end = time.time()
+        print(F' Completed QED-RHF in {t_hf_end - t_hf_start} seconds')
+
+        # Parse output of cqed-rhf calculation
+        psi4_wfn = self.parseArrays(cqed_rhf_dict)
+
+
+        if self.natural_orbitals: #<== need to run CIS
+            self.buildArraysInOrbitalBasis(psi4_wfn)
+            t_det_start = time.time()
+            self.generateCISDeterminants()
+            H_dim = self.CISnumDets * 2 
+            t_det_end = time.time()
+            print(F' Completed determinant list in {t_det_end - t_det_start} seconds ')
+            #indim = self.davidson_indim * self.davidson_roots
+            #maxdim = self.davidson_maxdim * self.davidson_roots
+            #if (indim > H_dim or maxdim > H_dim):
+            #    print('subspace size is too large, try to set maxdim and indim <',H_dim//self.davidson_roots)
+            #    sys.exit()
+                
+            # build Constant matrices
+            self.buildConstantMatrices("cis")
+            t_const_end = time.time()
+            print(F' Completed constant offset matrix in {t_const_end - t_det_end} seconds')
+            
+            # Build Matrix
+            self.generatePFHMatrix("cis")
+            t_H_build = time.time()
+            print(F' Completed Hamiltonian build in {t_H_build - t_const_end} seconds')
+            #dres = self.Davidson(self.H_PF, self.davidson_roots, self.davidson_threshold, indim, maxdim,self.davidson_maxiter)
+            #self.cis_e = dres["DAVIDSON EIGENVALUES"]
+            #self.cis_c = dres["DAVIDSON EIGENVECTORS"]
+            #t_dav_end = time.time()
+            #print(F' Completed Davidson iterations in {t_dav_end - t_H_build} seconds')
+            self.cis_e, self.cis_c = np.linalg.eigh(self.H_PF)
+            self.classifySpinState()
+
+            # get RDM from CIS ground-state - THIS CAN BE GENERALIZED TO 
+            # get RDM from different states!
+            _D1_avg = np.zeros((self.nmo, self.nmo))
+            N_states = len(self.rdm_weights)
+            _norm = np.sum(self.rdm_weights)
+            for i in range(N_states):
+                _sidx = self.singlets[i]
+                self.calc1RDMfromCIS(self.cis_c[:, _sidx])
+                _D1_avg += self.rdm_weights[i] / _norm * self.D1_spatial 
+
+
+            _eig, _vec = np.linalg.eigh(_D1_avg)
+            _idx = _eig.argsort()[::-1]
+            self.noocs = _eig[_idx]
+            self.no_vec = _vec[:,_idx]
+            self.nat_orbs = np.dot(self.C, self.no_vec)
+
+            # now we have the natural orbitals, make sure we update the quantities
+            # that use the orbitals
+            self.C = np.copy(self.nat_orbs)
+
+            # collect rhf wfn object as dictionary
+            wfn_dict = psi4.core.Wavefunction.to_file(psi4_wfn)
+            
+            # update wfn_dict with orbitals from CQED-RHF
+            wfn_dict["matrix"]["Ca"] = self.C
+            wfn_dict["matrix"]["Cb"] = self.C
+            
+            # update wfn object
+            psi4_wfn = psi4.core.Wavefunction.from_file(wfn_dict)
+            
+            # Grab data from wavfunction class
+            self.Ca = psi4_wfn.Ca()
+
+            # transform d_ao to d_cmo using natural orbitals
+            self.d_cmo = np.dot(self.C.T, self.d_ao).dot(self.C)
+
+        return psi4_wfn
+
+
+    def buildArraysInOrbitalBasis(self, p4_wfn):
+
+        # build 1H in orbital basis
+        t_1H_start = time.time()
+        self.build1HSO()
+        t_1H_end = time.time()
+        print(F' Completed 1HSO Build in {t_1H_end - t_1H_start} seconds')
+        
+        # build 2eInt in cqed-rhf basis
+        mints = psi4.core.MintsHelper(p4_wfn.basisset())
+        self.eri_so = np.asarray(mints.mo_spin_eri(self.Ca, self.Ca))
+        t_eri_end = time.time()
+        print(F' Completed ERI Build in {t_eri_end - t_1H_end} seconds ')
+        
+        # form the 2H in spin orbital basis
+        self.build2DSO()
+        t_2d_end = time.time()
+        print(F' Completed 2D build in {t_2d_end - t_eri_end} seconds')
+        
+        # build the array to build G in the so basis
+        self.buildGSO()
+        t_1G_end = time.time()
+        print(F' Completed 1G build in {t_1G_end - t_2d_end} seconds')
 
     def calc1RDMfromCIS(self, c_vec):
         _nDets = self.CISnumDets
@@ -1237,7 +1333,69 @@ class PFHamiltonianGenerator:
                     _D_bb[j,l]=self.D1[p,q]
 
         # spatial orbital 1RDM
-        self.D1_spatial = _D_aa + _D_bb 
+        self.D1_spatial = _D_aa + _D_bb
+
+    def computeS2(self, state_vec):
+        """
+        Given a state with vector state_vec, compute the expectation value of S^2 using
+        Eq. 2.2.38 of Helgaker:
+        S^2 = S_+ S_- + S_z(S_z - 1)
+
+        with 
+
+        S_+ = sum_p a_{p,alpha}^{dagger} a_{p,beta}
+        S_- = sum_p a_{p,beta}^{dagger} a_{p,alpha}
+        S_z = 1/2 sum_p ( a_{p,alpha}^{dagger} a_{p,alpha} - a_{p,beta}^{dagger} a_{p,beta} )
+        
+        """
+        pass
+
+    def computeSplusSminusPQ(self, bra_idx, ket_idx, state_vec, p, q):
+        """
+        
+        <bra|S_+(p)S_-(q)|ket> 
+
+        """
+        # copy bra and ket determinant
+        _bra = self.CISdets[bra_idx].copy()
+        _ket = self.CISdets[ket_idx].copy()
+
+        # S-(q) kills q_alpha and creates q_beta
+        a, b = _ket.getOrbitalIndexLists()
+        print(a, b)
+
+        # check to see if q_alpha is unnoccupied
+        if (q not in a):
+            return 0
+        else:
+            _ket.removeAlphaOrbital(q)
+        if (q not in b):
+            _ket.addBetaOrbital(q)
+        else:
+            return 0
+        
+        # act on updated ket with S+(p)
+        # S+(p) kills p_beta and creates p_alpha
+        
+        # get updated occupation list
+        a, b = _ket.getOrbitalIndexLists()
+        print(a, b)
+        if (p not in b):
+            return 0
+        else:
+            _ket.removeBetaOrbital(p)
+        if (p not in a):
+            _ket.addAlphaOrbital(p)
+        else:
+            return 0
+        
+        numUniqueOrbitals = _bra.numberOfTotalDiffOrbitals(_ket)
+        if numUniqueOrbitals==0:
+            u1, u2, sign = _bra.getUniqueOrbitalsInListsPlusSign(_ket)
+            return sign * state_vec[bra_idx] * state_vec[ket_idx]
+        else:
+            return 0
+        
 
     def Davidson(self, H, nroots, threshold,indim,maxdim,maxiter):
         H_diag = np.diag(H)
@@ -1362,25 +1520,7 @@ class PFHamiltonianGenerator:
                 Q = np.column_stack(Qtup)
                 #print(Q)
         Q=np.dot(Q, alpha)
-        for i in range(Q.shape[1]):
-            print("state",i, "energy =",theta[i])
-            print("        amplitude","      position", "         most important determinants","             number of photon")
-            for j in range(Q.shape[0]):
-                if j<H_dim/2:
-                    if np.abs(Q[j][i]) >0.2:
-                        a,b = self.detmap[j]
-                        alphalist = Determinant.obtBits2ObtIndexList(a)
-                        betalist = Determinant.obtBits2ObtIndexList(b)
-
-                        print("%20.12lf"%(Q[j][i]),"%9.3d"%(j),"      alpha",alphalist,"beta",betalist, "       0 photon")
-                if j>=H_dim/2:
-                    if np.abs(Q[j][i]) >0.2:
-                        a,b = self.detmap[j-H_dim//2]
-                        alphalist = Determinant.obtBits2ObtIndexList(a)
-                        betalist = Determinant.obtBits2ObtIndexList(b)
-
-                        print("%20.12lf"%(Q[j][i]),"%9.3d"%(j),"      alpha",alphalist,"beta",betalist, "       1 photon")
-
+        
 
 
         davidson_dict = {
@@ -1389,3 +1529,70 @@ class PFHamiltonianGenerator:
         }
 
         return davidson_dict
+    
+    def classifySpinState(self):
+        self.triplets = []
+        self.singlets = [item for item in range(2*self.CISnumDets)]
+        Q = self.cis_c
+        theta = self.cis_e
+        singlesDets = self.CISnumDets - 1
+        halfDets = singlesDets // 2
+
+        H_dim = Q.shape[0]
+        print("H_dim is",H_dim)
+        print("dimensions of detmap", len(self.detmap))
+        for i in range(Q.shape[1]):
+            print("state",i, "energy =",theta[i])
+            needs_assignment = True
+            print("        amplitude","      position", "         most important determinants","             number of photon")
+            for j in range(1, halfDets):
+                #if j<H_dim/2: 
+                # zero photon
+                j_off = j + halfDets
+                if np.abs(Q[j,i]) >0.2:
+                    a1, b1 = self.detmap[j]
+                    a2, b2 = self.detmap[j_off]
+                    alpha1 = Determinant.obtBits2ObtIndexList(a1)
+                    beta1 = Determinant.obtBits2ObtIndexList(b1)
+                    alpha2 = Determinant.obtBits2ObtIndexList(a2)
+                    beta2 = Determinant.obtBits2ObtIndexList(b2)
+                    if needs_assignment:
+                        if np.isclose(Q[j,i], -1*Q[j_off,i]):
+                            self.triplets.append(i)
+                            self.singlets.remove(i)
+                            needs_assignment = False
+                    
+
+                    print("%20.12lf"%(Q[j,i]),"%9.3d"%(j),"      alpha",alpha1,"beta",beta1, "       0 photon")
+                    print("%20.12lf"%(Q[j_off,i]),"%9.3d"%(j_off),"      alpha",alpha2,"beta",beta2, "       0 photon")
+
+                # one photon
+                j_o = j + singlesDets + 1
+                j_o_off = j_o + halfDets
+                if np.abs(Q[j_o, i]) > 0.2:
+                    a1, b1 = self.detmap[j]
+                    a2, b2 = self.detmap[j_off]
+                    alpha1 = Determinant.obtBits2ObtIndexList(a1)
+                    beta1 = Determinant.obtBits2ObtIndexList(b1)
+                    alpha2 = Determinant.obtBits2ObtIndexList(a2)
+                    beta2 = Determinant.obtBits2ObtIndexList(b2)
+                    if needs_assignment:
+                        if np.isclose(Q[j_o,i], -1*Q[j_o_off,i]):
+                            self.triplets.append(i)
+                            self.singlets.remove(i)
+                            needs_assignment = False
+                        
+                    print("%20.12lf"%(Q[j_o,i]),"%9.3d"%(j_o),"      alpha",alpha1,"beta",beta1, "       1 photon")
+                    print("%20.12lf"%(Q[j_o_off,i]),"%9.3d"%(j_o_off),"      alpha",alpha2,"beta",beta2, "       1 photon")
+                        
+                        
+
+                #if j>=H_dim/2:
+                #    #print("offset j is ",(j-H_dim//2))
+                #    if np.abs(Q[j,i]) >0.2:
+                #        a,b = self.detmap[j-H_dim//2]
+                #        alphalist = Determinant.obtBits2ObtIndexList(a)
+                #        betalist = Determinant.obtBits2ObtIndexList(b)
+
+                #print("%20.12lf"%(Q[j,i]),"%9.3d"%(j),"      alpha",alphalist,"beta",betalist, "       1 photon")
+
