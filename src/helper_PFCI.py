@@ -1520,6 +1520,35 @@ class PFHamiltonianGenerator:
                 Q = np.column_stack(Qtup)
                 #print(Q)
         Q=np.dot(Q, alpha)
+        for i in range(Q.shape[1]):
+            #print("state",i, "energy =",theta[i])
+            print("        amplitude","      position", "         most important determinants","             number of photon")
+            index=np.argsort(np.abs(Q[:,i]))
+            c0 = index[Q.shape[0]-1]%(H_dim//2)
+            d0 = (index[Q.shape[0]-1]-c0)//(H_dim//2)
+            a0,b0 = self.detmap[c0]
+            alphalist = Determinant.obtBits2ObtIndexList(a0)
+            betalist = Determinant.obtBits2ObtIndexList(b0)
+            singlet = 1
+            for j in range(min(H_dim,10)):
+                c = index[Q.shape[0]-j-1]%(H_dim//2)
+                d = (index[Q.shape[0]-j-1]-c)//(H_dim//2)
+                a,b = self.detmap[c]
+                if a == b0 and b == a0 and np.abs(Q[index[Q.shape[0]-j-1]][i]-(-1)*Q[index[Q.shape[0]-1]][i]) < 1e-8:
+                    singlet = singlet * 0
+                else:
+                    singlet = singlet * 1
+                alphalist = Determinant.obtBits2ObtIndexList(a)
+                betalist = Determinant.obtBits2ObtIndexList(b)
+
+                print("%20.12lf"%(Q[index[Q.shape[0]-j-1]][i]),"%9.3d"%(index[Q.shape[0]-j-1]),"      alpha",alphalist,"   beta",betalist,"%4.1d"%(d), "photon")
+            #print("state",i, "energy =",theta[i], singlet)
+            if singlet == 1:
+                print("state",i, "energy =",theta[i], '  singlet',"%2.1d"%(d0), "photon")
+            else:
+                print("state",i, "energy =",theta[i], '  triplet',"%2.1d"%(d0), "photon")
+
+
         
 
 
