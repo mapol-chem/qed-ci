@@ -1534,7 +1534,7 @@ class PFHamiltonianGenerator:
                 c = index[Q.shape[0]-j-1]%(H_dim//2)
                 d = (index[Q.shape[0]-j-1]-c)//(H_dim//2)
                 a,b = self.detmap[c]
-                if a == b0 and b == a0 and np.abs(Q[index[Q.shape[0]-j-1]][i]-(-1)*Q[index[Q.shape[0]-1]][i]) < 1e-8:
+                if a == b0 and b == a0 and np.abs(Q[index[Q.shape[0]-j-1]][i]-(-1)*Q[index[Q.shape[0]-1]][i]) < 1e-4:
                     singlet = singlet * 0
                 else:
                     singlet = singlet * 1
