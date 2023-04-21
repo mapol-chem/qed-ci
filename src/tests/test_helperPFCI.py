@@ -205,6 +205,58 @@ def test_mghp_qed_cis_with_cavity():
     assert np.isclose(actual_lp, expected_mghp_lp_e)
     assert np.isclose(actual_up, expected_mghp_up_e)
 
+
+def test_mghp_qed_cis_with_cavity_canonical_mo():
+    # options for mgf
+    mol_str = """
+    Mg
+    H 1 2.2
+    symmetry c1
+    1 1
+    """
+
+    options_dict = {
+        "basis": "cc-pVDZ",
+        "scf_type": "pk",
+        "e_convergence": 1e-10,
+        "d_convergence": 1e-10,
+    }
+
+    cavity_dict = {
+        'omega_value' : 4.75 / psi4.constants.Hartree_energy_in_eV,
+        'lambda_vector' : np.array([0, 0, 0.0125]),
+        'ci_level' : 'cis',
+        'full_diagonalization' : True,
+        'canonical_mos' : True
+    }
+
+    mol = psi4.geometry(mol_str)
+
+    psi4.set_options(options_dict)
+
+    #energy from psi4numpy
+    expected_mghp_g_e = -199.86358254419457
+    expected_mghp_lp_e = -199.69776087489558
+    expected_mghp_up_e = -199.68066502792058
+
+
+    test_pf = PFHamiltonianGenerator(
+        mol_str,
+        options_dict,
+        cavity_dict
+    )
+
+    #e_fci, wavefunctions = np.linalg.eigh(test_pf.H_PF)
+    actual_g = test_pf.CIeigs[0] # <== ground state
+    actual_lp = test_pf.CIeigs[2] # <== root 3 is LP
+    actual_up = test_pf.CIeigs[5] # <== root 6 is UP
+
+    print(actual_g - expected_mghp_g_e)
+    print(actual_lp - expected_mghp_lp_e)
+    print(actual_up - expected_mghp_up_e)
+    pass
+
+
 def test_build_1rdm():
 
     mol_str = """

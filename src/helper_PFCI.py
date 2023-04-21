@@ -7,7 +7,7 @@ References:
 - Equations from [Szabo:1996], [Foley:2022], [Koch:2020]
 """
 
-__authors__ = "Jonathan J. Foley IV"
+__authors__ = "Nam Vu", "Jonathan J. Foley IV"
 __credits__ = ["Tianyuan Zhang", "Jeffrey B. Schriber", "Daniel G. A. Smith"]
 
 __copyright__ = "(c) 2014-2023, The Psi4NumPy Developers, Foley Lab, Mapol Project"
@@ -654,10 +654,16 @@ class PFHamiltonianGenerator:
             self.ignore_coupling = cavity_dictionary["ignore_coupling"]
         else:
             self.ignore_coupling = False
+
         if "natural_orbitals" in cavity_dictionary:
             self.natural_orbitals = cavity_dictionary["natural_orbitals"]
         else:
             self.natural_orbitals = False
+
+        if "canonical_mos" in cavity_dictionary:
+            self.canonical_mos = cavity_dictionary["canonical_mos"]
+        else:
+            self.canonical_mos = False
 
         if self.natural_orbitals:
             if "rdm_weights" in cavity_dictionary:
@@ -1143,10 +1149,18 @@ class PFHamiltonianGenerator:
             5. Dot original MO coefficients into vectors NO = C @ U
         """
 
-        t_hf_start = time.time()
-        cqed_rhf_dict = cqed_rhf(self.lambda_vector, molecule_string, psi4_options_dict)
-        t_hf_end = time.time()
-        print(F' Completed QED-RHF in {t_hf_end - t_hf_start} seconds')
+        if self.canonical_mos:
+            t_hf_start = time.time()
+            _no_lambda = np.array([0, 0, 0])
+            cqed_rhf_dict = cqed_rhf(_no_lambda, molecule_string, psi4_options_dict)
+            t_hf_end = time.time()
+            print(F' Completed RHF in {t_hf_end - t_hf_start} seconds')
+        
+        else:
+            t_hf_start = time.time()
+            cqed_rhf_dict = cqed_rhf(self.lambda_vector, molecule_string, psi4_options_dict)
+            t_hf_end = time.time()
+            print(F' Completed QED-RHF in {t_hf_end - t_hf_start} seconds')
 
         # Parse output of cqed-rhf calculation
         psi4_wfn = self.parseArrays(cqed_rhf_dict)
