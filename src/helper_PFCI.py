@@ -733,6 +733,10 @@ class PFHamiltonianGenerator:
         self.d_exp = cqed_rhf_dict["EXPECTATION VALUE OF d"]
         self.Enuc = cqed_rhf_dict["NUCLEAR REPULSION ENERGY"]
 
+        self.mu_x_ao = cqed_rhf_dict["DIPOLE AO X"]
+        self.mu_y_ao = cqed_rhf_dict["DIPOLE AO Y"]
+        self.mu_z_ao = cqed_rhf_dict["DIPOLE AO Z"]
+
         # collect rhf wfn object as dictionary
         wfn_dict = psi4.core.Wavefunction.to_file(wfn)
 
@@ -753,12 +757,37 @@ class PFHamiltonianGenerator:
         self.docc_list = [i for i in range(self.ndocc)]
 
         return wfn
+    
+    def build1MuSO(self):
+        """ Will build the 1-electron dipole arrays in the spin orbital
+            basis to be used for computing dipole moment expectation values
+        """
+        _mu_x_spin = np.einsum("uj,vi,uv", self.C, self.C, self.mu_x_ao)
+        _mu_x_spin = np.repeat(_mu_x_spin, 2, axis=0)
+        _mu_x_spin = np.repeat(_mu_x_spin, 2, axis=1)
+
+        _mu_y_spin = np.einsum("uj,vi,uv", self.C, self.C, self.mu_y_ao)
+        _mu_y_spin = np.repeat(_mu_y_spin, 2, axis=0)
+        _mu_y_spin = np.repeat(_mu_y_spin, 2, axis=1)
+
+        _mu_z_spin = np.einsum("uj,vi,uv", self.C, self.C, self.mu_z_ao)
+        _mu_z_spin = np.repeat(_mu_z_spin, 2, axis=0)
+        _mu_z_spin = np.repeat(_mu_z_spin, 2, axis=1)
+
+        _spin_ind = np.arange(_mu_z_spin.shape[0], dtype=int) % 2
+
+        self.mu_x_spin = _mu_x_spin * (_spin_ind.reshape(-1, 1) == _spin_ind)
+        self.mu_y_spin = _mu_y_spin * (_spin_ind.reshape(-1, 1) == _spin_ind)
+        self.mu_z_spin = _mu_z_spin * (_spin_ind.reshape(-1, 1) == _spin_ind)
+        
+
 
     def build1HSO(self):
         """Will build the 1-electron arrays in
         the spin orbital basis that contribute to the A+Delta blocks
 
         """
+
         self.H_1e_ao = self.T_ao + self.V_ao
         if self.ignore_coupling == False:
             self.H_1e_ao += self.q_PF_ao + self.d_PF_ao
@@ -1099,6 +1128,35 @@ class PFHamiltonianGenerator:
         p = unique2[0]
         Gelem = self.g_so[m, p]
         return sign * Gelem
+    
+    def calcMuMatrixElementDiffIn1(self, det1, det2):
+        """
+        Calculate a dipole matrix element by two determinants where the determinants differ by 1 spin orbitals
+        """
+        unique1, unique2, sign = det1.getUniqueOrbitalsInMixIndexListsPlusSign(det2)
+        m = unique1[0]
+        p = unique2[0]
+        mu_x = self.mu_x_spin[m, p] * sign
+        mu_y = self.mu_y_spin[m, p] * sign
+        mu_z = self.mu_z_spin[m, p] * sign
+        return np.array([mu_x, mu_y, mu_z])
+
+    
+    def calcMuMatrixElementIdentialDet(self, det):
+        """
+        Calculate a matrix element by two determinants where they are identical
+        """
+
+        spinObtList = det.getOrbitalMixedIndexList()
+        mu_x = 0.0
+        mu_y = 0.0
+        mu_z = 0.0
+        for m in spinObtList:
+            mu_x += self.mu_x_spin[m, m]
+            mu_y += self.mu_y_spin[m, m]
+            mu_z += self.mu_z_spin[m, m]
+
+        return np.array([mu_x, mu_y, mu_z])
 
     def calcGMatrixElementIdentialDet(self, det):
         """
@@ -1260,6 +1318,12 @@ class PFHamiltonianGenerator:
         t_1G_end = time.time()
         print(F' Completed 1G build in {t_1G_end - t_2d_end} seconds')
 
+        # build the x, y, z components of the dipole array in the so basis
+        self.build1MuSO()
+        t_dipole_end = time.time()
+        print(F' Completed the Dipole Matrix Build in {t_dipole_end - t_1G_end} seconds')
+
+
     def calc1RDMfromCIS(self, c_vec):
         _nDets = self.CISnumDets
         _nSingles = _nDets - 1
@@ -1348,68 +1412,6 @@ class PFHamiltonianGenerator:
 
         # spatial orbital 1RDM
         self.D1_spatial = _D_aa + _D_bb
-
-    def computeS2(self, state_vec):
-        """
-        Given a state with vector state_vec, compute the expectation value of S^2 using
-        Eq. 2.2.38 of Helgaker:
-        S^2 = S_+ S_- + S_z(S_z - 1)
-
-        with 
-
-        S_+ = sum_p a_{p,alpha}^{dagger} a_{p,beta}
-        S_- = sum_p a_{p,beta}^{dagger} a_{p,alpha}
-        S_z = 1/2 sum_p ( a_{p,alpha}^{dagger} a_{p,alpha} - a_{p,beta}^{dagger} a_{p,beta} )
-        
-        """
-        pass
-
-    def computeSplusSminusPQ(self, bra_idx, ket_idx, state_vec, p, q):
-        """
-        
-        <bra|S_+(p)S_-(q)|ket> 
-
-        """
-        # copy bra and ket determinant
-        _bra = self.CISdets[bra_idx].copy()
-        _ket = self.CISdets[ket_idx].copy()
-
-        # S-(q) kills q_alpha and creates q_beta
-        a, b = _ket.getOrbitalIndexLists()
-        print(a, b)
-
-        # check to see if q_alpha is unnoccupied
-        if (q not in a):
-            return 0
-        else:
-            _ket.removeAlphaOrbital(q)
-        if (q not in b):
-            _ket.addBetaOrbital(q)
-        else:
-            return 0
-        
-        # act on updated ket with S+(p)
-        # S+(p) kills p_beta and creates p_alpha
-        
-        # get updated occupation list
-        a, b = _ket.getOrbitalIndexLists()
-        print(a, b)
-        if (p not in b):
-            return 0
-        else:
-            _ket.removeBetaOrbital(p)
-        if (p not in a):
-            _ket.addAlphaOrbital(p)
-        else:
-            return 0
-        
-        numUniqueOrbitals = _bra.numberOfTotalDiffOrbitals(_ket)
-        if numUniqueOrbitals==0:
-            u1, u2, sign = _bra.getUniqueOrbitalsInListsPlusSign(_ket)
-            return sign * state_vec[bra_idx] * state_vec[ket_idx]
-        else:
-            return 0
-        
 
     def Davidson(self, H, nroots, threshold,indim,maxdim,maxiter):
         H_diag = np.diag(H)
@@ -1629,13 +1631,3 @@ class PFHamiltonianGenerator:
                     print("%20.12lf"%(Q[j_o_off,i]),"%9.3d"%(j_o_off),"      alpha",alpha2,"beta",beta2, "       1 photon")
                         
                         
-
-                #if j>=H_dim/2:
-                #    #print("offset j is ",(j-H_dim//2))
-                #    if np.abs(Q[j,i]) >0.2:
-                #        a,b = self.detmap[j-H_dim//2]
-                #        alphalist = Determinant.obtBits2ObtIndexList(a)
-                #        betalist = Determinant.obtBits2ObtIndexList(b)
-
-                #print("%20.12lf"%(Q[j,i]),"%9.3d"%(j),"      alpha",alphalist,"beta",betalist, "       1 photon")
-

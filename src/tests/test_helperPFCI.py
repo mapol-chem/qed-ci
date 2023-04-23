@@ -109,6 +109,50 @@ def test_h2o_qed_fci_no_cavity():
     assert np.isclose(actual_g, expected_g)
     assert np.isclose(actual_e1, excpected_e1)
 
+def test_mghp_qed_cis_tdm_no_cavity():
+    # options for mgf
+    mol_str = """
+    Mg
+    H 1 2.2
+    symmetry c1
+    1 1
+    """
+
+    options_dict = {
+        "basis": "cc-pVDZ",
+        "scf_type": "pk",
+        "e_convergence": 1e-10,
+        "d_convergence": 1e-10,
+    }
+
+    cavity_dict = {
+        'omega_value' : 0.0,
+        'lambda_vector' : np.array([0, 0, 0]),
+        'ci_level' : 'cis',
+        'davidson_roots' : 8,
+        'davidson_threshold' : 1e-8,
+        'full_diagonalization' : True,
+    }
+
+    mol = psi4.geometry(mol_str)
+
+    psi4.set_options(options_dict)
+
+    expected_e4 = -199.69011028328705
+
+    #energy from psi4numpy
+    expected_mu_04 = np.array([-6.93218490e-16, -1.77990759e-15,  2.33258251e+00])
+    
+
+    test_pf = PFHamiltonianGenerator(
+        mol_str,
+        options_dict,
+        cavity_dict
+    )
+
+    pass
+
+
 
 def test_mghp_qed_cis_no_cavity():
     # options for mgf
