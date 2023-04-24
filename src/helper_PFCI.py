@@ -1013,6 +1013,12 @@ class PFHamiltonianGenerator:
         # one-electron version of Hamiltonian
         self.H_1E = np.zeros((2 * _numDets, 2 * _numDets))
 
+        # dipole matrix
+        self.dipole_block_x = np.zeros((_numDets, _numDets))
+        self.dipole_block_y = np.zeros((_numDets, _numDets))
+        self.dipole_block_z = np.zeros((_numDets, _numDets))
+
+
         for i in range(_numDets):
             for j in range(i + 1):
                 self.ApDmatrix[i, j] = self.calcApDMatrixElement(_dets[i], _dets[j])
@@ -1023,6 +1029,16 @@ class PFHamiltonianGenerator:
                 self.apdmatrix[j, i] = self.apdmatrix[i, j]
                 self.Gmatrix[i, j] = self.calcGMatrixElement(_dets[i], _dets[j])
                 self.Gmatrix[j, i] = self.Gmatrix[i, j]
+
+                _dipole_moment = self.calcMuMatrixElement(_dets[i], _dets[j])
+                self.dipole_block_x[i, j] = _dipole_moment[0]
+                self.dipole_block_x[j, i] = _dipole_moment[0]
+                self.dipole_block_y[i, j] = _dipole_moment[1]
+                self.dipole_block_y[j, i] = _dipole_moment[1]
+                self.dipole_block_z[i, j] = _dipole_moment[2]
+                self.dipole_block_z[i, j] = _dipole_moment[2]
+
+
 
         # full hamiltonian
         self.H_PF[:_numDets, :_numDets] = self.ApDmatrix + self.Enuc_so + self.dc_so
@@ -1070,6 +1086,25 @@ class PFHamiltonianGenerator:
 
         else:
             return 0.0
+        
+    def calcMuMatrixElement(self, det1, det2):
+        """
+        Calculate a Mu matrix element between two determinants
+        """
+        numUniqueOrbitals = None
+        if det1.diff2OrLessOrbitals(det2):
+            numUniqueOrbitals = det1.numberOfTotalDiffOrbitals(det2)
+            if numUniqueOrbitals == 0:
+                
+                return self.calcMuMatrixElementIdentialDet(det1)
+            elif numUniqueOrbitals == 1:
+                return self.calcMuMatrixElementDiffIn1(det1, det2)
+            else:
+                #
+                return np.array([0.0, 0.0, 0.0])
+        else:
+            return np.array([0.0, 0.0, 0.0])
+        
 
     def calcGMatrixElement(self, det1, det2):
         """
