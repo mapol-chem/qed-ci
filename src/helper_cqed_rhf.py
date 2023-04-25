@@ -20,7 +20,7 @@ import numpy as np
 import time
 
 
-def cqed_rhf(lambda_vector, molecule_string, psi4_options_dict):
+def cqed_rhf(lambda_vector, molecule_string, psi4_options_dict, canonical_basis=False):
     """Computes the QED-RHF energy and density
     Arguments
     ---------
@@ -173,6 +173,7 @@ def cqed_rhf(lambda_vector, molecule_string, psi4_options_dict):
     maxiter = 500
     for SCF_ITER in range(1, maxiter + 1):
 
+
         # Build fock matrix: [Szabo:1996] Eqn. 3.154, pp. 141
         J = np.einsum("pqrs,rs->pq", I, D)
         K = np.einsum("prqs,rs->pq", I, D)
@@ -188,6 +189,7 @@ def cqed_rhf(lambda_vector, molecule_string, psi4_options_dict):
         diis_e = np.einsum("ij,jk,kl->il", F, D, S) - np.einsum("ij,jk,kl->il", S, D, F)
         diis_e = A.dot(diis_e).dot(A)
         dRMS = np.mean(diis_e**2) ** 0.5
+
 
         # SCF energy and update: [Szabo:1996], Eqn. 3.184, pp. 150
         # Pauli-Fierz terms Eq. 13 of [McTague:2021:ChemRxiv]
@@ -205,6 +207,12 @@ def cqed_rhf(lambda_vector, molecule_string, psi4_options_dict):
         # Diagonalize Fock matrix: [Szabo:1996] pp. 145
         Fp = A.dot(F).dot(A)  # Eqn. 3.177
         e, C2 = np.linalg.eigh(Fp)  # Solving Eqn. 1.178
+
+        # if optional flag to use canonical basis is set to True, break before updating 
+        # any scf quantities
+        if canonical_basis:
+            break
+
         C = A.dot(C2)  # Back transform, Eqn. 3.174
         Cocc = C[:, :ndocc]
         D = np.einsum("pi,qi->pq", Cocc, Cocc)  # [Szabo:1996] Eqn. 3.145, pp. 139

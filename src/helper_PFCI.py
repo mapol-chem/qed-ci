@@ -1242,18 +1242,14 @@ class PFHamiltonianGenerator:
             5. Dot original MO coefficients into vectors NO = C @ U
         """
 
+        t_hf_start = time.time()
         if self.canonical_mos:
-            t_hf_start = time.time()
-            _no_lambda = np.array([0, 0, 0])
-            cqed_rhf_dict = cqed_rhf(_no_lambda, molecule_string, psi4_options_dict)
-            t_hf_end = time.time()
-            print(F' Completed RHF in {t_hf_end - t_hf_start} seconds')
-        
+            cqed_rhf_dict = cqed_rhf(self.lambda_vector, molecule_string, psi4_options_dict, canonical_basis=True)
         else:
-            t_hf_start = time.time()
             cqed_rhf_dict = cqed_rhf(self.lambda_vector, molecule_string, psi4_options_dict)
-            t_hf_end = time.time()
-            print(F' Completed QED-RHF in {t_hf_end - t_hf_start} seconds')
+        t_hf_end = time.time()
+        print(F' Completed QED-RHF in {t_hf_end - t_hf_start} seconds')
+
 
         # Parse output of cqed-rhf calculation
         psi4_wfn = self.parseArrays(cqed_rhf_dict)
