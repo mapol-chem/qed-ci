@@ -7,7 +7,7 @@ References:
 - Equations from [Szabo:1996], [Foley:2022], [Koch:2020]
 """
 
-__authors__ = "Jonathan J. Foley IV"
+__authors__ = "Nam Vu and Jonathan J. Foley IV"
 __credits__ = ["Tianyuan Zhang", "Jeffrey B. Schriber", "Daniel G. A. Smith"]
 
 __copyright__ = "(c) 2014-2023, The Psi4NumPy Developers, Foley Lab, Mapol Project"
