@@ -628,6 +628,10 @@ class PFHamiltonianGenerator:
             t_dav_end = time.time()
             print(F' Completed Davidson iterations in {t_dav_end - t_H_build} seconds')
 
+        # can generalize this later, but for now we will compute the dipole moment and tdm relevant
+        # for the first 3 CI states
+        
+
 
     def parseCavityOptions(self, cavity_dictionary):
         """
@@ -1010,8 +1014,15 @@ class PFHamiltonianGenerator:
         self.Gmatrix = np.zeros((_numDets, _numDets))
 
         self.H_PF = np.zeros((2 * _numDets, 2 * _numDets))
+
         # one-electron version of Hamiltonian
         self.H_1E = np.zeros((2 * _numDets, 2 * _numDets))
+
+        # dipole matrix in CI basis
+        self.MU_X = np.zeros((2 * _numDets, 2 * _numDets))
+        self.MU_Y = np.zeros((2 * _numDets, 2 * _numDets))
+        self.MU_Z = np.zeros((2 * _numDets, 2 * _numDets))
+
 
         # dipole matrix
         self.dipole_block_x = np.zeros((_numDets, _numDets))
@@ -1044,6 +1055,15 @@ class PFHamiltonianGenerator:
         self.H_PF[:_numDets, :_numDets] = self.ApDmatrix + self.Enuc_so + self.dc_so
         # 1-e piece
         self.H_1E[:_numDets, :_numDets] = self.apdmatrix + self.Enuc_so + self.dc_so
+
+        # Dipole Hamiltonian
+        self.MU_X[:_numDets, :_numDets] = self.dipole_block_x
+        self.MU_X[_numDets:, _numDets:] = self.dipole_block_x
+        self.MU_Y[:_numDets, :_numDets] = self.dipole_block_y
+        self.MU_Y[_numDets:, _numDets:] = self.dipole_block_y
+        self.MU_Z[:_numDets, :_numDets] = self.dipole_block_z
+        self.MU_Z[_numDets:, _numDets:] = self.dipole_block_z
+
 
         # full Hamiltonian
         self.H_PF[_numDets:, _numDets:] = (
