@@ -626,11 +626,7 @@ class PFHamiltonianGenerator:
             self.CIeigs = dres["DAVIDSON EIGENVALUES"]
             self.CIvecs = dres["DAVIDSON EIGENVECTORS"]
             t_dav_end = time.time()
-            print(F' Completed Davidson iterations in {t_dav_end - t_H_build} seconds')
-
-        # can generalize this later, but for now we will compute the dipole moment and tdm relevant
-        # for the first 3 CI states
-        
+            print(F' Completed Davidson iterations in {t_dav_end - t_H_build} seconds')        
 
 
     def parseCavityOptions(self, cavity_dictionary):
@@ -1047,7 +1043,7 @@ class PFHamiltonianGenerator:
                 self.dipole_block_y[i, j] = _dipole_moment[1]
                 self.dipole_block_y[j, i] = _dipole_moment[1]
                 self.dipole_block_z[i, j] = _dipole_moment[2]
-                self.dipole_block_z[i, j] = _dipole_moment[2]
+                self.dipole_block_z[j, i] = _dipole_moment[2]
 
 
 
@@ -1463,6 +1459,31 @@ class PFHamiltonianGenerator:
 
         # spatial orbital 1RDM
         self.D1_spatial = _D_aa + _D_bb
+
+    def compute_dipole_moment(self, braI, ketJ):
+        """
+        Compute the dipole moment expectation value  using CIvecs indexed
+        by braI and ketJ <braI | \hat{mu} | ketJ> where \hat{mu} is built
+        in the CI basis.  Note that this will be a transition dipole moment
+        when braI refers to a different state than ketJ
+        
+        """
+        # array for the dipole moment
+        _dm = np.zeros(3)
+
+        # x-component 
+        _tmpX = np.dot(self.MU_X, self.CIvecs[:,ketJ])
+        _dm[0] = np.dot(self.CIvecs[:,braI].T, _tmpX)
+        
+        # y-component
+        _tmpY = np.dot(self.MU_Y, self.CIvecs[:,ketJ])
+        _dm[1] = np.dot(self.CIvecs[:,braI].T, _tmpY)
+
+        # z-component
+        _tmpZ = np.dot(self.MU_Z, self.CIvecs[:,ketJ])
+        _dm[2] = np.dot(self.CIvecs[:,braI].T, _tmpZ)
+
+        return _dm
 
     def Davidson(self, H, nroots, threshold,indim,maxdim,maxiter):
         H_diag = np.diag(H)

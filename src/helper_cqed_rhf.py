@@ -279,7 +279,6 @@ def cqed_rhf(lambda_vector, molecule_string, psi4_options_dict, canonical_basis=
         "PF 1-E SCALED DIPOLE MATRIX AO" : d_PF,
         "PF 1-E DIPOLE MATRIX AO" : l_dot_mu_el,
         "PF 1-E DIPOLE MATRIX MO" : l_dot_mu_cmo,
-        "PF 1-E DIPOLE MATRIX AO" : l_dot_mu_el,
         "PF 1-E QUADRUPOLE MATRIX AO" : Q_PF,
         "1-E KINETIC MATRIX AO" : T,
         "1-E POTENTIAL MATRIX AO" : V

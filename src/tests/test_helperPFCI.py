@@ -150,7 +150,11 @@ def test_mghp_qed_cis_tdm_no_cavity():
         cavity_dict
     )
 
-    pass
+    actual_e4 = test_pf.CIeigs[4]
+
+    actual_mu_04 = test_pf.compute_dipole_moment(0, 4)
+    assert np.isclose(actual_e4, expected_e4)
+    assert np.allclose( np.abs(actual_mu_04), np.abs(expected_mu_04))
 
 
 
