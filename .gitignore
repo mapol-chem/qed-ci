@@ -6,3 +6,10 @@ src/*.swp
 src/output.dat
 src/timer.dat
 src/.ipynb*
+src/examples/*.clean
+src/tests/*.clean
+src/test/*.pyc 
+*.pyc
+src/tests/__pychace__/*
+src/examples/__pycache__/*
+src/tests/__pycache__/test_helperPFCI.cpython-39-pytest-7.1.2.pyc

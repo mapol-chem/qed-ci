@@ -101,6 +101,7 @@ def cqed_rhf(lambda_vector, molecule_string, psi4_options_dict, canonical_basis=
     mu_nuc = np.array(
         [mol.nuclear_dipole()[0], mol.nuclear_dipole()[1], mol.nuclear_dipole()[2]]
     )
+    rhf_dipole_moment = mu_exp_el + mu_nuc 
     # We need to carry around the electric field dotted into the nuclear dipole moment
 
     # \lambda_vecto \cdot < \mu > where <\mu> contains ONLY electronic contributions
@@ -272,6 +273,7 @@ def cqed_rhf(lambda_vector, molecule_string, psi4_options_dict, canonical_basis=
         "NUCLEAR DIPOLE MOMENT": mu_nuc,
         "CQED-RHF DIPOLE MOMENT" : mu_exp_el + mu_nuc,
         "DIPOLE ENERGY (1/2 (lambda cdot <mu>_e)^2)": d_c,
+        "RHF DIPOLE MOMENT" : rhf_dipole_moment,
         "NUCLEAR REPULSION ENERGY": Enuc,
         "DIPOLE AO X" : mu_ao_x,
         "DIPOLE AO Y" : mu_ao_y,

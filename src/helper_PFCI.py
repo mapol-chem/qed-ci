@@ -732,6 +732,8 @@ class PFHamiltonianGenerator:
         wfn = cqed_rhf_dict["PSI4 WFN"]
         self.d_exp = cqed_rhf_dict["EXPECTATION VALUE OF d"]
         self.Enuc = cqed_rhf_dict["NUCLEAR REPULSION ENERGY"]
+        self.mu_nuc = cqed_rhf_dict["NUCLEAR DIPOLE MOMENT"]
+        self.rhf_dipole_moment = cqed_rhf_dict["RHF DIPOLE MOMENT"]
 
         self.mu_x_ao = cqed_rhf_dict["DIPOLE AO X"]
         self.mu_y_ao = cqed_rhf_dict["DIPOLE AO Y"]

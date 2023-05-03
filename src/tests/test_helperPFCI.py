@@ -109,7 +109,7 @@ def test_h2o_qed_fci_no_cavity():
     assert np.isclose(actual_g, expected_g)
     assert np.isclose(actual_e1, excpected_e1)
 
-def test_mghp_qed_cis_tdm_no_cavity():
+def test_mghp_qed_cis_dipole_calculations_no_cavity():
     # options for mgf
     mol_str = """
     Mg
@@ -140,9 +140,11 @@ def test_mghp_qed_cis_tdm_no_cavity():
 
     expected_e4 = -199.69011028328705
 
-    #energy from psi4numpy
+    # psi4's cis tdm between gs and first singlet excited state
     expected_mu_04 = np.array([-6.93218490e-16, -1.77990759e-15,  2.33258251e+00])
     
+    # psi4's rhf dipole moment
+    expected_mu_rhf = np.array([1.23668023e-15,  3.26291298e-15, -1.50279429e+00])
 
     test_pf = PFHamiltonianGenerator(
         mol_str,
@@ -153,9 +155,10 @@ def test_mghp_qed_cis_tdm_no_cavity():
     actual_e4 = test_pf.CIeigs[4]
 
     actual_mu_04 = test_pf.compute_dipole_moment(0, 4)
+    actual_mu_g = test_pf.compute_dipole_moment(0, 0) + test_pf.mu_nuc
     assert np.isclose(actual_e4, expected_e4)
     assert np.allclose( np.abs(actual_mu_04), np.abs(expected_mu_04))
-
+    assert np.allclose( actual_mu_g, expected_mu_rhf)
 
 
 def test_mghp_qed_cis_no_cavity():
