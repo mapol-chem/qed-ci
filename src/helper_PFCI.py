@@ -1664,7 +1664,7 @@ class PFHamiltonianGenerator:
             print("state",i, "energy =",theta[i])
             needs_assignment = True
             print("        amplitude","      position", "         most important determinants","             number of photon")
-            for j in range(1, halfDets):
+            for j in range(1, halfDets-1):
                 #if j<H_dim/2: 
                 # zero photon
                 j_off = j + halfDets
@@ -1703,5 +1703,4 @@ class PFHamiltonianGenerator:
                         
                     print("%20.12lf"%(Q[j_o,i]),"%9.3d"%(j_o),"      alpha",alpha1,"beta",beta1, "       1 photon")
                     print("%20.12lf"%(Q[j_o_off,i]),"%9.3d"%(j_o_off),"      alpha",alpha2,"beta",beta2, "       1 photon")
-                        
                         
