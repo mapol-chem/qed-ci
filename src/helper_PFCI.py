@@ -1703,4 +1703,67 @@ class PFHamiltonianGenerator:
                         
                     print("%20.12lf"%(Q[j_o,i]),"%9.3d"%(j_o),"      alpha",alpha1,"beta",beta1, "       1 photon")
                     print("%20.12lf"%(Q[j_o_off,i]),"%9.3d"%(j_o_off),"      alpha",alpha2,"beta",beta2, "       1 photon")
+
+
+    def reduceCISpace(self):
+        """
+        function to map QED-CI space to electronic subspace for when 
+        there is no cavity effect
+        """
+        # make the CI matrix in the electronic subspace only
+        _H_CI_NO_CAV = self.ApDmatrix + self.Enuc_so + self.dc_so
+        
+        # diagonize only the electronic subspace CI matrix
+        self.CIeigs, self.CIvecs = np.linalg.eigh(_H_CI_NO_CAV)
+        
+        # get the number of determinants
+        _numDets = len(self.CIeigs)
+        
+        # reduce the dipole arrays to the electronic subspace
+        self.MU_X = np.copy(self.MU_X[:_numDets, :_numDets])
+        self.MU_Y = np.copy(self.MU_Y[:_numDets, :_numDets])
+        self.MU_Z = np.copy(self.MU_Z[:_numDets, :_numDets])
+
+
+    def sort_dipole_allowed_states(instance, N_el):
+        """
+        A function to capture the indices of states with a dipole-allowed
+        singlet transition from the ground-state
+        """
+        
+        # we want to find the first N_el states that are coupled to the ground state through a dipole transition
+        _singlet_states = [0]
+        _num_kets = 0
+        _ket_idx = 1
+        _sing_idx = 1
+        zero_vec = np.array([0., 0., 0.])
+        while _num_kets < N_el - 1:
+            _tmp_mu = instance.compute_dipole_moment(0, _ket_idx)
+            if np.allclose(zero_vec, _tmp_mu):
+                _ket_idx += 1
+            else:
+                _singlet_states.append(_ket_idx)
+                _ket_idx += 1
+                _num_kets += 1
+                _sing_idx += 1
+                
+        return _singlet_states
+
+
+    def compute_dipole_moments(instance, states):
+        """
+        Given an array of states, compute all the dipole moments between those states
+        """
+        _Ns = len(states)
+        _singlet_dipole_moments = np.zeros((_Ns, _Ns, 3))
+        
+        for i in range(_Ns):
+            a = states[i]
+            for j in range(_Ns):
+                b = states[j]
+                _singlet_dipole_moments[i, j, :] = instance.compute_dipole_moment(a, b) + instance.mu_nuc * (a==b)
+        
+        return _singlet_dipole_moments
+
+
                         
