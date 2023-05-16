@@ -1044,6 +1044,7 @@ class PFHamiltonianGenerator:
 
         # build arrays in the full N_el * N_ph space
         self.H_PF = np.zeros((_compDim, _compDim))
+        #_tryHPF = np.zeros((_compDim, _compDim))
 
         # one-electron version of Hamiltonian
         self.H_1E = np.zeros((_compDim, _compDim))
@@ -1088,29 +1089,52 @@ class PFHamiltonianGenerator:
             self.H_PF[:_numDets, _numDets:] = self.Gmatrix + self.G_exp_so
 
         else:
-            for i in range(self.N_p):
-                bra_b = i * _numDets
-                bra_e = bra_b + _numDets
 
-                for j in range(i, self.N_p):
-                    ket_b = j * _numDets
-                    ket_e = ket_b + _numDets
-                    
-                    if i==j:
-                        self.H_PF[bra_b:bra_e, ket_b:ket_e] = self.ApDmatrix + self.Enuc_so + self.dc_so + j * self.Omega_so
-                        self.H_1E[bra_b:bra_e, ket_b:ket_e] = self.apdmatrix + self.Enuc_so + self.dc_so + j * self.Omega_so
-                        self.MU_X[bra_b:bra_e, ket_b:ket_e] = self.dipole_block_x
-                        self.MU_Y[bra_b:bra_e, ket_b:ket_e] = self.dipole_block_y
-                        self.MU_Z[bra_b:bra_e, ket_b:ket_e] = self.dipole_block_z
+            for i in range(self.N_p+1):
+                bra_s = i * _numDets
+                bra_e = (i+1) * _numDets
+                ket_s = bra_s
+                ket_e = bra_e
+                self.H_PF[bra_s:bra_e, ket_s:ket_e] = self.ApDmatrix + self.Enuc_so + self.dc_so + i * self.Omega_so
 
-                    
-                    elif i==j+1:
-                        self.H_PF[bra_b:bra_e, ket_b:ket_e] = self.Gmatrix * np.sqrt(j) + self.G_exp_so * np.sqrt(j)
-                        self.H_PF[ket_b:ket_e, bra_b:bra_e] = self.Gmatrix * np.sqrt(j) + self.G_exp_so * np.sqrt(j)
+            for i in range(self.N_p+1):
+                if i==0:
+                    j = i + 1
+                    bra_s = i * _numDets
+                    bra_e = (i+1) * _numDets
+                    ket_s = j * _numDets
+                    ket_e = (j+1) * _numDets
 
-                    elif i==j-1:
-                        self.H_PF[bra_b:bra_e, ket_b:ket_e] = self.Gmatrix * np.sqrt(j+1) + self.G_exp_so * np.sqrt(j+1)
-                        self.H_PF[ket_b:ket_e, bra_b:bra_e] = self.Gmatrix * np.sqrt(j+1) + self.G_exp_so * np.sqrt(j+1)
+                    self.H_PF[bra_s:bra_e, ket_s:ket_e] = self.Gmatrix * np.sqrt(j) + self.G_exp_so * np.sqrt(j)
+
+                elif i == (self.N_p):
+                    j  = i - 1
+                    bra_s = i * _numDets
+                    bra_e = (i+1) * _numDets
+                    ket_s = j * _numDets
+                    ket_e = (j+1) * _numDets
+
+                    self.H_PF[bra_s:bra_e, ket_s:ket_e] = self.Gmatrix * np.sqrt(j) + self.G_exp_so * np.sqrt(j+1)
+
+                else:
+                    j = i + 1
+                    bra_s = i * _numDets
+                    bra_e = (i+1) * _numDets
+                    ket_s = j * _numDets
+                    ket_e = (j+1) * _numDets
+
+                    self.H_PF[bra_s:bra_e, ket_s:ket_e] = self.Gmatrix * np.sqrt(j) + self.G_exp_so * np.sqrt(j)
+
+                    j  = i - 1
+                    bra_s = i * _numDets
+                    bra_e = (i+1) * _numDets
+                    ket_s = j * _numDets
+                    ket_e = (j+1) * _numDets
+
+                    self.H_PF[bra_s:bra_e, ket_s:ket_e] = self.Gmatrix * np.sqrt(j) + self.G_exp_so * np.sqrt(j+1)
+
+            ##assert np.allclose(_tryHPF, self.H_PF)
+            #self.tryHPF = np.copy(_tryHPF)
 
 
 
