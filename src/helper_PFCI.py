@@ -1714,7 +1714,10 @@ class PFHamiltonianGenerator:
         _H_CI_NO_CAV = self.ApDmatrix + self.Enuc_so + self.dc_so
         
         # diagonize only the electronic subspace CI matrix
-        self.CIeigs, self.CIvecs = np.linalg.eigh(_H_CI_NO_CAV)
+        eigs, vecs = np.linalg.eigh(_H_CI_NO_CAV)
+        self.CIeigs = np.copy(eigs)
+        self.CIvecs = np.copy(vecs)
+        #self.CIeigs, self.CIvecs = np.linalg.eigh(_H_CI_NO_CAV)
         
         # get the number of determinants
         _numDets = len(self.CIeigs)
@@ -1725,7 +1728,7 @@ class PFHamiltonianGenerator:
         self.MU_Z = np.copy(self.MU_Z[:_numDets, :_numDets])
 
 
-    def sort_dipole_allowed_states(instance, N_el):
+    def sort_dipole_allowed_states(self, N_el):
         """
         A function to capture the indices of states with a dipole-allowed
         singlet transition from the ground-state
@@ -1738,7 +1741,7 @@ class PFHamiltonianGenerator:
         _sing_idx = 1
         zero_vec = np.array([0., 0., 0.])
         while _num_kets < N_el - 1:
-            _tmp_mu = instance.compute_dipole_moment(0, _ket_idx)
+            _tmp_mu = self.compute_dipole_moment(0, _ket_idx)
             if np.allclose(zero_vec, _tmp_mu):
                 _ket_idx += 1
             else:
@@ -1750,7 +1753,7 @@ class PFHamiltonianGenerator:
         return _singlet_states
 
 
-    def compute_dipole_moments(instance, states):
+    def compute_dipole_moments(self, states):
         """
         Given an array of states, compute all the dipole moments between those states
         """
@@ -1761,7 +1764,7 @@ class PFHamiltonianGenerator:
             a = states[i]
             for j in range(_Ns):
                 b = states[j]
-                _singlet_dipole_moments[i, j, :] = instance.compute_dipole_moment(a, b) + instance.mu_nuc * (a==b)
+                _singlet_dipole_moments[i, j, :] = self.compute_dipole_moment(a, b) + self.mu_nuc * (a==b)
         
         return _singlet_dipole_moments
 
