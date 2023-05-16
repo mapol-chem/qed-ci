@@ -83,6 +83,7 @@ def test_h2o_qed_fci_no_cavity():
         'omega_value' : 0.0,
         'lambda_vector' : np.array([0, 0, 0]),
         'ci_level' : 'fci',
+        'number_of_photons' : 1,
         'davidson_roots' : 4,
         'davidson_threshold' : 1e-8
     }

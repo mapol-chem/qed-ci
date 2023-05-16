@@ -1005,29 +1005,21 @@ class PFHamiltonianGenerator:
             _dets = self.CISdets.copy()
             _numDets = self.CISnumDets
 
+        
+
         self.ApDmatrix = np.zeros((_numDets, _numDets))
         # one-electron only version of A+\Delta
         self.apdmatrix = np.zeros((_numDets, _numDets))
 
         self.Gmatrix = np.zeros((_numDets, _numDets))
-
-        self.H_PF = np.zeros((2 * _numDets, 2 * _numDets))
-
-        # one-electron version of Hamiltonian
-        self.H_1E = np.zeros((2 * _numDets, 2 * _numDets))
-
-        # dipole matrix in CI basis
-        self.MU_X = np.zeros((2 * _numDets, 2 * _numDets))
-        self.MU_Y = np.zeros((2 * _numDets, 2 * _numDets))
-        self.MU_Z = np.zeros((2 * _numDets, 2 * _numDets))
-
-
+                
         # dipole matrix
         self.dipole_block_x = np.zeros((_numDets, _numDets))
         self.dipole_block_y = np.zeros((_numDets, _numDets))
         self.dipole_block_z = np.zeros((_numDets, _numDets))
 
 
+        # build ApD, G, and dipole sub-blocks
         for i in range(_numDets):
             for j in range(i + 1):
                 self.ApDmatrix[i, j] = self.calcApDMatrixElement(_dets[i], _dets[j])
@@ -1047,33 +1039,80 @@ class PFHamiltonianGenerator:
                 self.dipole_block_z[i, j] = _dipole_moment[2]
                 self.dipole_block_z[j, i] = _dipole_moment[2]
 
+        # dimension of composite dimension
+        _compDim = (self.N_p + 1) * _numDets
+
+        # build arrays in the full N_el * N_ph space
+        self.H_PF = np.zeros((_compDim, _compDim))
+
+        # one-electron version of Hamiltonian
+        self.H_1E = np.zeros((_compDim, _compDim))
+
+        # dipole matrix in CI basis
+        self.MU_X = np.zeros((_compDim, _compDim))
+        self.MU_Y = np.zeros((_compDim, _compDim))
+        self.MU_Z = np.zeros((_compDim, _compDim))
+
+        if self.N_p == 0:
+            self.H_PF[:_numDets, :_numDets] = self.ApDmatrix + self.Enuc_so + self.dc_so 
+            self.H_1E[:_numDets, :_numDets] = self.apdmatrix + self.Enuc_so + self.dc_so
+            self.MU_X[:_numDets, :_numDets] = self.dipole_block_x
+            self.MU_Y[:_numDets, :_numDets] = self.dipole_block_y
+            self.MU_Z[:_numDets, :_numDets] = self.dipole_block_z
+
+        elif self.N_p == 1:
+            # full hamiltonian
+            self.H_PF[:_numDets, :_numDets] = self.ApDmatrix + self.Enuc_so + self.dc_so
+            # 1-e piece
+            self.H_1E[:_numDets, :_numDets] = self.apdmatrix + self.Enuc_so + self.dc_so
+
+            # Dipole Hamiltonian
+            self.MU_X[:_numDets, :_numDets] = self.dipole_block_x
+            self.MU_X[_numDets:, _numDets:] = self.dipole_block_x
+            self.MU_Y[:_numDets, :_numDets] = self.dipole_block_y
+            self.MU_Y[_numDets:, _numDets:] = self.dipole_block_y
+            self.MU_Z[:_numDets, :_numDets] = self.dipole_block_z
+            self.MU_Z[_numDets:, _numDets:] = self.dipole_block_z
 
 
-        # full hamiltonian
-        self.H_PF[:_numDets, :_numDets] = self.ApDmatrix + self.Enuc_so + self.dc_so
-        # 1-e piece
-        self.H_1E[:_numDets, :_numDets] = self.apdmatrix + self.Enuc_so + self.dc_so
+            # full Hamiltonian
+            self.H_PF[_numDets:, _numDets:] = (
+                self.ApDmatrix + self.Enuc_so + self.dc_so + self.Omega_so
+            )
 
-        # Dipole Hamiltonian
-        self.MU_X[:_numDets, :_numDets] = self.dipole_block_x
-        self.MU_X[_numDets:, _numDets:] = self.dipole_block_x
-        self.MU_Y[:_numDets, :_numDets] = self.dipole_block_y
-        self.MU_Y[_numDets:, _numDets:] = self.dipole_block_y
-        self.MU_Z[:_numDets, :_numDets] = self.dipole_block_z
-        self.MU_Z[_numDets:, _numDets:] = self.dipole_block_z
+            # 1-e piece
+            self.H_1E[_numDets:, _numDets:] = (
+                self.apdmatrix + self.Enuc_so + self.dc_so + self.Omega_so
+            )
+            self.H_PF[_numDets:, :_numDets] = self.Gmatrix + self.G_exp_so
+            self.H_PF[:_numDets, _numDets:] = self.Gmatrix + self.G_exp_so
+
+        else:
+            for i in range(self.N_p):
+                bra_b = i * _numDets
+                bra_e = bra_b + _numDets
+
+                for j in range(i, self.N_p):
+                    ket_b = j * _numDets
+                    ket_e = ket_b + _numDets
+                    
+                    if i==j:
+                        self.H_PF[bra_b:bra_e, ket_b:ket_e] = self.ApDmatrix + self.Enuc_so + self.dc_so + j * self.Omega_so
+                        self.H_1E[bra_b:bra_e, ket_b:ket_e] = self.apdmatrix + self.Enuc_so + self.dc_so + j * self.Omega_so
+                        self.MU_X[bra_b:bra_e, ket_b:ket_e] = self.dipole_block_x
+                        self.MU_Y[bra_b:bra_e, ket_b:ket_e] = self.dipole_block_y
+                        self.MU_Z[bra_b:bra_e, ket_b:ket_e] = self.dipole_block_z
+
+                    
+                    elif i==j+1:
+                        self.H_PF[bra_b:bra_e, ket_b:ket_e] = self.Gmatrix * np.sqrt(j) + self.G_exp_so * np.sqrt(j)
+                        self.H_PF[ket_b:ket_e, bra_b:bra_e] = self.Gmatrix * np.sqrt(j) + self.G_exp_so * np.sqrt(j)
+
+                    elif i==j-1:
+                        self.H_PF[bra_b:bra_e, ket_b:ket_e] = self.Gmatrix * np.sqrt(j+1) + self.G_exp_so * np.sqrt(j+1)
+                        self.H_PF[ket_b:ket_e, bra_b:bra_e] = self.Gmatrix * np.sqrt(j+1) + self.G_exp_so * np.sqrt(j+1)
 
 
-        # full Hamiltonian
-        self.H_PF[_numDets:, _numDets:] = (
-            self.ApDmatrix + self.Enuc_so + self.dc_so + self.Omega_so
-        )
-
-        # 1-e piece
-        self.H_1E[_numDets:, _numDets:] = (
-            self.apdmatrix + self.Enuc_so + self.dc_so + self.Omega_so
-        )
-        self.H_PF[_numDets:, :_numDets] = self.Gmatrix + self.G_exp_so
-        self.H_PF[:_numDets, _numDets:] = self.Gmatrix + self.G_exp_so
 
     def calcApDMatrixElement(self, det1, det2, OneEpTwoE=True):
         """
