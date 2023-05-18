@@ -1108,30 +1108,33 @@ class PFHamiltonianGenerator:
                     self.H_PF[bra_s:bra_e, ket_s:ket_e] = self.Gmatrix * np.sqrt(j) + self.G_exp_so * np.sqrt(j)
 
                 elif i == (self.N_p):
-                    j  = i - 1
+                    j  = i - 1 #<== equivalent to i = j + 1
                     bra_s = i * _numDets
                     bra_e = (i+1) * _numDets
                     ket_s = j * _numDets
                     ket_e = (j+1) * _numDets
 
-                    self.H_PF[bra_s:bra_e, ket_s:ket_e] = self.Gmatrix * np.sqrt(j) + self.G_exp_so * np.sqrt(j+1)
+                    # the <i|\hat{b}^{\dagger}|j> -> \sqrt{j+1} <i|j+1> term survives
+                    self.H_PF[bra_s:bra_e, ket_s:ket_e] = self.Gmatrix * np.sqrt(j+1) + self.G_exp_so * np.sqrt(j+1)
 
                 else:
-                    j = i + 1
+                    j = i + 1 #<== equivalent to i = j - 1
                     bra_s = i * _numDets
                     bra_e = (i+1) * _numDets
                     ket_s = j * _numDets
                     ket_e = (j+1) * _numDets
 
+                    # the <i|\hat{b}|j> -> \sqrt{j} <i|j-1> term survives
                     self.H_PF[bra_s:bra_e, ket_s:ket_e] = self.Gmatrix * np.sqrt(j) + self.G_exp_so * np.sqrt(j)
 
-                    j  = i - 1
+                    j  = i - 1 #<== equivalent to i = j + 1
                     bra_s = i * _numDets
                     bra_e = (i+1) * _numDets
                     ket_s = j * _numDets
                     ket_e = (j+1) * _numDets
 
-                    self.H_PF[bra_s:bra_e, ket_s:ket_e] = self.Gmatrix * np.sqrt(j) + self.G_exp_so * np.sqrt(j+1)
+                    # the <i|\hat{b}^{\dagger}|j> -> \sqrt{j+1} <i|j+1> term survives
+                    self.H_PF[bra_s:bra_e, ket_s:ket_e] = self.Gmatrix * np.sqrt(j+1) + self.G_exp_so * np.sqrt(j+1)
 
             ##assert np.allclose(_tryHPF, self.H_PF)
             #self.tryHPF = np.copy(_tryHPF)
