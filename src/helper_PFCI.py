@@ -791,17 +791,31 @@ class PFHamiltonianGenerator:
         """
 
         self.H_1e_ao = self.T_ao + self.V_ao
-        if self.ignore_coupling == False:
-            self.H_1e_ao += self.q_PF_ao + self.d_PF_ao
+        self.D_1e_ao = self.q_PF_ao + self.d_PF_ao
+        #if self.ignore_coupling == False:
+        #    self.H_1e_ao += self.q_PF_ao + self.d_PF_ao
         # build H_spin
         # spatial part of 1-e integrals
         _H_spin = np.einsum("uj,vi,uv", self.C, self.C, self.H_1e_ao)
+        _D1_spin = np.einsum("uj,vi,uv", self.C, self.C, self.D_1e_ao)
+
         _H_spin = np.repeat(_H_spin, 2, axis=0)
         _H_spin = np.repeat(_H_spin, 2, axis=1)
+
+        _D1_spin = np.repeat(_D1_spin, 2, axis=0)
+        _D1_spin = np.repeat(_D1_spin, 2, axis=1)
+
+
+
         # spin part of 1-e integrals
         spin_ind = np.arange(_H_spin.shape[0], dtype=int) % 2
         # product of spatial and spin parts
         self.Hspin = _H_spin * (spin_ind.reshape(-1, 1) == spin_ind)
+        # keep a copy of only the D1 block for DSE matrix
+        self.D1spin = _D1_spin * (spin_ind.reshape(-1, 1) == spin_ind)
+        # this is for the Hamiltonian matrix
+        self.Hspin += self.D1spin
+
 
     def build2DSO(self):
         """Will build the 2-electron arrays in the spin orbital basis
@@ -817,7 +831,9 @@ class PFHamiltonianGenerator:
 
         t1 = np.einsum("ik,jl->ijkl", self.d_spin, self.d_spin)
         t2 = np.einsum("il,jk->ijkl", self.d_spin, self.d_spin)
+        # keep a copy of the TDI_spin for the DSE matrix
         self.TDI_spin = t1 - t2
+        # this is for the Hamiltonian matrix
         self.antiSym2eInt = self.eri_so + self.TDI_spin
 
     def buildGSO(self):
@@ -1005,12 +1021,15 @@ class PFHamiltonianGenerator:
             _dets = self.CISdets.copy()
             _numDets = self.CISnumDets
 
-        
-
+        # \Delta - the dse matrix
+        self.Dmatrix = np.zeros((_numDets, _numDets))
+        # A +\Delta 
         self.ApDmatrix = np.zeros((_numDets, _numDets))
+
         # one-electron only version of A+\Delta
         self.apdmatrix = np.zeros((_numDets, _numDets))
 
+        # G matrix
         self.Gmatrix = np.zeros((_numDets, _numDets))
                 
         # dipole matrix
@@ -1022,12 +1041,22 @@ class PFHamiltonianGenerator:
         # build ApD, G, and dipole sub-blocks
         for i in range(_numDets):
             for j in range(i + 1):
-                self.ApDmatrix[i, j] = self.calcApDMatrixElement(_dets[i], _dets[j])
-                self.apdmatrix[i, j] = self.calcApDMatrixElement(
+                APD_Dict = self.calcApDMatrixElement(_dets[i], _dets[j])
+                apd_dict = self.calcApDMatrixElement(
                     _dets[i], _dets[j], OneEpTwoE=False
                 )
-                self.ApDmatrix[j, i] = self.ApDmatrix[i, j]
-                self.apdmatrix[j, i] = self.apdmatrix[i, j]
+                _ApD = APD_Dict["A+Delta"]
+                _D = APD_Dict["Delta"]
+                _apd = apd_dict["A+Delta"]
+
+                self.ApDmatrix[i, j] = _ApD
+                self.apdmatrix[i, j] = _apd
+                self.Dmatrix[i, j] = _D
+
+                self.ApDmatrix[j, i] = _ApD
+                self.apdmatrix[j, i] = _apd
+                self.Dmatrix[j, i] = _D
+
                 self.Gmatrix[i, j] = self.calcGMatrixElement(_dets[i], _dets[j])
                 self.Gmatrix[j, i] = self.Gmatrix[i, j]
 
@@ -1054,7 +1083,12 @@ class PFHamiltonianGenerator:
         self.MU_Y = np.zeros((_compDim, _compDim))
         self.MU_Z = np.zeros((_compDim, _compDim))
 
+        # if N_p = 0, build the DSE matrix
         if self.N_p == 0:
+            self.H_DSE = np.zeros((_compDim, _compDim))
+
+        if self.N_p == 0:
+            self.H_DSE[:_numDets, :_numDets] = self.Dmatrix
             self.H_PF[:_numDets, :_numDets] = self.ApDmatrix + self.Enuc_so + self.dc_so 
             self.H_1E[:_numDets, :_numDets] = self.apdmatrix + self.Enuc_so + self.dc_so
             self.MU_X[:_numDets, :_numDets] = self.dipole_block_x
@@ -1158,7 +1192,11 @@ class PFHamiltonianGenerator:
                 return self.calcMatrixElementDiffIn1(det1, det2)
             else:
                 #
-                return 0.0
+                slater_condon_dict = {
+                    "A+Delta" : 0.0,
+                    "Delta" : 0.0
+                }
+                return slater_condon_dict
         elif det1.diff2OrLessOrbitals(det2):
             numUniqueOrbitals = det1.numberOfTotalDiffOrbitals(det2)
             if numUniqueOrbitals == 0:
@@ -1166,10 +1204,18 @@ class PFHamiltonianGenerator:
             elif numUniqueOrbitals == 1:
                 return self.calcMatrixElementDiffIn1(det1, det2, omit2E=True)
             else:
-                return 0.0
+                slater_condon_dict = {
+                    "A+Delta" : 0.0,
+                    "Delta" : 0.0
+                }
+                return slater_condon_dict
 
         else:
-            return 0.0
+            slater_condon_dict = {
+                    "A+Delta" : 0.0,
+                    "Delta" : 0.0
+                }
+            return slater_condon_dict
         
     def calcMuMatrixElement(self, det1, det2):
         """
@@ -1215,7 +1261,15 @@ class PFHamiltonianGenerator:
         """
 
         unique1, unique2, sign = det1.getUniqueOrbitalsInMixIndexListsPlusSign(det2)
-        return sign * self.antiSym2eInt[unique1[0], unique1[1], unique2[0], unique2[1]]
+        _ApD = sign * self.antiSym2eInt[unique1[0], unique1[1], unique2[0], unique2[1]]
+        _D = sign * self.TDI_spin[unique1[0], unique1[1], unique2[0], unique2[1]]
+        #return sign * self.antiSym2eInt[unique1[0], unique1[1], unique2[0], unique2[1]]
+        slater_condon_dict = {
+            "A+Delta" : _ApD,
+            "Delta" : _D
+        }
+        return slater_condon_dict
+        #return _ApD, _D
 
     def calcMatrixElementDiffIn1(self, det1, det2, omit2E=False):
         """
@@ -1226,16 +1280,30 @@ class PFHamiltonianGenerator:
         m = unique1[0]
         p = unique2[0]
         Helem = self.Hspin[m, p]
+        D1elem = self.D1spin[m, p]
+
         common = det1.getCommonOrbitalsInMixedSpinIndexList(det2)
 
         if omit2E == False:
             Relem = 0.0
+            D2elem = 0.0
             for n in common:
                 Relem += self.antiSym2eInt[m, n, p, n]
+                D2elem += self.TDI_spin[m, n, p, n]
 
         else:
             Relem = 0.0
-        return sign * (Helem + Relem)
+            D2elem = 0.0
+
+        _ApD_elem = sign * (Helem + Relem)
+        _D_elem = sign * (D1elem + D2elem)
+
+        #return sign * (Helem + Relem)
+        slater_condon_dict = {
+            "A+Delta" : _ApD_elem,
+            "Delta" : _D_elem
+        }
+        return slater_condon_dict
 
     def calcGMatrixElementDiffIn1(self, det1, det2):
         """
@@ -1296,20 +1364,38 @@ class PFHamiltonianGenerator:
 
         spinObtList = det.getOrbitalMixedIndexList()
         Helem = 0.0
+        D1elem = 0.0
         for m in spinObtList:
             Helem += self.Hspin[m, m]
+            D1elem += self.D1spin[m,m]
+
         length = len(spinObtList)
         if omit2E == False:
             Relem = 0.0
+            D2elem = 0.0
             for m in range(length - 1):
                 for n in range(m + 1, length):
                     Relem += self.antiSym2eInt[
                         spinObtList[m], spinObtList[n], spinObtList[m], spinObtList[n]
                     ]
+                    D2elem += self.TDI_spin[
+                        spinObtList[m], spinObtList[n], spinObtList[m], spinObtList[n]
+                    ]
+
         else:
             Relem = 0.0
+            D2elem = 0.0
 
-        return Helem + Relem
+        _ApDelem = Helem + Relem
+        _Delem = D1elem + D2elem
+
+        slater_condon_dict = {
+            "A+Delta" : _ApDelem,
+            "Delta" : _Delem
+        }
+        return slater_condon_dict
+
+ 
     
     def generateOrbitalBasis(self, molecule_string, psi4_options_dict):
         """
