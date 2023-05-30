@@ -1088,7 +1088,7 @@ class PFHamiltonianGenerator:
             self.H_DSE = np.zeros((_compDim, _compDim))
 
         if self.N_p == 0:
-            self.H_DSE[:_numDets, :_numDets] = self.Dmatrix
+            self.H_DSE[:_numDets, :_numDets] = np.copy(self.Dmatrix)
             self.H_PF[:_numDets, :_numDets] = self.ApDmatrix + self.Enuc_so + self.dc_so 
             self.H_1E[:_numDets, :_numDets] = self.apdmatrix + self.Enuc_so + self.dc_so
             self.MU_X[:_numDets, :_numDets] = self.dipole_block_x
@@ -1614,31 +1614,7 @@ class PFHamiltonianGenerator:
         # spatial orbital 1RDM
         self.D1_spatial = _D_aa + _D_bb
 
-    def compute_dipole_moment(self, braI, ketJ):
-        """
-        Compute the dipole moment expectation value  using CIvecs indexed
-        by braI and ketJ <braI | \hat{mu} | ketJ> where \hat{mu} is built
-        in the CI basis.  Note that this will be a transition dipole moment
-        when braI refers to a different state than ketJ
-        
-        """
-        # array for the dipole moment
-        _dm = np.zeros(3)
-
-        # x-component 
-        _tmpX = np.dot(self.MU_X, self.CIvecs[:,ketJ])
-        _dm[0] = np.dot(self.CIvecs[:,braI].T, _tmpX)
-        
-        # y-component
-        _tmpY = np.dot(self.MU_Y, self.CIvecs[:,ketJ])
-        _dm[1] = np.dot(self.CIvecs[:,braI].T, _tmpY)
-
-        # z-component
-        _tmpZ = np.dot(self.MU_Z, self.CIvecs[:,ketJ])
-        _dm[2] = np.dot(self.CIvecs[:,braI].T, _tmpZ)
-
-        return _dm
-
+    
     def Davidson(self, H, nroots, threshold,indim,maxdim,maxiter):
         H_diag = np.diag(H)
         H_dim = len(H[:,0])
@@ -1903,6 +1879,42 @@ class PFHamiltonianGenerator:
                 _sing_idx += 1
                 
         return _singlet_states
+    
+    def compute_dipole_moment(self, braI, ketJ):
+        """
+        Compute the dipole moment expectation value  using CIvecs indexed
+        by braI and ketJ <braI | \hat{mu} | ketJ> where \hat{mu} is built
+        in the CI basis.  Note that this will be a transition dipole moment
+        when braI refers to a different state than ketJ
+        
+        """
+        # array for the dipole moment
+        _dm = np.zeros(3)
+
+        # x-component 
+        _tmpX = np.dot(self.MU_X, self.CIvecs[:,ketJ])
+        _dm[0] = np.dot(self.CIvecs[:,braI].T, _tmpX)
+        
+        # y-component
+        _tmpY = np.dot(self.MU_Y, self.CIvecs[:,ketJ])
+        _dm[1] = np.dot(self.CIvecs[:,braI].T, _tmpY)
+
+        # z-component
+        _tmpZ = np.dot(self.MU_Z, self.CIvecs[:,ketJ])
+        _dm[2] = np.dot(self.CIvecs[:,braI].T, _tmpZ)
+
+        return _dm
+    
+    def compute_dipole_self_energy(self, braI, ketJ):
+        """
+        Compute the dipole self energy expectation value  using CIvecs indexed
+        by braI and ketJ <braI | \hat{H}_{DSE} | ketJ> where \hat{H}_{DSE} is built
+        in the CI basis. 
+        """
+        _tmpDSE = np.dot(self.H_DSE, self.CIvecs[:,ketJ])
+        _DSE = np.dot(self.CIvecs[:,braI], _tmpDSE)
+
+        return _DSE
 
 
     def compute_dipole_moments(self, states):
@@ -1919,6 +1931,22 @@ class PFHamiltonianGenerator:
                 _singlet_dipole_moments[i, j, :] = self.compute_dipole_moment(a, b) + self.mu_nuc * (a==b)
         
         return _singlet_dipole_moments
+    
+
+    def compute_dipole_self_energies(self, states):
+        """
+        Given an array of states, compute all the dipole moments between those states
+        """
+        _Ns = len(states)
+        _singlet_dses = np.zeros((_Ns, _Ns, 3))
+        
+        for i in range(_Ns):
+            a = states[i]
+            for j in range(_Ns):
+                b = states[j]
+                _singlet_dses[i, j, :] = self.compute_dipole_self_energy(a, b) 
+        
+        return _singlet_dses
 
 
                         
