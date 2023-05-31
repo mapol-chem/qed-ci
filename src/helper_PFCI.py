@@ -836,6 +836,41 @@ class PFHamiltonianGenerator:
         # this is for the Hamiltonian matrix
         self.antiSym2eInt = self.eri_so + self.TDI_spin
 
+    def build2MuSO(self):
+        """ Build Mu Mu matrix in spin orbital basis to 
+            enable the computation of the DSE in the basis of many electron states
+        """
+
+        _ddxx_coul = np.einsum("ik,jl->ijkl", self.mu_x_spin, self.mu_x_spin)
+        _ddxx_exch = np.einsum("il,jk->ijkl", self.mu_x_spin, self.mu_x_spin)
+        
+        _ddyy_coul = np.einsum("ik,jl->ijkl", self.mu_y_spin, self.mu_y_spin)
+        _ddyy_exch = np.einsum("il,jk->ijkl", self.mu_y_spin, self.mu_y_spin)
+
+        _ddzz_coul = np.einsum("ik,jl->ijkl", self.mu_z_spin, self.mu_z_spin)
+        _ddzz_exch = np.einsum("il,jk->ijkl", self.mu_z_spin, self.mu_z_spin)
+
+        _ddxy_coul = np.einsum("ik,jl->ijkl", self.mu_x_spin, self.mu_y_spin)
+        _ddxy_exch = np.einsum("il,jk->ijkl", self.mu_x_spin, self.mu_y_spin)
+
+        _ddxz_coul = np.einsum("ik,jl->ijkl", self.mu_x_spin, self.mu_z_spin)
+        _ddxz_exch = np.einsum("il,jk->ijkl", self.mu_x_spin, self.mu_z_spin)
+
+        _ddyz_coul = np.einsum("ik,jl->ijkl", self.mu_y_spin, self.mu_z_spin)
+        _ddyz_exch = np.einsum("il,jk->ijkl", self.mu_y_spin, self.mu_z_spin)
+
+        self.ddxx = _ddxx_coul - _ddxx_exch 
+        self.ddyy = _ddyy_coul - _ddyy_exch
+        self.ddzz = _ddzz_coul - _ddzz_exch
+
+        self.ddxy = 2 * _ddxy_coul - 2 * _ddxy_exch
+        self.ddxz = 2 * _ddxz_coul - 2 * _ddxz_exch
+        self.ddyz = 2 * _ddyz_coul - 2 * _ddyz_exch
+
+
+
+        
+
     def buildGSO(self):
         """
         Will build the 1-electron arrays in the spin orbital basis
