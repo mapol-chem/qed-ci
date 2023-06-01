@@ -734,10 +734,18 @@ class PFHamiltonianGenerator:
         self.Enuc = cqed_rhf_dict["NUCLEAR REPULSION ENERGY"]
         self.mu_nuc = cqed_rhf_dict["NUCLEAR DIPOLE MOMENT"]
         self.rhf_dipole_moment = cqed_rhf_dict["RHF DIPOLE MOMENT"]
+        self.mu_exp_el = cqed_rhf_dict["CQED-RHF ELECTRONIC DIPOLE MOMENT"]
 
         self.mu_x_ao = cqed_rhf_dict["DIPOLE AO X"]
         self.mu_y_ao = cqed_rhf_dict["DIPOLE AO Y"]
         self.mu_z_ao = cqed_rhf_dict["DIPOLE AO Z"]
+
+        self.q_xx_ao = cqed_rhf_dict["QUADRUPOLE AO XX"]
+        self.q_yy_ao = cqed_rhf_dict["QUADRUPOLE AO YY"]
+        self.q_zz_ao = cqed_rhf_dict["QUADRUPOLE AO ZZ"]
+        self.q_xy_ao = cqed_rhf_dict["QUADRUPOLE AO XY"]
+        self.q_xz_ao = cqed_rhf_dict["QUADRUPOLE AO XZ"]
+        self.q_yz_ao = cqed_rhf_dict["QUADRUPOLE AO YZ"]
 
         # collect rhf wfn object as dictionary
         wfn_dict = psi4.core.Wavefunction.to_file(wfn)
@@ -781,8 +789,75 @@ class PFHamiltonianGenerator:
         self.mu_x_spin = _mu_x_spin * (_spin_ind.reshape(-1, 1) == _spin_ind)
         self.mu_y_spin = _mu_y_spin * (_spin_ind.reshape(-1, 1) == _spin_ind)
         self.mu_z_spin = _mu_z_spin * (_spin_ind.reshape(-1, 1) == _spin_ind)
-        
 
+    def build2MuSO(self):
+        """ Build Mu Mu matrix in spin orbital basis to 
+            enable the computation of the DSE in the basis of many electron states
+        """
+
+        _ddxx_coul = np.einsum("ik,jl->ijkl", self.mu_x_spin, self.mu_x_spin)
+        _ddxx_exch = np.einsum("il,jk->ijkl", self.mu_x_spin, self.mu_x_spin)
+        
+        _ddyy_coul = np.einsum("ik,jl->ijkl", self.mu_y_spin, self.mu_y_spin)
+        _ddyy_exch = np.einsum("il,jk->ijkl", self.mu_y_spin, self.mu_y_spin)
+
+        _ddzz_coul = np.einsum("ik,jl->ijkl", self.mu_z_spin, self.mu_z_spin)
+        _ddzz_exch = np.einsum("il,jk->ijkl", self.mu_z_spin, self.mu_z_spin)
+
+        _ddxy_coul = np.einsum("ik,jl->ijkl", self.mu_x_spin, self.mu_y_spin)
+        _ddxy_exch = np.einsum("il,jk->ijkl", self.mu_x_spin, self.mu_y_spin)
+
+        _ddxz_coul = np.einsum("ik,jl->ijkl", self.mu_x_spin, self.mu_z_spin)
+        _ddxz_exch = np.einsum("il,jk->ijkl", self.mu_x_spin, self.mu_z_spin)
+
+        _ddyz_coul = np.einsum("ik,jl->ijkl", self.mu_y_spin, self.mu_z_spin)
+        _ddyz_exch = np.einsum("il,jk->ijkl", self.mu_y_spin, self.mu_z_spin)
+
+        self.ddxx = _ddxx_coul - _ddxx_exch 
+        self.ddyy = _ddyy_coul - _ddyy_exch
+        self.ddzz = _ddzz_coul - _ddzz_exch
+
+        self.ddxy = 2 * _ddxy_coul - 2 * _ddxy_exch
+        self.ddxz = 2 * _ddxz_coul - 2 * _ddxz_exch
+        self.ddyz = 2 * _ddyz_coul - 2 * _ddyz_exch
+
+    def build1QSO(self):
+        """ Will build the 1-electron quadrupole arrays in the spin orbital
+            basis to be used for DSE
+        """
+        _q_xx_spin = np.einsum("uj,vi,uv", self.C, self.C, self.q_xx_ao)
+        _q_xx_spin = np.repeat(_q_xx_spin, 2, axis=0)
+        _q_xx_spin = np.repeat(_q_xx_spin, 2, axis=1)
+
+        _q_yy_spin = np.einsum("uj,vi,uv", self.C, self.C, self.q_yy_ao)
+        _q_yy_spin = np.repeat(_q_yy_spin, 2, axis=0)
+        _q_yy_spin = np.repeat(_q_yy_spin, 2, axis=1)
+
+        _q_zz_spin = np.einsum("uj,vi,uv", self.C, self.C, self.q_zz_ao)
+        _q_zz_spin = np.repeat(_q_zz_spin, 2, axis=0)
+        _q_zz_spin = np.repeat(_q_zz_spin, 2, axis=1)
+
+        _q_xy_spin = np.einsum("uj,vi,uv", self.C, self.C, self.q_xy_ao)
+        _q_xy_spin = np.repeat(_q_xy_spin, 2, axis=0)
+        _q_xy_spin = np.repeat(_q_xy_spin, 2, axis=1)
+
+        _q_xz_spin = np.einsum("uj,vi,uv", self.C, self.C, self.q_xz_ao)
+        _q_xz_spin = np.repeat(_q_xz_spin, 2, axis=0)
+        _q_xz_spin = np.repeat(_q_xz_spin, 2, axis=1)
+
+        _q_yz_spin = np.einsum("uj,vi,uv", self.C, self.C, self.q_yz_ao)
+        _q_yz_spin = np.repeat(_q_yz_spin, 2, axis=0)
+        _q_yz_spin = np.repeat(_q_yz_spin, 2, axis=1)
+        
+        _spin_ind = np.arange(_q_xx_spin.shape[0], dtype=int) % 2
+
+        self.q_xx_spin = _q_xx_spin * (_spin_ind.reshape(-1, 1) == _spin_ind)
+        self.q_yy_spin = _q_yy_spin * (_spin_ind.reshape(-1, 1) == _spin_ind)
+        self.q_zz_spin = _q_zz_spin * (_spin_ind.reshape(-1, 1) == _spin_ind)
+        self.q_xy_spin = _q_xy_spin * (_spin_ind.reshape(-1, 1) == _spin_ind)
+        self.q_xz_spin = _q_xz_spin * (_spin_ind.reshape(-1, 1) == _spin_ind)
+        self.q_yz_spin = _q_yz_spin * (_spin_ind.reshape(-1, 1) == _spin_ind)
+        
 
     def build1HSO(self):
         """Will build the 1-electron arrays in
@@ -835,41 +910,6 @@ class PFHamiltonianGenerator:
         self.TDI_spin = t1 - t2
         # this is for the Hamiltonian matrix
         self.antiSym2eInt = self.eri_so + self.TDI_spin
-
-    def build2MuSO(self):
-        """ Build Mu Mu matrix in spin orbital basis to 
-            enable the computation of the DSE in the basis of many electron states
-        """
-
-        _ddxx_coul = np.einsum("ik,jl->ijkl", self.mu_x_spin, self.mu_x_spin)
-        _ddxx_exch = np.einsum("il,jk->ijkl", self.mu_x_spin, self.mu_x_spin)
-        
-        _ddyy_coul = np.einsum("ik,jl->ijkl", self.mu_y_spin, self.mu_y_spin)
-        _ddyy_exch = np.einsum("il,jk->ijkl", self.mu_y_spin, self.mu_y_spin)
-
-        _ddzz_coul = np.einsum("ik,jl->ijkl", self.mu_z_spin, self.mu_z_spin)
-        _ddzz_exch = np.einsum("il,jk->ijkl", self.mu_z_spin, self.mu_z_spin)
-
-        _ddxy_coul = np.einsum("ik,jl->ijkl", self.mu_x_spin, self.mu_y_spin)
-        _ddxy_exch = np.einsum("il,jk->ijkl", self.mu_x_spin, self.mu_y_spin)
-
-        _ddxz_coul = np.einsum("ik,jl->ijkl", self.mu_x_spin, self.mu_z_spin)
-        _ddxz_exch = np.einsum("il,jk->ijkl", self.mu_x_spin, self.mu_z_spin)
-
-        _ddyz_coul = np.einsum("ik,jl->ijkl", self.mu_y_spin, self.mu_z_spin)
-        _ddyz_exch = np.einsum("il,jk->ijkl", self.mu_y_spin, self.mu_z_spin)
-
-        self.ddxx = _ddxx_coul - _ddxx_exch 
-        self.ddyy = _ddyy_coul - _ddyy_exch
-        self.ddzz = _ddzz_coul - _ddzz_exch
-
-        self.ddxy = 2 * _ddxy_coul - 2 * _ddxy_exch
-        self.ddxz = 2 * _ddxz_coul - 2 * _ddxz_exch
-        self.ddyz = 2 * _ddyz_coul - 2 * _ddyz_exch
-
-
-
-        
 
     def buildGSO(self):
         """
@@ -1056,8 +1096,8 @@ class PFHamiltonianGenerator:
             _dets = self.CISdets.copy()
             _numDets = self.CISnumDets
 
-        # \Delta - the dse matrix
-        self.Dmatrix = np.zeros((_numDets, _numDets))
+        # \MUMU- the 6-component MUMU matrix
+        self.MUMU = np.zeros((_numDets, _numDets, 6))
         # A +\Delta 
         self.ApDmatrix = np.zeros((_numDets, _numDets))
 
@@ -1086,11 +1126,13 @@ class PFHamiltonianGenerator:
 
                 self.ApDmatrix[i, j] = _ApD
                 self.apdmatrix[i, j] = _apd
-                self.Dmatrix[i, j] = _D
+                self.MUMU[i, j,:] = _D
+
+
 
                 self.ApDmatrix[j, i] = _ApD
                 self.apdmatrix[j, i] = _apd
-                self.Dmatrix[j, i] = _D
+                self.MUMU[j, i,:] = _D
 
                 self.Gmatrix[i, j] = self.calcGMatrixElement(_dets[i], _dets[j])
                 self.Gmatrix[j, i] = self.Gmatrix[i, j]
@@ -1118,12 +1160,7 @@ class PFHamiltonianGenerator:
         self.MU_Y = np.zeros((_compDim, _compDim))
         self.MU_Z = np.zeros((_compDim, _compDim))
 
-        # if N_p = 0, build the DSE matrix
         if self.N_p == 0:
-            self.H_DSE = np.zeros((_compDim, _compDim))
-
-        if self.N_p == 0:
-            self.H_DSE[:_numDets, :_numDets] = np.copy(self.Dmatrix)
             self.H_PF[:_numDets, :_numDets] = self.ApDmatrix + self.Enuc_so + self.dc_so 
             self.H_1E[:_numDets, :_numDets] = self.apdmatrix + self.Enuc_so + self.dc_so
             self.MU_X[:_numDets, :_numDets] = self.dipole_block_x
@@ -1229,7 +1266,7 @@ class PFHamiltonianGenerator:
                 #
                 slater_condon_dict = {
                     "A+Delta" : 0.0,
-                    "Delta" : 0.0
+                    "Delta" : np.array([0.0, 0.0, 0.0, 0.0, 0.0, 0.0])
                 }
                 return slater_condon_dict
         elif det1.diff2OrLessOrbitals(det2):
@@ -1241,14 +1278,14 @@ class PFHamiltonianGenerator:
             else:
                 slater_condon_dict = {
                     "A+Delta" : 0.0,
-                    "Delta" : 0.0
+                    "Delta" : np.array([0.0, 0.0, 0.0, 0.0, 0.0, 0.0])
                 }
                 return slater_condon_dict
 
         else:
             slater_condon_dict = {
                     "A+Delta" : 0.0,
-                    "Delta" : 0.0
+                    "Delta" : np.array([0.0, 0.0, 0.0, 0.0, 0.0, 0.0])
                 }
             return slater_condon_dict
         
@@ -1297,11 +1334,17 @@ class PFHamiltonianGenerator:
 
         unique1, unique2, sign = det1.getUniqueOrbitalsInMixIndexListsPlusSign(det2)
         _ApD = sign * self.antiSym2eInt[unique1[0], unique1[1], unique2[0], unique2[1]]
-        _D = sign * self.TDI_spin[unique1[0], unique1[1], unique2[0], unique2[1]]
+
+        _Dxx = sign * self.ddxx[unique1[0], unique1[1], unique2[0], unique2[1]]
+        _Dyy = sign * self.ddyy[unique1[0], unique1[1], unique2[0], unique2[1]]
+        _Dzz = sign * self.ddzz[unique1[0], unique1[1], unique2[0], unique2[1]]
+        _Dxy = sign * self.ddxy[unique1[0], unique1[1], unique2[0], unique2[1]]
+        _Dxz = sign * self.ddxz[unique1[0], unique1[1], unique2[0], unique2[1]]
+        _Dyz = sign * self.ddyz[unique1[0], unique1[1], unique2[0], unique2[1]]
         #return sign * self.antiSym2eInt[unique1[0], unique1[1], unique2[0], unique2[1]]
         slater_condon_dict = {
             "A+Delta" : _ApD,
-            "Delta" : _D
+            "Delta" : np.array([_Dxx, _Dyy, _Dzz, _Dxy, _Dxz, _Dyz])
         }
         return slater_condon_dict
         #return _ApD, _D
@@ -1315,28 +1358,48 @@ class PFHamiltonianGenerator:
         m = unique1[0]
         p = unique2[0]
         Helem = self.Hspin[m, p]
-        D1elem = self.D1spin[m, p]
+
+        D1xx = self.q_xx_spin[m, p]
+        D1yy = self.q_yy_spin[m, p]
+        D1zz = self.q_zz_spin[m, p]
+        D1xy = self.q_xy_spin[m, p]
+        D1xz = self.q_xz_spin[m, p]
+        D1yz = self.q_yz_spin[m, p]
+
+        #D1elem = self.D1spin[m, p]
 
         common = det1.getCommonOrbitalsInMixedSpinIndexList(det2)
 
         if omit2E == False:
             Relem = 0.0
-            D2elem = 0.0
+            D2xx = D2yy = D2zz = D2xy = D2xz = D2yz = 0.0
             for n in common:
                 Relem += self.antiSym2eInt[m, n, p, n]
-                D2elem += self.TDI_spin[m, n, p, n]
+                D2xx += self.ddxx[m, n, p, n]
+                D2yy += self.ddyy[m, n, p, n]
+                D2zz += self.ddzz[m, n, p, n]
+                D2xy += self.ddxy[m, n, p, n]
+                D2xz += self.ddxz[m, n, p, n]
+                D2yz += self.ddyz[m, n, p, n]
+
 
         else:
             Relem = 0.0
-            D2elem = 0.0
+            D2xx = D2yy = D2zz = D2xy = D2xz = D2yz = 0.0
 
         _ApD_elem = sign * (Helem + Relem)
-        _D_elem = sign * (D1elem + D2elem)
+        _Dxx = sign * (D1xx + D2xx)
+        _Dyy = sign * (D1yy + D2yy)
+        _Dzz = sign * (D1zz + D2zz)
+        _Dxy = sign * (D1xy + D2xy)
+        _Dxz = sign * (D1xz + D2xz)
+        _Dyz = sign * (D1yz + D2yz)
+        
 
         #return sign * (Helem + Relem)
         slater_condon_dict = {
             "A+Delta" : _ApD_elem,
-            "Delta" : _D_elem
+            "Delta" : np.array([_Dxx, _Dyy, _Dzz, _Dxy, _Dxz, _Dyz])
         }
         return slater_condon_dict
 
@@ -1399,34 +1462,51 @@ class PFHamiltonianGenerator:
 
         spinObtList = det.getOrbitalMixedIndexList()
         Helem = 0.0
-        D1elem = 0.0
+        D1xx = D1yy = D1zz = D1xy = D1xz = D1yz = 0.0
         for m in spinObtList:
             Helem += self.Hspin[m, m]
-            D1elem += self.D1spin[m,m]
+            D1xx += self.q_xx_spin[m,m]
+            D1yy += self.q_yy_spin[m,m]
+            D1zz += self.q_zz_spin[m,m]
+            D1xy += self.q_xy_spin[m,m]
+            D1xz += self.q_xz_spin[m,m]
+            D1yz += self.q_yz_spin[m,m]
+
 
         length = len(spinObtList)
         if omit2E == False:
             Relem = 0.0
-            D2elem = 0.0
+            D2xx = D2yy = D2zz = D2xy = D2xz = D2yz = 0.0
             for m in range(length - 1):
                 for n in range(m + 1, length):
                     Relem += self.antiSym2eInt[
                         spinObtList[m], spinObtList[n], spinObtList[m], spinObtList[n]
                     ]
-                    D2elem += self.TDI_spin[
-                        spinObtList[m], spinObtList[n], spinObtList[m], spinObtList[n]
-                    ]
+                    D2xx += self.ddxx[spinObtList[m], spinObtList[n], spinObtList[m], spinObtList[n]]
+                    D2yy += self.ddyy[spinObtList[m], spinObtList[n], spinObtList[m], spinObtList[n]]
+                    D2zz += self.ddzz[spinObtList[m], spinObtList[n], spinObtList[m], spinObtList[n]]
+                    D2xy += self.ddxy[spinObtList[m], spinObtList[n], spinObtList[m], spinObtList[n]]
+                    D2xz += self.ddxz[spinObtList[m], spinObtList[n], spinObtList[m], spinObtList[n]]
+                    D2yz += self.ddyz[spinObtList[m], spinObtList[n], spinObtList[m], spinObtList[n]]
+
+            
 
         else:
             Relem = 0.0
-            D2elem = 0.0
+            D2xx = D2yy = D2zz = D2xy = D2xz = D2yz = 0.0
 
         _ApDelem = Helem + Relem
-        _Delem = D1elem + D2elem
+        _Dxx = D1xx + D2xx
+        _Dyy = D1yy + D2yy
+        _Dzz = D1zz + D2zz
+        _Dxy = D1xy + D2xy
+        _Dxz = D1xz + D2xz
+        _Dyz = D1yz + D2yz
+
 
         slater_condon_dict = {
             "A+Delta" : _ApDelem,
-            "Delta" : _Delem
+            "Delta" : np.array([_Dxx, _Dyy, _Dzz, _Dxy, _Dxz, _Dyz])
         }
         return slater_condon_dict
 
@@ -1558,6 +1638,10 @@ class PFHamiltonianGenerator:
         self.build1MuSO()
         t_dipole_end = time.time()
         print(F' Completed the Dipole Matrix Build in {t_dipole_end - t_1G_end} seconds')
+
+        #if self.N_p == 0:
+        self.build1QSO()
+        self.build2MuSO()
 
 
     def calc1RDMfromCIS(self, c_vec):
@@ -1983,5 +2067,3 @@ class PFHamiltonianGenerator:
         
         return _singlet_dses
 
-
-                        
