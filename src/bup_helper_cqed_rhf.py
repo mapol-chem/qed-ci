@@ -18,23 +18,7 @@ __date__ = "2021-08-19"
 import psi4
 import numpy as np
 import time
-def b_coefficient(error_vectors):
-    b_mat = np.zeros((len(error_vectors)+1,len(error_vectors)+1))
-    b_mat[-1,:] = -1
-    b_mat[:,-1] = -1
-    b_mat[-1,-1] = 0
-    rhs = np.zeros((len(error_vectors)+1,1))
-    rhs[-1,-1]=-1
-    for i in range(len(error_vectors)):
-        for j in range(i+1):
-            b_mat[i,j] = np.dot(error_vectors[i].transpose(), error_vectors[j])
-            b_mat[j,i] = b_mat[i,j]
-    *diis_coeff, _ = np.linalg.solve(b_mat,rhs)
-    return diis_coeff
-class Subspace(list):
-    def append(self, item):
-        list.append(self, item)
-        if len(self) > dimSubspace : del self[0]
+
 
 def cqed_rhf(lambda_vector, molecule_string, psi4_options_dict, canonical_basis=False):
     """Computes the QED-RHF energy and density
@@ -185,10 +169,7 @@ def cqed_rhf(lambda_vector, molecule_string, psi4_options_dict, canonical_basis=
         D_conv = 1.0e-5
 
     t = time.time()
-    global dimSubspace  
-    dimSubspace = 8 
-    error_list = Subspace()
-    fock_list = Subspace()
+
     # maxiter
     maxiter = 500
     for SCF_ITER in range(1, maxiter + 1):
@@ -205,20 +186,8 @@ def cqed_rhf(lambda_vector, molecule_string, psi4_options_dict, canonical_basis=
         # Build fock matrix: [Szabo:1996] Eqn. 3.154, pp. 141
         # plus Pauli-Fierz terms Eq. (12) in [McTague:2021:ChemRxiv]
         F = H + 2 * J - K - N
-        #save current Fock matrix into memory
-        fock_list.append(F)
+
         diis_e = np.einsum("ij,jk,kl->il", F, D, S) - np.einsum("ij,jk,kl->il", S, D, F)
-        #turn diis_e into column vector and then save to memory
-        error_vector=diis_e.reshape(diis_e.shape[0]*diis_e.shape[0],1)
-        error_list.append(error_vector)
-
-                   
-
-
-
-
-
-
         diis_e = A.dot(diis_e).dot(A)
         dRMS = np.mean(diis_e**2) ** 0.5
 
@@ -235,15 +204,7 @@ def cqed_rhf(lambda_vector, molecule_string, psi4_options_dict, canonical_basis=
             break
 
         Eold = SCF_E
-        
 
-        if SCF_ITER >=2:
-            diis_coeff=b_coefficient(error_list)
-            F = np.zeros_like(D)
-            for i in range(len(fock_list)):
-                F += diis_coeff[i] * fock_list[i] 
-
-         
         # Diagonalize Fock matrix: [Szabo:1996] pp. 145
         Fp = A.dot(F).dot(A)  # Eqn. 3.177
         e, C2 = np.linalg.eigh(Fp)  # Solving Eqn. 1.178
@@ -298,7 +259,7 @@ def cqed_rhf(lambda_vector, molecule_string, psi4_options_dict, canonical_basis=
 
     # transform \lambda \cdot \mu to CMO basis
     l_dot_mu_cmo = np.dot(C.T, l_dot_mu_el).dot(C)
-    
+
     cqed_rhf_dict = {
         "RHF ENERGY": psi4_rhf_energy,
         "CQED-RHF ENERGY": SCF_E,
