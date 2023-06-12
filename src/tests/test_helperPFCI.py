@@ -291,7 +291,6 @@ def test_mghp_qed_cis_with_cavity_canonical_mo():
     expected_mghp_lp_e = -199.69776087489558
     expected_mghp_up_e = -199.68066502792058
 
-
     test_pf = PFHamiltonianGenerator(
         mol_str,
         options_dict,
@@ -303,11 +302,101 @@ def test_mghp_qed_cis_with_cavity_canonical_mo():
     actual_lp = test_pf.CIeigs[2] # <== root 3 is LP
     actual_up = test_pf.CIeigs[5] # <== root 6 is UP
 
-    print(actual_g - expected_mghp_g_e)
-    print(actual_lp - expected_mghp_lp_e)
-    print(actual_up - expected_mghp_up_e)
-    pass
+    assert np.isclose(actual_g, expected_mghp_g_e )
+    assert np.isclose(actual_lp, expected_mghp_lp_e)
+    assert np.isclose(actual_up, expected_mghp_up_e)
 
+
+def test_mghp_qed_cis_no_cavity_compare_mos():
+    # options for mgf
+    mol_str = """
+    Mg
+    H 1 2.2
+    symmetry c1
+    1 1
+    """
+
+    options_dict = {
+        "basis": "cc-pVDZ",
+        "scf_type": "pk",
+        "e_convergence": 1e-10,
+        "d_convergence": 1e-10,
+    }
+
+    cmo_cavity_dict = {
+        'omega_value' : 4.75 / psi4.constants.Hartree_energy_in_eV,
+        'lambda_vector' : np.array([0, 0, 0.0]),
+        'ci_level' : 'cis',
+        'full_diagonalization' : True,
+        'canonical_mos' : True
+    }
+
+    qedmo_cavity_dict = {
+        'omega_value' : 4.75 / psi4.constants.Hartree_energy_in_eV,
+        'lambda_vector' : np.array([0, 0, 0.0]),
+        'ci_level' : 'cis',
+        'full_diagonalization' : True
+    }
+
+    qedmo = PFHamiltonianGenerator(
+        mol_str,
+        options_dict,
+        qedmo_cavity_dict
+    )
+    cmo = PFHamiltonianGenerator(
+        mol_str,
+        options_dict,
+        cmo_cavity_dict
+    )
+
+    assert np.allclose(qedmo.CIeigs[:50], cmo.CIeigs[:50], 1e-8)
+
+def test_h2o_qed_fci_compare_mos():
+
+    options_dict = {
+        "basis": "sto-3g",
+        "scf_type": "pk",
+        "e_convergence": 1e-10,
+        "d_convergence": 1e-10,
+    }
+
+    cmo_cavity_dict = {
+        'omega_value' : 4.75 / psi4.constants.Hartree_energy_in_eV,
+        'lambda_vector' : np.array([0, 0, 0.05]),
+        'ci_level' : 'fci',
+        'number_of_photons' : 6,
+        'full_diagonalization' : True,
+        'canonical_mos' : True
+    }
+
+    qedmo_cavity_dict = {
+        'omega_value' : 4.75 / psi4.constants.Hartree_energy_in_eV,
+        'lambda_vector' : np.array([0, 0, 0.05]),
+        'ci_level' : 'fci',
+        'number_of_photons' : 6,
+        'full_diagonalization' : True
+    }
+
+    # molecule string for H2O
+    h2o_string = """
+    O
+    H 1 1.1
+    H 1 1.1 2 104
+    symmetry c1
+    """
+
+    qedmo = PFHamiltonianGenerator(
+        h2o_string,
+        options_dict,
+        qedmo_cavity_dict
+    )
+    cmo = PFHamiltonianGenerator(
+        h2o_string,
+        options_dict,
+        cmo_cavity_dict
+    )
+
+    assert np.allclose(qedmo.CIeigs[:5], cmo.CIeigs[:5], 1e-8)
 
 def test_build_1rdm():
 
