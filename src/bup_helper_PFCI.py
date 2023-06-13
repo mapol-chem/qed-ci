@@ -19,6 +19,8 @@ import sys
 from helper_cqed_rhf import cqed_rhf
 from itertools import combinations
 import time
+
+
 def compute_excitation_level(ket, ndocc):
     level = 0
     homo = ndocc - 1
@@ -124,6 +126,7 @@ def map_spatial_dipole_to_spin(mu, I, J, K, L):
     )
 
     return spat_ikjl - spat_iljk
+
 
 class Determinant:
     """
@@ -592,56 +595,7 @@ class PFHamiltonianGenerator:
             H_dim = self.CASnumDets * 2 
         elif self.ci_level == "fci":
             self.generateFCIDeterminants()
-            H_dim = self.FCInumDets * 2
-            graph,graph_big=self.graph(self.ndocc,self.nmo)
-            self.Y=self.arc_weight(graph,graph_big,self.ndocc,self.nmo)
-            #print(self.Y)
-
-
-            #for index2 in range(0,self.num_alpha):
-            #    binary,string=self.index_to_string(index2,self.ndocc,self.nmo,self.Y,return_binary=True)
-            #    orblist=Determinant.obtBits2ObtIndexList(string)
-            #    print(binary,index2,string,orblist)
-
-            self.table=self.single_replacement_list(self.num_alpha,self.ndocc,self.nmo,self.Y)
-            for i in range(len(self.table)):
-                print(self.table[i])
-            ### JJF Commenting out for testing
-            #self.c_vectors = np.random.rand(H_dim,5)
-            #self.s1_vectors = np.zeros((H_dim,5))
-            #self.build_sigma(self.c_vectors,self.s1_vectors,H_dim)
-            ### END JJF COMMENT 
-
-            #print(self.c_vectors)
-            #for m in range(self.N_p+1):
-            #    start =  m    * H_dim//np1
-            #    end   = (m+1) * H_dim//np1
-            #    self.one_e_contraction(self.H_spatial, self.c_vectors[start:end], self.s1_vectors[start:end], self.num_alpha, self.num_links, 1)
-            #    self.two_e_contraction(self.twoeint, self.c_vectors[start:end], self.s1_vectors[start:end], self.num_alpha, self.num_links)
-            #    self.one_e_contraction(self.contracted_twoeint, self.c_vectors[start:end], self.s1_vectors[start:end], self.num_alpha, self.num_links, 1)
-            #    someconstant = m * self.omega + self.Enuc + self.dc 
-            #    self.constant_terms_contraction(self.c_vectors[start:end], self.s1_vectors[start:end], someconstant)
-            #    start0 = (m-1) * H_dim//np1
-            #    end0   =  m    * H_dim//np1
-            #    start2 = (m+1) * H_dim//np1
-            #    end2   = (m+2) * H_dim//np1
-            #    if 0 < m < self.N_p:
-            #        someconstant = -np.sqrt(m * self.omega/2)
-            #        self.one_e_contraction(self.d_cmo, self.c_vectors[start0:end0], self.s1_vectors[start:end], self.num_alpha, self.num_links, someconstant)
-            #        self.constant_terms_contraction(self.c_vectors[start0:end0], self.s1_vectors[start:end], -self.d_exp * someconstant)
-            #        someconstant = -np.sqrt((m+1) * self.omega/2)
-            #        self.one_e_contraction(self.d_cmo, self.c_vectors[start2:end2], self.s1_vectors[start:end], self.num_alpha, self.num_links, someconstant)
-            #        self.constant_terms_contraction(self.c_vectors[start2:end2], self.s1_vectors[start:end], -self.d_exp * someconstant)
-            #    elif m == self.N_p:
-            #        someconstant = -np.sqrt(m * self.omega/2)
-            #        self.one_e_contraction(self.d_cmo, self.c_vectors[start0:end0], self.s1_vectors[start:end], self.num_alpha, self.num_links, someconstant)
-            #        self.constant_terms_contraction(self.c_vectors[start0:end0], self.s1_vectors[start:end], -self.d_exp * someconstant)
-            #    else:
-            #        someconstant = -np.sqrt((m+1) * self.omega/2)
-            #        self.one_e_contraction(self.d_cmo, self.c_vectors[start2:end2], self.s1_vectors[start:end], self.num_alpha, self.num_links, someconstant)
-            #        self.constant_terms_contraction(self.c_vectors[start2:end2], self.s1_vectors[start:end], -self.d_exp * someconstant)
-
-
+            H_dim = self.FCInumDets * 2 
 
         t_det_end = time.time()
         print(F' Completed determinant list in {t_det_end - t_det_start} seconds ')
@@ -656,20 +610,7 @@ class PFHamiltonianGenerator:
         self.generatePFHMatrix(self.ci_level)
         t_H_build = time.time()
         print(F' Completed Hamiltonian build in {t_H_build - t_const_end} seconds')
-
-        ### JJF COMMENT OUT FOR TEST
-        #s1_temp = np.einsum("ij,jk->ik", self.H_PF, self.c_vectors)
-        #for j in range(self.s1_vectors.shape[1]):
-        #    print('dim 2 is',j)
-        #    for i in range(self.s1_vectors.shape[0]):
-        #        print(self.s1_vectors[i][j]-s1_temp[i][j])
-        ### END JJF COMMENT 
-
-        #s2_temp = np.einsum("ij,j->i", self.H_2E, self.c_vectors)
-        #for i in range(len(self.s2_vectors)):
-        #    print(self.s2_vectors[i]-s2_temp[i])
-
-
+        
         if self.full_diagonalization:
             self.CIeigs, self.CIvecs = np.linalg.eigh(self.H_PF)
         
@@ -681,7 +622,7 @@ class PFHamiltonianGenerator:
                 sys.exit()
 
 
-            dres = self.Davidson(self.H_PF, self.davidson_roots, self.davidson_threshold, indim, maxdim,self.davidson_maxiter,self.build_sigma)
+            dres = self.Davidson(self.H_PF, self.davidson_roots, self.davidson_threshold, indim, maxdim,self.davidson_maxiter)
             self.CIeigs = dres["DAVIDSON EIGENVALUES"]
             self.CIvecs = dres["DAVIDSON EIGENVECTORS"]
             t_dav_end = time.time()
@@ -853,8 +794,6 @@ class PFHamiltonianGenerator:
         # build H_spin
         # spatial part of 1-e integrals
         _H_spin = np.einsum("uj,vi,uv", self.C, self.C, self.H_1e_ao)
-        self.H_spatial=_H_spin
-        print(np.shape(self.H_spatial))
         _H_spin = np.repeat(_H_spin, 2, axis=0)
         _H_spin = np.repeat(_H_spin, 2, axis=1)
         # spin part of 1-e integrals
@@ -869,7 +808,6 @@ class PFHamiltonianGenerator:
         """
         # try a more efficient way of computing the 2-e d terms
         _d_spin = np.copy(self.d_cmo)
-        self.d_spatial = np.einsum("ij,kl->ijkl", _d_spin, _d_spin)
         _d_spin = np.repeat(_d_spin, 2, axis=0)
         _d_spin = np.repeat(_d_spin, 2, axis=1)
         spin_ind = np.arange(_d_spin.shape[0], dtype=int) % 2
@@ -879,11 +817,7 @@ class PFHamiltonianGenerator:
         t2 = np.einsum("il,jk->ijkl", self.d_spin, self.d_spin)
         self.TDI_spin = t1 - t2
         self.antiSym2eInt = self.eri_so + self.TDI_spin
-        self.twoeint= self.eri_spatial + self.d_spatial
-        self.contracted_twoeint = -0.5 * np.einsum("illj->ij", self.twoeint)
-        print('shapecontracted_twoe',np.shape(self.contracted_twoeint))
-        self.twoeint = np.reshape(self.twoeint,(self.nmo*self.nmo,self.nmo*self.nmo))
-        print('shapetwoe',np.shape(self.twoeint))
+
     def buildGSO(self):
         """
         Will build the 1-electron arrays in the spin orbital basis
@@ -949,10 +883,8 @@ class PFHamiltonianGenerator:
         """
         self.FCIDets = []
         self.FCInumDets = 0
-        self.num_alpha = 0
         self.detmap = []
         for alpha in combinations(range(self.nmo), self.ndocc):
-            self.num_alpha += 1
             for beta in combinations(range(self.nmo), self.ndocc):
                 e = Determinant(alphaObtList=alpha, betaObtList=beta)
                 alphabit = e.obtIndexList2ObtBits(alpha)
@@ -1080,8 +1012,6 @@ class PFHamiltonianGenerator:
         self.H_PF = np.zeros((2 * _numDets, 2 * _numDets))
         # one-electron version of Hamiltonian
         self.H_1E = np.zeros((2 * _numDets, 2 * _numDets))
-        self.H_11E = np.zeros((2 * _numDets, 2 * _numDets))
-        self.H_2E = np.zeros((2 * _numDets, 2 * _numDets))
 
         # dipole matrix
         self.dipole_block_x = np.zeros((_numDets, _numDets))
@@ -1114,7 +1044,6 @@ class PFHamiltonianGenerator:
         self.H_PF[:_numDets, :_numDets] = self.ApDmatrix + self.Enuc_so + self.dc_so
         # 1-e piece
         self.H_1E[:_numDets, :_numDets] = self.apdmatrix + self.Enuc_so + self.dc_so
-        self.H_11E[:_numDets, :_numDets] = self.apdmatrix + self.dc_so
 
         # full Hamiltonian
         self.H_PF[_numDets:, _numDets:] = (
@@ -1125,12 +1054,9 @@ class PFHamiltonianGenerator:
         self.H_1E[_numDets:, _numDets:] = (
             self.apdmatrix + self.Enuc_so + self.dc_so + self.Omega_so
         )
-        self.H_11E[_numDets:, _numDets:] = (
-            self.apdmatrix + self.dc_so + self.Omega_so
-        )
         self.H_PF[_numDets:, :_numDets] = self.Gmatrix + self.G_exp_so
         self.H_PF[:_numDets, _numDets:] = self.Gmatrix + self.G_exp_so
-        self.H_2E = self.H_PF - self.H_1E
+
     def calcApDMatrixElement(self, det1, det2, OneEpTwoE=True):
         """
         Calculate a matrix element by two determinants
@@ -1410,15 +1336,12 @@ class PFHamiltonianGenerator:
         # build 2eInt in cqed-rhf basis
         mints = psi4.core.MintsHelper(p4_wfn.basisset())
         self.eri_so = np.asarray(mints.mo_spin_eri(self.Ca, self.Ca))
-        
-        self.eri_spatial = np.asarray(mints.mo_eri(self.Ca, self.Ca, self.Ca, self.Ca))
         t_eri_end = time.time()
         print(F' Completed ERI Build in {t_eri_end - t_1H_end} seconds ')
         
         # form the 2H in spin orbital basis
         self.build2DSO()
         t_2d_end = time.time()
-        self.oneeint = self.H_spatial + self.contracted_twoeint
         print(F' Completed 2D build in {t_2d_end - t_eri_end} seconds')
         
         # build the array to build G in the so basis
@@ -1521,350 +1444,7 @@ class PFHamiltonianGenerator:
         # spatial orbital 1RDM
         self.D1_spatial = _D_aa + _D_bb
 
-   
-    def graph(self,N,n_o):
-        '''
-            lexical ordering graph with unoccupied arc set to be zero, return vertex weight
-        '''
-        rows, cols = ((N+1)*(n_o-N+1), 3)
-        rows1, cols1 = (N+1, n_o+1)
-        graph = [[0 for i in range(cols)] for j in range(rows)]
-        graph_big = [[0 for i in range(cols1)] for j in range(rows1)]
-        graph_big[N][n_o]=1
-        #weight of vertex
-        for e in range(N,-1,-1):
-            for o in range(n_o-1,-1,-1):
-                #print(e,o)
-                if e==N and o>=e:
-                    graph_big[e][o] = graph_big[e][o+1]
-                elif e<=N and o<e:
-                    graph_big[e][o] = 0 
-                else:
-                    graph_big[e][o] = graph_big[e+1][o+1] + graph_big[e][o+1]
-                
-        
-        count = 0
-        for e in range(0,N+1):
-            for o in range(0,n_o+1):
-                #print(e,o,graph_big[e][o])
-                if graph_big[e][o] !=0:
-                    graph[count][0] = e
-                    graph[count][1] = o
-                    graph[count][2] = graph_big[e][o]
-                    count +=1
-        
-        return graph,graph_big
-    def arc_weight(self,graph,graph_big,N,n_o):
-        '''
-            return diagonal (occupied) arc weight for lexical ordering graph above
-            Y=arc weight
-        '''
-        Y=[]
-        for row in range (0,len(graph)):
-            #print(graph[i])
-            e = graph[row][0]   
-            o = graph[row][1]
-            B=[]
-            if e == N:
-                continue
-            i = o - e
-            c = 0
-            if i == 0:
-                c=0
-                B.extend([e,o,c])
-                #print(B)
-            else:
-                for j in range (1, i+1):
-                    c +=graph_big[e+1][o+2-j] 
-                B.extend([e,o,c])
-                #print(B)
-            Y.append(B)
-        
-        return Y
-    def string_to_binary(self,string,n_o):
-        b=[int(d) for d in str(bin(string))[2:]]
-        if len(b)<n_o:
-            c = [0]*(n_o-len(b))
-            d = c+b
-        else:
-            d=b
-        d.reverse()
-        return(d)
-    def string_to_index(self,string,N,n_o,Y):
-        '''
-            return index using arc weight for a string(integer represents binary string)
-        '''
-        count=0
-        index=0 #counting from 0 so that determinant index can be counted from 0
-        b=[int(d) for d in str(bin(string))[2:]]
-        if len(b)<n_o:
-            c = [0]*(n_o-len(b))
-            d = c+b
-        else:
-            d=b
-        d.reverse()
-        for i in range(n_o):
-            if d[i] == 1:
-                e = count
-                o = i
-                for j in range(0,len(Y)):
-                    if  Y[j][0] == e and Y[j][1] == o: 
-                        index +=Y[j][2]
-                count +=1        
-        return index
-    
-    def binary_to_index(self,binary_string,N,n_o,Y):
-        count=0
-        index=0 # count from 0
-        string=0
-        for i in range(0,len(binary_string)):
-            if binary_string[i] == 1:
-                e = count
-                o = i
-                string += pow(2,i)
-                for j in range(0,len(Y)):
-                    if  Y[j][0] == e and Y[j][1] == o: 
-                        index +=Y[j][2]
-                count +=1        
-        #print(string)        
-        return index,string
-    def index_to_string(self,index, N, n_o, Y, return_binary=False):
-        '''
-           return string for an index using graph
-        '''
-        I=0 #count from 0 in stead of 1 so that determinant index can be counted from 0
-        e=N
-        o=n_o
-        count=0
-        record=[]
-        while(I<=index and e <= o):
-            #print(count,e,o,I,record)
-            if (e == o and I<index):
-                count2 = 0
-                for i in range(len(record)-1,-1,-1):
-                    if record[i]==0:
-                        count2 += 1
-                        record.pop(i)
-                    else:    
-                        record[i]=0
-                        break
-                o=o+count2
-                e=e+1
-                for j in range(0,len(Y)):
-                    if  Y[j][0] == e-1 and Y[j][1] == o:
-                        b=Y[j][2]
-                I=I-b        
-                #print(record,o,e,b,I)    
-        
-            else:
-                if e>0:
-                    for j in range(0,len(Y)):
-                        if  Y[j][0] == e-1 and Y[j][1] == o-1:
-                            a=Y[j][2]
-                            if a<=index-I:
-                                e=e-1
-                                o=o-1
-                                I=I+a
-                                record.append(1)
-                            else:
-                                o=o-1
-                                record.append(0)
-                else:
-                    o = o-1
-                    record.append(0)
-            count +=1
-            if count == 15000000 or (e==0 and o==0 and I==index): break
-        string = 0
-        for i in range(len(record)):
-            if record[i] == 1:
-                string += pow(2,len(record)-i-1)
-        #print(string)
-        #print(record)
-    
-        if return_binary == True:
-            return record,string
-        else:
-            return string
-    
-    def phase_single_excitation(self,p,q,string):
-        '''
-            getting the phase(-1 or 1) for E_pq\ket{I_a} where I_a is an alpha or beta string 
-            p=particle,q=hole
-        '''
-        if p>q:
-            mask=(1<<p)-(1<<(q+1))
-        else:
-            mask=(1<<q)-(1<<(p+1))
-        if (bin(mask & string).count('1') %2):
-            return -1
-        else:
-            return 1
-    def single_replacement_list(self,num_strings,N,n_o,Y):
-        '''
-            getting the sign, string address and pq for sign(pq)E_pq\ket{I_a}
-            p=particle, q=hole
-        '''
-        rows, cols = (num_strings*(N*(n_o-N)+N), 4)
-        self.num_links = N*(n_o-N)+N
-        table = [[0 for i in range(cols)] for j in range(rows)]
-        count=0        
-        for index in range(0,num_strings):
-            string = self.index_to_string(index,N,n_o,Y)
-            d = self.string_to_binary(string,n_o)
-            print('single replacement list for binary string',d,'string',string,'index',index)
-            occ=[]
-            vir=[]
-            #print(occ,vir)
-            for i in range(n_o):
-                if (string &(1<<i)):
-                    occ.append(i)
-                else:
-                    vir.append(i)
-            for i in range(N):
-                table[count][0] = index
-                table[count][1] = 1 
-                table[count][2] = occ[i]
-                table[count][3] = occ[i]
-                count += 1
-            for i in range(N):
-                for a in range(n_o-N):
-                    string1 = (string^(1<<occ[i])) | (1<<vir[a])
-                    #c=string_to_binary(string1,n_o)
-                    table[count][0] = self.string_to_index(string1,N,n_o,Y)
-                    table[count][1] = self.phase_single_excitation(vir[a],occ[i],string)
-                    table[count][2] = vir[a]
-                    table[count][3] = occ[i]
-                    count += 1
-        return table 
-    def one_e_contraction(self, h1e, c_vectors,c1_vectors,num_strings,num_links,scale):
-        for indexa in range(0, num_strings):
-            stride = indexa * num_links
-            #print('indexa',indexa,'stride',stride)        
-            for excitation in range(num_links):
-                index1 = self.table[stride+excitation][0]
-                sign = self.table[stride+excitation][1]
-                a = self.table[stride+excitation][2]
-                i = self.table[stride+excitation][3]
-                #print(index1,sign,a,i)
-                tmp = sign * h1e[a,i]
-                for indexb in range(0, num_strings):
-                    #composite index of determinant
-                    index_I = indexa * num_strings + indexb
-                    index_J = index1 * num_strings + indexb
-                    c1_vectors[index_I] += scale * tmp * c_vectors[index_J] 
-        for indexb in range(0, num_strings):
-            stride = indexb * num_links
-            for excitation in range(num_links):
-                index1 = self.table[stride+excitation][0]
-                sign = self.table[stride+excitation][1]
-                a = self.table[stride+excitation][2]
-                i = self.table[stride+excitation][3]
-                tmp = sign * h1e[a,i]
-                for indexa in range(0, num_strings):
-                    index_I = indexa * num_strings + indexb
-                    index_J = indexa * num_strings + index1
-                    c1_vectors[index_I] += scale * tmp * c_vectors[index_J] 
-        #c1_vectors = scale * c1_vectors            
-    def two_e_contraction(self, h2e, c_vectors,c1_vectors,num_strings,num_links):
-        #build intermediate D^K_kl = \gamma^KJ_kl * c_J 
-        D = np.zeros((self.FCInumDets,  self.nmo * self.nmo))
-        for indexa in range(0, num_strings):
-            stride = indexa * num_links
-            for excitation in range(num_links):
-                index1 = self.table[stride+excitation][0]
-                sign = self.table[stride+excitation][1]
-                a = self.table[stride+excitation][2]
-                i = self.table[stride+excitation][3]
-                for indexb in range(0, num_strings):
-                    #composite index of determinant
-                    index_I = indexa * num_strings + indexb
-                    index_J = index1 * num_strings + indexb
-                    ai = a * self.nmo + i
-                    D[index_I][ai] = sign * c_vectors[index_J] 
-        for indexb in range(0, num_strings):
-            stride = indexb * num_links
-            for excitation in range(num_links):
-                index1 = self.table[stride+excitation][0]
-                sign = self.table[stride+excitation][1]
-                a = self.table[stride+excitation][2]
-                i = self.table[stride+excitation][3]
-                for indexa in range(0, num_strings):
-                    index_I = indexa * num_strings + indexb
-                    index_J = indexa * num_strings + index1
-                    ai = a * self.nmo + i
-                    D[index_I][ai] += sign * c_vectors[index_J] 
-
-        #build intermediate E^K_ij = D^K_kl * (ij|kl) 
-        E = np.einsum("pr,kr->kp", h2e, D)  
-
-        #build \sigma_I = 0.5 * \gamma^IK_ij * E^K_ij 
-        for indexa in range(0, num_strings):
-            stride = indexa * num_links
-            for excitation in range(num_links):
-                index1 = self.table[stride+excitation][0]
-                sign = self.table[stride+excitation][1]
-                a = self.table[stride+excitation][2]
-                i = self.table[stride+excitation][3]
-                for indexb in range(0, num_strings):
-                    #composite index of determinant
-                    index_I = indexa * num_strings + indexb
-                    index_J = index1 * num_strings + indexb
-                    ai = a * self.nmo + i
-                    c1_vectors[index_I] += 0.5 * sign * E[index_J][ai] 
-        for indexb in range(0, num_strings):
-            stride = indexb * num_links
-            for excitation in range(num_links):
-                index1 = self.table[stride+excitation][0]
-                sign = self.table[stride+excitation][1]
-                a = self.table[stride+excitation][2]
-                i = self.table[stride+excitation][3]
-                for indexa in range(0, num_strings):
-                    index_I = indexa * num_strings + indexb
-                    index_J = indexa * num_strings + index1
-                    ai = a * self.nmo + i
-                    c1_vectors[index_I] += 0.5 * sign * E[index_J][ai] 
-
-    def constant_terms_contraction(self, c_vectors, c1_vectors, A):
-        for i in range(len(c_vectors)):
-            c1_vectors[i] += A * c_vectors[i]
-
-    def build_sigma(self, c_vectors, s_vectors,H_dim):
-        np1 = self.N_p + 1
-        for n in range(c_vectors.shape[1]):
-            for m in range(self.N_p+1):
-                start =  m    * H_dim//np1
-                end   = (m+1) * H_dim//np1
-                self.one_e_contraction(self.oneeint, c_vectors[start:end,n], s_vectors[start:end,n], self.num_alpha, self.num_links, 1)
-                self.two_e_contraction(self.twoeint, c_vectors[start:end,n], s_vectors[start:end,n], self.num_alpha, self.num_links)
-                someconstant = m * self.omega + self.Enuc + self.dc 
-                self.constant_terms_contraction(c_vectors[start:end,n], s_vectors[start:end,n], someconstant)
-                start0 = (m-1) * H_dim//np1
-                end0   =  m    * H_dim//np1
-                start2 = (m+1) * H_dim//np1
-                end2   = (m+2) * H_dim//np1
-                if 0 < m < self.N_p:
-                    someconstant = -np.sqrt(m * self.omega/2)
-                    self.one_e_contraction(self.d_cmo, c_vectors[start0:end0,n], s_vectors[start:end,n], self.num_alpha, self.num_links, someconstant)
-                    self.constant_terms_contraction(c_vectors[start0:end0,n], s_vectors[start:end,n], -self.d_exp * someconstant)
-                    someconstant = -np.sqrt((m+1) * self.omega/2)
-                    self.one_e_contraction(self.d_cmo, c_vectors[start2:end2,n], s_vectors[start:end,n], self.num_alpha, self.num_links, someconstant)
-                    self.constant_terms_contraction(c_vectors[start2:end2,n], s_vectors[start:end,n], -self.d_exp * someconstant)
-                elif m == self.N_p:
-                    someconstant = -np.sqrt(m * self.omega/2)
-                    self.one_e_contraction(self.d_cmo, c_vectors[start0:end0,n], s_vectors[start:end,n], self.num_alpha, self.num_links, someconstant)
-                    self.constant_terms_contraction(c_vectors[start0:end0,n], s_vectors[start:end,n], -self.d_exp * someconstant)
-                else:
-                    someconstant = -np.sqrt((m+1) * self.omega/2)
-                    self.one_e_contraction(self.d_cmo, c_vectors[start2:end2,n], s_vectors[start:end,n], self.num_alpha, self.num_links, someconstant)
-                    self.constant_terms_contraction(c_vectors[start2:end2,n], s_vectors[start:end,n], -self.d_exp * someconstant)
-
-
-
-
-
-
-
-    def Davidson(self, H, nroots, threshold,indim,maxdim,maxiter,build_sigma):
+    def Davidson(self, H, nroots, threshold,indim,maxdim,maxiter):
         H_diag = np.diag(H)
         H_dim = len(H[:,0])
         L = indim 
@@ -1901,14 +1481,8 @@ class PFHamiltonianGenerator:
             #print("CI Iter # {:>6} L = {}".format(EOMCCSD_iter, L))
             # singma build
             S = np.zeros_like(Q)
-            if self.ci_level == "fci":
-                #S = np.einsum("pq,qi->pi", H, Q)  
-                t_sigma_begin = time.time()
-                build_sigma(Q,S,H_dim)
-                t_sigma_end = time.time()
-                print('build sigma took',t_sigma_end-t_sigma_begin,'seconds')
-            else:    
-                S = np.einsum("pq,qi->pi", H, Q)  
+            S = np.einsum("pq,qi->pi", H, Q)  
+
             # Build the subspace Hamiltonian
             G = np.dot(Q.T, S)
             #print(np.allclose(G, G.T, 1e-12, 1e-12))    
@@ -1993,7 +1567,6 @@ class PFHamiltonianGenerator:
                 Q = np.column_stack(Qtup)
                 #print(Q)
         Q=np.dot(Q, alpha)
-        singletcount = 0
         for i in range(Q.shape[1]):
             #print("state",i, "energy =",theta[i])
             print("        amplitude","      position", "         most important determinants","             number of photon")
@@ -2018,8 +1591,7 @@ class PFHamiltonianGenerator:
                 print("%20.12lf"%(Q[index[Q.shape[0]-j-1]][i]),"%9.3d"%(index[Q.shape[0]-j-1]),"      alpha",alphalist,"   beta",betalist,"%4.1d"%(d), "photon")
             #print("state",i, "energy =",theta[i], singlet)
             if singlet == 1:
-                print("state",i, "energy =",theta[i], '  singlet',singletcount)
-                singletcount += 1
+                print("state",i, "energy =",theta[i], '  singlet',"%2.1d"%(d0), "photon")
             else:
                 print("state",i, "energy =",theta[i], '  triplet',"%2.1d"%(d0), "photon")
 

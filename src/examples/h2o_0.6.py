@@ -27,14 +27,12 @@ mol = psi4.geometry(mol_str)
 cavity_options = {
     'omega_value' : 0.0,
     'lambda_vector' : np.array([0, 0, 0.0]),
-    'ci_level' : 'cas',
+    'ci_level' : 'fci',
     'ignore_coupling' : True,
     'number_of_photons' : 1,
     'natural_orbitals' : False,
     'davidson_roots' : 6,
     'davidson_maxdim':10,
-    'nact_orbs' : 4,
-    'nact_els' : 4
 }
 
 psi4.set_options(options_dict)
@@ -62,7 +60,8 @@ scf_e, wfn = psi4.energy('SCF', return_wfn=True)
 ##wfn_dict["matrix"]["Cb"] = C
 # update wfn object
 ##wfn = psi4.core.Wavefunction.from_file(wfn_dict)
-psi4.set_options({'restricted_docc': [3],'active': [4],'num_roots':2})
+#psi4.set_options({'restricted_docc': [3],'active': [4],'num_roots':2})
+
 fci_energy = psi4.energy('fci',ref_wfn=wfn)
-print(np.allclose(H2_PF.cis_e[0],fci_energy,1e-8,1e-8))
+print(np.allclose(-74.14620410799654,fci_energy,1e-8,1e-8))
 
