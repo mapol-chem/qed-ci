@@ -588,6 +588,7 @@ class PFHamiltonianGenerator:
         if self.ci_level == "cis":
             self.generateCISDeterminants()
             H_dim = self.CISnumDets * 2 
+            
         elif self.ci_level == "cas":
             self.generateCASCIDeterminants()
             H_dim = self.CASnumDets * 2
