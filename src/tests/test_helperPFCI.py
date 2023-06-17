@@ -300,6 +300,48 @@ def test_mghp_qed_cis_with_cavity_canonical_mo():
     print(actual_up - expected_mghp_up_e)
     pass
 
+def test_lih_direct_qed_fci_with_cavity():
+    """ Test LiH using direct CASCI with cavity compared to 
+        full diagonalization 
+    """
+
+    mol_str = """
+    Li
+    H 1 1.5
+    symmetry c1
+    """
+
+    options_dict = {
+        "basis": "sto-3g",
+        "scf_type": "pk",
+        "e_convergence": 1e-10,
+        "d_convergence": 1e-10,
+    }
+
+    cavity_dict = {
+        'omega_value' : 0.12086,
+        'lambda_vector' : np.array([0, 0, 0.05]),
+        'ci_level' : 'fci',
+        'davidson_roots' : 10,
+        'number_of_photons' : 1
+    }
+    
+    # this is with Np = 6 for full diagonalization
+    # _expected_eigs = np.array([[-7.878802702,  -7.7614561393, -7.75645532,   -7.7361601158,
+    #                            -7.7083528272, -7.7083528272, -7.6868798814, -7.6868798814,
+    #                            -7.6427875594, -7.6372558418]])
+
+    # Np = 1 results
+    _expected_eigs = np.array([-7.878792424,  -7.7601800101, -7.7547250121])
+
+    test_pf = PFHamiltonianGenerator(
+        mol_str,
+        options_dict,
+        cavity_dict
+    )
+
+    assert np.allclose(test_pf.CIeigs[:2], _expected_eigs[:2])
+
 def test_lih_direct_qed_cas_with_cavity():
     """ Test LiH using direct CASCI with cavity compared to 
         full diagonalization 
