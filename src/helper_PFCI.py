@@ -587,8 +587,8 @@ class PFHamiltonianGenerator:
         # build the determinant list
         if self.ci_level == "cis":
             self.generateCISDeterminants()
-            H_dim = self.CISnumDets * 2 
-            
+            H_dim = self.CISnumDets * 2
+            self.H_diag = np.zeros((H_dim))
         elif self.ci_level == "cas":
             self.generateCASCIDeterminants()
             H_dim = self.CASnumDets * 2
@@ -600,6 +600,7 @@ class PFHamiltonianGenerator:
             self.Y=self.arc_weight(graph,graph_big,self.n_act_a,self.n_act_orb) # graph arc weight
             #print(self.num_alpha,math.comb(self.n_act_orb,self.n_act_a))
             self.table=self.single_replacement_list2(self.num_alpha, self.n_act_a, self.n_act_orb, self.n_in_a, self.Y) # table look up for single replacement list
+            self.H_diag = self.build_H_diag(H_dim,self.H_spatial,self.twoeint,self.num_alpha,self.n_act_a,self.n_act_orb,self.n_in_a)
             #self.c_vectors = np.random.rand(H_dim,1)
             #self.s1_vectors = np.zeros((H_dim,1))
             #self.build_sigma(self.c_vectors,self.s1_vectors,H_dim)
@@ -611,6 +612,7 @@ class PFHamiltonianGenerator:
             self.num_det = self.num_alpha * self.num_alpha# number of determinants
             graph,graph_big=self.graph(self.ndocc,self.nmo)
             self.Y=self.arc_weight(graph,graph_big,self.ndocc,self.nmo)
+            self.H_diag = self.build_H_diag(H_dim,self.H_spatial,self.twoeint,self.num_alpha,self.ndocc,self.nmo,0)
             #print(self.Y)
 
 
@@ -659,7 +661,7 @@ class PFHamiltonianGenerator:
                 sys.exit()
 
 
-            dres = self.Davidson(self.H_PF, self.davidson_roots, self.davidson_threshold, indim, maxdim,self.davidson_maxiter,self.build_sigma)
+            dres = self.Davidson(self.H_PF, self.davidson_roots, self.davidson_threshold, indim, maxdim,self.davidson_maxiter,self.build_sigma,self.H_diag)
             self.CIeigs = dres["DAVIDSON EIGENVALUES"]
             self.CIvecs = dres["DAVIDSON EIGENVECTORS"]
             t_dav_end = time.time()
@@ -1680,10 +1682,9 @@ class PFHamiltonianGenerator:
             return string
     
     def phase_single_excitation(self,p,q,string):
-        '''
-            getting the phase(-1 or 1) for E_pq\ket{I_a} where I_a is an alpha or beta string 
+        """getting the phase(-1 or 1) for E_pq\ket{I_a} where I_a is an alpha or beta string 
             p=particle,q=hole
-        '''
+        """
         if p>q:
             mask=(1<<p)-(1<<(q+1))
         else:
@@ -1734,13 +1735,12 @@ class PFHamiltonianGenerator:
     #    return table
 
     def single_replacement_list2(self,num_strings,N,n_o,n_in_a,Y):
-        '''
-            getting the sign, string address and pq for sign(pq)E_pq\ket{I_a}
+        """getting the sign, string address and pq for sign(pq)E_pq\ket{I_a}
             N = number of active alpha electrons
             n_o = number of active alpha orbitals
             n_in_a = number of inactive alpha orbitals
             p=particle, q=hole
-        '''
+        """
         rows, cols = (num_strings*(N*(n_o-N)+N+n_in_a), 4)
         self.num_links = N*(n_o-N)+N+n_in_a
         table = [[0 for i in range(cols)] for j in range(rows)]
@@ -2078,13 +2078,123 @@ class PFHamiltonianGenerator:
                     index_I = index_ia * num_strings + index_ib
                     index_J = index_ja * num_strings + index_ib
                     c1_vectors[index_I] += someconstant * F[index_ja] * c_vectors[index_J] 
-     
+    
 
-    def Davidson(self, H, nroots, threshold,indim,maxdim,maxiter,build_sigma):
-        H_diag = np.diag(H)
-        H_dim = len(H[:,0])
+    def build_H_diag(self, H_dim, h1e, h2e, num_strings,n_act_a,n_act_orb,n_in_a):
+        d=np.zeros((H_dim))
+        np1 = self.N_p + 1
+        for m in range(self.N_p+1):
+            start =  m    * H_dim//np1
+            end   = (m+1) * H_dim//np1
+
+            for I in range(self.num_det):
+                index_a = I//num_strings
+                index_b = I%num_strings
+                string_a=self.index_to_string(index_a,n_act_a,n_act_orb,self.Y,return_binary=False)
+                string_b=self.index_to_string(index_b,n_act_a,n_act_orb,self.Y,return_binary=False)
+                #print(index_a,binary_a,index_b,binary_b)
+                ###c=Determinant.obtBits2ObtIndexList(string_a&string_b)
+                ###print(c)
+                ###d=Determinant.obtBits2ObtIndexList(string_a^string_b)
+                inactive_list = list(x for x in range(n_in_a))
+                double_occupation = Determinant.obtBits2ObtIndexList(string_a&string_b)
+                double_occupation = [x + n_in_a for x in double_occupation]
+                double_occupation[0:0] = inactive_list
+                ####single_occupation = Determinant.obtBits2ObtIndexList(string_a^string_b)
+                ####single_occupation = [x + n_in_a for x in single_occupation]
+                #print(double_occupation,single_occupation)
+                ####dim_s = len(single_occupation) 
+                dim_d = len(double_occupation)
+                ####occupation_list = np.zeros((dim_s+dim_d,2),dtype=int)
+                ####for i in range(dim_d):
+                ####    occupation_list[i][0] = double_occupation[i]
+                ####    occupation_list[i][1] = 2                   
+                ####for i in range(dim_s):
+                ####    occupation_list[i+dim_d][0] = single_occupation[i]
+                ####    occupation_list[i+dim_d][1] = 1                   
+                ####print(occupation_list)
+                
+                e=string_a^string_b
+                ea=e&string_a
+                eb=e&string_b
+                single_occupation_a = Determinant.obtBits2ObtIndexList(ea)
+                single_occupation_a = [x + n_in_a for x in single_occupation_a]
+                single_occupation_b = Determinant.obtBits2ObtIndexList(eb)
+                single_occupation_b = [x + n_in_a for x in single_occupation_b]
+                dim_sa = len(single_occupation_a) 
+                dim_sb = len(single_occupation_b) 
+                #print(double_occupation,single_occupation_a,single_occupation_b)
+                occupation_list_spin = np.zeros((dim_sa+dim_sb+dim_d,3),dtype=int)
+                for i in range(dim_d):
+                    occupation_list_spin[i][0] = double_occupation[i]
+                    occupation_list_spin[i][1] = 1                   
+                    occupation_list_spin[i][2] = 1                   
+                for i in range(dim_sa):
+                    occupation_list_spin[i+dim_d][0] = single_occupation_a[i]
+                    occupation_list_spin[i+dim_d][1] = 1      
+                for i in range(dim_sb):
+                    occupation_list_spin[i+dim_d+dim_sa][0] = single_occupation_b[i]
+                    occupation_list_spin[i+dim_d+dim_sa][2] = 1   
+                #print(occupation_list_spin)
+                ####F = -1/(dim_s-1)
+
+                ####d = 0
+                ####for a in range(dim_d+dim_s):
+                ####    i = occupation_list[a][0]
+                ####    n_i = occupation_list[a][1]
+                ####    N_i = n_i * (2 - n_i)
+                ####    ii = i * self.nmo + i
+                ####    d += n_i * h1e[i,i]
+                ####    d -= 0.25 * N_i * h2e[ii][ii]
+                ####    for b in range(dim_d+dim_s):
+                ####        j = occupation_list[b][0]
+                ####        n_j = occupation_list[b][1]
+                ####        N_j = n_j * (2 - n_j)
+                ####        jj = j * self.nmo + j
+                ####        d += 0.5 * n_i * n_j * h2e[ii][jj]
+                ####        ij = i * self.nmo + j
+                ####        d -= 0.25 * n_i * n_j * h2e[ij][ij]
+                ####        if j !=i:
+                ####            d -= 0.25 * F * N_i * N_j * h2e[ij][ij]
+                ####print('d',d+self.Enuc)             
+                c = 0
+                for a in range(dim_d+dim_sa+dim_sb):
+                    i = occupation_list_spin[a][0]
+                    n_ia = occupation_list_spin[a][1] 
+                    n_ib = occupation_list_spin[a][2]
+                    n_i = n_ia+ n_ib 
+                    ii = i * self.nmo + i
+                    c += n_i * h1e[i,i]
+                    for b in range(dim_d+dim_sa+dim_sb):
+                        j = occupation_list_spin[b][0]
+                        n_ja = occupation_list_spin[b][1] 
+                        n_jb = occupation_list_spin[b][2]
+                        n_j = n_ja + n_jb 
+                        jj = j * self.nmo + j
+                        c += 0.5 * n_i * n_j * h2e[ii][jj]
+                        ij = i * self.nmo + j
+                        c -= 0.5 * (n_ia * n_ja + n_ib * n_jb) * h2e[ij][ij]
+                d[I+start] = c + m * self.omega + self.Enuc + self.dc
+        #print('d',d)             
+        return(d)
+
+
+
+        #for n in range(c_vectors.shape[1]):
+        #    for m in range(self.N_p+1):
+        #        start =  m    * H_dim//np1
+        #        end   = (m+1) * H_dim//np1
+        #        self.sigma12(self.gkl, self.twoeint, c_vectors[start:end,n], s_vectors[start:end,n], self.num_alpha, self.num_links)
+        #        self.sigma3(self.twoeint, c_vectors[start:end,n], s_vectors[start:end,n], self.num_alpha, self.num_links)
+        #        someconstant = m * self.omega + self.Enuc + self.dc 
+
+    def Davidson(self, H, nroots, threshold,indim,maxdim,maxiter,build_sigma,H_diag):
+        if self.ci_level == "cis":
+            H_diag = np.diag(H)
+        #for i in range(len(H_diag)):
+        #    print(H_diag[i]-H_diag2[i])
+        H_dim = len(H_diag)
         L = indim 
-
         # When L exceeds Lmax we will collapse the guess space so our sub-space
         # diagonalization problem does not grow too large
         Lmax = maxdim
