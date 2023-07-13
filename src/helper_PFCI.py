@@ -16,10 +16,74 @@ __date__ = "2023-01-21"
 
 import psi4
 import sys
-from helper_cqed_rhf import cqed_rhf
+from helper_cqed_rhf2 import cqed_rhf
 from itertools import combinations
 import math
 import time
+import ctypes
+import numpy as np
+from ctypes import *
+import os
+
+script_dir = os.path.abspath(os.path.dirname(__file__))
+lib_path = os.path.join(script_dir, "cfunctions.so")
+
+# import shared lib
+cfunctions = cdll.LoadLibrary(lib_path)
+
+
+cfunctions.matrix_product.argtypes = [
+        np.ctypeslib.ndpointer(ctypes.c_double, ndim=2, flags='C_CONTIGUOUS'),
+        np.ctypeslib.ndpointer(ctypes.c_double, ndim=2, flags='C_CONTIGUOUS'),
+        np.ctypeslib.ndpointer(ctypes.c_double, ndim=2, flags='C_CONTIGUOUS'),
+        ctypes.c_int32,
+        ctypes.c_int32,
+        ctypes.c_int32]
+cfunctions.get_string.argtypes = [ctypes.c_size_t,ctypes.c_size_t,ctypes.c_size_t,ctypes.c_size_t,np.ctypeslib.ndpointer(ctypes.c_int32, ndim=1, flags='C_CONTIGUOUS')]
+cfunctions.string_to_binary.argtypes = [ctypes.c_size_t,ctypes.c_size_t]
+cfunctions.get_string.argtypes = [
+        np.ctypeslib.ndpointer(ctypes.c_double, ndim=2, flags='C_CONTIGUOUS'),
+        np.ctypeslib.ndpointer(ctypes.c_double, ndim=2, flags='C_CONTIGUOUS'),
+        np.ctypeslib.ndpointer(ctypes.c_double, ndim=1, flags='C_CONTIGUOUS'),
+        np.ctypeslib.ndpointer(ctypes.c_int32,  ndim=1, flags='C_CONTIGUOUS'),
+        ctypes.c_int32,
+        ctypes.c_int32,
+        ctypes.c_int32,
+        ctypes.c_int32,
+        ctypes.c_int32,
+        ctypes.c_int32,
+        ctypes.c_double,
+        ctypes.c_double,
+        ctypes.c_double]
+
+cfunctions.build_sigma.argtypes = [
+        np.ctypeslib.ndpointer(ctypes.c_double, ndim=2, flags='C_CONTIGUOUS'),
+        np.ctypeslib.ndpointer(ctypes.c_double, ndim=2, flags='C_CONTIGUOUS'),
+        np.ctypeslib.ndpointer(ctypes.c_double, ndim=2, flags='C_CONTIGUOUS'),
+        np.ctypeslib.ndpointer(ctypes.c_double, ndim=2, flags='C_CONTIGUOUS'),
+        np.ctypeslib.ndpointer(ctypes.c_double, ndim=2, flags='C_CONTIGUOUS'),
+        np.ctypeslib.ndpointer(ctypes.c_int32,  ndim=1, flags='C_CONTIGUOUS'),
+        ctypes.c_size_t,
+        ctypes.c_int32,
+        ctypes.c_int32,
+        ctypes.c_int32,
+        ctypes.c_int32,
+        ctypes.c_int32,
+        ctypes.c_double,
+        ctypes.c_double,
+        ctypes.c_double,
+        ctypes.c_double,
+        ctypes.c_bool]
+def c_matrix_product(A,B,C,m,n,k):
+    cfunctions.matrix_product(A,B,C,m,n,k)
+def c_string(h1e, h2e, H_diag, table, N_p, num_alpha, nmo, N, n_o, n_in_a, omega, Enuc, dc):
+    cfunctions.get_string(h1e, h2e, H_diag, table, N_p, num_alpha, nmo, N, n_o, n_in_a, omega, Enuc, dc)
+def c_binary(string,n_o):
+    cfunctions.string_to_binary(string,n_o)
+def c_sigma(h1e, h2e, d_cmo, c_vectors, s_vectors, table, table_length, num_links, nmo, num_alpha, num_state, N_p, Enuc, dc, omega, d_exp, only_ground_state):
+    cfunctions.build_sigma(h1e, h2e, d_cmo, c_vectors, s_vectors, table, table_length, num_links, nmo, num_alpha, num_state, N_p, Enuc, dc, omega, d_exp, only_ground_state)
+
+
 def compute_excitation_level(ket, ndocc):
     level = 0
     homo = ndocc - 1
@@ -554,7 +618,6 @@ class Determinant:
         return "|" + str(a) + str(b) + ">"
 
 
-import numpy as np
 
 
 class PFHamiltonianGenerator:
@@ -590,64 +653,109 @@ class PFHamiltonianGenerator:
             H_dim = self.CISnumDets * 2
             self.H_diag = np.zeros((H_dim))
         elif self.ci_level == "cas":
-            self.generateCASCIDeterminants()
-            H_dim = self.CASnumDets * 2
+            #self.generateCASCIDeterminants()
             self.n_act_a = self.n_act_el//2 #number of active alpha electrons
             self.n_in_a = self.ndocc - self.n_act_a #number of inactive alpha electrons
             self.num_alpha = math.comb(self.n_act_orb,self.n_act_a) # number of alpha strings
             self.num_det = self.num_alpha * self.num_alpha# number of determinants
-            graph,graph_big=self.graph(self.n_act_a,self.n_act_orb) #graph vertex weight
-            self.Y=self.arc_weight(graph,graph_big,self.n_act_a,self.n_act_orb) # graph arc weight
+            self.CASnumDets = self.num_det
+            H_dim = self.CASnumDets * 2
+            #graph,graph_big=self.graph(self.n_act_a,self.n_act_orb) #graph vertex weight
+            #print(graph)
+            #self.Y=self.arc_weight(graph,graph_big,self.n_act_a,self.n_act_orb) # graph arc weight
             #print(self.num_alpha,math.comb(self.n_act_orb,self.n_act_a))
-            self.table=self.single_replacement_list2(self.num_alpha, self.n_act_a, self.n_act_orb, self.n_in_a, self.Y) # table look up for single replacement list
-            self.H_diag = self.build_H_diag(H_dim,self.H_spatial,self.twoeint,self.num_alpha,self.n_act_a,self.n_act_orb,self.n_in_a)
-            #self.c_vectors = np.random.rand(H_dim,1)
-            #self.s1_vectors = np.zeros((H_dim,1))
+            #self.table=self.single_replacement_list2(self.num_alpha, self.n_act_a, self.n_act_orb, self.n_in_a, self.Y) # table look up for single replacement list
+            #self.H_diag = self.build_H_diag(H_dim,self.H_spatial,self.twoeint,self.num_alpha,self.n_act_a,self.n_act_orb,self.n_in_a)
+            self.H_diag = np.zeros(H_dim)
+            #self.c_vectors = np.random.rand(H_dim,4)
+            #self.s1_vectors = np.zeros((H_dim,4))
+            #self.s2_vectors = np.zeros((H_dim,4))
             #self.build_sigma(self.c_vectors,self.s1_vectors,H_dim)
+          
+            #for index2 in range(0,self.num_alpha):
+            #    binary,string=self.index_to_string(index2,self.n_act_a,self.n_act_orb,self.Y,return_binary=True)
+            #    print(binary,index2,string)
+
+            self.table = np.zeros(self.num_alpha*(self.n_act_a*(self.n_act_orb-self.n_act_a)+self.n_act_a+self.n_in_a)*4,dtype=np.int32)
+
+            c_string(self.H_spatial2, self.twoeint, self.H_diag, self.table, self.N_p, self.num_alpha, self.nmo, self.n_act_a, self.n_act_orb, self.n_in_a, self.omega, self.Enuc, self.dc)
+            #for i in range(len(self.table)):
+            #    print(self.table[i])
+             
+            #rows = self.num_alpha*(self.n_act_a*(self.n_act_orb-self.n_act_a)+self.n_act_a+self.n_in_a)
+            #cols = 4
+            #num_links = rows//self.num_alpha 
+            #for i in range(rows):
+            #    for j in range(cols):
+            #        print(self.table2[i*cols+j],end="");
+            #    print("\n");
+
+            #c_sigma(self.gkl, self.twoeint, self.d_cmo, self.c_vectors, self.s2_vectors, self.table2, rows, 
+            #        num_links, self.nmo, self.num_alpha, 4, self.N_p, self.Enuc, self.dc, self.omega, self.d_exp, self.only_ground_state) 
+
+            ####A = np.asarray([1.0,2.0,3.0,4.0,5.0,6.0])
+            ####A = np.reshape(A,(3,2))
+            ####B = np.asarray([1.0,2.0,3.0,5.0,6.0,7.0,9.0,10.0])
+            ####B = np.reshape(B,(2,4))
+            ####C = np.einsum("ij,jk->ik",A,B)
+            ####print(A)
+            ####print(B)
+            ####print(C)
+            ####D = np.zeros((3,4))
+            ####c_matrix_product(A,B,D,3,4,2)
+            ####print(D)
 
         elif self.ci_level == "fci":
-            self.generateFCIDeterminants()
-            H_dim = self.FCInumDets * 2
+            self.n_act_a = self.ndocc #number of active alpha electrons
+            self.n_in_a = 0 #number of inactive alpha electrons
+            self.n_act_orb = self.nmo #number of active alpha orbitals 
+
             self.num_alpha = math.comb(self.nmo,self.ndocc) # number of alpha strings
             self.num_det = self.num_alpha * self.num_alpha# number of determinants
-            graph,graph_big=self.graph(self.ndocc,self.nmo)
-            self.Y=self.arc_weight(graph,graph_big,self.ndocc,self.nmo)
-            self.H_diag = self.build_H_diag(H_dim,self.H_spatial,self.twoeint,self.num_alpha,self.ndocc,self.nmo,0)
-            #print(self.Y)
-
+            self.FCInumDets = self.num_det
+            H_dim = self.FCInumDets * 2
+            self.H_diag = np.zeros(H_dim)
+            self.table = np.zeros(self.num_alpha*(self.n_act_a*(self.n_act_orb-self.n_act_a)+self.n_act_a+self.n_in_a)*4,dtype=np.int32)
+            c_string(self.H_spatial2, self.twoeint, self.H_diag, self.table, self.N_p, self.num_alpha, self.nmo, self.n_act_a, self.n_act_orb, self.n_in_a, self.omega, self.Enuc, self.dc)
+            #graph,graph_big=self.graph(self.ndocc,self.nmo)
+            #self.Y=self.arc_weight(graph,graph_big,self.ndocc,self.nmo)
+            #self.H_diag = self.build_H_diag(H_dim,self.H_spatial,self.twoeint,self.num_alpha,self.ndocc,self.nmo,0)
+            #self.table=self.single_replacement_list2(self.num_alpha,self.ndocc,self.nmo,0, self.Y)
 
             #for index2 in range(0,self.num_alpha):
             #    binary,string=self.index_to_string(index2,self.ndocc,self.nmo,self.Y,return_binary=True)
             #    orblist=Determinant.obtBits2ObtIndexList(string)
             #    print(binary,index2,string,orblist)
 
-            self.table=self.single_replacement_list2(self.num_alpha,self.ndocc,self.nmo,0, self.Y)
             #for i in range(len(self.table)):
             #    print(self.table[i])
             #self.c_vectors = np.random.rand(H_dim,1)
             #self.s1_vectors = np.zeros((H_dim,1))
             #self.build_sigma(self.c_vectors,self.s1_vectors,H_dim)
-       
+        #print(self.Y)
+
         t_det_end = time.time()
         print(F' Completed determinant list in {t_det_end - t_det_start} seconds ')
 
 
-        # build Constant matrices
-        self.buildConstantMatrices(self.ci_level)
-        t_const_end = time.time()
-        print(F' Completed constant offset matrix in {t_const_end - t_det_end} seconds')
-
-        # Build Matrix
-        self.generatePFHMatrix(self.ci_level)
-        t_H_build = time.time()
-        print(F' Completed Hamiltonian build in {t_H_build - t_const_end} seconds')
+        if self.ci_level == "cis": 
+            # build Constant matrices
+            self.buildConstantMatrices(self.ci_level)
+            t_const_end = time.time()
+            print(F' Completed constant offset matrix in {t_const_end - t_det_end} seconds')
         
+            # Build Matrix
+            self.generatePFHMatrix(self.ci_level)
+            t_H_build = time.time()
+            print(F' Completed Hamiltonian build in {t_H_build - t_const_end} seconds')
+        else:
+            self.H_PF = np.eye(2)
         ####test sigma build
         ###s1_temp = np.einsum("ij,jk->ik", self.H_PF, self.c_vectors)
         ###for j in range(self.s1_vectors.shape[1]):
-        ###    print('dim 2 is',j)
         ###    for i in range(self.s1_vectors.shape[0]):
-        ###        print(self.s1_vectors[i][j]-s1_temp[i][j])
+        ###        #print(self.s1_vectors[i][j]-s1_temp[i][j])
+        ###        print(self.s1_vectors[i][j]-self.s2_vectors[i][j])
         
 
         if self.full_diagonalization:
@@ -659,6 +767,7 @@ class PFHamiltonianGenerator:
             if (indim > H_dim or maxdim > H_dim):
                 print('subspace size is too large, try to set maxdim and indim <',H_dim//self.davidson_roots)
                 sys.exit()
+            t_H_build = time.time()
 
 
             dres = self.Davidson(self.H_PF, self.davidson_roots, self.davidson_threshold, indim, maxdim,self.davidson_maxiter,self.build_sigma,self.H_diag)
@@ -714,6 +823,13 @@ class PFHamiltonianGenerator:
             self.full_diagonalization = cavity_dictionary["full_diagonalization"]
         else:
             self.full_diagonalization = False 
+
+
+        if "only_ground_state" in cavity_dictionary:
+            self.only_ground_state = cavity_dictionary["only_ground_state"]
+        else:
+            self.only_ground_state = False 
+
 
         if "davidson_roots" in cavity_dictionary:
             self.davidson_roots = cavity_dictionary["davidson_roots"]
@@ -834,6 +950,7 @@ class PFHamiltonianGenerator:
         # spatial part of 1-e integrals
         _H_spin = np.einsum("uj,vi,uv", self.C, self.C, self.H_1e_ao)
         self.H_spatial=_H_spin
+        self.H_spatial2 = np.ascontiguousarray(_H_spin) 
         _H_spin = np.repeat(_H_spin, 2, axis=0)
         _H_spin = np.repeat(_H_spin, 2, axis=1)
         # spin part of 1-e integrals
@@ -861,6 +978,8 @@ class PFHamiltonianGenerator:
         self.twoeint= self.eri_spatial + self.d_spatial
         self.contracted_twoeint = -0.5 * np.einsum("illj->ij", self.twoeint)
         self.twoeint = np.reshape(self.twoeint,(self.nmo*self.nmo,self.nmo*self.nmo))
+        #self.twoeint2 = np.reshape(self.twoeint,(self.nmo*self.nmo*self.nmo*self.nmo))
+
     def buildGSO(self):
         """
         Will build the 1-electron arrays in the spin orbital basis
@@ -1413,6 +1532,7 @@ class PFHamiltonianGenerator:
                     kl = k * self.nmo + l
                     self.gkl[k][l] -= self.twoeint[kk][kl]/(1+(k==l))
         
+        #self.gkl2 = np.reshape(self.gkl,(self.nmo*self.nmo))
 
         print(F' Completed 2D build in {t_2d_end - t_eri_end} seconds')
         
@@ -1923,6 +2043,10 @@ class PFHamiltonianGenerator:
                     self.sigma12(self.gkl, self.twoeint, c_vectors[start:end,n], s_vectors[start:end,n], self.num_alpha, self.num_links)
                     self.sigma3(self.twoeint, c_vectors[start:end,n], s_vectors[start:end,n], self.num_alpha, self.num_links)
                     someconstant = m * self.omega + self.Enuc + self.dc 
+                    if self.only_ground_state == True:
+                       #print('only ground state')
+                       someconstant = m * (self.omega + 1) + self.Enuc + self.dc 
+
                     self.constant_terms_contraction(c_vectors[start:end,n], s_vectors[start:end,n], someconstant)
                     start0 = (m-1) * H_dim//np1
                     end0   =  m    * H_dim//np1
@@ -2135,7 +2259,6 @@ class PFHamiltonianGenerator:
                 for i in range(dim_sb):
                     occupation_list_spin[i+dim_d+dim_sa][0] = single_occupation_b[i]
                     occupation_list_spin[i+dim_d+dim_sa][2] = 1   
-                #print(occupation_list_spin)
                 ####F = -1/(dim_s-1)
 
                 ####d = 0
@@ -2194,11 +2317,15 @@ class PFHamiltonianGenerator:
         #for i in range(len(H_diag)):
         #    print(H_diag[i]-H_diag2[i])
         H_dim = len(H_diag)
+        print(H_dim,indim) 
         L = indim 
         # When L exceeds Lmax we will collapse the guess space so our sub-space
         # diagonalization problem does not grow too large
         Lmax = maxdim
-        
+        if self.ci_level == "cas" or self.ci_level == "fci":
+            rows = self.num_alpha*(self.n_act_a*(self.n_act_orb-self.n_act_a)+self.n_act_a+self.n_in_a)
+            num_links = rows//self.num_alpha 
+
 
         # An array to hold the excitation energies
         theta = [0.0] * L
@@ -2207,21 +2334,32 @@ class PFHamiltonianGenerator:
         Q_idx = H_diag.argsort()[:indim]
         #print(Q_idx)
         if self.davidson_guess == "unit guess":
+            Q = np.zeros((indim,H_dim))
             print("use unit guess")
-            Q = np.eye(H_dim)[:, Q_idx]
+            BIGNUM=10**100
+            H_diag2 = np.copy(H_diag)
+            for i in range(indim): 
+                minimum = H_diag2[0]
+                min_pos = 0
+                for j in range(H_dim): 
+                    if H_diag2[j] < minimum: 
+                        minimum = H_diag2[j]
+                        min_pos = j
+                Q[i][min_pos] = 1.0
+                H_diag2[min_pos] = BIGNUM
         else:    
             print("use random guess")
-            Q = np.random.rand(H_dim,indim)
+            Q = np.random.rand(indim,H_dim)
         #print(Q)
-        #print(np.shape(Q)) 
-
+        print("qshape",np.shape(Q)) 
         num_iter = maxiter
         for a in range(0, num_iter):
             print("\n")
             #orthonormalization of basis vectors by QR
-            Q, R = np.linalg.qr(Q)
-            print(Q.shape)
-            L = Q.shape[1]#dynamic dimension of subspace
+            Qtemp, Rtemp = np.linalg.qr(Q.T)
+            Q = np.ascontiguousarray(Qtemp.T)
+            L = Q.shape[0]#dynamic dimension of subspace
+            print(np.shape(Q)) 
             print('iteration', a+1, 'subspace dimension', L)
             theta_old = theta[:nroots]
             #print("CI Iter # {:>6} L = {}".format(EOMCCSD_iter, L))
@@ -2230,13 +2368,19 @@ class PFHamiltonianGenerator:
             if self.ci_level == "fci" or self.ci_level == "cas":
                 #S = np.einsum("pq,qi->pi", H, Q)  
                 t_sigma_begin = time.time()
-                build_sigma(Q,S,H_dim)
+                #build_sigma(Q,S,H_dim)
+
+
+                c_sigma(self.gkl, self.twoeint, self.d_cmo, Q, S, self.table, rows, 
+                    num_links, self.nmo, self.num_alpha, L, self.N_p, self.Enuc, self.dc, self.omega, self.d_exp, self.only_ground_state) 
+
+
                 t_sigma_end = time.time()
                 print('build sigma took',t_sigma_end-t_sigma_begin,'seconds')
             else:    
-                S = np.einsum("pq,qi->pi", H, Q)  
+                S = np.einsum("ip,pq->iq", Q, H)  
             # Build the subspace Hamiltonian
-            G = np.dot(Q.T, S)
+            G = np.dot(Q, S.T)
             #print(np.allclose(G, G.T, 1e-12, 1e-12))    
             # Diagonalize it, and sort the eigenvector/eigenvalue pairs
             theta, alpha = np.linalg.eigh(G)
@@ -2246,15 +2390,15 @@ class PFHamiltonianGenerator:
             alpha = alpha[:, idx]
             # This vector will hold the new guess vectors to add to our space
             add_Q = []
-            w = np.zeros((H_dim,nroots))
+            w = np.zeros((nroots,H_dim))
             residual_norm = np.zeros((nroots))
             unconverged_idx = []
             convergence_check = np.zeros((nroots),dtype=str)
             conv = 0
             for j in range(nroots):
                 # Compute a residual vector "w" for each root we seek
-                w[:,j] = np.dot(S, alpha[:, j]) - theta[j] * np.dot(Q, alpha[:, j])
-                residual_norm[j] = np.sqrt(np.dot(w[:,j].T,w[:,j]))
+                w[j,:] = np.dot(alpha[:, j].T, S) - theta[j] * np.dot(alpha[:, j].T, Q)
+                residual_norm[j] = np.sqrt(np.dot(w[j,:],w[j,:].T))
                 if (residual_norm[j] < threshold):
                     conv += 1
                     convergence_check[j] = 'Yes'
@@ -2265,7 +2409,7 @@ class PFHamiltonianGenerator:
             
             print('root','residual norm','Eigenvalue','Convergence')
             for j in range(nroots):
-                print(j+1,residual_norm[j],theta[j],convergence_check[j])
+                print(j+1,residual_norm[j],theta[j],convergence_check[j],flush=True)
 
 
             if (conv == nroots):
@@ -2276,7 +2420,7 @@ class PFHamiltonianGenerator:
                 print('maxiter reached, try to increase maxiter or subspace size')
                 break
             
-            preconditioned_w = np.zeros((H_dim,len(unconverged_idx)))
+            preconditioned_w = np.zeros((len(unconverged_idx),H_dim))
             #print('wshape',w.shape)
             if(len(unconverged_idx) >0):
                 for n in range(H_dim):
@@ -2286,24 +2430,24 @@ class PFHamiltonianGenerator:
                         
                         if np.abs(dum) <1e-20:
                             #print('error!!!!!!!!!!!')
-                            preconditioned_w[n,k] = 0.0
+                            preconditioned_w[k,n] = 0.0
                         else:
-                            preconditioned_w[n,k] = w[n,unconverged_idx[k]] /dum
+                            preconditioned_w[k,n] = w[unconverged_idx[k],n] /dum
                         #print(preconditioned_w[n,k],n,k)
                 add_Q.append(preconditioned_w)
                 #print(add_Q)
             
             if (Lmax-L < len(unconverged_idx)):
-                unconverged_w = np.zeros((H_dim,len(unconverged_idx)))
-                Q=np.dot(Q, alpha)
+                unconverged_w = np.zeros((len(unconverged_idx),H_dim))
+                Q=np.dot(alpha.T, Q)
                 
                 for i in range(len(unconverged_idx)):
-                    unconverged_w[:,i]=w[:,unconverged_idx[i]] 
+                    unconverged_w[i,:]=w[unconverged_idx[i],:] 
                 
                 #Q=np.append(Q,unconverged_w)
                 #print(Q)
                 #print(unconverged_w)
-                Q = np.concatenate((Q,unconverged_w),axis=1)
+                Q = np.concatenate((Q,unconverged_w),axis=0)
                 print(Q.shape)
                 #Q=np.column_stack(Qtup)
                 
@@ -2315,39 +2459,45 @@ class PFHamiltonianGenerator:
                 # if not we add the preconditioned residuals to the guess
                 # space, and continue. Note that the set will be orthogonalized
                 # at the start of the next iteration
-                Qtup = tuple(Q[:, i] for i in range(L)) + tuple(add_Q)
-                Q = np.column_stack(Qtup)
+                Qtup = tuple(Q[i, :] for i in range(L)) + tuple(add_Q)
+                Q = np.row_stack(Qtup)
                 #print(Q)
-        Q=np.dot(Q, alpha)
+        newQ=np.dot(alpha.T, Q)
+        Q = np.zeros((H_dim,nroots))
+        Q = newQ.T 
         singletcount = 0
+        print(Q.shape)
         for i in range(Q.shape[1]):
-            #print("state",i, "energy =",theta[i])
-            print("        amplitude","      position", "         most important determinants","             number of photon")
-            index=np.argsort(np.abs(Q[:,i]))
-            c0 = index[Q.shape[0]-1]%(H_dim//2)
-            d0 = (index[Q.shape[0]-1]-c0)//(H_dim//2)
-            a0,b0 = self.detmap[c0]
-            alphalist = Determinant.obtBits2ObtIndexList(a0)
-            betalist = Determinant.obtBits2ObtIndexList(b0)
-            singlet = 1
-            for j in range(min(H_dim,10)):
-                c = index[Q.shape[0]-j-1]%(H_dim//2)
-                d = (index[Q.shape[0]-j-1]-c)//(H_dim//2)
-                a,b = self.detmap[c]
-                if a == b0 and b == a0 and np.abs(Q[index[Q.shape[0]-j-1]][i]-(-1)*Q[index[Q.shape[0]-1]][i]) < 1e-4:
-                    singlet = singlet * 0
-                else:
-                    singlet = singlet * 1
-                alphalist = Determinant.obtBits2ObtIndexList(a)
-                betalist = Determinant.obtBits2ObtIndexList(b)
+            print("state",i, "energy =",theta[i])
 
-                print("%20.12lf"%(Q[index[Q.shape[0]-j-1]][i]),"%9.3d"%(index[Q.shape[0]-j-1]),"      alpha",alphalist,"   beta",betalist,"%4.1d"%(d), "photon")
-            #print("state",i, "energy =",theta[i], singlet)
-            if singlet == 1:
-                print("state",i, "energy =",theta[i], '  singlet',singletcount)
-                singletcount += 1
-            else:
-                print("state",i, "energy =",theta[i], '  triplet',"%2.1d"%(d0), "photon")
+        #for i in range(Q.shape[1]):
+        #    #print("state",i, "energy =",theta[i])
+        #    print("        amplitude","      position", "         most important determinants","             number of photon")
+        #    index=np.argsort(np.abs(Q[:,i]))
+        #    c0 = index[Q.shape[0]-1]%(H_dim//2)
+        #    d0 = (index[Q.shape[0]-1]-c0)//(H_dim//2)
+        #    a0,b0 = self.detmap[c0]
+        #    alphalist = Determinant.obtBits2ObtIndexList(a0)
+        #    betalist = Determinant.obtBits2ObtIndexList(b0)
+        #    singlet = 1
+        #    for j in range(min(H_dim,10)):
+        #        c = index[Q.shape[0]-j-1]%(H_dim//2)
+        #        d = (index[Q.shape[0]-j-1]-c)//(H_dim//2)
+        #        a,b = self.detmap[c]
+        #        if a == b0 and b == a0 and np.abs(Q[index[Q.shape[0]-j-1]][i]-(-1)*Q[index[Q.shape[0]-1]][i]) < 1e-4:
+        #            singlet = singlet * 0
+        #        else:
+        #            singlet = singlet * 1
+        #        alphalist = Determinant.obtBits2ObtIndexList(a)
+        #        betalist = Determinant.obtBits2ObtIndexList(b)
+
+        #        print("%20.12lf"%(Q[index[Q.shape[0]-j-1]][i]),"%9.3d"%(index[Q.shape[0]-j-1]),"      alpha",alphalist,"   beta",betalist,"%4.1d"%(d), "photon")
+        #    #print("state",i, "energy =",theta[i], singlet)
+        #    if singlet == 1:
+        #        print("state",i, "energy =",theta[i], '  singlet',singletcount)
+        #        singletcount += 1
+        #    else:
+        #        print("state",i, "energy =",theta[i], '  triplet',"%2.1d"%(d0), "photon")
 
 
         
