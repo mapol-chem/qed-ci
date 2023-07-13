@@ -1,6 +1,6 @@
 #include <stdlib.h>
 #include <stdio.h>
-#include "cfunctions2.h"
+#include "cfunctions.h"
 #include <string.h>
 #include <math.h>
 #include <cblas.h>

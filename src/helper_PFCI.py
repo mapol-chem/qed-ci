@@ -16,7 +16,7 @@ __date__ = "2023-01-21"
 
 import psi4
 import sys
-from helper_cqed_rhf2 import cqed_rhf
+from helper_cqed_rhf import cqed_rhf
 from itertools import combinations
 import math
 import time
