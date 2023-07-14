@@ -9,7 +9,7 @@ void matrix_product(double* A, double* B, double* C, int m, int n, int k) {
      cblas_dgemm(CblasRowMajor, CblasNoTrans, CblasNoTrans, m, n, k, 1.0, A, k, B, n, 0.0, C, n);
 }
 
-void get_graph(size_t N, size_t n_o, int** Y) {
+void get_graph(size_t N, size_t n_o, int* Y) {
      //lexical ordering graph with unoccupied arc set to be zero, return vertex weight
      size_t rows = (N+1)*(n_o-N+1);
      size_t cols = 3;
@@ -89,14 +89,14 @@ void get_graph(size_t N, size_t n_o, int** Y) {
 	       B[0][2]=c;
                //printf("%4d%4d%4d\n",e,o,c);
 	   }
-           Y[row][0]=B[0][0];
-           Y[row][1]=B[0][1];
-           Y[row][2]=B[0][2];
+           Y[row*3+0]=B[0][0];
+           Y[row*3+1]=B[0][1];
+           Y[row*3+2]=B[0][2];
        } 
        /*
        for (int i = 0; i < rows; i++) {
            for (int j = 0; j < cols; j++) {
-	       printf("%4d%4d%4d\n",i,j,Y[i][j]);	   
+	       printf("%4d%4d%4d\n",i,j,Y[i*3+j]);	   
 	   }
 		 printf("\n");
        }
@@ -149,7 +149,7 @@ int* string_to_obtlist(size_t string, int nmo, int* length) {
 
 
 
-int string_to_index(size_t string, size_t N, size_t n_o, int** Y) {
+int string_to_index(size_t string, size_t N, size_t n_o, int* Y) {
      int a[n_o];
      memset(a, 0, sizeof a);
      int c=0;
@@ -171,8 +171,8 @@ int string_to_index(size_t string, size_t N, size_t n_o, int** Y) {
              int e = count;
              int o = i;
              for (int j = 0; j < rows; j++) {
-                 if  (Y[j][0] == e && Y[j][1] == o) {
-                     index +=Y[j][2];
+                 if  (Y[j*3+0] == e && Y[j*3+1] == o) {
+                     index +=Y[j*3+2];
 		 }
 	     }
              count +=1;
@@ -180,7 +180,7 @@ int string_to_index(size_t string, size_t N, size_t n_o, int** Y) {
      } 
      return index;
 }  
-size_t index_to_string(int index, int N, int n_o, int** Y) {
+size_t index_to_string(int index, int N, int n_o, int* Y) {
        int index_sum=0;
        int e=N;
        int o=n_o;
@@ -202,8 +202,8 @@ size_t index_to_string(int index, int N, int n_o, int** Y) {
 		   }
 	       }
                for (int j = 0; j < rows; j++) {
-                   if  (Y[j][0] == e-1 && Y[j][1] == o) {
-                       int b = Y[j][2];
+                   if  (Y[j*3+0] == e-1 && Y[j*3+1] == o) {
+                       int b = Y[j*3+2];
                        index_sum = index_sum-b;
 		   }
 	       }
@@ -213,8 +213,8 @@ size_t index_to_string(int index, int N, int n_o, int** Y) {
            else {
                if (e > 0) {
                    for (int j = 0; j < rows; j++) {
-                       if (Y[j][0] == e-1 && Y[j][1] == o-1) {
-                           int a = Y[j][2];
+                       if (Y[j*3+0] == e-1 && Y[j*3+1] == o-1) {
+                           int a = Y[j*3+2];
                            if (a <= index-index_sum) {
                                e = e-1;
                                o = o-1;
@@ -269,7 +269,7 @@ int phase_single_excitation(size_t p, size_t q, size_t string) {
 
 
 
-void single_replacement_list(int num_alpha, int N, int n_o, int n_in_a, int** Y,int* table) {
+void single_replacement_list(int num_alpha, int N, int n_o, int n_in_a, int* Y,int* table) {
 
        int count=0;        
        for (int index = 0; index < num_alpha; index++){
@@ -324,8 +324,8 @@ void build_H_diag(double* h1e, double* h2e, double* H_diag, int N_p, int num_alp
             int start =  m * num_dets; 
 
             for (size_t Idet = 0; Idet < num_dets; Idet++) {
-                int index_a = Idet/num_alpha;
                 int index_b = Idet%num_alpha;
+                int index_a = (Idet-index_b)/num_alpha;
                 size_t string_a = index_to_string(index_a,n_act_a,n_act_orb,Y);
                 size_t string_b = index_to_string(index_b,n_act_a,n_act_orb,Y);
 		size_t ab = string_a & string_b;
@@ -406,10 +406,11 @@ void build_H_diag(double* h1e, double* h2e, double* H_diag, int N_p, int num_alp
 void get_string (double* h1e, double* h2e, double* H_diag, int* table, int N_p, int num_alpha, int nmo, int N, int n_o, int n_in_a, double omega, double Enuc, double dc){
      int rows = N*(n_o-N+1);
      int cols = 3;
-     Y = (int**) malloc(rows*sizeof(int*));
-     for (int row = 0; row < rows; row++) {
-         Y[row] = (int*) malloc(cols*sizeof(int));
-     }
+     //Y = (int**) malloc(rows*sizeof(int*));
+     //for (int row = 0; row < rows; row++) {
+     //    Y[row] = (int*) malloc(cols*sizeof(int));
+     //}
+     Y = (int*) malloc(rows*cols*sizeof(int));
 
      get_graph(N,n_o,Y);
      

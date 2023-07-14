@@ -40,7 +40,11 @@ cfunctions.matrix_product.argtypes = [
         ctypes.c_int32,
         ctypes.c_int32]
 cfunctions.get_string.argtypes = [ctypes.c_size_t,ctypes.c_size_t,ctypes.c_size_t,ctypes.c_size_t,np.ctypeslib.ndpointer(ctypes.c_int32, ndim=1, flags='C_CONTIGUOUS')]
-cfunctions.string_to_binary.argtypes = [ctypes.c_size_t,ctypes.c_size_t]
+cfunctions.get_graph.argtypes = [ctypes.c_int32,ctypes.c_int32,
+        np.ctypeslib.ndpointer(ctypes.c_int32, ndim=1, flags='C_CONTIGUOUS')]
+cfunctions.index_to_string.argtypes = [ctypes.c_int32,ctypes.c_int32,ctypes.c_int32,
+        np.ctypeslib.ndpointer(ctypes.c_int32, ndim=1, flags='C_CONTIGUOUS')]
+cfunctions.index_to_string.restype = ctypes.c_size_t
 cfunctions.get_string.argtypes = [
         np.ctypeslib.ndpointer(ctypes.c_double, ndim=2, flags='C_CONTIGUOUS'),
         np.ctypeslib.ndpointer(ctypes.c_double, ndim=2, flags='C_CONTIGUOUS'),
@@ -78,8 +82,14 @@ def c_matrix_product(A,B,C,m,n,k):
     cfunctions.matrix_product(A,B,C,m,n,k)
 def c_string(h1e, h2e, H_diag, table, N_p, num_alpha, nmo, N, n_o, n_in_a, omega, Enuc, dc):
     cfunctions.get_string(h1e, h2e, H_diag, table, N_p, num_alpha, nmo, N, n_o, n_in_a, omega, Enuc, dc)
-def c_binary(string,n_o):
-    cfunctions.string_to_binary(string,n_o)
+
+
+def c_index_to_string(index,n_act_a,n_act_orb,Y):
+    string = cfunctions.index_to_string(index,n_act_a,n_act_orb,Y)
+    return string
+
+def c_graph(N,n_o,Y):
+    cfunctions.get_graph(N,n_o,Y)
 def c_sigma(h1e, h2e, d_cmo, c_vectors, s_vectors, table, table_length, num_links, nmo, num_alpha, num_state, N_p, Enuc, dc, omega, d_exp, only_ground_state):
     cfunctions.build_sigma(h1e, h2e, d_cmo, c_vectors, s_vectors, table, table_length, num_links, nmo, num_alpha, num_state, N_p, Enuc, dc, omega, d_exp, only_ground_state)
 
@@ -647,10 +657,11 @@ class PFHamiltonianGenerator:
         self.buildArraysInOrbitalBasis(psi4_wfn_o)
 
         t_det_start = time.time()
+        np1=self.N_p+1
         # build the determinant list
         if self.ci_level == "cis":
             self.generateCISDeterminants()
-            H_dim = self.CISnumDets * 2
+            H_dim = self.CISnumDets * np1
             self.H_diag = np.zeros((H_dim))
         elif self.ci_level == "cas":
             #self.generateCASCIDeterminants()
@@ -659,7 +670,7 @@ class PFHamiltonianGenerator:
             self.num_alpha = math.comb(self.n_act_orb,self.n_act_a) # number of alpha strings
             self.num_det = self.num_alpha * self.num_alpha# number of determinants
             self.CASnumDets = self.num_det
-            H_dim = self.CASnumDets * 2
+            H_dim = self.CASnumDets * np1
             #graph,graph_big=self.graph(self.n_act_a,self.n_act_orb) #graph vertex weight
             #print(graph)
             #self.Y=self.arc_weight(graph,graph_big,self.n_act_a,self.n_act_orb) # graph arc weight
@@ -713,7 +724,7 @@ class PFHamiltonianGenerator:
             self.num_alpha = math.comb(self.nmo,self.ndocc) # number of alpha strings
             self.num_det = self.num_alpha * self.num_alpha# number of determinants
             self.FCInumDets = self.num_det
-            H_dim = self.FCInumDets * 2
+            H_dim = self.FCInumDets * np1
             self.H_diag = np.zeros(H_dim)
             self.table = np.zeros(self.num_alpha*(self.n_act_a*(self.n_act_orb-self.n_act_a)+self.n_act_a+self.n_in_a)*4,dtype=np.int32)
             c_string(self.H_spatial2, self.twoeint, self.H_diag, self.table, self.N_p, self.num_alpha, self.nmo, self.n_act_a, self.n_act_orb, self.n_in_a, self.omega, self.Enuc, self.dc)
@@ -2469,35 +2480,85 @@ class PFHamiltonianGenerator:
         print(Q.shape)
         for i in range(Q.shape[1]):
             print("state",i, "energy =",theta[i])
+        if self.ci_level == "cis":
+            for i in range(Q.shape[1]):
+                #print("state",i, "energy =",theta[i])
+                print("        amplitude","      position", "         most important determinants","             number of photon")
+                index=np.argsort(np.abs(Q[:,i]))
+                c0 = index[Q.shape[0]-1]%(H_dim//2)
+                d0 = (index[Q.shape[0]-1]-c0)//(H_dim//2)
+                a0,b0 = self.detmap[c0]
+                alphalist = Determinant.obtBits2ObtIndexList(a0)
+                betalist = Determinant.obtBits2ObtIndexList(b0)
+                
+                singlet = 1
+                for j in range(min(H_dim,10)):
+                    c = index[Q.shape[0]-j-1]%(H_dim//2)
+                    d = (index[Q.shape[0]-j-1]-c)//(H_dim//2)
+                    a,b = self.detmap[c]
+                    if a == b0 and b == a0 and np.abs(Q[index[Q.shape[0]-j-1]][i]-(-1)*Q[index[Q.shape[0]-1]][i]) < 1e-4:
+                        singlet = singlet * 0
+                    else:
+                        singlet = singlet * 1
+                    alphalist = Determinant.obtBits2ObtIndexList(a)
+                    betalist = Determinant.obtBits2ObtIndexList(b)
+                   
+                    print("%20.12lf"%(Q[index[Q.shape[0]-j-1]][i]),"%9.3d"%(index[Q.shape[0]-j-1]),"      alpha",alphalist,"   beta",betalist,"%4.1d"%(d), "photon")
+                #print("state",i, "energy =",theta[i], singlet)
+                if singlet == 1:
+                    print("state",i, "energy =",theta[i], '  singlet',singletcount)
+                    singletcount += 1
+                else:
+                    print("state",i, "energy =",theta[i], '  triplet',"%2.1d"%(d0), "photon")
+        else:
+            Y = np.zeros(self.n_act_a*(self.n_act_orb-self.n_act_a+1)*3,dtype=np.int32)
+            c_graph(self.n_act_a, self.n_act_orb, Y);
+            np1 = self.N_p + 1
+            for i in range(Q.shape[1]):
+                #print("state",i, "energy =",theta[i])
+                print("        amplitude","      position", "         most important determinants","             number of photon")
+                index=np.argsort(np.abs(Q[:,i]))
+                #print(index)
+                Idet0 = index[Q.shape[0]-1]%self.num_det #determinant index of most significant contribution
+                photon_p0 = (index[Q.shape[0]-1]-Idet0)//self.num_det # photon number block of determinant
+                Ib0= Idet0%self.num_alpha
+                Ia0= Idet0//self.num_alpha
+                a0 = c_index_to_string(Ia0,self.n_act_a,self.n_act_orb,Y);
+                b0 = c_index_to_string(Ib0,self.n_act_a,self.n_act_orb,Y);
 
-        #for i in range(Q.shape[1]):
-        #    #print("state",i, "energy =",theta[i])
-        #    print("        amplitude","      position", "         most important determinants","             number of photon")
-        #    index=np.argsort(np.abs(Q[:,i]))
-        #    c0 = index[Q.shape[0]-1]%(H_dim//2)
-        #    d0 = (index[Q.shape[0]-1]-c0)//(H_dim//2)
-        #    a0,b0 = self.detmap[c0]
-        #    alphalist = Determinant.obtBits2ObtIndexList(a0)
-        #    betalist = Determinant.obtBits2ObtIndexList(b0)
-        #    singlet = 1
-        #    for j in range(min(H_dim,10)):
-        #        c = index[Q.shape[0]-j-1]%(H_dim//2)
-        #        d = (index[Q.shape[0]-j-1]-c)//(H_dim//2)
-        #        a,b = self.detmap[c]
-        #        if a == b0 and b == a0 and np.abs(Q[index[Q.shape[0]-j-1]][i]-(-1)*Q[index[Q.shape[0]-1]][i]) < 1e-4:
-        #            singlet = singlet * 0
-        #        else:
-        #            singlet = singlet * 1
-        #        alphalist = Determinant.obtBits2ObtIndexList(a)
-        #        betalist = Determinant.obtBits2ObtIndexList(b)
+                alphalist = Determinant.obtBits2ObtIndexList(a0)
+                betalist = Determinant.obtBits2ObtIndexList(b0)
+                singlet = 1
+                for j in range(min(H_dim,10)):
+                    Idet = index[Q.shape[0]-j-1]%self.num_det
+                    photon_p = (index[Q.shape[0]-j-1]-Idet)//self.num_det
+                    Ib= Idet%self.num_alpha
+                    Ia= Idet//self.num_alpha
+                    a = c_index_to_string(Ia,self.n_act_a,self.n_act_orb,Y);
+                    b = c_index_to_string(Ib,self.n_act_a,self.n_act_orb,Y);
 
-        #        print("%20.12lf"%(Q[index[Q.shape[0]-j-1]][i]),"%9.3d"%(index[Q.shape[0]-j-1]),"      alpha",alphalist,"   beta",betalist,"%4.1d"%(d), "photon")
-        #    #print("state",i, "energy =",theta[i], singlet)
-        #    if singlet == 1:
-        #        print("state",i, "energy =",theta[i], '  singlet',singletcount)
-        #        singletcount += 1
-        #    else:
-        #        print("state",i, "energy =",theta[i], '  triplet',"%2.1d"%(d0), "photon")
+
+                    if a == b0 and b == a0 and np.abs(Q[index[Q.shape[0]-j-1]][i]-(-1)*Q[index[Q.shape[0]-1]][i]) < 1e-4:
+                        singlet = singlet * 0
+                    else:
+                        singlet = singlet * 1
+                    alphalist = Determinant.obtBits2ObtIndexList(a)
+                    betalist = Determinant.obtBits2ObtIndexList(b)
+ 
+                    inactive_list = list(x for x in range(self.n_in_a))
+                    alphalist2 = [x + self.n_in_a for x in alphalist]
+                    alphalist2[0:0] = inactive_list
+                    betalist2 = [x + self.n_in_a for x in betalist]
+                    betalist2[0:0] = inactive_list
+
+                    print("%20.12lf"%(Q[index[Q.shape[0]-j-1]][i]),"%9.3d"%(index[Q.shape[0]-j-1]),"      alpha",alphalist2,"   beta",betalist2,"%4.1d"%(photon_p), "photon")
+                #print("state",i, "energy =",theta[i], singlet)
+                if singlet == 1:
+                    print("state",i, "energy =",theta[i], '  singlet',singletcount)
+                    singletcount += 1
+                else:
+                    print("state",i, "energy =",theta[i], '  triplet',"%2.1d"%(photon_p0), "photon")
+
 
 
         
