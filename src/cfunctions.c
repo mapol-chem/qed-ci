@@ -481,8 +481,6 @@ void sigma3(double* h2e, double* c_vectors,double* c1_vectors,int num_alpha,int 
      int* L = (int*) malloc(num_alpha*sizeof(int));
      int* R = (int*) malloc(num_alpha*sizeof(int));
      int* sgn = (int*) malloc(num_alpha*sizeof(int));
-     double* cp;
-     double* v;
      double* F;
      F = (double*) malloc(num_alpha*sizeof(double));
      memset(L, 0, num_alpha*sizeof(int));
@@ -503,6 +501,7 @@ void sigma3(double* h2e, double* c_vectors,double* c1_vectors,int num_alpha,int 
       	      }
 	      if (dim >0) {
               //print(L,R,sgn,dim)
+                  double* cp;
                   cp = (double*) malloc(dim*num_alpha*sizeof(double));
                   memset(cp, 0, dim*num_alpha*sizeof(double));
                   for (int Ia = 0; Ia < dim; Ia++) {
@@ -524,6 +523,7 @@ void sigma3(double* h2e, double* c_vectors,double* c1_vectors,int num_alpha,int 
                           int ij = i * nmo + j;
                           F[index_jb] += sign * h2e[ij*nmo*nmo+kl];
 	              }
+                      double* v;
                       v = (double*) malloc(dim*sizeof(double));
                       memset(v, 0, dim*sizeof(double));
                       //v = np.einsum("pq,q->p", cp, F)  
@@ -537,9 +537,9 @@ void sigma3(double* h2e, double* c_vectors,double* c1_vectors,int num_alpha,int 
                           int index_I = R[Ia] * num_alpha + index_ib;
                           c1_vectors[(state_p * num_photon + photon_p) * num_dets + index_I] += v[Ia];
 	              } 
-                      //free(v);     
+                      free(v);     
 	          }
-                  //free(cp);     
+                  free(cp);     
 	      }
           }
       }
@@ -547,8 +547,8 @@ free(R);
 free(L);     
 free(sgn);     
 free(F);     
-free(v);     
-free(cp);     
+//free(v);     
+//free(cp);     
 }
 void sigma12(double* h1e, double* h2e, double* c_vectors,double* c1_vectors,int num_alpha,int num_links, int* table, int nmo, int photon_p, int state_p, int num_photon) {
      size_t num_dets = num_alpha * num_alpha;
