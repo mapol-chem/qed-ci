@@ -23,5 +23,5 @@ The generation of determinant lists has been broken up into two methods based on
 
 
 ## Compile c shared library
-gcc -fPIC -lm -Wall -fopenmp -pedantic -c -O3 cfunctions.c
-gcc -shared -lgomp -o cfunctions.so cfunctions.o
+- gcc -fPIC -lm -Wall -fopenmp -pedantic -c -O3 cfunctions.c
+- gcc -shared -lgomp -o cfunctions.so cfunctions.o
