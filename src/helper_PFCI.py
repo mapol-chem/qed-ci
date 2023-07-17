@@ -24,6 +24,7 @@ import ctypes
 import numpy as np
 from ctypes import *
 import os
+import psutil
 
 script_dir = os.path.abspath(os.path.dirname(__file__))
 lib_path = os.path.join(script_dir, "cfunctions.so")
@@ -781,6 +782,7 @@ class PFHamiltonianGenerator:
             t_H_build = time.time()
 
 
+            print(psutil.Process().memory_info().rss / (1024 * 1024))
             dres = self.Davidson(self.H_PF, self.davidson_roots, self.davidson_threshold, indim, maxdim,self.davidson_maxiter,self.build_sigma,self.H_diag)
             self.CIeigs = dres["DAVIDSON EIGENVALUES"]
             self.CIvecs = dres["DAVIDSON EIGENVECTORS"]
@@ -2362,13 +2364,21 @@ class PFHamiltonianGenerator:
             print("use random guess")
             Q = np.random.rand(indim,H_dim)
         #print(Q)
-        print("qshape",np.shape(Q)) 
+        print("qshape",np.shape(Q))
+        print('initial_mem_q',Q.size*Q.itemsize/1024/1024)
+
         num_iter = maxiter
         for a in range(0, num_iter):
             print("\n")
+            print('mem_q1',Q.size*Q.itemsize/1024/1024)
             #orthonormalization of basis vectors by QR
-            Qtemp, Rtemp = np.linalg.qr(Q.T)
-            Q = np.ascontiguousarray(Qtemp.T)
+            t_qr_begin = time.time()
+            Q, R = np.linalg.qr(Q.T)
+            t_qr_end = time.time()
+            print('QR took',t_qr_end-t_qr_begin,'seconds')
+            Q = np.ascontiguousarray(Q.T)
+            R= None
+            del(R)
             L = Q.shape[0]#dynamic dimension of subspace
             print(np.shape(Q)) 
             print('iteration', a+1, 'subspace dimension', L)
@@ -2381,10 +2391,10 @@ class PFHamiltonianGenerator:
                 t_sigma_begin = time.time()
                 #build_sigma(Q,S,H_dim)
 
-
+                print(psutil.Process().memory_info().rss / (1024 * 1024))
                 c_sigma(self.gkl, self.twoeint, self.d_cmo, Q, S, self.table, rows, 
                     num_links, self.nmo, self.num_alpha, L, self.N_p, self.Enuc, self.dc, self.omega, self.d_exp, self.only_ground_state) 
-
+                print(psutil.Process().memory_info().rss / (1024 * 1024))
 
                 t_sigma_end = time.time()
                 print('build sigma took',t_sigma_end-t_sigma_begin,'seconds')
@@ -2400,7 +2410,7 @@ class PFHamiltonianGenerator:
             theta = theta[idx]
             alpha = alpha[:, idx]
             # This vector will hold the new guess vectors to add to our space
-            add_Q = []
+            #add_Q = []
             w = np.zeros((nroots,H_dim))
             residual_norm = np.zeros((nroots))
             unconverged_idx = []
@@ -2431,24 +2441,32 @@ class PFHamiltonianGenerator:
                 print('maxiter reached, try to increase maxiter or subspace size')
                 break
             
-            preconditioned_w = np.zeros((len(unconverged_idx),H_dim))
-            #print('wshape',w.shape)
+            t_precondition_begin = time.time()
+            #preconditioned_w = np.zeros((len(unconverged_idx),H_dim))
             if(len(unconverged_idx) >0):
-                for n in range(H_dim):
-                    for k in range(len(unconverged_idx)):
-                    # Precondition the residual vector to form a correction vector
-                        dum = (theta[unconverged_idx[k]] - H_diag[n])
-                        
-                        if np.abs(dum) <1e-20:
-                            #print('error!!!!!!!!!!!')
-                            preconditioned_w[k,n] = 0.0
-                        else:
-                            preconditioned_w[k,n] = w[unconverged_idx[k],n] /dum
-                        #print(preconditioned_w[n,k],n,k)
-                add_Q.append(preconditioned_w)
-                #print(add_Q)
+                
+                preconditioned_w = np.zeros((len(unconverged_idx),H_dim))
+                preconditioned_w = theta[unconverged_idx].reshape(len(unconverged_idx),1) - H_diag.reshape(1,H_dim)
+                #print(np.shape(preconditioned_w))
+                preconditioned_w = np.divide(w[unconverged_idx], preconditioned_w, out=np.zeros_like(w[unconverged_idx]), where=preconditioned_w!=0)
+                #for k in range(len(unconverged_idx)):
+                #    for n in range(H_dim):
+                #    # Precondition the residual vector to form a correction vector
+                #        dum = (theta[unconverged_idx[k]] - H_diag[n])
+                #        
+                #        if np.abs(dum) <1e-20:
+                #            #print('error!!!!!!!!!!!')
+                #            preconditioned_w[k,n] = 0.0
+                #        else:
+                #            preconditioned_w[k,n] = w[unconverged_idx[k],n] /dum
+                #        #print(preconditioned_w[k,n],end="")
+                #add_Q.append(preconditioned_w)
+                #print(np.array_equal(preconditioned_w,temp))
             
+            t_precondition_end = time.time()
+            print('build precondition took',t_precondition_end-t_precondition_begin,'seconds')
             if (Lmax-L < len(unconverged_idx)):
+                t_collapsing_begin = time.time()
                 unconverged_w = np.zeros((len(unconverged_idx),H_dim))
                 Q=np.dot(alpha.T, Q)
                 
@@ -2466,12 +2484,17 @@ class PFHamiltonianGenerator:
                 # iteration so to avoid a false convergence we reset the theta
                 # vector to theta_old
                 theta = theta_old
+                t_collapsing_end = time.time()
+                print('restart took',t_collapsing_end-t_collapsing_begin,'seconds')
             else:
+                t_expanding_begin = time.time()
                 # if not we add the preconditioned residuals to the guess
                 # space, and continue. Note that the set will be orthogonalized
                 # at the start of the next iteration
-                Qtup = tuple(Q[i, :] for i in range(L)) + tuple(add_Q)
-                Q = np.row_stack(Qtup)
+                Q = tuple(Q[i, :] for i in range(L)) + tuple(preconditioned_w)
+                Q = np.row_stack(Q)
+                t_expanding_end = time.time()
+                print('expand took',t_expanding_end-t_expanding_begin,'seconds')
                 #print(Q)
         newQ=np.dot(alpha.T, Q)
         Q = np.zeros((H_dim,nroots))

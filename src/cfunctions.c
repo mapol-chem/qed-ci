@@ -4,12 +4,16 @@
 #include <string.h>
 #include <math.h>
 #include <cblas.h>
+#include<omp.h>
+#include<time.h>
+//#include "memorymeasure.h"
 
 void matrix_product(double* A, double* B, double* C, int m, int n, int k) {
      cblas_dgemm(CblasRowMajor, CblasNoTrans, CblasNoTrans, m, n, k, 1.0, A, k, B, n, 0.0, C, n);
 }
 
 void get_graph(size_t N, size_t n_o, int* Y) {
+    
      //lexical ordering graph with unoccupied arc set to be zero, return vertex weight
      size_t rows = (N+1)*(n_o-N+1);
      size_t cols = 3;
@@ -18,25 +22,31 @@ void get_graph(size_t N, size_t n_o, int* Y) {
      //size_t graph[rows][cols];
      //size_t graph_big[rows1][cols1];
      //graph = [[0 for i in range(cols)] for j in range(rows)]
-     size_t graph[rows][cols];
+     //size_t graph[rows][cols];
+
+     int* graph = (int*) malloc(rows*cols*sizeof(int));
+     memset(graph, 0, rows*cols*sizeof(int));
+
      //graph_big = [[0 for i in range(cols1)] for j in range(rows1)]
-     size_t graph_big[rows1][cols1];
-     memset(graph_big, 0, sizeof graph_big);
-     memset(graph, 0, sizeof graph);
-     graph_big[N][n_o]=1;
+     //size_t graph_big[rows1][cols1];
+     int* graph_big = (int*) malloc(rows1*cols1*sizeof(int));
+     memset(graph_big, 0, rows1*cols1*sizeof(int));
+
+
+     graph_big[N*cols1+n_o]=1;
 
 
      //weight of vertex
      for (int e = N; e>=0; e--) { 
          for (int o = n_o-1; o>=0; o--) {
              if (e==N && o>=e){
-                 graph_big[e][o] = graph_big[e][o+1];
+                 graph_big[e*cols1+o] = graph_big[e*cols1+o+1];
 	     }
 	     else if (e<=N && o<e){
-                 graph_big[e][o] = 0;
+                 graph_big[e*cols1+o] = 0;
 	     }
              else{
-                 graph_big[e][o] = graph_big[e+1][o+1] + graph_big[e][o+1];
+                 graph_big[e*cols1+o] = graph_big[(e+1)*cols1+ o+1] + graph_big[e*cols1+o+1];
 	     }
 	 }
      } 
@@ -44,10 +54,10 @@ void get_graph(size_t N, size_t n_o, int* Y) {
      size_t count = 0;
      for (int e = 0; e<=N; e++) {
          for (int o = 0; o<=n_o; o++) {
-             if (graph_big[e][o] !=0){
-                 graph[count][0] = e;
-                 graph[count][1] = o;
-                 graph[count][2] = graph_big[e][o];
+             if (graph_big[e*cols1+o] !=0){
+                 graph[count*3+0] = e;
+                 graph[count*3+1] = o;
+                 graph[count*3+2] = graph_big[e*cols1+o];
                  count +=1;
 	     }
 	 }
@@ -64,8 +74,8 @@ void get_graph(size_t N, size_t n_o, int* Y) {
      rows = N*(n_o-N+1);
        for (int row = 0; row < rows; row++) {
            //print(graph[i])
-           int e = graph[row][0];   
-           int o = graph[row][1];
+           int e = graph[row*3+0];   
+           int o = graph[row*3+1];
            int B[1][3];
            if (e == N) {
                continue;
@@ -82,7 +92,7 @@ void get_graph(size_t N, size_t n_o, int* Y) {
 	   }
            else {
                for (int j =1; j < i+1; j++) {
-                   c += graph_big[e+1][o+2-j]; 
+                   c += graph_big[(e+1)*cols1+o+2-j]; 
 	       }
                B[0][0]=e;
 	       B[0][1]=o;
@@ -101,6 +111,8 @@ void get_graph(size_t N, size_t n_o, int* Y) {
 		 printf("\n");
        }
        */
+free(graph);
+free(graph_big);
 }
 
 void string_to_binary(size_t string, size_t n_o) {
@@ -317,13 +329,17 @@ void single_replacement_list(int num_alpha, int N, int n_o, int n_in_a, int* Y,i
        }
 }
 
-void build_H_diag(double* h1e, double* h2e, double* H_diag, int N_p, int num_alpha,int nmo, int n_act_a,int n_act_orb,int n_in_a, double omega, double Enuc, double dc) {
+void build_H_diag(double* h1e, double* h2e, double* H_diag, int N_p, int num_alpha,int nmo, int n_act_a,int n_act_orb,int n_in_a, double omega, double Enuc, double dc, int* Y) {
         size_t num_dets = num_alpha * num_alpha;
         int np1 = N_p + 1;
-        for (int m = 0; m < np1; m++) {
+        
+     #pragma omp parallel for num_threads(12)
+	for (size_t index_photon_det = 0; index_photon_det < np1*num_dets; index_photon_det++) {
+	    size_t Idet = index_photon_det%num_dets;	
+	    int m = (index_photon_det-Idet)/num_dets;	
             int start =  m * num_dets; 
 
-            for (size_t Idet = 0; Idet < num_dets; Idet++) {
+            //for (size_t Idet = 0; Idet < num_dets; Idet++) {
                 int index_b = Idet%num_alpha;
                 int index_a = (Idet-index_b)/num_alpha;
                 size_t string_a = index_to_string(index_a,n_act_a,n_act_orb,Y);
@@ -397,7 +413,7 @@ void build_H_diag(double* h1e, double* h2e, double* H_diag, int N_p, int num_alp
 		free(single_occupation_a);
 		free(single_occupation_b);
 		free(occupation_list_spin);
-	    }
+	    //}
 	}
 
 }
@@ -411,8 +427,13 @@ void get_string (double* h1e, double* h2e, double* H_diag, int* table, int N_p, 
      //    Y[row] = (int*) malloc(cols*sizeof(int));
      //}
      Y = (int*) malloc(rows*cols*sizeof(int));
-
+     clock_t t;
+     t = clock();
      get_graph(N,n_o,Y);
+     t = clock() - t;
+     double time_taken = ((double)t)/CLOCKS_PER_SEC;
+     printf("get_graph took %f seconds to execute \n", time_taken);
+
      
      //int* p;
      //int length;
@@ -424,10 +445,23 @@ void get_string (double* h1e, double* h2e, double* H_diag, int* table, int N_p, 
        rows = num_alpha*(N*(n_o-N)+N+n_in_a);
        cols = 4;
        //size_t num_links = N*(n_o-N)+N+n_in_a
-     
-     build_H_diag(h1e, h2e, H_diag, N_p, num_alpha, nmo, N, n_o, n_in_a, omega, Enuc, dc);   
+     double itime, ftime, exec_time;
+     itime = omp_get_wtime();
+     build_H_diag(h1e, h2e, H_diag, N_p, num_alpha, nmo, N, n_o, n_in_a, omega, Enuc, dc,Y);   
+     ftime = omp_get_wtime();
+     time_taken = ((double)t)/CLOCKS_PER_SEC;
+     exec_time = ftime - itime;
+    printf("buil_H_diag took %f seconds to execute \n", exec_time);
+
      //table = (int*) malloc(rows*cols*sizeof(int));
+     t = clock();
      single_replacement_list(num_alpha, N, n_o, n_in_a, Y, table);   
+     t = clock() - t;
+     time_taken = ((double)t)/CLOCKS_PER_SEC;
+     printf("single_replacement_list took %f seconds to execute \n", time_taken);
+
+
+
      //for (int i = 0; i < rows; i++) {
      //    for (int j = 0; j < cols; j++) {
      //        //table[i*cols+j] =1;
@@ -442,11 +476,22 @@ void build_sigma(double* h1e, double* h2e, double* d_cmo, double* c_vectors, dou
 		 int*table, size_t table_length, int num_links, int nmo, int num_alpha, int num_state, int N_p, double Enuc, double dc, double omega, double d_exp, bool only_ground_state) {
 
 
+     //int threads =omp_get_max_threads();
+     //printf(" numthread %d",threads);
+     //  #pragma omp parallel for num_threads(12)
+     // for (int i = 1; i <= 12; i++) {
+     //     int tid = omp_get_thread_num();
+     //     printf("The thread %d  executes i = %d\n", tid, i);
+     // }
+
+
+
      int np1 = N_p + 1;
      //printf("total dim %d", num_alpha*num_alpha*num_state*np1);
+     #pragma omp parallel for num_threads(12) collapse(2)
      for (int n = 0; n < num_state; n++) {
          for (int m = 0; m < np1; m++) {
-             sigma12(h1e, h2e, c_vectors, c1_vectors, num_alpha, num_links, table, nmo, m, n, np1);  
+             sigma12(h1e, h2e, c_vectors, c1_vectors, num_alpha, num_links, table, nmo, m, n, np1); 
              sigma3(h2e, c_vectors, c1_vectors, num_alpha, num_links, table, table_length, nmo, m, n, np1);  
              double someconstant = m * omega + Enuc + dc;
              if (only_ground_state == true) {
@@ -477,12 +522,17 @@ void build_sigma(double* h1e, double* h2e, double* d_cmo, double* c_vectors, dou
 
        
 void sigma3(double* h2e, double* c_vectors,double* c1_vectors,int num_alpha,int num_links, int* table, size_t table_length, int nmo, int photon_p, int state_p, int num_photon) {
+     //printf("he3\n");
+     //unsigned long currRealMem, peakRealMem, currVirtMem, peakVirtMem;
+     //int success2 = getMemory(&currRealMem, &peakRealMem, &currVirtMem, &peakVirtMem);
+
+
+    
      size_t num_dets = num_alpha * num_alpha;
      int* L = (int*) malloc(num_alpha*sizeof(int));
      int* R = (int*) malloc(num_alpha*sizeof(int));
      int* sgn = (int*) malloc(num_alpha*sizeof(int));
-     double* F;
-     F = (double*) malloc(num_alpha*sizeof(double));
+     double* F = (double*) malloc(num_alpha*sizeof(double));
      memset(L, 0, num_alpha*sizeof(int));
      memset(R, 0, num_alpha*sizeof(int));
      memset(sgn, 0, num_alpha*sizeof(int));
@@ -548,12 +598,21 @@ free(L);
 free(sgn);     
 free(F);     
 //free(v);     
-//free(cp);     
+//free(cp); 
+     //success2 = getMemory(&currRealMem, &peakRealMem, &currVirtMem, &peakVirtMem);
+     //printf("he4\n");
+
+
+   
 }
 void sigma12(double* h1e, double* h2e, double* c_vectors,double* c1_vectors,int num_alpha,int num_links, int* table, int nmo, int photon_p, int state_p, int num_photon) {
+     //printf("he1\n");
+     //unsigned long currRealMem, peakRealMem, currVirtMem, peakVirtMem;
+     //int success2 = getMemory(&currRealMem, &peakRealMem, &currVirtMem, &peakVirtMem);
+
+
      size_t num_dets = num_alpha * num_alpha;
-     double* F;
-     F = (double*) malloc(num_alpha*sizeof(double));
+     double* F = (double*) malloc(num_alpha*sizeof(double));
 
      double* s_resize = (double*) malloc(num_alpha*sizeof(double));
 
@@ -636,9 +695,6 @@ void sigma12(double* h1e, double* h2e, double* c_vectors,double* c1_vectors,int 
 		 }
 	     }
 	 }
-         //vectorize ia
-         //double* F2 = (double*) malloc(num_alpha*sizeof(double));
-         //memset(F2, 0, num_alpha*sizeof(double));
          cblas_dgemm(CblasRowMajor, CblasNoTrans, CblasNoTrans, num_alpha,1,num_alpha, 1.0, c_resize, num_alpha, F, 1, 1.0,
 			 c1_vectors+(state_p * num_photon + photon_p) * num_dets+index_ia*num_alpha, 1);
          //matrix_product(c_resize, F, c1_vectors+(state_p * num_photon + photon_p) * num_dets + index_ia, num_alpha,1,num_alpha);
@@ -656,13 +712,21 @@ void sigma12(double* h1e, double* h2e, double* c_vectors,double* c1_vectors,int 
      }
      free(F); 
      free(c_resize); 
-     free(s_resize); 
+     free(s_resize);
+     //success2 = getMemory(&currRealMem, &peakRealMem, &currVirtMem, &peakVirtMem);
+     //printf("he2\n");
+
+
+    
 }
 void sigma_dipole(double* h1e, double* c_vectors,double* c1_vectors,int num_alpha,int num_links, int* table, int nmo, double someconstant, int photon_p1, int photon_p2, int state_p, int num_photon) {
+     //printf("he5\n");
+     //unsigned long currRealMem, peakRealMem, currVirtMem, peakVirtMem;
+     //int success2 = getMemory(&currRealMem, &peakRealMem, &currVirtMem, &peakVirtMem);
+
 
      size_t num_dets = num_alpha * num_alpha;
-     double* F;
-     F = (double*) malloc(num_alpha*sizeof(double));
+     double* F = (double*) malloc(num_alpha*sizeof(double));
 
      double* s_resize = (double*) malloc(num_alpha*sizeof(double));
 
@@ -739,6 +803,9 @@ void sigma_dipole(double* h1e, double* c_vectors,double* c1_vectors,int num_alph
      free(F); 
      free(c_resize); 
      free(s_resize); 
+     //success2 = getMemory(&currRealMem, &peakRealMem, &currVirtMem, &peakVirtMem);
+     //printf("he6\n");
+
 
 }
 void constant_terms_contraction(double* c_vectors,double* c1_vectors,int num_alpha, double someconstant, int photon_p1, int photon_p2, int state_p, int num_photon) {
