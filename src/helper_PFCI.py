@@ -40,7 +40,6 @@ cfunctions.matrix_product.argtypes = [
         ctypes.c_int32,
         ctypes.c_int32,
         ctypes.c_int32]
-cfunctions.get_string.argtypes = [ctypes.c_size_t,ctypes.c_size_t,ctypes.c_size_t,ctypes.c_size_t,np.ctypeslib.ndpointer(ctypes.c_int32, ndim=1, flags='C_CONTIGUOUS')]
 cfunctions.get_graph.argtypes = [ctypes.c_int32,ctypes.c_int32,
         np.ctypeslib.ndpointer(ctypes.c_int32, ndim=1, flags='C_CONTIGUOUS')]
 cfunctions.index_to_string.argtypes = [ctypes.c_int32,ctypes.c_int32,ctypes.c_int32,
@@ -60,6 +59,13 @@ cfunctions.get_string.argtypes = [
         ctypes.c_double,
         ctypes.c_double,
         ctypes.c_double]
+cfunctions.get_table.argtypes = [
+        ctypes.c_int32,
+        ctypes.c_int32,
+        ctypes.c_int32,
+        np.ctypeslib.ndpointer(ctypes.c_int32,  ndim=1, flags='C_CONTIGUOUS'),
+        np.ctypeslib.ndpointer(ctypes.c_int32,  ndim=1, flags='C_CONTIGUOUS')]
+
 
 cfunctions.build_sigma.argtypes = [
         np.ctypeslib.ndpointer(ctypes.c_double, ndim=2, flags='C_CONTIGUOUS'),
@@ -68,7 +74,7 @@ cfunctions.build_sigma.argtypes = [
         np.ctypeslib.ndpointer(ctypes.c_double, ndim=2, flags='C_CONTIGUOUS'),
         np.ctypeslib.ndpointer(ctypes.c_double, ndim=2, flags='C_CONTIGUOUS'),
         np.ctypeslib.ndpointer(ctypes.c_int32,  ndim=1, flags='C_CONTIGUOUS'),
-        ctypes.c_size_t,
+        ctypes.c_int32,
         ctypes.c_int32,
         ctypes.c_int32,
         ctypes.c_int32,
@@ -79,10 +85,44 @@ cfunctions.build_sigma.argtypes = [
         ctypes.c_double,
         ctypes.c_double,
         ctypes.c_bool]
+cfunctions.build_sigma_2.argtypes = [
+        np.ctypeslib.ndpointer(ctypes.c_double, ndim=2, flags='C_CONTIGUOUS'),
+        np.ctypeslib.ndpointer(ctypes.c_double, ndim=2, flags='C_CONTIGUOUS'),
+        np.ctypeslib.ndpointer(ctypes.c_double, ndim=2, flags='C_CONTIGUOUS'),
+        np.ctypeslib.ndpointer(ctypes.c_double, ndim=2, flags='C_CONTIGUOUS'),
+        np.ctypeslib.ndpointer(ctypes.c_double, ndim=2, flags='C_CONTIGUOUS'),
+        np.ctypeslib.ndpointer(ctypes.c_int32,  ndim=1, flags='C_CONTIGUOUS'),
+        np.ctypeslib.ndpointer(ctypes.c_int32,  ndim=1, flags='C_CONTIGUOUS'),
+        np.ctypeslib.ndpointer(ctypes.c_int32,  ndim=1, flags='C_CONTIGUOUS'),
+        np.ctypeslib.ndpointer(ctypes.c_int32,  ndim=1, flags='C_CONTIGUOUS'),
+        ctypes.c_int32,
+        ctypes.c_int32,
+        ctypes.c_int32,
+        ctypes.c_int32,
+        ctypes.c_int32,
+        ctypes.c_int32,
+        ctypes.c_int32,
+        ctypes.c_int32,
+        ctypes.c_double,
+        ctypes.c_double,
+        ctypes.c_double,
+        ctypes.c_double,
+        ctypes.c_bool]
+
+def c_sigma_2(h1e, h2e, d_cmo, c_vectors, s_vectors, table, table_creation, table_annihilation, partition_index, 
+        table_length, table_creation_length, num_links, num_links2, nmo, num_alpha, n_o_ras1, num_state, N_p, Enuc, dc, omega, d_exp, only_ground_state):
+    cfunctions.build_sigma_2( h1e, h2e, d_cmo, c_vectors, s_vectors, table, table_creation, table_annihilation, partition_index, 
+         table_creation_length, num_links, num_links2, nmo, num_alpha, n_o_ras1, num_state, N_p, Enuc, dc, omega, d_exp, only_ground_state)
+
+
+
 def c_matrix_product(A,B,C,m,n,k):
     cfunctions.matrix_product(A,B,C,m,n,k)
 def c_string(h1e, h2e, H_diag, table, N_p, num_alpha, nmo, N, n_o, n_in_a, omega, Enuc, dc):
     cfunctions.get_string(h1e, h2e, H_diag, table, N_p, num_alpha, nmo, N, n_o, n_in_a, omega, Enuc, dc)
+
+def c_table(N, n_o_ras1, n_o_ras2, table_creation, table_annihilation):
+    cfunctions.get_table(N, n_o_ras1, n_o_ras2,table_creation, table_annihilation)
 
 
 def c_index_to_string(index,n_act_a,n_act_orb,Y):
@@ -679,10 +719,10 @@ class PFHamiltonianGenerator:
             #self.table=self.single_replacement_list2(self.num_alpha, self.n_act_a, self.n_act_orb, self.n_in_a, self.Y) # table look up for single replacement list
             #self.H_diag = self.build_H_diag(H_dim,self.H_spatial,self.twoeint,self.num_alpha,self.n_act_a,self.n_act_orb,self.n_in_a)
             self.H_diag = np.zeros(H_dim)
-            #self.c_vectors = np.random.rand(H_dim,4)
-            #self.s1_vectors = np.zeros((H_dim,4))
-            #self.s2_vectors = np.zeros((H_dim,4))
-            #self.build_sigma(self.c_vectors,self.s1_vectors,H_dim)
+            #self.c_vectors = np.random.rand(H_dim,1)
+            #self.s1_vectors = np.zeros((H_dim,1))
+            #self.s2_vectors = np.zeros((H_dim,1))
+            ##self.build_sigma(self.c_vectors,self.s1_vectors,H_dim)
           
             #for index2 in range(0,self.num_alpha):
             #    binary,string=self.index_to_string(index2,self.n_act_a,self.n_act_orb,self.Y,return_binary=True)
@@ -691,6 +731,37 @@ class PFHamiltonianGenerator:
             self.table = np.zeros(self.num_alpha*(self.n_act_a*(self.n_act_orb-self.n_act_a)+self.n_act_a+self.n_in_a)*4,dtype=np.int32)
 
             c_string(self.H_spatial2, self.twoeint, self.H_diag, self.table, self.N_p, self.num_alpha, self.nmo, self.n_act_a, self.n_act_orb, self.n_in_a, self.omega, self.Enuc, self.dc)
+            
+            min_ras1 = 0
+            n_o_ras1 = self.n_in_a
+            n_o_ras2 = self.n_act_orb
+            if (n_o_ras1 > 0):
+                min_ras1 = n_o_ras1 - 1;
+            else: 
+                min_ras1 = n_o_ras1; #no ras1 in fci case
+            N_total = self.n_act_a + self.n_in_a - 1
+            self.partition_index = np.zeros(n_o_ras1-min_ras1+1,dtype=np.int32)
+            for i in range (n_o_ras1-min_ras1+1): 
+                self.partition_index[i] = math.comb(n_o_ras1, n_o_ras1-i) * math.comb(n_o_ras2, N_total-n_o_ras1+i)
+            if n_o_ras1 > 0:
+                self.rows1 = self.partition_index[0] * (n_o_ras1 + n_o_ras2 - N_total) + self.partition_index[1];
+            else:
+                self.rows1 = self.partition_index[0] * (n_o_ras1 + n_o_ras2 - N_total)
+            self.table_creation = np.zeros(self.rows1*3,dtype=np.int32)
+            rows2 = self.num_alpha * self.ndocc 
+            self.table_annihilation = np.zeros(rows2*3,dtype=np.int32)
+
+            c_table(self.ndocc, self.n_in_a, self.n_act_orb, self.table_creation, self.table_annihilation)
+            
+
+            #rows = self.num_alpha*(self.n_act_a*(self.n_act_orb-self.n_act_a)+self.n_act_a+self.n_in_a)
+            #num_links = rows//self.num_alpha 
+            #for i in range(rows1):
+            #    print(self.table_creation[i*3+0], self.table_creation[i*3+1], self.table_creation[i*3+2])
+            #print("\n")
+            #for i in range(rows2):
+            #    print(self.table_annihilation[i*3+0], self.table_annihilation[i*3+1], self.table_annihilation[i*3+2])
+             
             #for i in range(len(self.table)):
             #    print(self.table[i])
              
@@ -701,22 +772,14 @@ class PFHamiltonianGenerator:
             #    for j in range(cols):
             #        print(self.table2[i*cols+j],end="");
             #    print("\n");
+            #c_sigma(self.gkl, self.twoeint, self.d_cmo, self.c_vectors, self.s1_vectors, self.table, rows, 
+            #        num_links, self.nmo, self.num_alpha, 1, self.N_p, self.Enuc, self.dc, self.omega, self.d_exp, self.only_ground_state) 
+            #c_sigma_2(self.gkl, self.twoeint, self.d_cmo, self.c_vectors, self.s2_vectors, self.table, self.table_creation, self.table_annihilation, 
+            #        self.partition_index, rows, rows1, 
+            #        num_links, self.ndocc, self.nmo, self.num_alpha, self.n_in_a, 1, self.N_p, self.Enuc, self.dc, self.omega, self.d_exp, self.only_ground_state) 
 
-            #c_sigma(self.gkl, self.twoeint, self.d_cmo, self.c_vectors, self.s2_vectors, self.table2, rows, 
-            #        num_links, self.nmo, self.num_alpha, 4, self.N_p, self.Enuc, self.dc, self.omega, self.d_exp, self.only_ground_state) 
 
-            ####A = np.asarray([1.0,2.0,3.0,4.0,5.0,6.0])
-            ####A = np.reshape(A,(3,2))
-            ####B = np.asarray([1.0,2.0,3.0,5.0,6.0,7.0,9.0,10.0])
-            ####B = np.reshape(B,(2,4))
-            ####C = np.einsum("ij,jk->ik",A,B)
-            ####print(A)
-            ####print(B)
-            ####print(C)
-            ####D = np.zeros((3,4))
-            ####c_matrix_product(A,B,D,3,4,2)
-            ####print(D)
-
+            
         elif self.ci_level == "fci":
             self.n_act_a = self.ndocc #number of active alpha electrons
             self.n_in_a = 0 #number of inactive alpha electrons
@@ -729,6 +792,46 @@ class PFHamiltonianGenerator:
             self.H_diag = np.zeros(H_dim)
             self.table = np.zeros(self.num_alpha*(self.n_act_a*(self.n_act_orb-self.n_act_a)+self.n_act_a+self.n_in_a)*4,dtype=np.int32)
             c_string(self.H_spatial2, self.twoeint, self.H_diag, self.table, self.N_p, self.num_alpha, self.nmo, self.n_act_a, self.n_act_orb, self.n_in_a, self.omega, self.Enuc, self.dc)
+           
+            min_ras1 = 0
+            n_o_ras1 = self.n_in_a
+            n_o_ras2 = self.n_act_orb
+            if (n_o_ras1 > 0):
+                min_ras1 = n_o_ras1 - 1;
+            else: 
+                min_ras1 = n_o_ras1; #no ras1 in fci case
+            N_total = self.n_act_a + self.n_in_a - 1
+            self.partition_index = np.zeros(n_o_ras1-min_ras1+1,dtype=np.int32)
+            for i in range (n_o_ras1-min_ras1+1): 
+                self.partition_index[i] = math.comb(n_o_ras1, n_o_ras1-i) * math.comb(n_o_ras2, N_total-n_o_ras1+i)
+            if n_o_ras1 > 0:
+                self.rows1 = self.partition_index[0] * (n_o_ras1 + n_o_ras2 - N_total) + self.partition_index[1];
+            else:
+                self.rows1 = self.partition_index[0] * (n_o_ras1 + n_o_ras2 - N_total)
+            self.table_creation = np.zeros(self.rows1*3,dtype=np.int32)
+            rows2 = self.num_alpha * self.ndocc 
+            self.table_annihilation = np.zeros(rows2*3,dtype=np.int32)
+
+            c_table(self.ndocc, self.n_in_a, self.n_act_orb, self.table_creation, self.table_annihilation)
+            
+
+            #rows = self.num_alpha*(self.n_act_a*(self.n_act_orb-self.n_act_a)+self.n_act_a+self.n_in_a)
+            #num_links = rows//self.num_alpha 
+            #for i in range(rows1):
+            #    print(self.table_creation[i*3+0], self.table_creation[i*3+1], self.table_creation[i*3+2])
+            #print("\n")
+            #for i in range(rows2):
+            #    print(self.table_annihilation[i*3+0], self.table_annihilation[i*3+1], self.table_annihilation[i*3+2])
+            #self.c_vectors = np.random.rand(H_dim,1)
+            #self.s1_vectors = np.zeros((H_dim,1))
+            #self.s2_vectors = np.zeros((H_dim,1))
+            #c_sigma(self.gkl, self.twoeint, self.d_cmo, self.c_vectors, self.s1_vectors, self.table, rows, 
+            #        num_links, self.nmo, self.num_alpha, 1, self.N_p, self.Enuc, self.dc, self.omega, self.d_exp, self.only_ground_state) 
+            #c_sigma_2(self.gkl, self.twoeint, self.d_cmo, self.c_vectors, self.s2_vectors, self.table, self.table_creation, self.table_annihilation, 
+            #        self.partition_index, rows, rows1, 
+            #        num_links, self.ndocc, self.nmo, self.num_alpha, self.n_in_a, 1, self.N_p, self.Enuc, self.dc, self.omega, self.d_exp, self.only_ground_state) 
+
+
             #graph,graph_big=self.graph(self.ndocc,self.nmo)
             #self.Y=self.arc_weight(graph,graph_big,self.ndocc,self.nmo)
             #self.H_diag = self.build_H_diag(H_dim,self.H_spatial,self.twoeint,self.num_alpha,self.ndocc,self.nmo,0)
@@ -762,12 +865,12 @@ class PFHamiltonianGenerator:
             print(F' Completed Hamiltonian build in {t_H_build - t_const_end} seconds')
         else:
             self.H_PF = np.eye(2)
-        ####test sigma build
-        ###s1_temp = np.einsum("ij,jk->ik", self.H_PF, self.c_vectors)
-        ###for j in range(self.s1_vectors.shape[1]):
-        ###    for i in range(self.s1_vectors.shape[0]):
-        ###        #print(self.s1_vectors[i][j]-s1_temp[i][j])
-        ###        print(self.s1_vectors[i][j]-self.s2_vectors[i][j])
+        #test sigma build
+        ##s1_temp = np.einsum("ij,jk->ik", self.H_PF, self.c_vectors)
+        #for j in range(self.s1_vectors.shape[1]):
+        #    for i in range(self.s1_vectors.shape[0]):
+        #        #print(self.s1_vectors[i][j]-s1_temp[i][j])
+        #        print(self.s1_vectors[i][j]-self.s2_vectors[i][j])
         
 
         if self.full_diagonalization:
@@ -2392,8 +2495,13 @@ class PFHamiltonianGenerator:
                 #build_sigma(Q,S,H_dim)
 
                 print(psutil.Process().memory_info().rss / (1024 * 1024))
-                c_sigma(self.gkl, self.twoeint, self.d_cmo, Q, S, self.table, rows, 
-                    num_links, self.nmo, self.num_alpha, L, self.N_p, self.Enuc, self.dc, self.omega, self.d_exp, self.only_ground_state) 
+                #c_sigma(self.gkl, self.twoeint, self.d_cmo, Q, S, self.table, rows, 
+                #    num_links, self.nmo, self.num_alpha, L, self.N_p, self.Enuc, self.dc, self.omega, self.d_exp, self.only_ground_state) 
+                c_sigma_2(self.gkl, self.twoeint, self.d_cmo, Q, S, self.table, self.table_creation, self.table_annihilation, 
+                        self.partition_index, rows, self.rows1, 
+                        num_links, self.ndocc, self.nmo, self.num_alpha, self.n_in_a, L, self.N_p, self.Enuc, self.dc, self.omega, self.d_exp, self.only_ground_state) 
+
+
                 print(psutil.Process().memory_info().rss / (1024 * 1024))
 
                 t_sigma_end = time.time()

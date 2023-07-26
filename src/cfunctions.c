@@ -7,11 +7,130 @@
 #include<omp.h>
 #include<time.h>
 //#include "memorymeasure.h"
+#define MIN(x, y) (((x) < (y)) ? (x) : (y))
+
 
 void matrix_product(double* A, double* B, double* C, int m, int n, int k) {
      cblas_dgemm(CblasRowMajor, CblasNoTrans, CblasNoTrans, m, n, k, 1.0, A, k, B, n, 0.0, C, n);
 }
 
+int binomialCoeff(int n, int k)
+{
+    int C[k + 1];
+    memset(C, 0, sizeof(C));
+ 
+    C[0] = 1; // nC0 is 1
+ 
+    for (int i = 1; i <= n; i++) {
+        // Compute next row of pascal triangle using
+        // the previous row
+        for (int j = MIN(i, k); j > 0; j--)
+            C[j] = C[j] + C[j - 1];
+    }
+    return C[k];
+}
+
+
+
+void get_graph2(int N, int n_o, int* Y, int scale) {
+    
+     // same as get_graph, but now we also consider subgraphs, so vertex weights are scaled by the number of paths going through intersection of two graphs
+     //from bottom to intersection point
+     int rows = (N+1)*(n_o-N+1);
+     int cols = 3;
+     int rows1 = N+1;
+     int cols1 = n_o+1;
+  
+     int* graph = (int*) malloc(rows*cols*sizeof(int));
+     memset(graph, 0, rows*cols*sizeof(int));
+
+     //graph_big = [[0 for i in range(cols1)] for j in range(rows1)]
+     //size_t graph_big[rows1][cols1];
+     int* graph_big = (int*) malloc(rows1*cols1*sizeof(int));
+     memset(graph_big, 0, rows1*cols1*sizeof(int));
+
+
+     graph_big[N*cols1+n_o]=1;
+
+
+     //weight of vertex
+     for (int e = N; e>=0; e--) { 
+         for (int o = n_o-1; o>=0; o--) {
+             if (e==N && o>=e){
+                 graph_big[e*cols1+o] = graph_big[e*cols1+o+1];
+	     }
+	     else if (e<=N && o<e){
+                 graph_big[e*cols1+o] = 0;
+	     }
+             else{
+                 graph_big[e*cols1+o] = graph_big[(e+1)*cols1+ o+1] + graph_big[e*cols1+o+1];
+	     }
+	 }
+     } 
+     
+     size_t count = 0;
+     for (int e = 0; e<=N; e++) {
+         for (int o = 0; o<=n_o; o++) {
+             if (graph_big[e*cols1+o] !=0){
+                 graph[count*3+0] = e;
+                 graph[count*3+1] = o;
+                 graph[count*3+2] = graph_big[e*cols1+o];
+                 count +=1;
+	     }
+	 }
+     }
+    ////for (int i = 0; i<rows; i++) { 
+    ////     for (int j = 0; j<cols; j++) {
+    ////    	 printf("%4d%4d%4d\n", i,j,graph[i*cols+j]);
+    ////     }
+    ////    	 printf("\n");
+    //// }
+     //fflush(stdout);
+     /*
+     */	   
+     rows = N*(n_o-N+1);
+       for (int row = 0; row < rows; row++) {
+           //print(graph[i])
+           int e = graph[row*3+0];   
+           int o = graph[row*3+1];
+           int B[1][3];
+           if (e == N) {
+               continue;
+	   }
+           int i = o - e;
+           int c = 0;
+           if (i == 0) {
+               c = 0;
+               //B.extend([e,o,c]);
+	       B[0][0]=e;
+	       B[0][1]=o;
+	       B[0][2]=c;
+               //printf("%4d%4d%4d\n",e,o,c);
+	   }
+           else {
+               for (int j =1; j < i+1; j++) {
+                   c += scale * graph_big[(e+1)*cols1+o+2-j]; 
+	       }
+               B[0][0]=e;
+	       B[0][1]=o;
+	       B[0][2]=c;
+               //printf("%4d%4d%4d\n",e,o,c);
+	   }
+           Y[row*3+0]=B[0][0];
+           Y[row*3+1]=B[0][1];
+           Y[row*3+2]=B[0][2];
+       } 
+       //for (int i = 0; i < rows; i++) {
+       //    for (int j = 0; j < cols; j++) {
+       //        printf("%4d%4d%4d\n",i,j,Y[i*3+j]);	   
+       //    }
+       // 	 printf("\n");
+       //}
+       /*
+       */
+free(graph);
+free(graph_big);
+}
 void get_graph(size_t N, size_t n_o, int* Y) {
     
      //lexical ordering graph with unoccupied arc set to be zero, return vertex weight
@@ -114,6 +233,57 @@ void get_graph(size_t N, size_t n_o, int* Y) {
 free(graph);
 free(graph_big);
 }
+void get_graph_ras12(int n_o_ras1, int n_o_ras2, int N_ras1, int N_ras2, int* Y, bool shift_Y2) {
+     /*
+     build array of arc weights for string consisting of ras1 and ras2
+     */
+     int rows;
+     rows = N_ras1 * (n_o_ras1 - N_ras1 + 1);
+     int* Y1 = (int*) malloc(rows*3*sizeof(int));
+     memset(Y1, 0, rows*3*sizeof(int));
+     if (n_o_ras1 > 0) {
+         rows = N_ras1 * (n_o_ras1 - N_ras1 + 1);
+
+         int scale = binomialCoeff(n_o_ras2, N_ras2);
+         get_graph2(N_ras1,n_o_ras1,Y1,scale);
+     }
+     ////printf("Y1\n");
+     ////for (int i = 0; i < rows; i++) {
+     ////     for (int j = 0; j < 3; j++) {
+     ////         printf("%4d%4d%4d\n",i,j,Y1[i*3+j]);	   
+     ////     }
+     ////         printf("\n");
+     ////}
+     rows = N_ras2 * (n_o_ras2 - N_ras2 + 1);
+     int* Y2 = (int*) malloc(rows*3*sizeof(int));
+     memset(Y2, 0, rows*3*sizeof(int));
+     get_graph2(N_ras2,n_o_ras2,Y2,1);
+     if (shift_Y2 == true) {
+         for (int i = 0; i < rows; i++) {
+              Y2[i*3+0] += N_ras1;
+              Y2[i*3+1] += n_o_ras1;
+         }
+     }
+     ////printf("Y2\n");
+     ////for (int i = 0; i < rows; i++) {
+     ////     for (int j = 0; j < 3; j++) {
+     ////         printf("%4d%4d%4d\n",i,j,Y2[i*3+j]);	   
+     ////     }
+     ////         printf("\n");
+     ////}
+
+     rows = N_ras1 * (n_o_ras1 - N_ras1 + 1) + N_ras2 * (n_o_ras2 - N_ras2 + 1);
+     for (int i = 0; i < rows; i++) {
+          for (int j = 0; j < 3; j++) {
+	      if (i < N_ras1 * (n_o_ras1 - N_ras1 + 1)) {
+		 Y[i*3+j] = Y1[i*3+j];     
+	      }
+	      else Y[i*3+j] = Y2[(i-N_ras1 * (n_o_ras1 - N_ras1 + 1))*3+j];
+	  }
+     }
+     free(Y1);
+     free(Y2);
+}
 
 void string_to_binary(size_t string, size_t n_o) {
      int a[n_o];
@@ -157,6 +327,104 @@ int* string_to_obtlist(size_t string, int nmo, int* length) {
 
 
 
+int binary_to_index_ras12(int* binary, int n_o_ras1, int n_o_ras2, int N) {
+     /*
+     //N=total number of electron
+     //n_o =total number of active alpha orbitals and inactive alpha orbitals
+     */
+     int n_o = n_o_ras1 + n_o_ras2;
+     int N_ras1 = 0;
+     for (int i = 0; i < n_o_ras1; i++) {
+         if (binary[i]==1)  N_ras1 += 1;
+     }
+     int N_ras2 = N - N_ras1;
+     int rows = N_ras1 * (n_o_ras1 - N_ras1 + 1) + N_ras2 * (n_o_ras2 - N_ras2 + 1);
+
+
+     int* Y = (int*) malloc(rows*3*sizeof(int));
+     memset(Y, 0, rows*3*sizeof(int));
+     get_graph_ras12(n_o_ras1, n_o_ras2, N_ras1, N_ras2, Y, true);
+
+
+     int index = 0;
+     int count = 0;
+     for (int i = 0; i < n_o; i++) {
+         if (binary[i] == 1) {
+             int e = count;
+             int o = i;
+             for (int j = 0; j < rows; j++) {
+                 if  (Y[j*3+0] == e && Y[j*3+1] == o) {
+                     index +=Y[j*3+2];
+		 }
+	     }
+             count +=1;
+	 }	 
+     }
+    
+     for (int i = N_ras1; i < n_o_ras1; i++) {
+          index += binomialCoeff(n_o_ras1, i+1) * binomialCoeff(n_o_ras2, N-i-1);
+     }
+     free(Y);
+     return index;
+}  
+
+
+
+
+int string_to_index_ras12(size_t string, int n_o_ras1, int n_o_ras2, int N) {
+     /*
+     //N=total number of electron
+     //n_o =total number of active alpha orbitals and inactive alpha orbitals
+     */
+     int n_o = n_o_ras1 + n_o_ras2;
+     int a[n_o];
+     memset(a, 0, sizeof a);
+     int c=0;
+     while(string > 0) {
+	 size_t i = string%2;
+         a[c++]=i; 		 
+         string = (string-i)/2;  		     
+     }
+     //for (int i = 0; i < n_o; i++) {
+     //        printf("%4d",a[i]);
+     //}
+     //printf("\n");
+     int N_ras1 = 0;
+     for (int i = 0; i < n_o_ras1; i++) {
+         if (a[i]==1)  N_ras1 += 1;
+     }
+     int N_ras2 = N - N_ras1;
+     int rows = N_ras1 * (n_o_ras1 - N_ras1 + 1) + N_ras2 * (n_o_ras2 - N_ras2 + 1);
+
+
+     int* Y = (int*) malloc(rows*3*sizeof(int));
+     memset(Y, 0, rows*3*sizeof(int));
+     get_graph_ras12(n_o_ras1, n_o_ras2, N_ras1, N_ras2, Y, true);
+
+
+     int index = 0;
+     int count = 0;
+     for (int i = 0; i < n_o; i++) {
+         if (a[i] == 1) {
+             int e = count;
+             int o = i;
+             for (int j = 0; j < rows; j++) {
+                 if  (Y[j*3+0] == e && Y[j*3+1] == o) {
+                     index +=Y[j*3+2];
+		 }
+	     }
+             count +=1;
+	 }	 
+     }
+    
+     for (int i = N_ras1; i < n_o_ras1; i++) {
+          index += binomialCoeff(n_o_ras1, i+1) * binomialCoeff(n_o_ras2, N-i-1);
+     }
+     free(Y);
+     return index;
+}  
+
+
 
 
 
@@ -191,72 +459,263 @@ int string_to_index(size_t string, size_t N, size_t n_o, int* Y) {
 	 }	 
      } 
      return index;
-}  
-size_t index_to_string(int index, int N, int n_o, int* Y) {
-       int index_sum=0;
-       int e=N;
-       int o=n_o;
-       int rows = N*(n_o-N+1);
-       int count=0;
-       int arr[n_o];
-       memset(arr, 1, sizeof arr);
-       int count3=0;
-       while(index_sum<=index && e <= o) {
-           if (e == o && index_sum<index) {
-               int count2 = 0;
-               for (int i = 0; i < count3; i++) {
-                   if (arr[n_o-count3+i] == 1) {
-                      arr[n_o-count3+i] = 0;
-                      count2 = i;
-                      o = o+i;
-                      e = e+1;
-                      break;
-		   }
-	       }
-               for (int j = 0; j < rows; j++) {
-                   if  (Y[j*3+0] == e-1 && Y[j*3+1] == o) {
-                       int b = Y[j*3+2];
-                       index_sum = index_sum-b;
-		   }
-	       }
-               count3 -= count2;
-	   }
+} 
 
-           else {
-               if (e > 0) {
-                   for (int j = 0; j < rows; j++) {
-                       if (Y[j*3+0] == e-1 && Y[j*3+1] == o-1) {
-                           int a = Y[j*3+2];
-                           if (a <= index-index_sum) {
-                               e = e-1;
-                               o = o-1;
-                               index_sum = index_sum+a;
-                               arr[n_o-count3-1] = 1;
-                               count3 += 1;
-			   }
-                           else {
-                               o = o-1;
-                               arr[n_o-count3-1] = 0;
-                               count3 += 1;
-			   }
-		       }
-		   }
-	       }
-	       else if (e == 0) {
-                   o = o-1;
-                   arr[n_o-count3-1] = 0;
-                   count3 += 1;
-	       }
-	   }
-           count += 1;
-           if (count == 1500000 || (e==0 && o==0 && index_sum==index))  break;
-       }
-       size_t string = 0;
-       for (int i = 0; i < n_o; i++) {
-           if (arr[i] == 1) {
-               string += pow(2,i);
-	   }
-       }
+union Alpha_string* index_to_string_ras12(int index, int n_o_ras1, int n_o_ras2, int N_ras1, int N_ras2, bool truncation, bool return_string) {
+    //assuming that the number of electrons in ras1 is known, return string for index (ignoring the offset from graphs for other n_o_ras1)
+    //if ras1 contains too many electrons, using string representation may not be feasible, in this case, the binary representation is preferable
+    int rows0 = N_ras1 * (n_o_ras1 - N_ras1 + 1) + N_ras2 * (n_o_ras2 - N_ras2 + 1);
+    int* Y0 = (int*) malloc(rows0*3*sizeof(int));
+    get_graph_ras12(n_o_ras1, n_o_ras2, N_ras1, N_ras2, Y0, false);
+    //printf("qwqad\n%4d%4d%4d%4d%4d\n",index, n_o_ras1,n_o_ras2,N_ras1,N_ras2); 
+    int num_alpha_ras2 = binomialCoeff(n_o_ras2, N_ras2);
+    struct binary_output ras1_out = {0};
+    struct binary_output ras2_out = {0};
+    ras1_out.get_binary = false;
+    if (n_o_ras1 >0) {
+        int i = num_alpha_ras2-1;
+        while((i >=0) && (n_o_ras1 >0)) {
+             ras1_out = index_to_binary2(index-i, N_ras1, n_o_ras1, Y0);
+             if (ras1_out.get_binary == true) break;
+             i--;
+        }
+        ras2_out = index_to_binary2(i, N_ras2, n_o_ras2, Y0 + N_ras1 * (n_o_ras1 - N_ras1 + 1)*3);
+    }
+    else {
+        ras2_out = index_to_binary2(index, N_ras2, n_o_ras2, Y0);
+    }
+    ////for (int i = 0; i < n_o_ras1; i++) {
+    ////    printf("%4d", ras1_out.binary[i]);  
+    ////}
+    ////for (int i = 0; i < n_o_ras2; i++) {
+    ////    printf("%4d", ras2_out.binary[i]);  
+    ////}
+    //printf("\n");
+    ////size_t string = 0;
+    //////if truncation = true, return string corresponding only to ras2 (or active space)
+    ////if (truncation == false) {
+    ////    for (int i = 0; i < n_o_ras1; i++) {
+    ////        if (ras1_out.binary[i] == 1) {
+    ////            string += pow(2,i);
+    ////        }
+    ////    }
+    ////    for (int i = 0; i < n_o_ras2; i++) {
+    ////        if (ras2_out.binary[i] == 1) {
+    ////            string += pow(2,i+n_o_ras1);
+    ////        }
+    ////    }
+    ////}
+    ////else {
+    ////    for (int i = 0; i < n_o_ras2; i++) {
+    ////        if (ras2_out.binary[i] == 1) {
+    ////            string += pow(2,i);
+    ////        }
+    ////    }
+    ////}
+    ////printf("%4ld",string);
+    union Alpha_string * a_string = {0};
+    if (truncation == false) {
+       a_string = (union Alpha_string*) malloc(sizeof (union Alpha_string) + n_o_ras1 + n_o_ras2*sizeof(int)); 
+    }
+    else {
+       a_string = (union Alpha_string*) malloc(sizeof (union Alpha_string) + n_o_ras2*sizeof(int)); 
+    }
+    if (return_string == true) {
+            int d = 0;
+        //if truncation = true, return string corresponding only to ras2 (or active space)
+        if (truncation == false) {
+            for (int i = 0; i < n_o_ras1; i++) {
+                if (ras1_out.binary[i] == 1) {
+                    //a_string->string += pow(2,i);
+                    d += pow(2,i);
+                }
+            }
+            for (int i = 0; i < n_o_ras2; i++) {
+                if (ras2_out.binary[i] == 1) {
+                    //a_string->string += pow(2,i+n_o_ras1);
+                    d += pow(2,i+n_o_ras1);
+                }
+            }
+        }
+        else {
+            for (int i = 0; i < n_o_ras2; i++) {
+                if (ras2_out.binary[i] == 1) {
+                    //a_string->string += pow(2,i);
+                    d += pow(2,i);
+                }
+            }
+        }
+        a_string->string = d;
+        //printf("a_string.string %4ld\n", a_string->string);
+    }
+    else {
+        if (truncation == false) {
+            for (int i = 0; i < n_o_ras1+ n_o_ras2; i++) {
+	        if (i < n_o_ras1) {	
+ 	            a_string->binary[i] = ras1_out.binary[i];
+	        }		    
+                else {
+ 	            a_string->binary[i] = ras2_out.binary[i-n_o_ras1];
+	        }	    
+	    }
+	}
+	else {
+	    for (int i = 0; i < n_o_ras2; i++) {
+ 	            a_string->binary[i] = ras2_out.binary[i];
+	    }
+	}
+    }    
+    free(ras1_out.binary);
+    free(ras2_out.binary);
+    free(Y0);
+
+    return a_string;
+
+}
+struct binary_output index_to_binary2(int index, int N, int n_o, int* Y) {
+    struct binary_output str_out = {0};
+        
+    int index_sum=0;
+    int e=N;
+    int o=n_o;
+    int rows = N*(n_o-N+1);
+    int count=0;
+    int arr[n_o];
+    memset(arr, 1, sizeof arr);
+    int count3=0;
+    while(index_sum<=index && e <= o) {
+        if (e == o && index_sum<index) {
+            int count2 = 0;
+            for (int i = 0; i < count3; i++) {
+                if (arr[n_o-count3+i] == 1) {
+                   arr[n_o-count3+i] = 0;
+                   count2 = i;
+                   o = o+i;
+                   e = e+1;
+                   break;
+     	   }
+            }
+            for (int j = 0; j < rows; j++) {
+                if  (Y[j*3+0] == e-1 && Y[j*3+1] == o) {
+                    int b = Y[j*3+2];
+                    index_sum = index_sum-b;
+     	   }
+            }
+            count3 -= count2;
+        }
+
+        else {
+            if (e > 0) {
+                for (int j = 0; j < rows; j++) {
+                    if (Y[j*3+0] == e-1 && Y[j*3+1] == o-1) {
+                        int a = Y[j*3+2];
+                        if (a <= index-index_sum) {
+                            e = e-1;
+                            o = o-1;
+                            index_sum = index_sum+a;
+                            arr[n_o-count3-1] = 1;
+                            count3 += 1;
+     		   }
+                        else {
+                            o = o-1;
+                            arr[n_o-count3-1] = 0;
+                            count3 += 1;
+     		   }
+     	       }
+     	   }
+            }
+            else if (e == 0) {
+                o = o-1;
+                arr[n_o-count3-1] = 0;
+                count3 += 1;
+            }
+        }
+        count += 1;
+        if (count == 1500000 || (e == N && o == N && index_sum<index)) {
+            str_out.get_binary = false;
+            break;
+        }
+        if ((e==0 && o==0 && index_sum==index)) {
+            str_out.get_binary = true;
+            break;
+        }
+    }
+    if (str_out.get_binary == true) {
+	str_out.binary = malloc(n_o * sizeof(int));    
+        for (int i = 0; i < n_o; i++) {
+           str_out.binary[i] = arr[i]; 
+        }
+    }
+
+
+return str_out;
+   
+}
+size_t index_to_string(int index, int N, int n_o, int* Y) {
+    int index_sum=0;
+    int e=N;
+    int o=n_o;
+    int rows = N*(n_o-N+1);
+    int count=0;
+    int arr[n_o];
+    memset(arr, 1, sizeof arr);
+    int count3=0;
+    while(index_sum<=index && e <= o) {
+        if (e == o && index_sum<index) {
+            int count2 = 0;
+            for (int i = 0; i < count3; i++) {
+                if (arr[n_o-count3+i] == 1) {
+                   arr[n_o-count3+i] = 0;
+                   count2 = i;
+                   o = o+i;
+                   e = e+1;
+                   break;
+     	   }
+            }
+            for (int j = 0; j < rows; j++) {
+                if  (Y[j*3+0] == e-1 && Y[j*3+1] == o) {
+                    int b = Y[j*3+2];
+                    index_sum = index_sum-b;
+     	   }
+            }
+            count3 -= count2;
+        }
+
+        else {
+            if (e > 0) {
+                for (int j = 0; j < rows; j++) {
+                    if (Y[j*3+0] == e-1 && Y[j*3+1] == o-1) {
+                        int a = Y[j*3+2];
+                        if (a <= index-index_sum) {
+                            e = e-1;
+                            o = o-1;
+                            index_sum = index_sum+a;
+                            arr[n_o-count3-1] = 1;
+                            count3 += 1;
+     		   }
+                        else {
+                            o = o-1;
+                            arr[n_o-count3-1] = 0;
+                            count3 += 1;
+     		   }
+     	       }
+     	   }
+            }
+            else if (e == 0) {
+                o = o-1;
+                arr[n_o-count3-1] = 0;
+                count3 += 1;
+            }
+        }
+        count += 1;
+        if (count == 1500000 || (e==0 && o==0 && index_sum==index))  break;
+    }
+    size_t string = 0;
+    for (int i = 0; i < n_o; i++) {
+        if (arr[i] == 1) {
+            string += pow(2,i);
+        }
+    }
 
 
 return string;
@@ -279,6 +738,174 @@ int phase_single_excitation(size_t p, size_t q, size_t string) {
 }
 
 
+void single_creation_list(int N, int n_o_ras1, int n_o_ras2, int* table_creation) {
+     int min_ras1;
+     if (n_o_ras1 > 0) {
+	 min_ras1 = n_o_ras1 - 1;
+     }
+     else {
+	 min_ras1 = n_o_ras1; //no ras1 in fci case
+     }
+     int N_total = N - 1;
+     int* partition_index = (int*) malloc((n_o_ras1-min_ras1+1)*sizeof(int));  
+     memset(partition_index, 0, (n_o_ras1-min_ras1+1)*sizeof(int));
+     for (int i = 0; i < n_o_ras1-min_ras1+1; i++) {
+	 partition_index[i] = binomialCoeff(n_o_ras1, n_o_ras1-i) * binomialCoeff(n_o_ras2, N_total-n_o_ras1+i);     
+     }
+     
+     /*
+     for (int i = 0; i < n_o_ras1-min_ras1+1; i++) {
+         for (int index = 0; index < partition_index[i]; index++) {
+	     union Alpha_string *a_string;
+	     //a_string.string = 0;
+	     a_string = index_to_string_ras12(index, n_o_ras1, n_o_ras2, n_o_ras1-i, N_total-n_o_ras1+i, false, false);
+             //a_string->binary = (int*) malloc((n_o_ras1+n_o_ras2)*sizeof(int));  
+             for (int k = 0; k < n_o_ras1+n_o_ras2; k++) {
+	         printf("%4d",a_string->binary[k]);
+	     }
+	     
+             printf("\tindex%4d\n",index+i*partition_index[0]);
+             printf("\n");	     
+	     //int c = string_to_index_ras12(string, n_o_ras1, n_o_ras2, N_total);
+	 }
+     }
+     */
+     int count=0;        
+     for (int i = 0; i < n_o_ras1-min_ras1+1; i++) {
+         for (int index = 0; index < partition_index[i]; index++) {
+	     //size_t string = index_to_string_ras12(index, n_o_ras1, n_o_ras2, n_o_ras1-i, N_total-n_o_ras1+i, true);
+	     union Alpha_string *a_string1;// = (union Alpha_string *)malloc(sizeof (union Alpha_string) + n_o_ras1 + n_o_ras2);
+	     //a_string.string = 0;
+	     //a_string = index_to_string_ras12(index, n_o_ras1, n_o_ras2, n_o_ras1-i, N_total-n_o_ras1+i, false, true);
+             //printf("string%4ld\n",a_string.string);
+             //a_string->binary = (int*) malloc((n_o_ras1+n_o_ras2)*sizeof(int));  
+             //for (int k = 0; k < n_o_ras2; k++) {
+	     //    printf("%4d",a_string1->binary[k]);
+	     //}
+             //printf("\n");	     
+	     //int c = string_to_index_ras12(string, n_o_ras1, n_o_ras2, N_total);
+             if (i == 0) {
+	         a_string1 = index_to_string_ras12(index, n_o_ras1, n_o_ras2, n_o_ras1-i, N_total-n_o_ras1+i, true, true);
+	     //printf("%4ld\n", a_string1->string);
+	         int vir[n_o_ras1 + n_o_ras2 - N_total -i];
+	         int sign[n_o_ras1 + n_o_ras2 - N_total -i];
+                 int count_vir = 0;
+                 for (int j = 0; j < n_o_ras2; j++) {
+                     if ((a_string1->string &(1<<j)) == 0) {
+                         vir[count_vir] = j;
+			 size_t mask = (1<<j)-1;
+			 //printf("%4d%4ld%4ld%4d\n",j, a_string1->string,  mask,(mask & a_string1->string));
+		         //printf("%4d\n", ((__builtin_popcount(mask & a_string1->string)) + n_o_ras1));
+			 if (((__builtin_popcount(mask & a_string1->string)) + n_o_ras1)  %2) {
+			 sign[count_vir] = -1;
+			 }
+			 else {
+		             sign[count_vir] = 1;
+			 }
+	                 count_vir++;
+	             }
+	         }
+		 
+                 for (int a = 0; a < n_o_ras1 + n_o_ras2 -N_total; a++) {
+	             size_t string = a_string1->string | (1<<vir[a]);
+		     //printf("%4ld%4d\n", string, vir[a]);
+                     table_creation[count*3+0] = string_to_index_ras12(string, 0, n_o_ras2, N-n_o_ras1);
+                     table_creation[count*3+1] = sign[a];		     
+                     table_creation[count*3+2] = vir[a] + n_o_ras1;		     
+                     count++;		     
+		 }
+	     }
+	     else {
+	         a_string1 = index_to_string_ras12(index, n_o_ras1, n_o_ras2, n_o_ras1-i, N_total-n_o_ras1+i, false, false);
+                 //for (int j = 0; j < n_o_ras1+n_o_ras2; j++) {
+		 //        printf("%4d",a_string1->binary[j]);
+		 //}
+	         printf("\n");
+	         int vir;
+	         int sign;
+                 for (int j = 0; j < n_o_ras1; j++) {
+	             if (a_string1->binary[j] == 0) {
+			vir = j;
+			if (j%2) {
+                            sign = -1;
+			}
+			else {
+			    sign = 1;	
+			}
+		     }		     
+		 }
+		 table_creation[count*3+0] = binary_to_index_ras12(a_string1->binary+n_o_ras1, 0, n_o_ras2, N-n_o_ras1);
+		 table_creation[count*3+1] = sign;
+		 table_creation[count*3+2] = vir;
+                 count++;		     
+		     
+	     }
+	     //printf("\n");
+
+	     free(a_string1);
+             
+         }
+     }
+     free(partition_index);	 
+}
+
+void single_annihilation_list(int N, int n_o_ras1, int n_o_ras2, int* table_annihilation) {
+    
+     int num_alpha = binomialCoeff(n_o_ras2, N-n_o_ras1); 
+     //int rows1 = num_alpha * N; 
+     //int* table_annihilation = (int*) malloc(rows1*3*sizeof(int));
+     //*length = rows1;
+     int n_o = n_o_ras1 + n_o_ras2;
+     //printf("%4d%4d%4d%4d\n",n_o_ras1,n_o_ras2,N,num_alpha);
+     int count=0;        
+     for (int index = 0; index < num_alpha; index++) {
+	 union Alpha_string *a_string0;
+	 a_string0 = index_to_string_ras12(index, n_o_ras1, n_o_ras2, n_o_ras1, N-n_o_ras1, false, false);
+         //for (int j = 0; j < n_o_ras1+n_o_ras2; j++) {
+	 //		 printf("%4d",a_string0->binary[j]);
+	 //	 }
+	 int occ[N];
+	 int occ_count = 0;
+         for (int j = 0; j < n_o; j++) {
+             if (a_string0->binary[j]&1) {
+		 occ[occ_count] = j;
+	         occ_count++;
+	     }
+	 }    		 
+         for (int j = 0; j < N; j++) {
+             //printf("%4d", occ[j]);		 
+	 
+	     int a_binary1[n_o];
+	     memset(a_binary1, 0, n_o * sizeof(int));
+	     memcpy(a_binary1, a_string0->binary, n_o* sizeof(int));
+	     a_binary1[occ[j]] = 0;
+	     //printf("%4d\n",j);
+	     int sign;
+	     if (j%2) {
+		 sign = -1;
+	     }
+	     else {
+                 sign = 1;		     
+	     }
+             //for (int i = 0; i < n_o; i++) {
+	     //        printf("%4d", a_binary1[i]);
+	     //}
+             int index1 = binary_to_index_ras12(a_binary1, n_o_ras1, n_o_ras2, N-1);
+	     table_annihilation[count*3+0] = index1;
+	     table_annihilation[count*3+1] = sign;
+	     table_annihilation[count*3+2] = occ[j];
+             count++;
+             //for (int i = 0; i < n_o; i++) {
+	     //        printf("%4d", a_binary1[i]);
+	     //}
+	     //printf("%4d", index1);
+	     //printf("\n");
+	 }
+	 //printf("\n");
+         free(a_string0);
+     }
+     //return table_annihilation;
+}
 
 
 void single_replacement_list(int num_alpha, int N, int n_o, int n_in_a, int* Y,int* table) {
@@ -333,7 +960,7 @@ void build_H_diag(double* h1e, double* h2e, double* H_diag, int N_p, int num_alp
         size_t num_dets = num_alpha * num_alpha;
         int np1 = N_p + 1;
         
-     #pragma omp parallel for num_threads(12)
+     #pragma omp parallel for num_threads(16)
 	for (size_t index_photon_det = 0; index_photon_det < np1*num_dets; index_photon_det++) {
 	    size_t Idet = index_photon_det%num_dets;	
 	    int m = (index_photon_det-Idet)/num_dets;	
@@ -417,15 +1044,103 @@ void build_H_diag(double* h1e, double* h2e, double* H_diag, int N_p, int num_alp
 	}
 
 }
+void get_table(int N, int n_o_ras1, int n_o_ras2, int* table_creation,int* table_annihilation) {
+    /* 
+     int n_o_ras1 = 3;
+     int n_o_ras2 = 3;
+     int N_ras1 = 1;
+     int N_ras2 = 2;
+     int rows0 = N_ras1 * (n_o_ras1 - N_ras1 + 1) + N_ras2 * (n_o_ras2 - N_ras2 + 1);
+     int index_test = string_to_index_ras12(44,3,3,3);
+ 
+     printf("%4d\n",index_test);
+     
 
+    index_to_string_ras12(7, 3, 3, 2, 1, false);   
+ */
+     //lets build an array containing numbers of strings in graph1, graph2...
+     //////////int* partition_index = (int*) malloc((n_o_ras1-min_ras1+1)*sizeof(int));  
+     //////////memset(partition_index, 0, (n_o_ras1-min_ras1+1)*sizeof(int));
+     //////////for (int i = 0; i < n_o_ras1-min_ras1+1; i++) {
+     //////////    partition_index[i] = binomialCoeff(n_o_ras1, n_o_ras1-i) * binomialCoeff(n_o_ras2, N_total-n_o_ras1+i);     
+     //////////}
+     //////////for (int i = 0; i < n_o_ras1-min_ras1+1; i++) {
+     //////////    printf("%4d",partition_index[i]);     
+     //////////}
+     //////////for (int i = 0; i < n_o_ras1-min_ras1+1; i++) {
+     //////////    for (int index = 0; index < partition_index[i]; index++) {
+     //////////        size_t string = index_to_string_ras12(index, n_o_ras1, n_o_ras2, n_o_ras1-i, N_total-n_o_ras1+i, false);
+     //////////        int c = string_to_index_ras12(string, n_o_ras1, n_o_ras2, N_total);
+     //////////        printf("%4d\n", c);
+     //////////    }
+     //////////}
+
+   clock_t t;
+     t = clock();
+     
+     //printf("N%4d n_in_a %4d n_o %4d \n", N,n_in_a,n_o);
+     //table_creation = single_creation_list(N+n_in_a, n_in_a,n_o, &length);
+     single_creation_list(N, n_o_ras1, n_o_ras2, table_creation);
+     
+     //for (int i = 0; i < length; i++) {
+     //    printf("%4d%4d%4d\n", table_creation[i*3+0], table_creation[i*3+1], table_creation[i*3+2]);
+     //}
+
+     //table_annihilation = single_annihilation_list(N+n_in_a, n_in_a,n_o, &length);
+     single_annihilation_list(N, n_o_ras1, n_o_ras2, table_annihilation);
+     //for (int i = 0; i < length; i++) {
+     //    printf("%4d%4d%4d\n", table_annihilation[i*3+0], table_annihilation[i*3+1], table_annihilation[i*3+2]);
+     //}
+     t = clock() - t;
+     double time_taken = ((double)t)/CLOCKS_PER_SEC;
+     printf("build index map for sigma3 took %f seconds to execute \n", time_taken);
+
+
+}
 
 void get_string (double* h1e, double* h2e, double* H_diag, int* table, int N_p, int num_alpha, int nmo, int N, int n_o, int n_in_a, double omega, double Enuc, double dc){
+    /* 
+     int n_o_ras1 = 3;
+     int n_o_ras2 = 3;
+     int N_ras1 = 1;
+     int N_ras2 = 2;
+     int rows0 = N_ras1 * (n_o_ras1 - N_ras1 + 1) + N_ras2 * (n_o_ras2 - N_ras2 + 1);
+     int index_test = string_to_index_ras12(44,3,3,3);
+ 
+     printf("%4d\n",index_test);
+     
+
+    index_to_string_ras12(7, 3, 3, 2, 1, false);   
+ */
+     //int min_ras1 = 2;
+     //int n_o_ras1 = 4;
+     //int n_o_ras2 = 5;
+     //int N_total = 5;
+     //lets build an array containing numbers of strings in graph1, graph2...
+     //////////int* partition_index = (int*) malloc((n_o_ras1-min_ras1+1)*sizeof(int));  
+     //////////memset(partition_index, 0, (n_o_ras1-min_ras1+1)*sizeof(int));
+     //////////for (int i = 0; i < n_o_ras1-min_ras1+1; i++) {
+     //////////    partition_index[i] = binomialCoeff(n_o_ras1, n_o_ras1-i) * binomialCoeff(n_o_ras2, N_total-n_o_ras1+i);     
+     //////////}
+     //////////for (int i = 0; i < n_o_ras1-min_ras1+1; i++) {
+     //////////    printf("%4d",partition_index[i]);     
+     //////////}
+     //////////for (int i = 0; i < n_o_ras1-min_ras1+1; i++) {
+     //////////    for (int index = 0; index < partition_index[i]; index++) {
+     //////////        size_t string = index_to_string_ras12(index, n_o_ras1, n_o_ras2, n_o_ras1-i, N_total-n_o_ras1+i, false);
+     //////////        int c = string_to_index_ras12(string, n_o_ras1, n_o_ras2, N_total);
+     //////////        printf("%4d\n", c);
+     //////////    }
+     //////////}
+     printf("\n");
      int rows = N*(n_o-N+1);
      int cols = 3;
      //Y = (int**) malloc(rows*sizeof(int*));
      //for (int row = 0; row < rows; row++) {
      //    Y[row] = (int*) malloc(cols*sizeof(int));
      //}
+     
+
      Y = (int*) malloc(rows*cols*sizeof(int));
      clock_t t;
      t = clock();
@@ -434,7 +1149,6 @@ void get_string (double* h1e, double* h2e, double* H_diag, int* table, int N_p, 
      double time_taken = ((double)t)/CLOCKS_PER_SEC;
      printf("get_graph took %f seconds to execute \n", time_taken);
 
-     
      //int* p;
      //int length;
      //p=string_to_obtlist(23,10,&length);
@@ -473,7 +1187,7 @@ void get_string (double* h1e, double* h2e, double* H_diag, int* table, int N_p, 
 free(Y);
 }
 void build_sigma(double* h1e, double* h2e, double* d_cmo, double* c_vectors, double *c1_vectors, 
-		 int*table, size_t table_length, int num_links, int nmo, int num_alpha, int num_state, int N_p, double Enuc, double dc, double omega, double d_exp, bool only_ground_state) {
+		 int*table, int table_length, int num_links, int nmo, int num_alpha, int num_state, int N_p, double Enuc, double dc, double omega, double d_exp, bool only_ground_state) {
 
 
      //int threads =omp_get_max_threads();
@@ -519,9 +1233,59 @@ void build_sigma(double* h1e, double* h2e, double* d_cmo, double* c_vectors, dou
 	 }
      }
 }
+void build_sigma_2(double* h1e, double* h2e, double* d_cmo, double* c_vectors, double *c1_vectors, 
+		 int* table, int* table_creation, int* table_annihilation, int* partition_index, int table_creation_length, int num_links, int num_links2, int nmo, 
+		 int num_alpha, int n_o_ras1, int num_state, int N_p, double Enuc, double dc, double omega, double d_exp, bool only_ground_state) {
+
+
+     //int threads =omp_get_max_threads();
+     //printf(" numthread %d",threads);
+     //  #pragma omp parallel for num_threads(12)
+     // for (int i = 1; i <= 12; i++) {
+     //     int tid = omp_get_thread_num();
+     //     printf("The thread %d  executes i = %d\n", tid, i);
+     // }
+
+
+
+     int np1 = N_p + 1;
+     //printf("total dim %d", num_alpha*num_alpha*num_state*np1);
+     #pragma omp parallel for num_threads(12) collapse(2)
+     for (int n = 0; n < num_state; n++) {
+         for (int m = 0; m < np1; m++) {
+             sigma12(h1e, h2e, c_vectors, c1_vectors, num_alpha, num_links, table, nmo, m, n, np1); 
+             sigma3_2(h2e, c_vectors, c1_vectors, table,  table_creation, table_annihilation, partition_index, 
+		 table_creation_length, num_alpha, n_o_ras1, num_links, num_links2, nmo, m, n, np1);
+             double someconstant = m * omega + Enuc + dc;
+             if (only_ground_state == true) {
+                someconstant = m * (omega + 1) + Enuc + dc;
+	     }
+             constant_terms_contraction(c_vectors, c1_vectors, num_alpha, someconstant, m, m, n, np1);    
+             if ((0 < m) && (m < N_p)) {
+                 someconstant = -sqrt(m * omega/2);
+                 sigma_dipole(d_cmo, c_vectors, c1_vectors, num_alpha, num_links, table, nmo, someconstant, m-1, m, n, np1);  
+                 constant_terms_contraction(c_vectors, c1_vectors, num_alpha, -d_exp * someconstant, m-1, m, n, np1);    
+                 someconstant = -sqrt((m+1) * omega/2);
+                 sigma_dipole(d_cmo, c_vectors, c1_vectors, num_alpha, num_links, table, nmo, someconstant, m+1, m, n, np1);  
+                 constant_terms_contraction(c_vectors, c1_vectors, num_alpha, -d_exp * someconstant, m+1, m, n, np1);    
+	     }
+             else if (m == N_p) {
+                 someconstant = -sqrt(m * omega/2);
+                 sigma_dipole(d_cmo, c_vectors, c1_vectors, num_alpha, num_links, table, nmo, someconstant, m-1, m, n, np1);  
+                 constant_terms_contraction(c_vectors, c1_vectors, num_alpha, -d_exp * someconstant, m-1, m, n, np1);   
+	     }
+             else {
+                 someconstant = -sqrt((m+1) * omega/2);
+                 sigma_dipole(d_cmo, c_vectors, c1_vectors, num_alpha, num_links, table, nmo, someconstant, m+1, m, n, np1);  
+                 constant_terms_contraction(c_vectors, c1_vectors, num_alpha, -d_exp * someconstant, m+1, m, n, np1);   
+	     }
+	 }
+     }
+}
+
 
        
-void sigma3(double* h2e, double* c_vectors,double* c1_vectors,int num_alpha,int num_links, int* table, size_t table_length, int nmo, int photon_p, int state_p, int num_photon) {
+void sigma3(double* h2e, double* c_vectors,double* c1_vectors,int num_alpha,int num_links, int* table, int table_length, int nmo, int photon_p, int state_p, int num_photon) {
      //printf("he3\n");
      //unsigned long currRealMem, peakRealMem, currVirtMem, peakVirtMem;
      //int success2 = getMemory(&currRealMem, &peakRealMem, &currVirtMem, &peakVirtMem);
@@ -605,116 +1369,306 @@ free(F);
 
    
 }
+
+
+       
+void sigma3_2(double* h2e, double* c_vectors, double* c1_vectors, int* table, int* table_creation, int* table_annihilation, int* partition_index, 
+		 int table_creation_length, int num_alpha, int n_o_ras1, int num_links, int num_links2, int nmo, int photon_p, int state_p, int num_photon) {
+    //printf("he3\n");
+    //unsigned long currRealMem, peakRealMem, currVirtMem, peakVirtMem;
+    //int success2 = getMemory(&currRealMem, &peakRealMem, &currVirtMem, &peakVirtMem);
+    size_t num_dets = num_alpha * num_alpha;
+    int part0, part1;
+    if (n_o_ras1 == 0) {
+       part0 = partition_index[0];
+       part1 = 0;
+    }
+    else {
+       part0 = partition_index[0];
+       part1 = partition_index[1];
+    } 
+    int num_links1 = (table_creation_length - part1) / part0;
+
+    //printf("%4d%4d%4d%4d\n",part0,part1, num_links1,nmo);
+    double* D = (double*) malloc((part0 + part1) * nmo * num_alpha*sizeof(double));
+    memset(D, 0, (part0 + part1) * nmo * num_alpha * sizeof(double));
+    for (int index_ka = 0; index_ka < part0 + part1; index_ka++) {
+	if (index_ka <  part0) {
+	    int stride = index_ka * num_links1;    	
+            for (int creation = 0; creation < num_links1; creation++) {
+		int index_ja = table_creation[(stride+creation)*3+0];
+		int sign = table_creation[(stride+creation)*3+1];
+		int j = table_creation[(stride+creation)*3+2];
+		//printf("%4d%4d%4d\n",index_ja,sign,j);
+                for (int index_jb = 0; index_jb < num_alpha; index_jb++) {
+		    int index_J = index_ja * num_alpha + index_jb;
+		    //D[(j * (partition_index[0] + partition_index[1]) + index_ka) * num_alpha + index_jb] += sign *
+                    //       c_vectors[(state_p * num_photon + photon_p) * num_dets + index_J];
+                      D[(index_jb * nmo + j) * (part0 + part1) + index_ka] += sign *
+                           c_vectors[(state_p * num_photon + photon_p) * num_dets + index_J];
+
+
+		}
+	    }
+	}
+	else {
+            int offset = table_creation_length - part1;
+	    int index_ja = table_creation[(offset + index_ka-part0)*3+0];
+	    int sign = table_creation[(offset + index_ka-part0)*3+1];
+	    int j = table_creation[(offset + index_ka-part0)*3+2];
+		//printf("%4d%4d%4d\n",index_ja,sign,j);
+            for (int index_jb = 0; index_jb < num_alpha; index_jb++) {
+		    int index_J = index_ja * num_alpha + index_jb;
+		    //D[(j * (partition_index[0] + partition_index[1]) + index_ka) * num_alpha + index_jb] += sign *
+                    //       c_vectors[(state_p * num_photon + photon_p) * num_dets + index_J];
+		    D[(index_jb * nmo + j) * (part0 + part1) + index_ka] += sign *
+                           c_vectors[(state_p * num_photon + photon_p) * num_dets + index_J];
+
+		}
+	}	
+    }
+
+    //printf("\n");
+    double* T = (double*) malloc((part0 + part1) * nmo * num_alpha*sizeof(double));
+    memset(T, 0, (part0 + part1) * nmo * num_alpha * sizeof(double));
+    for (int index_ib = 0; index_ib < num_alpha; index_ib++) {
+        //memset(F, 0, num_alpha*sizeof(double));
+        int stride = index_ib * num_links;
+        for (int excitation = 0; excitation < num_links; excitation++) {
+            int index_jb = table[(stride + excitation)*4+0];
+            int sign = table[(stride + excitation)*4+1];
+            int k = table[(stride + excitation)*4+2]; 
+            int l = table[(stride + excitation)*4+3]; 
+            //print(index_kb,sign1,k,l)
+            int kl = k * nmo + l;
+        cblas_dgemm(CblasRowMajor, CblasNoTrans, CblasNoTrans, nmo, (part0 + part1), nmo, sign, h2e+kl*nmo*nmo, 
+       		  nmo, D+index_jb*nmo*(part0 + part1), (part0 + part1), 1.0, 
+        	  T+index_ib*nmo*(part0 + part1), (part0 + part1));
+        }
+    }
+
+// double* T2 = (double*) malloc((partition_index[0] + partition_index[1]) * nmo * num_alpha*sizeof(double));
+//    memset(T2, 0, (partition_index[0] + partition_index[1]) * nmo * num_alpha * sizeof(double));
+//
+//    for (int index_ib = 0; index_ib < num_alpha; index_ib++) {
+//        //memset(F, 0, num_alpha*sizeof(double));
+//        int stride = index_ib * num_links;
+//        for (int excitation = 0; excitation < num_links; excitation++) {
+//            int index_jb = table[(stride + excitation)*4+0];
+//            int sign = table[(stride + excitation)*4+1];
+//            int k = table[(stride + excitation)*4+2]; 
+//            int l = table[(stride + excitation)*4+3]; 
+//            //print(index_kb,sign1,k,l)
+//            int kl = k * nmo + l;
+//            for (int index_ka = 0; index_ka < partition_index[0] + partition_index[1]; index_ka++) {
+//                for (int i = 0; i < nmo; i++) {
+//                    for (int j = 0; j < nmo; j++) {
+//                        int ij = i * nmo + j;
+//                        T2[(index_ib * nmo + i) * (partition_index[0] + partition_index[1]) + index_ka] +=
+//				sign * h2e[kl*nmo*nmo + ij] * D[(index_jb * nmo  + j) * (partition_index[0] + partition_index[1]) + index_ka];
+//		    }
+//		}
+//	    }
+//	}
+//    }
+
+
+//    for (int index_ib = 0; index_ib < num_alpha; index_ib++) {
+//        for (int i = 0; i < nmo; i++) {
+//            for (int index_ka = 0; index_ka < partition_index[0] + partition_index[1]; index_ka++) {
+//		    printf("%20.12lf%20.12lf\n",T2[(index_ib * nmo + i) * (partition_index[0] + partition_index[1]) + index_ka],
+//				    T[(index_ib * nmo + i) * (partition_index[0] + partition_index[1]) + index_ka]);
+//	    }
+//	}
+//    }
+
+
+
+    //printf("\n");
+    for (int index_ia = 0; index_ia < num_alpha; index_ia++) {
+        int stride = index_ia * num_links2;    	
+        for (int annihilation = 0; annihilation < num_links2; annihilation++) {
+            int index_ka = table_annihilation[(stride+annihilation)*3+0];
+            int sign = table_annihilation[(stride+annihilation)*3+1];
+            int i = table_annihilation[(stride+annihilation)*3+2];
+            //printf("%4d%4d%4d\n",index_ka,sign,i);
+            for (int index_ib = 0; index_ib < num_alpha; index_ib++) {
+                int index_I = index_ia * num_alpha + index_ib;
+                c1_vectors[(state_p * num_photon + photon_p) * num_dets + index_I] += sign *
+                //T[(index_ib * nmo + i) * (partition_index[0] + partition_index[1]) + index_ka];
+                T[(index_ib * nmo + i) * (part0 + part1) + index_ka];
+            }
+        }
+        	
+    }
+    /*
+      double* T = (double*) malloc((partition_index[0] + partition_index[1]) * nmo * num_alpha*sizeof(double));
+    memset(T, 0, (partition_index[0] + partition_index[1]) * nmo * num_alpha * sizeof(double));
+
+    for (int index_ib = 0; index_ib < num_alpha; index_ib++) {
+        //memset(F, 0, num_alpha*sizeof(double));
+        int stride = index_ib * num_links;
+        for (int excitation = 0; excitation < num_links; excitation++) {
+            int index_jb = table[(stride + excitation)*4+0];
+            int sign = table[(stride + excitation)*4+1];
+            int k = table[(stride + excitation)*4+2]; 
+            int l = table[(stride + excitation)*4+3]; 
+            //print(index_kb,sign1,k,l)
+            int kl = k * nmo + l;
+            for (int index_ka = 0; index_ka < partition_index[0] + partition_index[1]; index_ka++) {
+                for (int i = 0; i < nmo; i++) {
+                    for (int j = 0; j < nmo; j++) {
+                        int ij = i * nmo + j;
+                        T[(i * (partition_index[0] + partition_index[1]) + index_ka) * num_alpha + index_ib] +=
+				sign * h2e[kl*nmo*nmo + ij] * D[(j * (partition_index[0] + partition_index[1]) + index_ka) * num_alpha + index_jb];
+		    }
+		}
+	    }
+	}
+    }
+    printf("\n");
+    for (int index_ia = 0; index_ia < num_alpha; index_ia++) {
+	int stride = index_ia * num_links2;    	
+        for (int annihilation = 0; annihilation < num_links2; annihilation++) {
+	    int index_ka = table_annihilation[(stride+annihilation)*3+0];
+	    int sign = table_annihilation[(stride+annihilation)*3+1];
+	    int i = table_annihilation[(stride+annihilation)*3+2];
+	    printf("%4d%4d%4d\n",index_ka,sign,i);
+            for (int index_ib = 0; index_ib < num_alpha; index_ib++) {
+	        int index_I = index_ia * num_alpha + index_ib;
+                c1_vectors[(state_p * num_photon + photon_p) * num_dets + index_I] += sign *
+	        T[(i * (partition_index[0] + partition_index[1]) + index_ka) * num_alpha + index_ib];
+	    }
+	}
+		
+    }
+    */
+//fflush(stdout);
+    
+//success2 = getMemory(&currRealMem, &peakRealMem, &currVirtMem, &peakVirtMem);
+//printf("he4\n");
+free(D);
+free(T);
+
+}
+
+
+
+
+
+
+
+
 void sigma12(double* h1e, double* h2e, double* c_vectors,double* c1_vectors,int num_alpha,int num_links, int* table, int nmo, int photon_p, int state_p, int num_photon) {
-     //printf("he1\n");
-     //unsigned long currRealMem, peakRealMem, currVirtMem, peakVirtMem;
-     //int success2 = getMemory(&currRealMem, &peakRealMem, &currVirtMem, &peakVirtMem);
+    //printf("he1\n");
+    //unsigned long currRealMem, peakRealMem, currVirtMem, peakVirtMem;
+    //int success2 = getMemory(&currRealMem, &peakRealMem, &currVirtMem, &peakVirtMem);
 
 
-     size_t num_dets = num_alpha * num_alpha;
-     double* F = (double*) malloc(num_alpha*sizeof(double));
+    size_t num_dets = num_alpha * num_alpha;
+    double* F = (double*) malloc(num_alpha*sizeof(double));
 
-     double* s_resize = (double*) malloc(num_alpha*sizeof(double));
+    double* s_resize = (double*) malloc(num_alpha*sizeof(double));
 
-     for (int index_ib = 0; index_ib < num_alpha; index_ib++) {
-         memset(F, 0, num_alpha*sizeof(double));
-         int stride1 = index_ib * num_links;
-         for (int excitation1 = 0; excitation1 < num_links; excitation1++) {
-             int index_kb = table[(stride1 + excitation1)*4+0];
-             int sign1 = table[(stride1 + excitation1)*4+1];
-             int k = table[(stride1 + excitation1)*4+2]; 
-             int l = table[(stride1 + excitation1)*4+3]; 
-             //print(index_kb,sign1,k,l)
-             int kl = k * nmo + l;
-             F[index_kb] += sign1 * h1e[k*nmo+l];
-             int stride2 = index_kb * num_links;
-             for (int excitation2 = 0; excitation2 < num_links; excitation2++) {
-                 int index_jb = table[(stride2 + excitation2)*4+0];
-                 int sign2 = table[(stride2 + excitation2)*4+1];
-                 int i = table[(stride2 + excitation2)*4+2]; 
-                 int j = table[(stride2 + excitation2)*4+3]; 
-                 int ij = i * nmo + j;
-                 if (ij >= kl) {
-                     F[index_jb] += (sign1 * sign2 * h2e[ij*nmo*nmo+kl])/(1+(ij == kl));
-		 }
-	     }
-	 }
+    for (int index_ib = 0; index_ib < num_alpha; index_ib++) {
+        memset(F, 0, num_alpha*sizeof(double));
+        int stride1 = index_ib * num_links;
+        for (int excitation1 = 0; excitation1 < num_links; excitation1++) {
+            int index_kb = table[(stride1 + excitation1)*4+0];
+            int sign1 = table[(stride1 + excitation1)*4+1];
+            int k = table[(stride1 + excitation1)*4+2]; 
+            int l = table[(stride1 + excitation1)*4+3]; 
+            //print(index_kb,sign1,k,l)
+            int kl = k * nmo + l;
+            F[index_kb] += sign1 * h1e[k*nmo+l];
+            int stride2 = index_kb * num_links;
+            for (int excitation2 = 0; excitation2 < num_links; excitation2++) {
+                int index_jb = table[(stride2 + excitation2)*4+0];
+                int sign2 = table[(stride2 + excitation2)*4+1];
+                int i = table[(stride2 + excitation2)*4+2]; 
+                int j = table[(stride2 + excitation2)*4+3]; 
+                int ij = i * nmo + j;
+                if (ij >= kl) {
+                    F[index_jb] += (sign1 * sign2 * h2e[ij*nmo*nmo+kl])/(1+(ij == kl));
+       	 }
+            }
+        }
 
-         memset(s_resize, 0, num_alpha*sizeof(double));
-         cblas_dgemm(CblasRowMajor, CblasNoTrans, CblasNoTrans, num_alpha, 1, num_alpha, 1.0, c_vectors 
-			 + (state_p * num_photon + photon_p) * num_dets, num_alpha, F, 1, 0.0, s_resize, 1);
-         for (int index_ia = 0; index_ia < num_alpha; index_ia++) {
-             int index_I = index_ia * num_alpha + index_ib;
-             c1_vectors[(state_p * num_photon + photon_p) * num_dets + index_I] += s_resize[index_ia];
-	 }
-         //for (int index_jb = 0; index_jb < num_alpha; index_jb++) {
-         //    for (int index_ia = 0; index_ia < num_alpha; index_ia++) {
-         //        int index_I = index_ia * num_alpha + index_ib;
-         //        int index_J = index_ia * num_alpha + index_jb;
-         //        c1_vectors[(state_p * num_photon + photon_p) * num_dets + index_I] += F[index_jb] * c_vectors[
-	 //       	 (state_p * num_photon + photon_p) * num_dets + index_J];
-	 //    }
-	 //}
+        memset(s_resize, 0, num_alpha*sizeof(double));
+        cblas_dgemm(CblasRowMajor, CblasNoTrans, CblasNoTrans, num_alpha, 1, num_alpha, 1.0, c_vectors 
+       		 + (state_p * num_photon + photon_p) * num_dets, num_alpha, F, 1, 0.0, s_resize, 1);
+        for (int index_ia = 0; index_ia < num_alpha; index_ia++) {
+            int index_I = index_ia * num_alpha + index_ib;
+            c1_vectors[(state_p * num_photon + photon_p) * num_dets + index_I] += s_resize[index_ia];
+        }
+        //for (int index_jb = 0; index_jb < num_alpha; index_jb++) {
+        //    for (int index_ia = 0; index_ia < num_alpha; index_ia++) {
+        //        int index_I = index_ia * num_alpha + index_ib;
+        //        int index_J = index_ia * num_alpha + index_jb;
+        //        c1_vectors[(state_p * num_photon + photon_p) * num_dets + index_I] += F[index_jb] * c_vectors[
+        //       	 (state_p * num_photon + photon_p) * num_dets + index_J];
+        //    }
+        //}
 
-     }
-
-
-     double* c_resize = (double*) malloc(num_dets*sizeof(double));
-     
-     for (int index_ja = 0; index_ja < num_alpha; index_ja++) {
-         for (int index_ib = 0; index_ib < num_alpha; index_ib++) {
-             int index_J = index_ja * num_alpha + index_ib;
-             int index_Jt = index_ib * num_alpha + index_ja;
-             c_resize[index_Jt] = c_vectors[
-        	 (state_p * num_photon + photon_p) * num_dets + index_J];
-         }
-     }
-     
-     
-     
-     for (int index_ia = 0; index_ia < num_alpha; index_ia++) {
-         memset(F, 0, num_alpha*sizeof(double));
-         int stride1 = index_ia * num_links;
-         for (int excitation1 = 0; excitation1 < num_links; excitation1++) {
-             int index_ka = table[(stride1 + excitation1)*4+0];
-             int sign1 = table[(stride1 + excitation1)*4+1];
-             int k = table[(stride1 + excitation1)*4+2]; 
-             int l = table[(stride1 + excitation1)*4+3]; 
-             //print(index_kb,sign1,k,l)
-             int kl = k * nmo + l;
-             F[index_ka] += sign1 * h1e[k*nmo+l];
-             int stride2 = index_ka * num_links;
-             for (int excitation2 = 0; excitation2 < num_links; excitation2++) {
-                 int index_ja = table[(stride2 + excitation2)*4+0];
-                 int sign2 = table[(stride2 + excitation2)*4+1];
-                 int i = table[(stride2 + excitation2)*4+2]; 
-                 int j = table[(stride2 + excitation2)*4+3]; 
-                 int ij = i * nmo + j;
-                 if (ij >= kl) {
-                     F[index_ja] += (sign1 * sign2 * h2e[ij*nmo*nmo+kl])/(1+(ij == kl));
-		 }
-	     }
-	 }
-         cblas_dgemm(CblasRowMajor, CblasNoTrans, CblasNoTrans, num_alpha,1,num_alpha, 1.0, c_resize, num_alpha, F, 1, 1.0,
-			 c1_vectors+(state_p * num_photon + photon_p) * num_dets+index_ia*num_alpha, 1);
-         //matrix_product(c_resize, F, c1_vectors+(state_p * num_photon + photon_p) * num_dets + index_ia, num_alpha,1,num_alpha);
+    }
 
 
-         //for (int index_ja = 0; index_ja < num_alpha; index_ja++) {
-         //    for (int index_ib = 0; index_ib < num_alpha; index_ib++) {
-         //        int index_I = index_ia * num_alpha + index_ib;
-         //        int index_J = index_ja * num_alpha + index_ib;
-         //        c1_vectors[(state_p * num_photon + photon_p) * num_dets + index_I] += F[index_ja] * c_vectors[
-	 //       	 (state_p * num_photon + photon_p) * num_dets + index_J];
-	 //    }
-	 //}
+    double* c_resize = (double*) malloc(num_dets*sizeof(double));
+    
+    for (int index_ja = 0; index_ja < num_alpha; index_ja++) {
+        for (int index_ib = 0; index_ib < num_alpha; index_ib++) {
+            int index_J = index_ja * num_alpha + index_ib;
+            int index_Jt = index_ib * num_alpha + index_ja;
+            c_resize[index_Jt] = c_vectors[
+       	 (state_p * num_photon + photon_p) * num_dets + index_J];
+        }
+    }
+    
+    
+    
+    for (int index_ia = 0; index_ia < num_alpha; index_ia++) {
+        memset(F, 0, num_alpha*sizeof(double));
+        int stride1 = index_ia * num_links;
+        for (int excitation1 = 0; excitation1 < num_links; excitation1++) {
+            int index_ka = table[(stride1 + excitation1)*4+0];
+            int sign1 = table[(stride1 + excitation1)*4+1];
+            int k = table[(stride1 + excitation1)*4+2]; 
+            int l = table[(stride1 + excitation1)*4+3]; 
+            //print(index_kb,sign1,k,l)
+            int kl = k * nmo + l;
+            F[index_ka] += sign1 * h1e[k*nmo+l];
+            int stride2 = index_ka * num_links;
+            for (int excitation2 = 0; excitation2 < num_links; excitation2++) {
+                int index_ja = table[(stride2 + excitation2)*4+0];
+                int sign2 = table[(stride2 + excitation2)*4+1];
+                int i = table[(stride2 + excitation2)*4+2]; 
+                int j = table[(stride2 + excitation2)*4+3]; 
+                int ij = i * nmo + j;
+                if (ij >= kl) {
+                    F[index_ja] += (sign1 * sign2 * h2e[ij*nmo*nmo+kl])/(1+(ij == kl));
+       	 }
+            }
+        }
+        cblas_dgemm(CblasRowMajor, CblasNoTrans, CblasNoTrans, num_alpha,1,num_alpha, 1.0, c_resize, num_alpha, F, 1, 1.0,
+       		 c1_vectors+(state_p * num_photon + photon_p) * num_dets+index_ia*num_alpha, 1);
+        //matrix_product(c_resize, F, c1_vectors+(state_p * num_photon + photon_p) * num_dets + index_ia, num_alpha,1,num_alpha);
 
-     }
-     free(F); 
-     free(c_resize); 
-     free(s_resize);
-     //success2 = getMemory(&currRealMem, &peakRealMem, &currVirtMem, &peakVirtMem);
-     //printf("he2\n");
+
+        //for (int index_ja = 0; index_ja < num_alpha; index_ja++) {
+        //    for (int index_ib = 0; index_ib < num_alpha; index_ib++) {
+        //        int index_I = index_ia * num_alpha + index_ib;
+        //        int index_J = index_ja * num_alpha + index_ib;
+        //        c1_vectors[(state_p * num_photon + photon_p) * num_dets + index_I] += F[index_ja] * c_vectors[
+        //       	 (state_p * num_photon + photon_p) * num_dets + index_J];
+        //    }
+        //}
+
+    }
+    free(F); 
+    free(c_resize); 
+    free(s_resize);
+    //success2 = getMemory(&currRealMem, &peakRealMem, &currVirtMem, &peakVirtMem);
+    //printf("he2\n");
 
 
     
@@ -810,9 +1764,22 @@ void sigma_dipole(double* h1e, double* c_vectors,double* c1_vectors,int num_alph
 }
 void constant_terms_contraction(double* c_vectors,double* c1_vectors,int num_alpha, double someconstant, int photon_p1, int photon_p2, int state_p, int num_photon) {
      size_t num_dets = num_alpha * num_alpha;
-     for (int index_I = 0; index_I < num_dets; index_I++) {
+     for (size_t index_I = 0; index_I < num_dets; index_I++) {
          c1_vectors[(state_p * num_photon + photon_p2) * num_dets + index_I] += someconstant * c_vectors[(state_p * num_photon + photon_p1) * num_dets + index_I];
      }
 }
 
-
+//int main() {
+//	int N = 3;
+//	int n_o = 5;
+//    int rows = N*(n_o-N+1);
+//    int cols = 3;
+//
+//    Y = (int*) malloc(rows*cols*sizeof(int));
+//    get_graph(N,n_o,Y);
+//    int* table_creation;
+//    int length;
+//    table_creation = single_creation_list(5, 2,5, &length);
+//
+//    free(Y);
+//}
