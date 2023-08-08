@@ -645,7 +645,103 @@ void single_replacement_list(int num_alpha, int N_ac, int n_o_ac, int n_o_in, in
 	   }
        }
 }
+void build_H_diag2(double* h1e, double* h2e, double* H_diag, int N_p, int num_alpha,int nmo, int n_act_a,int n_act_orb,int n_in_a, double omega, double Enuc, double dc, int* Y) {
+        //approximate diagonal elements for singlet roots
+	
+	size_t num_dets = num_alpha * num_alpha;
+        int np1 = N_p + 1;
+        
+     //#pragma omp parallel for num_threads(16)
+	for (size_t index_photon_det = 0; index_photon_det < np1*num_dets; index_photon_det++) {
+	    size_t Idet = index_photon_det%num_dets;	
+	    int m = (index_photon_det-Idet)/num_dets;	
+            int start =  m * num_dets; 
 
+            //for (size_t Idet = 0; Idet < num_dets; Idet++) {
+                int index_b = Idet%num_alpha;
+                int index_a = (Idet-index_b)/num_alpha;
+                size_t string_a = index_to_string(index_a,n_act_a,n_act_orb,Y);
+                size_t string_b = index_to_string(index_b,n_act_a,n_act_orb,Y);
+		size_t ab = string_a & string_b;
+		int length;
+		int* double_active = string_to_obtlist(ab, nmo, &length);
+		int dim_d = length+n_in_a;
+		int double_occupation[dim_d];
+                for (int i = 0; i < dim_d; i++) {
+	            if (i < n_in_a) {
+		       double_occupation[i] = i;	    
+		    }
+                    else {
+		       double_occupation[i] = double_active[i-n_in_a] + n_in_a;	
+		    }
+		}
+                
+             	size_t e = string_a^string_b;
+                size_t ea = e&string_a;
+                size_t eb = e&string_b;
+                int dim_s;
+		int* single_occupation_a = string_to_obtlist(ea, nmo, &dim_s);
+		int* single_occupation_b = string_to_obtlist(eb, nmo, &dim_s);
+                for (int i = 0; i < dim_s; i++) {
+		    single_occupation_a[i] += n_in_a;	
+		    single_occupation_b[i] += n_in_a;	
+		}
+                
+                int* occupation_list_spin = (int*) malloc((dim_d+2*dim_s)*3*sizeof(int));
+                memset(occupation_list_spin, 0, (dim_d+2*dim_s)*3*sizeof(int));
+                for (int i = 0; i < dim_d; i++) {
+                    occupation_list_spin[i*3+0] = double_occupation[i];
+                    occupation_list_spin[i*3+1] = 1; 
+                    occupation_list_spin[i*3+2] = 1; 
+		}
+                for (int i = 0; i < dim_s; i++) {
+                    occupation_list_spin[(i+dim_d)*3+0] = single_occupation_a[i];
+                    occupation_list_spin[(i+dim_d)*3+1] = 1; 
+                    occupation_list_spin[(i+dim_d+dim_s)*3+0] = single_occupation_b[i];
+                    occupation_list_spin[(i+dim_d+dim_s)*3+2] = 1; 
+		}
+		for (int i = 0; i < dim_d + 2*dim_s; i++) {
+		        printf("%4d%4d%4d\n", occupation_list_spin[i*3+0], occupation_list_spin[i*3+1], occupation_list_spin[i*3+2]);
+	 	    
+		}
+		fflush(stdout);
+		double F = -1.0/(2*dim_s-1);
+                double c = 0;
+                for (int a = 0; a < (dim_d+2*dim_s); a++) {
+                    int i = occupation_list_spin[a*3+0];
+                    int n_ia = occupation_list_spin[a*3+1]; 
+                    int n_ib = occupation_list_spin[a*3+2];
+                    int n_i = n_ia+ n_ib; 
+                    int N_i = n_i * (2 - n_i); 
+                    int ii = i * nmo + i;
+                    c += n_i * h1e[ii];
+                    c -= 0.25 * N_i * h2e[ii*nmo+ii];
+                    for (int b = 0; b < (dim_d+2*dim_s); b++) {
+                        int j = occupation_list_spin[b*3+0];
+                        int n_ja = occupation_list_spin[b*3+1]; 
+                        int n_jb = occupation_list_spin[b*3+2];
+                        int n_j = n_ja + n_jb; 
+                        int N_j = n_j * (2 - n_j); 
+                        int jj = j * nmo + j;
+			int ij = i * nmo + j;
+                        c += 0.5 * n_i * n_j * h2e[ii*nmo*nmo+jj];
+                        c -= 0.25 * n_i * n_j * h2e[ij*nmo*nmo+ij];
+                        if (i !=j) {
+			    c -= 0.25 * F * N_i * N_j * h2e[ij*nmo*nmo+ij];
+			}
+		    }
+		}
+                H_diag[Idet+start] = c + m * omega + Enuc + dc;
+	        printf("%4d%20.12lf\n",2*dim_s, H_diag[Idet+start]);
+		free(double_active);
+		free(single_occupation_a);
+		free(single_occupation_b);
+		free(occupation_list_spin);
+	    //}
+	    printf("\n");
+	}
+
+}
 void build_H_diag(double* h1e, double* h2e, double* H_diag, int N_p, int num_alpha,int nmo, int n_act_a,int n_act_orb,int n_in_a, double omega, double Enuc, double dc, int* Y) {
         size_t num_dets = num_alpha * num_alpha;
         int np1 = N_p + 1;
@@ -811,7 +907,7 @@ single_annihilation_list2(3,6, 2, Y3,table_annihilation);
 free(Y);
 }
 void build_sigma(double* h1e, double* h2e, double* d_cmo, double* c_vectors, double *c1_vectors, 
-		 int*table, int table_length, int num_links, int nmo, int num_alpha, int num_state, int N_p, double Enuc, double dc, double omega, double d_exp, bool only_ground_state) {
+		 int*table, int table_length, int num_links, int nmo, int num_alpha, int num_state, int N_p, double Enuc, double dc, double omega, double d_exp, bool break_degeneracy) {
 
 
      //int threads =omp_get_max_threads();
@@ -832,10 +928,11 @@ void build_sigma(double* h1e, double* h2e, double* d_cmo, double* c_vectors, dou
              sigma12(h1e, h2e, c_vectors, c1_vectors, num_alpha, num_links, table, nmo, m, n, np1); 
              sigma3(h2e, c_vectors, c1_vectors, num_alpha, num_links, table, table_length, nmo, m, n, np1);  
              double someconstant = m * omega + Enuc + dc;
-             if (only_ground_state == true) {
+             if (break_degeneracy == true) {
                 someconstant = m * (omega + 1) + Enuc + dc;
 	     }
-             constant_terms_contraction(c_vectors, c1_vectors, num_alpha, someconstant, m, m, n, np1);    
+             constant_terms_contraction(c_vectors, c1_vectors, num_alpha, someconstant, m, m, n, np1);   
+	     if (N_p == 0) continue;
              if ((0 < m) && (m < N_p)) {
                  someconstant = -sqrt(m * omega/2);
                  sigma_dipole(d_cmo, c_vectors, c1_vectors, num_alpha, num_links, table, nmo, someconstant, m-1, m, n, np1);  
@@ -861,7 +958,7 @@ void build_sigma(double* h1e, double* h2e, double* d_cmo, double* c_vectors, dou
 
 void build_sigma_3(double* h1e, double* h2e, double* d_cmo, double* c_vectors, double *c1_vectors, 
 		 int* table,int* table1, int* table_creation, int* table_annihilation, int N_ac, int n_o_ac, int n_o_in, int nmo, 
-		 int num_state, int N_p, double Enuc, double dc, double omega, double d_exp, bool only_ground_state) {
+		 int num_state, int N_p, double Enuc, double dc, double omega, double d_exp, bool break_degeneracy) {
 
 
     //int threads =omp_get_max_threads();
@@ -884,10 +981,11 @@ void build_sigma_3(double* h1e, double* h2e, double* d_cmo, double* c_vectors, d
        	   N_ac, n_o_ac, n_o_in, nmo, m, n, np1);
 
             double someconstant = m * omega + Enuc + dc;
-            if (only_ground_state == true) {
+            if (break_degeneracy == true) {
                someconstant = m * (omega + 1) + Enuc + dc;
             }
             constant_terms_contraction(c_vectors, c1_vectors, num_alpha, someconstant, m, m, n, np1);    
+	    if (N_p == 0) continue;
             if ((0 < m) && (m < N_p)) {
                 someconstant = -sqrt(m * omega/2);
                 sigma_dipole(d_cmo, c_vectors, c1_vectors, num_alpha, num_links, table, nmo, someconstant, m-1, m, n, np1);  

@@ -117,12 +117,12 @@ def c_index_to_string(index,n_act_a,n_act_orb,Y):
 
 def c_graph(N,n_o,Y):
     cfunctions.get_graph(N,n_o,Y)
-def c_sigma(h1e, h2e, d_cmo, c_vectors, s_vectors, table, table_length, num_links, nmo, num_alpha, num_state, N_p, Enuc, dc, omega, d_exp, only_ground_state):
-    cfunctions.build_sigma(h1e, h2e, d_cmo, c_vectors, s_vectors, table, table_length, num_links, nmo, num_alpha, num_state, N_p, Enuc, dc, omega, d_exp, only_ground_state)
+def c_sigma(h1e, h2e, d_cmo, c_vectors, s_vectors, table, table_length, num_links, nmo, num_alpha, num_state, N_p, Enuc, dc, omega, d_exp, break_degeneracy):
+    cfunctions.build_sigma(h1e, h2e, d_cmo, c_vectors, s_vectors, table, table_length, num_links, nmo, num_alpha, num_state, N_p, Enuc, dc, omega, d_exp, break_degeneracy)
 def c_sigma_3(h1e, h2e, d_cmo, c_vectors, s_vectors, table, table1, table_creation, table_annihilation, 
-         N_ac, n_o_ac, n_o_in, nmo, num_state, N_p, Enuc, dc, omega, d_exp, only_ground_state):
+         N_ac, n_o_ac, n_o_in, nmo, num_state, N_p, Enuc, dc, omega, d_exp, break_degeneracy):
     cfunctions.build_sigma_3(h1e, h2e, d_cmo, c_vectors, s_vectors, table, table1, table_creation, table_annihilation, 
-         N_ac, n_o_ac, n_o_in, nmo, num_state, N_p, Enuc, dc, omega, d_exp, only_ground_state)
+         N_ac, n_o_ac, n_o_in, nmo, num_state, N_p, Enuc, dc, omega, d_exp, break_degeneracy)
 
 
 def compute_excitation_level(ket, ndocc):
@@ -695,71 +695,81 @@ class PFHamiltonianGenerator:
             H_dim = self.CISnumDets * np1
             self.H_diag = np.zeros((H_dim))
         elif self.ci_level == "cas":
-            
-            #self.generateCASCIDeterminants()
-            self.n_act_a = self.n_act_el//2 #number of active alpha electrons
-            self.n_in_a = self.ndocc - self.n_act_a #number of inactive alpha electrons
-            self.num_alpha = math.comb(self.n_act_orb,self.n_act_a) # number of alpha strings
-            self.num_det = self.num_alpha * self.num_alpha# number of determinants
-            self.CASnumDets = self.num_det
-            H_dim = self.CASnumDets * np1
-            #graph,graph_big=self.graph(self.n_act_a,self.n_act_orb) #graph vertex weight
-            #print(graph)
-            #self.Y=self.arc_weight(graph,graph_big,self.n_act_a,self.n_act_orb) # graph arc weight
-            #print(self.num_alpha,math.comb(self.n_act_orb,self.n_act_a))
-            #self.table=self.single_replacement_list2(self.num_alpha, self.n_act_a, self.n_act_orb, self.n_in_a, self.Y) # table look up for single replacement list
-            #self.H_diag = self.build_H_diag(H_dim,self.H_spatial,self.twoeint,self.num_alpha,self.n_act_a,self.n_act_orb,self.n_in_a)
-            self.H_diag = np.zeros(H_dim)
-            ##self.build_sigma(self.c_vectors,self.s1_vectors,H_dim)
+            if self.test_mode:
+                self.generateCASCIDeterminants()
+                H_dim = self.CASnumDets * np1
+                self.H_diag2 = np.zeros((H_dim))
+
+            if self.full_diagonalization:
+                self.generateCASCIDeterminants()
+                H_dim = self.CASnumDets * np1
+                self.H_diag = np.zeros((H_dim))
+            else:
+                self.n_act_a = self.n_act_el//2 #number of active alpha electrons
+                self.n_in_a = self.ndocc - self.n_act_a #number of inactive alpha electrons
+                self.num_alpha = math.comb(self.n_act_orb,self.n_act_a) # number of alpha strings
+                self.num_det = self.num_alpha * self.num_alpha# number of determinants
+                self.CASnumDets = self.num_det
+                H_dim = self.CASnumDets * np1
+                #graph,graph_big=self.graph(self.n_act_a,self.n_act_orb) #graph vertex weight
+                #print(graph)
+                #self.Y=self.arc_weight(graph,graph_big,self.n_act_a,self.n_act_orb) # graph arc weight
+                #print(self.num_alpha,math.comb(self.n_act_orb,self.n_act_a))
+                #self.table=self.single_replacement_list2(self.num_alpha, self.n_act_a, self.n_act_orb, self.n_in_a, self.Y) # table look up for single replacement list
+                #self.H_diag = self.build_H_diag(H_dim,self.H_spatial,self.twoeint,self.num_alpha,self.n_act_a,self.n_act_orb,self.n_in_a)
+                self.H_diag = np.zeros(H_dim)
+                ##self.build_sigma(self.c_vectors,self.s1_vectors,H_dim)
           
-            #for index2 in range(0,self.num_alpha):
-            #    binary,string=self.index_to_string(index2,self.n_act_a,self.n_act_orb,self.Y,return_binary=True)
-            #    print(binary,index2,string)
+                #for index2 in range(0,self.num_alpha):
+                #    binary,string=self.index_to_string(index2,self.n_act_a,self.n_act_orb,self.Y,return_binary=True)
+                #    print(binary,index2,string)
 
-            num_alpha1 = math.comb(self.n_act_orb,self.n_act_a-1) # number of alpha strings
-            print('mem_D+T',self.num_alpha*num_alpha1*self.n_act_orb*8*2/1024/1024)
-            self.table = np.zeros(self.num_alpha*(self.n_act_a*(self.n_act_orb-self.n_act_a)+self.n_act_a+self.n_in_a)*4,dtype=np.int32)
-            self.table1 = np.zeros(self.num_alpha*(self.n_act_a*(self.n_act_orb-self.n_act_a)+self.n_act_a)*4,dtype=np.int32)
-            num_links1 = self.n_act_orb-self.n_act_a+1
-            rows1 = math.comb(self.n_act_orb,self.n_act_a-1) * num_links1
-            self.table_creation = np.zeros(rows1*3,dtype=np.int32)
-            num_links2 = self.n_act_a
-            rows2 = self.num_alpha * num_links2
-            self.table_annihilation = np.zeros(rows2*3,dtype=np.int32)
+                num_alpha1 = math.comb(self.n_act_orb,self.n_act_a-1) # number of alpha strings
+                print('mem_D+T',self.num_alpha*num_alpha1*self.n_act_orb*8*2/1024/1024)
+                self.table = np.zeros(self.num_alpha*(self.n_act_a*(self.n_act_orb-self.n_act_a)+self.n_act_a+self.n_in_a)*4,dtype=np.int32)
+                self.table1 = np.zeros(self.num_alpha*(self.n_act_a*(self.n_act_orb-self.n_act_a)+self.n_act_a)*4,dtype=np.int32)
+                num_links1 = self.n_act_orb-self.n_act_a+1
+                rows1 = math.comb(self.n_act_orb,self.n_act_a-1) * num_links1
+                self.table_creation = np.zeros(rows1*3,dtype=np.int32)
+                num_links2 = self.n_act_a
+                rows2 = self.num_alpha * num_links2
+                self.table_annihilation = np.zeros(rows2*3,dtype=np.int32)
 
-            c_string(self.H_spatial2, self.twoeint, self.H_diag, self.table, self.table1, self.table_creation, 
-                    self.table_annihilation, self.N_p, self.num_alpha, self.nmo, self.n_act_a, self.n_act_orb, self.n_in_a, self.omega, self.Enuc, self.dc)
-          
-                       
+                c_string(self.H_spatial2, self.twoeint, self.H_diag, self.table, self.table1, self.table_creation, 
+                        self.table_annihilation, self.N_p, self.num_alpha, self.nmo, self.n_act_a, self.n_act_orb, self.n_in_a, self.omega, self.Enuc, self.dc)
+                #for i in range(H_dim):
+                #    print(self.H_diag[i])
 
-            rows = self.num_alpha*(self.n_act_a*(self.n_act_orb-self.n_act_a)+self.n_act_a+self.n_in_a)
-            num_links = rows//self.num_alpha 
-            #print("single_creation_list\n")
-            #for i in range(rows1):
-            #    print(self.table_creation[i*3+0], self.table_creation[i*3+1], self.table_creation[i*3+2])
-            #print("\n")
-            #for i in range(rows2):
-            #    print(self.table_annihilation[i*3+0], self.table_annihilation[i*3+1], self.table_annihilation[i*3+2])
-            #print("single_replacement_list\n")
-            #for i in range(rows):
-            #   print(self.table[i*4+0], self.table[i*4+1], self.table[i*4+2], self.table[i*4+3])
-            #rows5 = self.num_alpha*(self.n_act_a*(self.n_act_orb-self.n_act_a)+self.n_act_a)
-            #print("single_replacement_list2\n",rows5/self.num_alpha)
-            #print("\n")
-            #for i in range(rows5):
-            #   print(self.table1[i*4+0], self.table1[i*4+1], self.table1[i*4+2], self.table1[i*4+3])
+                           
 
-            #test sigma build
-            ########self.c_vectors = np.random.rand(H_dim,1)
-            ########self.s1_vectors = np.zeros((H_dim,1))
-            ########self.s2_vectors = np.zeros((H_dim,1))
-            ########c_sigma(self.gkl, self.twoeint, self.d_cmo, self.c_vectors, self.s1_vectors, self.table, rows, 
-            ########        num_links, self.nmo, self.num_alpha, 1, self.N_p, self.Enuc, self.dc, self.omega, self.d_exp, self.only_ground_state) 
-            ########c_sigma_3(self.gkl, self.twoeint, self.d_cmo, self.c_vectors, self.s2_vectors, self.table, self.table1, self.table_creation, self.table_annihilation, 
-            ########        self.n_act_a, self.n_act_orb, self.n_in_a, self.nmo, 1, self.N_p, self.Enuc, self.dc, self.omega, self.d_exp, self.only_ground_state) 
-            ########for j in range(self.s1_vectors.shape[1]):
-            ########    for i in range(self.s1_vectors.shape[0]):
-            ########        print(self.s1_vectors[i][j]-self.s2_vectors[i][j])
+                rows = self.num_alpha*(self.n_act_a*(self.n_act_orb-self.n_act_a)+self.n_act_a+self.n_in_a)
+                num_links = rows//self.num_alpha 
+                #print("single_creation_list\n")
+                #for i in range(rows1):
+                #    print(self.table_creation[i*3+0], self.table_creation[i*3+1], self.table_creation[i*3+2])
+                #print("\n")
+                #for i in range(rows2):
+                #    print(self.table_annihilation[i*3+0], self.table_annihilation[i*3+1], self.table_annihilation[i*3+2])
+                #print("single_replacement_list\n")
+                #for i in range(rows):
+                #   print(self.table[i*4+0], self.table[i*4+1], self.table[i*4+2], self.table[i*4+3])
+                #rows5 = self.num_alpha*(self.n_act_a*(self.n_act_orb-self.n_act_a)+self.n_act_a)
+                #print("single_replacement_list2\n",rows5/self.num_alpha)
+                #print("\n")
+                #for i in range(rows5):
+                #   print(self.table1[i*4+0], self.table1[i*4+1], self.table1[i*4+2], self.table1[i*4+3])
+
+                #test sigma build
+                ########self.c_vectors = np.random.rand(H_dim,1)
+                ########self.s1_vectors = np.zeros((H_dim,1))
+                ########self.s2_vectors = np.zeros((H_dim,1))
+                ########c_sigma(self.gkl, self.twoeint, self.d_cmo, self.c_vectors, self.s1_vectors, self.table, rows, 
+                ########        num_links, self.nmo, self.num_alpha, 1, self.N_p, self.Enuc, self.dc, self.omega, self.d_exp, self.break_degeneracy) 
+                ########c_sigma_3(self.gkl, self.twoeint, self.d_cmo, self.c_vectors, self.s2_vectors, self.table, self.table1, self.table_creation, self.table_annihilation, 
+                ########        self.n_act_a, self.n_act_orb, self.n_in_a, self.nmo, 1, self.N_p, self.Enuc, self.dc, self.omega, self.d_exp, self.break_degeneracy) 
+                ########for j in range(self.s1_vectors.shape[1]):
+                ########    for i in range(self.s1_vectors.shape[0]):
+                ########        print(self.s1_vectors[i][j]-self.s2_vectors[i][j])
         
 
 
@@ -767,68 +777,78 @@ class PFHamiltonianGenerator:
 
             
         elif self.ci_level == "fci":
-            self.n_act_a = self.ndocc #number of active alpha electrons
-            self.n_in_a = 0 #number of inactive alpha electrons
-            self.n_act_orb = self.nmo #number of active alpha orbitals 
+            if self.test_mode:
+                self.generateFCIDeterminants()
+                H_dim = self.FCInumDets * np1
+                self.H_diag2 = np.zeros((H_dim))
 
-            self.num_alpha = math.comb(self.nmo,self.ndocc) # number of alpha strings
-            self.num_det = self.num_alpha * self.num_alpha# number of determinants
-            self.FCInumDets = self.num_det
-            H_dim = self.FCInumDets * np1
-            self.H_diag = np.zeros(H_dim)
-            self.table = np.zeros(self.num_alpha*(self.n_act_a*(self.n_act_orb-self.n_act_a)+self.n_act_a+self.n_in_a)*4,dtype=np.int32)
-            self.table1 = np.zeros(self.num_alpha*(self.n_act_a*(self.n_act_orb-self.n_act_a)+self.n_act_a)*4,dtype=np.int32)
-            num_links1 = self.n_act_orb-self.n_act_a+1
-            rows1 = math.comb(self.n_act_orb,self.n_act_a-1) * num_links1
-            self.table_creation = np.zeros(rows1*3,dtype=np.int32)
-            num_links2 = self.n_act_a
-            rows2 = self.num_alpha * num_links2
-            self.table_annihilation = np.zeros(rows2*3,dtype=np.int32)
+            if self.full_diagonalization:
+                self.generateFCIDeterminants()
+                H_dim = self.FCInumDets * np1
+                self.H_diag = np.zeros((H_dim))
+            else:
+                self.n_act_a = self.ndocc #number of active alpha electrons
+                self.n_in_a = 0 #number of inactive alpha electrons
+                self.n_act_orb = self.nmo #number of active alpha orbitals 
 
-            c_string(self.H_spatial2, self.twoeint, self.H_diag, self.table, self.table1, self.table_creation, 
-                    self.table_annihilation, self.N_p, self.num_alpha, self.nmo, self.n_act_a, self.n_act_orb, self.n_in_a, self.omega, self.Enuc, self.dc)
+                self.num_alpha = math.comb(self.nmo,self.ndocc) # number of alpha strings
+                self.num_det = self.num_alpha * self.num_alpha# number of determinants
+                self.FCInumDets = self.num_det
+                H_dim = self.FCInumDets * np1
+                self.H_diag = np.zeros(H_dim)
+                self.table = np.zeros(self.num_alpha*(self.n_act_a*(self.n_act_orb-self.n_act_a)+self.n_act_a+self.n_in_a)*4,dtype=np.int32)
+                self.table1 = np.zeros(self.num_alpha*(self.n_act_a*(self.n_act_orb-self.n_act_a)+self.n_act_a)*4,dtype=np.int32)
+                num_links1 = self.n_act_orb-self.n_act_a+1
+                rows1 = math.comb(self.n_act_orb,self.n_act_a-1) * num_links1
+                self.table_creation = np.zeros(rows1*3,dtype=np.int32)
+                num_links2 = self.n_act_a
+                rows2 = self.num_alpha * num_links2
+                self.table_annihilation = np.zeros(rows2*3,dtype=np.int32)
+
+                c_string(self.H_spatial2, self.twoeint, self.H_diag, self.table, self.table1, self.table_creation, 
+                        self.table_annihilation, self.N_p, self.num_alpha, self.nmo, self.n_act_a, self.n_act_orb, self.n_in_a, self.omega, self.Enuc, self.dc)
           
-            rows = self.num_alpha*(self.n_act_a*(self.n_act_orb-self.n_act_a)+self.n_act_a+self.n_in_a)
-            num_links = rows//self.num_alpha 
+                rows = self.num_alpha*(self.n_act_a*(self.n_act_orb-self.n_act_a)+self.n_act_a+self.n_in_a)
+                num_links = rows//self.num_alpha 
 
-            num_alpha1 = math.comb(self.n_act_orb,self.n_act_a-1) # number of alpha strings
-            print('mem_D+T',self.num_alpha*num_alpha1*self.n_act_orb*8*2/1024/1024)
+                num_alpha1 = math.comb(self.n_act_orb,self.n_act_a-1) # number of alpha strings
+                print('mem_D+T',self.num_alpha*num_alpha1*self.n_act_orb*8*2/1024/1024)
 
 
-            #test sigma build
-            ########self.c_vectors = np.random.rand(H_dim,1)
-            ########self.s1_vectors = np.zeros((H_dim,1))
-            ########self.s2_vectors = np.zeros((H_dim,1))
-            ########c_sigma(self.gkl, self.twoeint, self.d_cmo, self.c_vectors, self.s1_vectors, self.table, rows, 
-            ########        num_links, self.nmo, self.num_alpha, 1, self.N_p, self.Enuc, self.dc, self.omega, self.d_exp, self.only_ground_state) 
-            ########c_sigma_3(self.gkl, self.twoeint, self.d_cmo, self.c_vectors, self.s2_vectors, self.table, self.table1, self.table_creation, self.table_annihilation, 
-            ########        self.n_act_a, self.n_act_orb, self.n_in_a, self.nmo, 1, self.N_p, self.Enuc, self.dc, self.omega, self.d_exp, self.only_ground_state) 
-            ########for j in range(self.s1_vectors.shape[1]):
-            ########    for i in range(self.s1_vectors.shape[0]):
-            ########        print(self.s1_vectors[i][j]-self.s2_vectors[i][j])
+                #test sigma build
+                ########self.c_vectors = np.random.rand(H_dim,1)
+                ########self.s1_vectors = np.zeros((H_dim,1))
+                ########self.s2_vectors = np.zeros((H_dim,1))
+                ########c_sigma(self.gkl, self.twoeint, self.d_cmo, self.c_vectors, self.s1_vectors, self.table, rows, 
+                ########        num_links, self.nmo, self.num_alpha, 1, self.N_p, self.Enuc, self.dc, self.omega, self.d_exp, self.break_degeneracy) 
+                ########c_sigma_3(self.gkl, self.twoeint, self.d_cmo, self.c_vectors, self.s2_vectors, self.table, self.table1, self.table_creation, self.table_annihilation, 
+                ########        self.n_act_a, self.n_act_orb, self.n_in_a, self.nmo, 1, self.N_p, self.Enuc, self.dc, self.omega, self.d_exp, self.break_degeneracy) 
+                ########for j in range(self.s1_vectors.shape[1]):
+                ########    for i in range(self.s1_vectors.shape[0]):
+                ########        print(self.s1_vectors[i][j]-self.s2_vectors[i][j])
         
 
-            
-            #for i in range(rows1):
-            #    print(self.table_creation[i*3+0], self.table_creation[i*3+1], self.table_creation[i*3+2])
-            #print("\n")
-            #for i in range(rows2):
-            #    print(self.table_annihilation[i*3+0], self.table_annihilation[i*3+1], self.table_annihilation[i*3+2])
-            #graph,graph_big=self.graph(self.ndocc,self.nmo)
-            #self.Y=self.arc_weight(graph,graph_big,self.ndocc,self.nmo)
-            #self.H_diag = self.build_H_diag(H_dim,self.H_spatial,self.twoeint,self.num_alpha,self.ndocc,self.nmo,0)
-            #self.table=self.single_replacement_list2(self.num_alpha,self.ndocc,self.nmo,0, self.Y)
+                
+                #for i in range(rows1):
+                #    print(self.table_creation[i*3+0], self.table_creation[i*3+1], self.table_creation[i*3+2])
+                #print("\n")
+                #for i in range(rows2):
+                #    print(self.table_annihilation[i*3+0], self.table_annihilation[i*3+1], self.table_annihilation[i*3+2])
+                #graph,graph_big=self.graph(self.ndocc,self.nmo)
+                #self.Y=self.arc_weight(graph,graph_big,self.ndocc,self.nmo)
+                #self.H_diag = self.build_H_diag(H_dim,self.H_spatial,self.twoeint,self.num_alpha,self.ndocc,self.nmo,0)
+                #self.table=self.single_replacement_list2(self.num_alpha,self.ndocc,self.nmo,0, self.Y)
 
-            #for index2 in range(0,self.num_alpha):
-            #    binary,string=self.index_to_string(index2,self.ndocc,self.nmo,self.Y,return_binary=True)
-            #    orblist=Determinant.obtBits2ObtIndexList(string)
-            #    print(binary,index2,string,orblist)
+                #for index2 in range(0,self.num_alpha):
+                #    binary,string=self.index_to_string(index2,self.ndocc,self.nmo,self.Y,return_binary=True)
+                #    orblist=Determinant.obtBits2ObtIndexList(string)
+                #    print(binary,index2,string,orblist)
 
-            #for i in range(len(self.table)):
-            #    print(self.table[i])
-            #self.c_vectors = np.random.rand(H_dim,1)
-            #self.s1_vectors = np.zeros((H_dim,1))
-            #self.build_sigma(self.c_vectors,self.s1_vectors,H_dim)
+                #for i in range(len(self.table)):
+                #    print(self.table[i])
+                #self.c_vectors = np.random.rand(H_dim,1)
+                #self.s1_vectors = np.zeros((H_dim,1))
+                #self.build_sigma(self.c_vectors,self.s1_vectors,H_dim)
         #print(self.Y)
 
         t_det_end = time.time()
@@ -846,6 +866,19 @@ class PFHamiltonianGenerator:
             t_H_build = time.time()
             print(F' Completed Hamiltonian build in {t_H_build - t_const_end} seconds')
         else:
+            if self.test_mode:
+                # build Constant matrices
+                self.buildConstantMatrices(self.ci_level)
+                t_const_end = time.time()
+                print(F' Completed constant offset matrix in {t_const_end - t_det_end} seconds')
+        
+                # Build Matrix
+                self.generatePFHMatrix(self.ci_level)
+                t_H_build = time.time()
+                print(F' Completed Hamiltonian build in {t_H_build - t_const_end} seconds')
+                self.H_diag2 = np.diag(self.H_PF)
+                #for i in range(self.H_PF.shape[0]):
+                #    print(self.H_diag2[i]-self.H_diag[i])
             if self.full_diagonalization:
                 # build Constant matrices
                 self.buildConstantMatrices(self.ci_level)
@@ -859,7 +892,9 @@ class PFHamiltonianGenerator:
             else:
                 #if using iterative solver, pass a small matrix to the solver that doesn't take up too much memory 
                 self.H_PF = np.eye(2)
-        
+        if self.test_mode:
+            self.CIeigs, self.CIvecs = np.linalg.eigh(self.H_PF)
+
         if self.full_diagonalization:
             self.CIeigs, self.CIvecs = np.linalg.eigh(self.H_PF)
         
@@ -926,12 +961,18 @@ class PFHamiltonianGenerator:
             self.full_diagonalization = cavity_dictionary["full_diagonalization"]
         else:
             self.full_diagonalization = False 
-
-
-        if "only_ground_state" in cavity_dictionary:
-            self.only_ground_state = cavity_dictionary["only_ground_state"]
+        
+        if "test_mode" in cavity_dictionary:
+            self.test_mode = cavity_dictionary["test_mode"]
         else:
-            self.only_ground_state = False 
+            self.test_mode = False 
+
+
+
+        if "break_degeneracy" in cavity_dictionary:
+            self.break_degeneracy = cavity_dictionary["break_degeneracy"]
+        else:
+            self.break_degeneracy = False 
 
 
         if "davidson_roots" in cavity_dictionary:
@@ -1054,7 +1095,7 @@ class PFHamiltonianGenerator:
         _H_spin = np.einsum("uj,vi,uv", self.C, self.C, self.H_1e_ao)
         self.H_spatial=_H_spin
         self.H_spatial2 = np.ascontiguousarray(_H_spin) 
-        if self.full_diagonalization or self.ci_level == "cis":
+        if self.full_diagonalization  or self.test_mode or self.ci_level == "cis":
             _H_spin = np.repeat(_H_spin, 2, axis=0)
             _H_spin = np.repeat(_H_spin, 2, axis=1)
             # spin part of 1-e integrals
@@ -1068,7 +1109,7 @@ class PFHamiltonianGenerator:
 
         """
 
-        if self.full_diagonalization or self.ci_level == "cis":
+        if self.full_diagonalization or self.test_mode or self.ci_level == "cis":
             _d_spin = np.copy(self.d_cmo)
             self.d_spatial = np.einsum("ij,kl->ijkl", _d_spin, _d_spin)
             # try a more efficient way of computing the 2-e d terms
@@ -1615,7 +1656,7 @@ class PFHamiltonianGenerator:
         # build 2eInt in cqed-rhf basis
         print(self.nmo)
         mints = psi4.core.MintsHelper(p4_wfn.basisset())
-        if self.full_diagonalization or self.ci_level == "cis":
+        if self.full_diagonalization or self.test_mode or self.ci_level == "cis":
             self.eri_so = np.asarray(mints.mo_spin_eri(self.Ca, self.Ca))
         
         #self.eri_spatial = np.asarray(mints.mo_eri(self.Ca, self.Ca, self.Ca, self.Ca))
@@ -1650,7 +1691,7 @@ class PFHamiltonianGenerator:
         #self.gkl2 = np.reshape(self.gkl,(self.nmo*self.nmo))
 
         print(F' Completed 2D build in {t_2d_end - t_eri_end} seconds')
-        if self.full_diagonalization or self.ci_level == "cis":
+        if self.full_diagonalization or self.test_mode or self.ci_level == "cis":
         
             # build the array to build G in the so basis
             self.buildGSO()
@@ -2159,7 +2200,7 @@ class PFHamiltonianGenerator:
                     self.sigma12(self.gkl, self.twoeint, c_vectors[start:end,n], s_vectors[start:end,n], self.num_alpha, self.num_links)
                     self.sigma3(self.twoeint, c_vectors[start:end,n], s_vectors[start:end,n], self.num_alpha, self.num_links)
                     someconstant = m * self.omega + self.Enuc + self.dc 
-                    if self.only_ground_state == True:
+                    if self.break_degeneracy == True:
                        #print('only ground state')
                        someconstant = m * (self.omega + 1) + self.Enuc + self.dc 
 
@@ -2427,7 +2468,593 @@ class PFHamiltonianGenerator:
         #        self.sigma3(self.twoeint, c_vectors[start:end,n], s_vectors[start:end,n], self.num_alpha, self.num_links)
         #        someconstant = m * self.omega + self.Enuc + self.dc 
 
+    def Davidson_spin(self, H, nroots, threshold,indim,maxdim,maxiter,build_sigma,H_diag):
+        if self.ci_level == "cis":
+            H_diag = np.diag(H)
+        for i in range(len(H_diag)):
+            print(self.H_diag[i],i)
+        H_dim = len(H_diag)
+        print(H_dim,indim) 
+        # When L exceeds Lmax we will collapse the guess space so our sub-space
+        # diagonalization problem does not grow too large
+        Lmax = maxdim
+        if self.ci_level == "cas" or self.ci_level == "fci":
+            rows = self.num_alpha*(self.n_act_a*(self.n_act_orb-self.n_act_a)+self.n_act_a+self.n_in_a)
+            num_links = rows//self.num_alpha
+            Y = np.zeros(self.n_act_a*(self.n_act_orb-self.n_act_a+1)*3,dtype=np.int32)
+            c_graph(self.n_act_a, self.n_act_orb, Y);
+
+        #generate initial guess
+        Q_idx = H_diag.argsort()[:indim]
+        #print(Q_idx)
+        print(H_diag.argsort())
+        sorted_index = H_diag.argsort()
+        if self.ci_level == "fci" or self.ci_level == "cas":
+            while H_diag[sorted_index[indim]] - H_diag[sorted_index[indim-1]] < 1e-9:
+                indim +=1
+
+        if self.davidson_guess == "unit guess":
+            Q = np.zeros((indim,H_dim))
+            print("use unit guess")
+            BIGNUM=10**100
+            H_diag2 = np.copy(H_diag)
+            for i in range(indim): 
+                minimum = H_diag2[0]
+                min_pos = 0
+                for j in range(H_dim): 
+                    if H_diag2[j] < minimum: 
+                        minimum = H_diag2[j]
+                        min_pos = j
+                Q[i][min_pos] = 1.0
+                H_diag2[min_pos] = BIGNUM
+            L = indim
+            print("L",L)
+            #if self.ci_level == "fci" or self.ci_level == "cas":
+            #    for i in range(indim): 
+            #        for j in range(H_dim): 
+            #            if Q[i][j] != 0:
+            #                print(i,j)
+
+                #######Q = np.ascontiguousarray(Q)
+                #######S = np.zeros_like(Q)
+                #######c_sigma_3(self.gkl, self.twoeint, self.d_cmo, Q, S, self.table, self.table1, self.table_creation, self.table_annihilation, 
+                #######        self.n_act_a, self.n_act_orb, self.n_in_a, self.nmo, L, self.N_p, self.Enuc, self.dc, self.omega, self.d_exp, self.break_degeneracy) 
+                #######G = np.dot(Q, S.T)
+                ########print(G)
+                ########print(np.allclose(G, G.T, 1e-12, 1e-12))    
+                ######## Diagonalize it, and sort the eigenvector/eigenvalue pairs
+                #######theta, alpha = np.linalg.eigh(G)
+                #######
+                #######idx = theta.argsort()[:L]
+                #######theta = theta[idx]
+                #######alpha = alpha[:, idx]
+                ######## This vector will hold the new guess vectors to add to our space
+                ########add_Q = []
+                #######print(theta)
+                #######singletcount = 0
+                #######newQ1=np.dot(alpha.T, Q)
+                #######Q1 = newQ1.T
+                ########Q = None
+                #######singlet_index = []
+                #######Y = np.zeros(self.n_act_a*(self.n_act_orb-self.n_act_a+1)*3,dtype=np.int32)
+                #######c_graph(self.n_act_a, self.n_act_orb, Y);
+                #######np1 = self.N_p + 1
+                #######for i in range(Q1.shape[1]):
+                #######    index=np.argsort(np.abs(Q1[:,i]))
+                #######    #print(index)
+
+                #######    Idet0 = index[Q1.shape[0]-1]%self.num_det #determinant index of most significant contribution
+                #######    photon_p0 = (index[Q1.shape[0]-1]-Idet0)//self.num_det # photon number block of determinant
+                #######    Ib0= Idet0%self.num_alpha
+                #######    Ia0= Idet0//self.num_alpha
+                #######    a0 = c_index_to_string(Ia0,self.n_act_a,self.n_act_orb,Y);
+                #######    b0 = c_index_to_string(Ib0,self.n_act_a,self.n_act_orb,Y);
+
+                #######    alphalist = Determinant.obtBits2ObtIndexList(a0)
+                #######    betalist = Determinant.obtBits2ObtIndexList(b0)
+                #######    singlet = 1
+                #######    for j in range(min(H_dim,10)):
+                #######        Idet = index[Q1.shape[0]-j-1]%self.num_det
+                #######        photon_p = (index[Q1.shape[0]-j-1]-Idet)//self.num_det
+                #######        Ib= Idet%self.num_alpha
+                #######        Ia= Idet//self.num_alpha
+                #######        a = c_index_to_string(Ia,self.n_act_a,self.n_act_orb,Y);
+                #######        b = c_index_to_string(Ib,self.n_act_a,self.n_act_orb,Y);
+
+
+                #######        if a == b0 and b == a0 and np.abs(Q1[index[Q1.shape[0]-j-1]][i]-(-1)*Q1[index[Q1.shape[0]-1]][i]) < 1e-2:
+                #######            singlet = singlet * 0
+                #######        else:
+                #######            singlet = singlet * 1
+                #######    if singlet == 1:  
+                #######        singlet_index.append(i)
+                #######        singletcount += 1
+                #######if singletcount < nroots: sys.exit("need to choose bigger initial dimension to get enough singlet roots")            
+                #######print(singlet_index)
+                ########Q2 =np.array(Q2,dtype = object)
+                ########Q2 =np.reshape(Q2,(H_dim,singletcount))
+                #######Q = Q1[:,singlet_index]
+                #######theta = theta[singlet_index]
+                #######alpha = alpha[:, singlet_index]
+                #######print("singletcount", singletcount,"L",L) 
+
+
+                #######singletcount = 0
+                #######for i in range(Q.shape[1]):
+                #######    #print("state",i, "energy =",theta[i])
+                #######    print("        amplitude","      position", "         most important determinants","             number of photon")
+                #######    index=np.argsort(np.abs(Q[:,i]))
+                #######    #print(index)
+                #######    Idet0 = index[Q.shape[0]-1]%self.num_det #determinant index of most significant contribution
+                #######    photon_p0 = (index[Q.shape[0]-1]-Idet0)//self.num_det # photon number block of determinant
+                #######    Ib0= Idet0%self.num_alpha
+                #######    Ia0= Idet0//self.num_alpha
+                #######    a0 = c_index_to_string(Ia0,self.n_act_a,self.n_act_orb,Y);
+                #######    b0 = c_index_to_string(Ib0,self.n_act_a,self.n_act_orb,Y);
+
+                #######    alphalist = Determinant.obtBits2ObtIndexList(a0)
+                #######    betalist = Determinant.obtBits2ObtIndexList(b0)
+                #######    singlet = 1
+                #######    for j in range(min(H_dim,10)):
+                #######        Idet = index[Q.shape[0]-j-1]%self.num_det
+                #######        photon_p = (index[Q.shape[0]-j-1]-Idet)//self.num_det
+                #######        Ib= Idet%self.num_alpha
+                #######        Ia= Idet//self.num_alpha
+                #######        a = c_index_to_string(Ia,self.n_act_a,self.n_act_orb,Y);
+                #######        b = c_index_to_string(Ib,self.n_act_a,self.n_act_orb,Y);
+
+
+                #######        if a == b0 and b == a0 and np.abs(Q[index[Q.shape[0]-j-1]][i]-(-1)*Q[index[Q.shape[0]-1]][i]) < 1e-4:
+                #######            singlet = singlet * 0
+                #######        else:
+                #######            singlet = singlet * 1
+                #######        alphalist = Determinant.obtBits2ObtIndexList(a)
+                #######        betalist = Determinant.obtBits2ObtIndexList(b)
+ 
+                #######        inactive_list = list(x for x in range(self.n_in_a))
+                #######        alphalist2 = [x + self.n_in_a for x in alphalist]
+                #######        #alphalist2[0:0] = inactive_list
+                #######        betalist2 = [x + self.n_in_a for x in betalist]
+                #######        #betalist2[0:0] = inactive_list
+
+                #######        print("%20.12lf"%(Q[index[Q.shape[0]-j-1]][i]),"%9.3d"%(index[Q.shape[0]-j-1]),"      alpha",alphalist2,"   beta",betalist2,"%4.1d"%(photon_p), "photon")
+                #######    #print("state",i, "energy =",theta[i], singlet)
+                #######    if singlet == 1:
+                #######        print("state",i, "energy =",theta[i], '  singlet',singletcount)
+                #######        singletcount += 1
+                #######    else:
+                #######        print("state",i, "energy =",theta[i], '  triplet',"%2.1d"%(photon_p0), "photon")
+                #######        L = singletcount
+                #######Q = Q.T
+
+
+        else:    
+            print("use random guess")
+            Q = np.random.rand(indim,H_dim)
+            L = indim 
+        #print(Q)
+
+
+        # An array to hold the excitation energies
+        theta = [0.0] * L
+
+
+
+
+
+
+
+
+
+
+        print("qshape",np.shape(Q))
+        print('initial_mem_q',Q.size*Q.itemsize/1024/1024)
+
+        num_iter = maxiter
+        for davidson_iteration in range(0, num_iter):
+            print("\n")
+            print('mem_q1',Q.size*Q.itemsize/1024/1024)
+            #orthonormalization of basis vectors by QR
+            
+            t_qr_begin = time.time()
+            Q, R = np.linalg.qr(Q.T)
+            t_qr_end = time.time()
+            print('QR took',t_qr_end-t_qr_begin,'seconds')
+            Q = np.ascontiguousarray(Q.T)
+            #print("after qr")
+            #print(Q)
+
+            R= None
+            del(R)
+            L = Q.shape[0]#dynamic dimension of subspace
+            print(np.shape(Q)) 
+            print('iteration', davidson_iteration+1, 'subspace dimension', L)
+            theta_old = theta[:nroots]
+            #print("CI Iter # {:>6} L = {}".format(EOMCCSD_iter, L))
+            # singma build
+            S = np.zeros_like(Q)
+            if self.ci_level == "fci" or self.ci_level == "cas":
+                #S = np.einsum("pq,qi->pi", H, Q)  
+                t_sigma_begin = time.time()
+                #build_sigma(Q,S,H_dim)
+
+                print(psutil.Process().memory_info().rss / (1024 * 1024))
+                #c_sigma(self.gkl, self.twoeint, self.d_cmo, Q, S, self.table, rows, 
+                #    num_links, self.nmo, self.num_alpha, L, self.N_p, self.Enuc, self.dc, self.omega, self.d_exp, self.break_degeneracy) 
+                 
+                c_sigma_3(self.gkl, self.twoeint, self.d_cmo, Q, S, self.table, self.table1, self.table_creation, self.table_annihilation, 
+                        self.n_act_a, self.n_act_orb, self.n_in_a, self.nmo, L, self.N_p, self.Enuc, self.dc, self.omega, self.d_exp, self.break_degeneracy) 
+
+                print(psutil.Process().memory_info().rss / (1024 * 1024))
+
+                t_sigma_end = time.time()
+                print('build sigma took',t_sigma_end-t_sigma_begin,'seconds')
+            else:    
+                S = np.einsum("ip,pq->iq", Q, H)  
+            # Build the subspace Hamiltonian
+            G = np.dot(Q, S.T)
+            #print(np.allclose(G, G.T, 1e-12, 1e-12))    
+            # Diagonalize it, and sort the eigenvector/eigenvalue pairs
+            theta, alpha = np.linalg.eigh(G)
+            #print(theta)
+            
+            if davidson_iteration > 0: 
+
+                idx = theta.argsort()[:nroots]
+                theta = theta[idx]
+                alpha = alpha[:, idx]
+                # This vector will hold the new guess vectors to add to our space
+                #add_Q = []
+            else:
+                idx = theta.argsort()[:L]
+                theta = theta[idx]
+                alpha = alpha[:, idx]
+                #print(theta)
+                singletcount = 0
+                newQ1=np.dot(alpha.T, Q)
+                Q1 = newQ1.T
+                #Q = None
+                singlet_index = []
+                np1 = self.N_p + 1
+                for i in range(Q1.shape[1]):
+                    index=np.argsort(np.abs(Q1[:,i]))
+                    #print(index)
+
+                    Idet0 = index[Q1.shape[0]-1]%self.num_det #determinant index of most significant contribution
+                    photon_p0 = (index[Q1.shape[0]-1]-Idet0)//self.num_det # photon number block of determinant
+                    Ib0= Idet0%self.num_alpha
+                    Ia0= Idet0//self.num_alpha
+                    a0 = c_index_to_string(Ia0,self.n_act_a,self.n_act_orb,Y);
+                    b0 = c_index_to_string(Ib0,self.n_act_a,self.n_act_orb,Y);
+
+                    alphalist = Determinant.obtBits2ObtIndexList(a0)
+                    betalist = Determinant.obtBits2ObtIndexList(b0)
+                    singlet = 1
+                    for j in range(min(H_dim,10)):
+                        Idet = index[Q1.shape[0]-j-1]%self.num_det
+                        photon_p = (index[Q1.shape[0]-j-1]-Idet)//self.num_det
+                        Ib= Idet%self.num_alpha
+                        Ia= Idet//self.num_alpha
+                        a = c_index_to_string(Ia,self.n_act_a,self.n_act_orb,Y);
+                        b = c_index_to_string(Ib,self.n_act_a,self.n_act_orb,Y);
+
+
+                        if a == b0 and b == a0 and np.abs(Q1[index[Q1.shape[0]-j-1]][i]-(-1)*Q1[index[Q1.shape[0]-1]][i]) < 1e-2:
+                            singlet = singlet * 0
+                        else:
+                            singlet = singlet * 1
+                    if singlet == 1:  
+                        singlet_index.append(i)
+                        singletcount += 1
+                if singletcount < nroots: sys.exit("need to choose bigger initial dimension to get enough singlet roots")            
+                print(singlet_index)
+                #Q2 =np.array(Q2,dtype = object)
+                #Q2 =np.reshape(Q2,(H_dim,singletcount))
+                Q1 = Q1[:,singlet_index]
+                theta = theta[singlet_index]
+                alpha = alpha[:, singlet_index]
+                print("singletcount", singletcount,"L",L) 
+
+
+                singletcount = 0
+                print("INITIAL GUESS FOR DAVIDSON")
+                for i in range(Q1.shape[1]):
+                    #print("state",i, "energy =",theta[i])
+                    print("        amplitude","      position", "         most important determinants","             number of photon")
+                    index=np.argsort(np.abs(Q1[:,i]))
+                    #print(index)
+                    Idet0 = index[Q1.shape[0]-1]%self.num_det #determinant index of most significant contribution
+                    photon_p0 = (index[Q1.shape[0]-1]-Idet0)//self.num_det # photon number block of determinant
+                    Ib0= Idet0%self.num_alpha
+                    Ia0= Idet0//self.num_alpha
+                    a0 = c_index_to_string(Ia0,self.n_act_a,self.n_act_orb,Y);
+                    b0 = c_index_to_string(Ib0,self.n_act_a,self.n_act_orb,Y);
+
+                    alphalist = Determinant.obtBits2ObtIndexList(a0)
+                    betalist = Determinant.obtBits2ObtIndexList(b0)
+                    singlet = 1
+                    for j in range(min(H_dim,10)):
+                        Idet = index[Q1.shape[0]-j-1]%self.num_det
+                        photon_p = (index[Q1.shape[0]-j-1]-Idet)//self.num_det
+                        Ib= Idet%self.num_alpha
+                        Ia= Idet//self.num_alpha
+                        a = c_index_to_string(Ia,self.n_act_a,self.n_act_orb,Y);
+                        b = c_index_to_string(Ib,self.n_act_a,self.n_act_orb,Y);
+
+
+                        if a == b0 and b == a0 and np.abs(Q1[index[Q1.shape[0]-j-1]][i]-(-1)*Q1[index[Q1.shape[0]-1]][i]) < 1e-4:
+                            singlet = singlet * 0
+                        else:
+                            singlet = singlet * 1
+                        alphalist = Determinant.obtBits2ObtIndexList(a)
+                        betalist = Determinant.obtBits2ObtIndexList(b)
+ 
+                        inactive_list = list(x for x in range(self.n_in_a))
+                        alphalist2 = [x + self.n_in_a for x in alphalist]
+                        #alphalist2[0:0] = inactive_list
+                        betalist2 = [x + self.n_in_a for x in betalist]
+                        #betalist2[0:0] = inactive_list
+
+                        print("%20.12lf"%(Q1[index[Q1.shape[0]-j-1]][i]),"%9.3d"%(index[Q1.shape[0]-j-1]),"      alpha",alphalist2,"   beta",betalist2,"%4.1d"%(photon_p), "photon")
+                    #print("state",i, "energy =",theta[i], singlet)
+                    if singlet == 1:
+                        print("state",i, "energy =",theta[i], '  singlet',singletcount)
+                        singletcount += 1
+                    else:
+                        print("state",i, "energy =",theta[i], '  triplet',"%2.1d"%(photon_p0), "photon")
+                        L = singletcount
+                #Q = Q.T
+
+
+
+
+
+
+            w = np.zeros((nroots,H_dim))
+            residual_norm = np.zeros((nroots))
+            unconverged_idx = []
+            convergence_check = np.zeros((nroots),dtype=str)
+            conv = 0
+            for j in range(nroots):
+                # Compute a residual vector "w" for each root we seek
+                w[j,:] = np.dot(alpha[:, j].T, S) - theta[j] * np.dot(alpha[:, j].T, Q)
+                residual_norm[j] = np.sqrt(np.dot(w[j,:],w[j,:].T))
+                if (residual_norm[j] < threshold):
+                    conv += 1
+                    convergence_check[j] = 'Yes'
+                else:
+                    unconverged_idx.append(j)
+                    convergence_check[j] = 'No'
+            print(unconverged_idx) 
+            
+            print('root','residual norm','Eigenvalue','Convergence')
+            for j in range(nroots):
+                print("ROOT",j+1,residual_norm[j],theta[j],convergence_check[j],flush=True)
+
+
+            if self.ci_level == "cas" or self.ci_level == "fci":
+                idx = theta.argsort()[:nroots]
+                theta = theta[idx]
+                alpha = alpha[:, idx]
+                # This vector will hold the new guess vectors to add to our space
+                #add_Q = []
+
+
+                singletcount = 0
+                newQ1=np.dot(alpha.T, Q)
+                Q1 = np.zeros((H_dim,nroots))
+                Q1 = newQ1.T
+                #Q = None
+                Y = np.zeros(self.n_act_a*(self.n_act_orb-self.n_act_a+1)*3,dtype=np.int32)
+                c_graph(self.n_act_a, self.n_act_orb, Y);
+                np1 = self.N_p + 1
+                for i in range(Q1.shape[1]):
+                    index=np.argsort(np.abs(Q1[:,i]))
+                    #print(index)
+                    Idet0 = index[Q1.shape[0]-1]%self.num_det #determinant index of most significant contribution
+                    photon_p0 = (index[Q1.shape[0]-1]-Idet0)//self.num_det # photon number block of determinant
+                    Ib0= Idet0%self.num_alpha
+                    Ia0= Idet0//self.num_alpha
+                    a0 = c_index_to_string(Ia0,self.n_act_a,self.n_act_orb,Y);
+                    b0 = c_index_to_string(Ib0,self.n_act_a,self.n_act_orb,Y);
+
+                    alphalist = Determinant.obtBits2ObtIndexList(a0)
+                    betalist = Determinant.obtBits2ObtIndexList(b0)
+                    singlet = 1
+                    for j in range(min(H_dim,10)):
+                        Idet = index[Q1.shape[0]-j-1]%self.num_det
+                        photon_p = (index[Q1.shape[0]-j-1]-Idet)//self.num_det
+                        Ib= Idet%self.num_alpha
+                        Ia= Idet//self.num_alpha
+                        a = c_index_to_string(Ia,self.n_act_a,self.n_act_orb,Y);
+                        b = c_index_to_string(Ib,self.n_act_a,self.n_act_orb,Y);
+
+
+                        if a == b0 and b == a0 and np.abs(Q1[index[Q1.shape[0]-j-1]][i]-(-1)*Q1[index[Q1.shape[0]-1]][i]) < 1e-4:
+                            singlet = singlet * 0
+                        else:
+                            singlet = singlet * 1
+
+                        alphalist = Determinant.obtBits2ObtIndexList(a)
+                        betalist = Determinant.obtBits2ObtIndexList(b)
+ 
+                        inactive_list = list(x for x in range(self.n_in_a))
+                        alphalist2 = [x + self.n_in_a for x in alphalist]
+                        #alphalist2[0:0] = inactive_list
+                        betalist2 = [x + self.n_in_a for x in betalist]
+                        #betalist2[0:0] = inactive_list
+
+                        print("%20.12lf"%(Q1[index[Q1.shape[0]-j-1]][i]),"%9.3d"%(index[Q1.shape[0]-j-1]),"      alpha",alphalist2,"   beta",betalist2,"%4.1d"%(photon_p), "photon")
+                    #print("state",i, "energy =",theta[i], singlet)
+                    if singlet == 1:
+                        print("state",i, "energy =",theta[i], '  singlet',singletcount)
+                        singletcount += 1
+                    else:
+                        print("state",i, "energy =",theta[i], '  triplet',"%2.1d"%(photon_p0), "photon")
+
+
+
+
+
+
+
+
+
+
+
+
+            if (conv == nroots):
+                print("converged!")
+                break
+
+            if (conv < nroots and davidson_iteration+1==num_iter):
+                print('maxiter reached, try to increase maxiter or subspace size')
+                break
+            
+            t_precondition_begin = time.time()
+            #preconditioned_w = np.zeros((len(unconverged_idx),H_dim))
+            if(len(unconverged_idx) >0):
+                
+                preconditioned_w = np.zeros((len(unconverged_idx),H_dim))
+                preconditioned_w = theta[unconverged_idx].reshape(len(unconverged_idx),1) - H_diag.reshape(1,H_dim)
+                #print(np.shape(preconditioned_w))
+                preconditioned_w = np.divide(w[unconverged_idx], preconditioned_w, out=np.zeros_like(w[unconverged_idx]), where=preconditioned_w!=0)
+                        
+            t_precondition_end = time.time()
+            print('build precondition took',t_precondition_end-t_precondition_begin,'seconds')
+            if (Lmax-L < len(unconverged_idx) or davidson_iteration == 0):
+                t_collapsing_begin = time.time()
+                unconverged_w = np.zeros((len(unconverged_idx),H_dim))
+                Q=np.dot(alpha.T, Q)
+                
+                for i in range(len(unconverged_idx)):
+                    unconverged_w[i,:]=w[unconverged_idx[i],:] 
+                
+                #Q=np.append(Q,unconverged_w)
+                #print(Q)
+                #print(unconverged_w)
+                Q = np.concatenate((Q,unconverged_w),axis=0)
+                print(Q.shape)
+                #Q=np.column_stack(Qtup)
+                
+                # These vectors will give the same eigenvalues at the next
+                # iteration so to avoid a false convergence we reset the theta
+                # vector to theta_old
+                theta = theta_old
+                t_collapsing_end = time.time()
+                print('restart took',t_collapsing_end-t_collapsing_begin,'seconds')
+            else:
+                t_expanding_begin = time.time()
+                # if not we add the preconditioned residuals to the guess
+                # space, and continue. Note that the set will be orthogonalized
+                # at the start of the next iteration
+                Q = tuple(Q[i, :] for i in range(L)) + tuple(preconditioned_w)
+                Q = np.row_stack(Q)
+                t_expanding_end = time.time()
+                print('expand took',t_expanding_end-t_expanding_begin,'seconds')
+                #print(Q)
+        newQ=np.dot(alpha.T, Q)
+        Q = np.zeros((H_dim,nroots))
+        Q = newQ.T 
+        singletcount = 0
+        print(Q.shape)
+        for i in range(Q.shape[1]):
+            print("state",i, "energy =",theta[i])
+        self.roots = theta
+        if self.ci_level == "cis":
+            for i in range(Q.shape[1]):
+                #print("state",i, "energy =",theta[i])
+                print("        amplitude","      position", "         most important determinants","             number of photon")
+                index=np.argsort(np.abs(Q[:,i]))
+                c0 = index[Q.shape[0]-1]%(H_dim//2)
+                d0 = (index[Q.shape[0]-1]-c0)//(H_dim//2)
+                a0,b0 = self.detmap[c0]
+                alphalist = Determinant.obtBits2ObtIndexList(a0)
+                betalist = Determinant.obtBits2ObtIndexList(b0)
+                
+                singlet = 1
+                for j in range(min(H_dim,10)):
+                    c = index[Q.shape[0]-j-1]%(H_dim//2)
+                    d = (index[Q.shape[0]-j-1]-c)//(H_dim//2)
+                    a,b = self.detmap[c]
+                    if a == b0 and b == a0 and np.abs(Q[index[Q.shape[0]-j-1]][i]-(-1)*Q[index[Q.shape[0]-1]][i]) < 1e-4:
+                        singlet = singlet * 0
+                    else:
+                        singlet = singlet * 1
+                    alphalist = Determinant.obtBits2ObtIndexList(a)
+                    betalist = Determinant.obtBits2ObtIndexList(b)
+                   
+                    print("%20.12lf"%(Q[index[Q.shape[0]-j-1]][i]),"%9.3d"%(index[Q.shape[0]-j-1]),"      alpha",alphalist,"   beta",betalist,"%4.1d"%(d), "photon")
+                #print("state",i, "energy =",theta[i], singlet)
+                if singlet == 1:
+                    print("state",i, "energy =",theta[i], '  singlet',singletcount)
+                    singletcount += 1
+                else:
+                    print("state",i, "energy =",theta[i], '  triplet',"%2.1d"%(d0), "photon")
+        else:
+            print("\nACTIVE PART OF DETERMINANTS THAT HAVE THE MOST IMPORTANT CONTRIBUTIONS")
+            Y = np.zeros(self.n_act_a*(self.n_act_orb-self.n_act_a+1)*3,dtype=np.int32)
+            c_graph(self.n_act_a, self.n_act_orb, Y);
+            np1 = self.N_p + 1
+            for i in range(Q.shape[1]):
+                #print("state",i, "energy =",theta[i])
+                print("        amplitude","      position", "         most important determinants","             number of photon")
+                index=np.argsort(np.abs(Q[:,i]))
+                #print(index)
+                Idet0 = index[Q.shape[0]-1]%self.num_det #determinant index of most significant contribution
+                photon_p0 = (index[Q.shape[0]-1]-Idet0)//self.num_det # photon number block of determinant
+                Ib0= Idet0%self.num_alpha
+                Ia0= Idet0//self.num_alpha
+                a0 = c_index_to_string(Ia0,self.n_act_a,self.n_act_orb,Y);
+                b0 = c_index_to_string(Ib0,self.n_act_a,self.n_act_orb,Y);
+
+                alphalist = Determinant.obtBits2ObtIndexList(a0)
+                betalist = Determinant.obtBits2ObtIndexList(b0)
+                singlet = 1
+                for j in range(min(H_dim,10)):
+                    Idet = index[Q.shape[0]-j-1]%self.num_det
+                    photon_p = (index[Q.shape[0]-j-1]-Idet)//self.num_det
+                    Ib= Idet%self.num_alpha
+                    Ia= Idet//self.num_alpha
+                    a = c_index_to_string(Ia,self.n_act_a,self.n_act_orb,Y);
+                    b = c_index_to_string(Ib,self.n_act_a,self.n_act_orb,Y);
+
+
+                    if a == b0 and b == a0 and np.abs(Q[index[Q.shape[0]-j-1]][i]-(-1)*Q[index[Q.shape[0]-1]][i]) < 1e-4:
+                        singlet = singlet * 0
+                    else:
+                        singlet = singlet * 1
+                    alphalist = Determinant.obtBits2ObtIndexList(a)
+                    betalist = Determinant.obtBits2ObtIndexList(b)
+ 
+                    inactive_list = list(x for x in range(self.n_in_a))
+                    alphalist2 = [x + self.n_in_a for x in alphalist]
+                    #alphalist2[0:0] = inactive_list
+                    betalist2 = [x + self.n_in_a for x in betalist]
+                    #betalist2[0:0] = inactive_list
+
+                    print("%20.12lf"%(Q[index[Q.shape[0]-j-1]][i]),"%9.3d"%(index[Q.shape[0]-j-1]),"      alpha",alphalist2,"   beta",betalist2,"%4.1d"%(photon_p), "photon")
+                #print("state",i, "energy =",theta[i], singlet)
+                if singlet == 1:
+                    print("state",i, "energy =",theta[i], '  singlet',singletcount)
+                    singletcount += 1
+                else:
+                    print("state",i, "energy =",theta[i], '  triplet',"%2.1d"%(photon_p0), "photon")
+
+
+
+        
+
+
+        davidson_dict = {
+        "DAVIDSON EIGENVALUES": theta,
+        "DAVIDSON EIGENVECTORS": Q,
+        }
+
+        return davidson_dict
+
     def Davidson(self, H, nroots, threshold,indim,maxdim,maxiter,build_sigma,H_diag):
+        #################################### a backup of davidson in case the one used for singlet root fails##########################################
         if self.ci_level == "cis":
             H_diag = np.diag(H)
         #for i in range(len(H_diag)):
@@ -2496,10 +3123,10 @@ class PFHamiltonianGenerator:
 
                 print(psutil.Process().memory_info().rss / (1024 * 1024))
                 #c_sigma(self.gkl, self.twoeint, self.d_cmo, Q, S, self.table, rows, 
-                #    num_links, self.nmo, self.num_alpha, L, self.N_p, self.Enuc, self.dc, self.omega, self.d_exp, self.only_ground_state) 
+                #    num_links, self.nmo, self.num_alpha, L, self.N_p, self.Enuc, self.dc, self.omega, self.d_exp, self.break_degeneracy) 
                  
                 c_sigma_3(self.gkl, self.twoeint, self.d_cmo, Q, S, self.table, self.table1, self.table_creation, self.table_annihilation, 
-                        self.n_act_a, self.n_act_orb, self.n_in_a, self.nmo, L, self.N_p, self.Enuc, self.dc, self.omega, self.d_exp, self.only_ground_state) 
+                        self.n_act_a, self.n_act_orb, self.n_in_a, self.nmo, L, self.N_p, self.Enuc, self.dc, self.omega, self.d_exp, self.break_degeneracy) 
 
                 print(psutil.Process().memory_info().rss / (1024 * 1024))
 
@@ -2701,7 +3328,18 @@ class PFHamiltonianGenerator:
         }
 
         return davidson_dict
-    
+
+
+
+
+
+
+
+
+
+
+
+
     def classifySpinState(self):
         self.triplets = []
         self.singlets = [item for item in range(2*self.CISnumDets)]
