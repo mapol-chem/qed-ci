@@ -348,8 +348,8 @@ def cqed_rhf(lambda_vector, molecule_string, psi4_options_dict, canonical_basis=
             "CQED-RHF ELECTRONIC DIPOLE MOMENT": mu_exp_el,
             "CQED-RHF DIPOLE MOMENT": mu_exp_el + mu_nuc,
             "COHERENT STATE 1-E SCALED DIPOLE MATRIX AO": d1_coherent_state_ao,
-            "COHERENT STATE NUCLEAR DIPOLE TERM": d_exp_el,
-            "COHERENT STATE NUCLEAR DIPOLE ENERGY": d_c_coherent_state,
+            "COHERENT STATE EXPECTATION VALUE OF d": d_exp_el,
+            "COHERENT STATE DIPOLE ENERGY": d_c_coherent_state,
             "1-E DIPOLE MATRIX MO": d_el_mo,
         }
         return cqed_rhf_dict
