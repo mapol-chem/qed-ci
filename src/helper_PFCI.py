@@ -1206,7 +1206,7 @@ class PFHamiltonianGenerator:
         if self.photon_number_basis:
             self.d_c = cqed_rhf_dict["NUMBER STATE NUCLEAR DIPOLE ENERGY"]
             self.d_PF_ao = cqed_rhf_dict["NUMBER STATE 1-E SCALED DIPOLE MATRIX AO"]
-            self.d_exp = cqed_rhf_dict["NUMBER STATE NUCLEAR DIPOLE TERM"]
+            self.d_exp = -1 * cqed_rhf_dict["NUMBER STATE NUCLEAR DIPOLE TERM"]
             self.C = cqed_rhf_dict["RHF C"]
             self.D = cqed_rhf_dict["RHF DENSITY MATRIX"]
 
@@ -1352,8 +1352,8 @@ class PFHamiltonianGenerator:
         # these terms are different depending on if we are in coherent state or number basis
         self.dc_so = self.d_c * _I #<== we have already taken care of differentiating between d_c in lines 1204 and 1211
 
-        if self.photon_number_basis: #<== -w/2 * <d_N> * I
-            self.G_exp_so = -np.sqrt(self.omega / 2) * self.d_exp * _I
+        if self.photon_number_basis: #<== -w/2 * d_N * I; negative sign taken care of at parsing line 1209
+            self.G_exp_so = np.sqrt(self.omega / 2) * self.d_exp * _I
 
         else:  #<== +w/2 <d_el> * I
             self.G_exp_so = np.sqrt(self.omega / 2) * self.d_exp * _I
@@ -2783,7 +2783,7 @@ class PFHamiltonianGenerator:
         #        end   = (m+1) * H_dim//np1
         #        self.sigma12(self.gkl, self.twoeint, c_vectors[start:end,n], s_vectors[start:end,n], self.num_alpha, self.num_links)
         #        self.sigma3(self.twoeint, c_vectors[start:end,n], s_vectors[start:end,n], self.num_alpha, self.num_links)
-        #        someconstant = m * self.omega + self.Enuc + self.dc
+        #        someconstant = m * self.omega + self.Enuc + self.d_c
 
     def Davidson_spin(
         self, H, nroots, threshold, indim, maxdim, maxiter, build_sigma, H_diag
@@ -2843,7 +2843,7 @@ class PFHamiltonianGenerator:
             #######Q = np.ascontiguousarray(Q)
             #######S = np.zeros_like(Q)
             #######c_sigma_3(self.gkl, self.twoeint, self.d_cmo, Q, S, self.table, self.table1, self.table_creation, self.table_annihilation,
-            #######        self.n_act_a, self.n_act_orb, self.n_in_a, self.nmo, L, self.N_p, self.Enuc, self.dc, self.omega, self.d_exp, self.break_degeneracy)
+            #######        self.n_act_a, self.n_act_orb, self.n_in_a, self.nmo, L, self.N_p, self.Enuc, self.d_c, self.omega, self.d_exp, self.break_degeneracy)
             #######G = np.dot(Q, S.T)
             ########print(G)
             ########print(np.allclose(G, G.T, 1e-12, 1e-12))
@@ -3600,7 +3600,7 @@ class PFHamiltonianGenerator:
 
                 print(psutil.Process().memory_info().rss / (1024 * 1024))
                 # c_sigma(self.gkl, self.twoeint, self.d_cmo, Q, S, self.table, rows,
-                #    num_links, self.nmo, self.num_alpha, L, self.N_p, self.Enuc, self.dc, self.omega, self.d_exp, self.break_degeneracy)
+                #    num_links, self.nmo, self.num_alpha, L, self.N_p, self.Enuc, self.d_c, self.omega, self.d_exp, self.break_degeneracy)
 
                 c_sigma_3(
                     self.gkl,
@@ -3619,7 +3619,7 @@ class PFHamiltonianGenerator:
                     L,
                     self.N_p,
                     self.Enuc,
-                    self.dc,
+                    self.d_c,
                     self.omega,
                     self.d_exp,
                     self.break_degeneracy,
