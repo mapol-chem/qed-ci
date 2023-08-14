@@ -328,7 +328,7 @@ def cqed_rhf(lambda_vector, molecule_string, psi4_options_dict, canonical_basis=
         SCF_1E = np.einsum("pq,pq->", 2 * H_0, D)
         SCF_2E_J = np.einsum("pq,pq->", 2 * J, D)
         SCF_2E_K = np.einsum("pq,pq->", -1 * K, D)
-        PF_1E_Q = np.einsum("pq,pq->", 2 * Q_PF, D)
+        PF_1E_Q = np.einsum("pq,pq->", 2 * Q_ao, D)
         PF_2E_N = np.einsum("pq,pq->", -1 * N, D)
 
         # sum these together and see if equal to SCF_E - Enuc - d_c
