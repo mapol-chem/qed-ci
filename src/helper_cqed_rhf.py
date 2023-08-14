@@ -220,6 +220,17 @@ def cqed_rhf(lambda_vector, molecule_string, psi4_options_dict, canonical_basis=
         "NUMBER STATE NUCLEAR DIPOLE TERM": d_nuc,
         "NUMBER STATE NUCLEAR DIPOLE ENERGY": d_c_number_state,
         "NUMBER STATE 1-E SCALED DIPOLE MATRIX AO": d1_number_state_ao,
+        "CQED-RHF ENERGY": None,
+        "CQED-RHF ONE-ENERGY": None,
+        "CQED-RHF C": None,
+        "CQED-RHF DENSITY MATRIX": None,
+        "CQED-RHF EPS": None,
+        "CQED-RHF ELECTRONIC DIPOLE MOMENT": None,
+        "CQED-RHF DIPOLE MOMENT": None,
+        "COHERENT STATE 1-E SCALED DIPOLE MATRIX AO": None,
+        "COHERENT STATE EXPECTATION VALUE OF d": None,
+        "COHERENT STATE DIPOLE ENERGY": None,
+        "1-E DIPOLE MATRIX MO": None,
     }
 
     if canonical_basis:
@@ -339,17 +350,17 @@ def cqed_rhf(lambda_vector, molecule_string, psi4_options_dict, canonical_basis=
         # transform \lambda \cdot \mu to CMO basis
         d_el_mo = np.dot(C.T, d_el_ao).dot(C)
 
-        cqed_rhf_dict = {
-            "CQED-RHF ENERGY": SCF_E,
-            "CQED-RHF ONE-ENERGY": SCF_1E,
-            "CQED-RHF C": C,
-            "CQED-RHF DENSITY MATRIX": D,
-            "CQED-RHF EPS": e,
-            "CQED-RHF ELECTRONIC DIPOLE MOMENT": mu_exp_el,
-            "CQED-RHF DIPOLE MOMENT": mu_exp_el + mu_nuc,
-            "COHERENT STATE 1-E SCALED DIPOLE MATRIX AO": d1_coherent_state_ao,
-            "COHERENT STATE EXPECTATION VALUE OF d": d_exp_el,
-            "COHERENT STATE DIPOLE ENERGY": d_c_coherent_state,
-            "1-E DIPOLE MATRIX MO": d_el_mo,
-        }
+        # update the entries of the dictionary now that the cqed-rhf iterations have converged
+        cqed_rhf_dict["CQED-RHF ENERGY"] = SCF_E
+        cqed_rhf_dict["CQED-RHF ONE-ENERGY"] = SCF_1E
+        cqed_rhf_dict["CQED-RHF C"] = C
+        cqed_rhf_dict["CQED-RHF DENSITY MATRIX"] = D
+        cqed_rhf_dict["CQED-RHF EPS"] = e
+        cqed_rhf_dict["CQED-RHF ELECTRONIC DIPOLE MOMENT"] =  mu_exp_el
+        cqed_rhf_dict["CQED-RHF DIPOLE MOMENT"] = mu_exp_el + mu_nuc
+        cqed_rhf_dict["COHERENT STATE 1-E SCALED DIPOLE MATRIX AO"] = d1_coherent_state_ao
+        cqed_rhf_dict["COHERENT STATE EXPECTATION VALUE OF d"] = d_exp_el
+        cqed_rhf_dict["COHERENT STATE DIPOLE ENERGY"] = d_c_coherent_state
+        cqed_rhf_dict["1-E DIPOLE MATRIX MO"] = d_el_mo
+        
         return cqed_rhf_dict
