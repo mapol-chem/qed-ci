@@ -230,7 +230,6 @@ def cqed_rhf(lambda_vector, molecule_string, psi4_options_dict, canonical_basis=
         "COHERENT STATE 1-E SCALED DIPOLE MATRIX AO": None,
         "COHERENT STATE EXPECTATION VALUE OF d": None,
         "COHERENT STATE DIPOLE ENERGY": None,
-        "1-E DIPOLE MATRIX MO": None,
     }
 
     if canonical_basis:
