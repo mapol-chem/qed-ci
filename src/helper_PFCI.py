@@ -887,7 +887,7 @@ class PFHamiltonianGenerator:
                     self.n_in_a,
                     self.omega,
                     self.Enuc,
-                    self.dc,
+                    self.d_c,
                 )
                 # for i in range(H_dim):
                 #    print(self.H_diag[i])
@@ -961,7 +961,7 @@ class PFHamiltonianGenerator:
                     self.n_in_a,
                     self.omega,
                     self.Enuc,
-                    self.dc,
+                    self.d_c,
                 )
 
                 rows = self.num_alpha * (
@@ -1206,13 +1206,13 @@ class PFHamiltonianGenerator:
         if self.photon_number_basis:
             self.d_c = cqed_rhf_dict["NUMBER STATE NUCLEAR DIPOLE ENERGY"]
             self.d_PF_ao = cqed_rhf_dict["NUMBER STATE 1-E SCALED DIPOLE MATRIX AO"]
-            self.d_nuc = cqed_rhf_dict["NUMBER STATE NUCLEAR DIPOLE TERM"]
+            self.d_exp = cqed_rhf_dict["NUMBER STATE NUCLEAR DIPOLE TERM"]
             self.C = cqed_rhf_dict["RHF C"]
             self.D = cqed_rhf_dict["RHF DENSITY MATRIX"]
 
         else:
             self.d_c = cqed_rhf_dict["COHERENT STATE DIPOLE ENERGY"]
-            self.d_exp_el = cqed_rhf_dict["COHERENT STATE EXPECTATION VALUE OF d"]
+            self.d_exp = cqed_rhf_dict["COHERENT STATE EXPECTATION VALUE OF d"]
             self.d_PF_ao = cqed_rhf_dict["COHERENT STATE 1-E SCALED DIPOLE MATRIX AO"]
             self.C = cqed_rhf_dict["CQED-RHF C"]
             self.D = cqed_rhf_dict["CQED-RHF DENSITY MATRIX"]
@@ -1352,11 +1352,11 @@ class PFHamiltonianGenerator:
         # these terms are different depending on if we are in coherent state or number basis
         self.dc_so = self.d_c * _I #<== we have already taken care of differentiating between d_c in lines 1204 and 1211
 
-        if self.photon_number_basis: #<== -w/2 * d_N * I
-            self.G_exp_so = -np.sqrt(self.omega / 2) * self.d_nuc * _I
+        if self.photon_number_basis: #<== -w/2 * <d_N> * I
+            self.G_exp_so = -np.sqrt(self.omega / 2) * self.d_exp * _I
 
         else:  #<== +w/2 <d_el> * I
-            self.G_exp_so = np.sqrt(self.omega / 2) * self.d_exp_el * _I
+            self.G_exp_so = np.sqrt(self.omega / 2) * self.d_exp * _I
 
         if self.ignore_coupling == True:
             self.G_exp_so *= 0
@@ -2376,7 +2376,7 @@ class PFHamiltonianGenerator:
                         self.num_alpha,
                         self.num_links,
                     )
-                    someconstant = m * self.omega + self.Enuc + self.dc
+                    someconstant = m * self.omega + self.Enuc + self.d_c
                     self.constant_terms_contraction(
                         c_vectors[start:end, n], s_vectors[start:end, n], someconstant
                     )
@@ -2465,10 +2465,10 @@ class PFHamiltonianGenerator:
                         self.num_alpha,
                         self.num_links,
                     )
-                    someconstant = m * self.omega + self.Enuc + self.dc
+                    someconstant = m * self.omega + self.Enuc + self.d_c
                     if self.break_degeneracy == True:
                         # print('only ground state')
-                        someconstant = m * (self.omega + 1) + self.Enuc + self.dc
+                        someconstant = m * (self.omega + 1) + self.Enuc + self.d_c
 
                     self.constant_terms_contraction(
                         c_vectors[start:end, n], s_vectors[start:end, n], someconstant
@@ -2773,7 +2773,7 @@ class PFHamiltonianGenerator:
                         c += 0.5 * n_i * n_j * h2e[ii][jj]
                         ij = i * self.nmo + j
                         c -= 0.5 * (n_ia * n_ja + n_ib * n_jb) * h2e[ij][ij]
-                d[I + start] = c + m * self.omega + self.Enuc + self.dc
+                d[I + start] = c + m * self.omega + self.Enuc + self.d_c
         # print('d',d)
         return d
 
@@ -2991,7 +2991,7 @@ class PFHamiltonianGenerator:
 
                 print(psutil.Process().memory_info().rss / (1024 * 1024))
                 # c_sigma(self.gkl, self.twoeint, self.d_cmo, Q, S, self.table, rows,
-                #    num_links, self.nmo, self.num_alpha, L, self.N_p, self.Enuc, self.dc, self.omega, self.d_exp, self.break_degeneracy)
+                #    num_links, self.nmo, self.num_alpha, L, self.N_p, self.Enuc, self.d_c, self.omega, self.d_exp, self.break_degeneracy)
 
                 c_sigma_3(
                     self.gkl,
@@ -3010,7 +3010,7 @@ class PFHamiltonianGenerator:
                     L,
                     self.N_p,
                     self.Enuc,
-                    self.dc,
+                    self.d_c,
                     self.omega,
                     self.d_exp,
                     self.break_degeneracy,
