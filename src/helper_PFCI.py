@@ -1111,6 +1111,8 @@ class PFHamiltonianGenerator:
         
         if "coherent_state_basis" in cavity_dictionary:
             self.coherent_state_basis = cavity_dictionary["coherent_state_basis"]
+        elif self.canonical_mos or self.photon_number_basis:
+            self.coherent_state_basis = False
         else:
             self.coherent_state_basis = True
 
@@ -1125,11 +1127,6 @@ class PFHamiltonianGenerator:
         if self.coherent_state_basis:
             self.canonical_mos = False
             self.photon_number_basis = False
-
-
-        
-
-
 
         if self.natural_orbitals:
             if "rdm_weights" in cavity_dictionary:
@@ -1221,9 +1218,6 @@ class PFHamiltonianGenerator:
             self.D = cqed_rhf_dict["CQED-RHF DENSITY MATRIX"]
             self.cqed_reference_energy = cqed_rhf_dict["CQED-RHF ENERGY"]
             self.cqed_one_energy = cqed_rhf_dict["CQED-RHF ONE-ENERGY"]
-
-
-
 
 
         # collect rhf wfn object as dictionary
@@ -1351,10 +1345,18 @@ class PFHamiltonianGenerator:
         else:
             _I = np.identity(self.CISnumDets)
 
+        # these terms are used for coherent state and number state basis
         self.Enuc_so = self.Enuc * _I
-        self.G_exp_so = np.sqrt(self.omega / 2) * self.d_exp * _I
         self.Omega_so = self.omega * _I
-        self.dc_so = self.dc * _I
+
+        # these terms are different depending on if we are in coherent state or number basis
+        self.dc_so = self.d_c * _I #<== we have already taken care of differentiating between d_c in lines 1204 and 1211
+
+        if self.photon_number_basis: #<== -w/2 * d_N * I
+            self.G_exp_so = -np.sqrt(self.omega / 2) * self.d_nuc * _I
+
+        else:  #<== +w/2 <d_el> * I
+            self.G_exp_so = np.sqrt(self.omega / 2) * self.d_exp_el * _I
 
         if self.ignore_coupling == True:
             self.G_exp_so *= 0
