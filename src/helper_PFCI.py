@@ -3245,7 +3245,7 @@ class PFHamiltonianGenerator:
                 break
 
             if (conv < nroots and davidson_iteration+1==num_iter):
-                sys.exit('maxiter reached, try to increase maxiter or subspace size')
+                print('maxiter reached, try to increase maxiter or subspace size')
                 break
             
             t_precondition_begin = time.time()
