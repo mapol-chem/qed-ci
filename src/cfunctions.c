@@ -645,7 +645,7 @@ void single_replacement_list(int num_alpha, int N_ac, int n_o_ac, int n_o_in, in
 	   }
        }
 }
-void build_H_diag2(double* h1e, double* h2e, double* H_diag, int N_p, int num_alpha,int nmo, int n_act_a,int n_act_orb,int n_in_a, double omega, double Enuc, double dc, int* Y) {
+void build_H_diag2(double* h1e, double* h2e, double* H_diag, int N_p, int num_alpha,int nmo, int N_ac,int n_o_ac,int n_o_in, double omega, double Enuc, double dc, int* Y) {
         //approximate diagonal elements for singlet roots
 	
 	size_t num_dets = num_alpha * num_alpha;
@@ -660,19 +660,19 @@ void build_H_diag2(double* h1e, double* h2e, double* H_diag, int N_p, int num_al
             //for (size_t Idet = 0; Idet < num_dets; Idet++) {
                 int index_b = Idet%num_alpha;
                 int index_a = (Idet-index_b)/num_alpha;
-                size_t string_a = index_to_string(index_a,n_act_a,n_act_orb,Y);
-                size_t string_b = index_to_string(index_b,n_act_a,n_act_orb,Y);
+                size_t string_a = index_to_string(index_a,N_ac,n_o_ac,Y);
+                size_t string_b = index_to_string(index_b,N_ac,n_o_ac,Y);
 		size_t ab = string_a & string_b;
 		int length;
 		int* double_active = string_to_obtlist(ab, nmo, &length);
-		int dim_d = length+n_in_a;
+		int dim_d = length+n_o_in;
 		int double_occupation[dim_d];
                 for (int i = 0; i < dim_d; i++) {
-	            if (i < n_in_a) {
+	            if (i < n_o_in) {
 		       double_occupation[i] = i;	    
 		    }
                     else {
-		       double_occupation[i] = double_active[i-n_in_a] + n_in_a;	
+		       double_occupation[i] = double_active[i-n_o_in] + n_o_in;	
 		    }
 		}
                 
@@ -683,8 +683,8 @@ void build_H_diag2(double* h1e, double* h2e, double* H_diag, int N_p, int num_al
 		int* single_occupation_a = string_to_obtlist(ea, nmo, &dim_s);
 		int* single_occupation_b = string_to_obtlist(eb, nmo, &dim_s);
                 for (int i = 0; i < dim_s; i++) {
-		    single_occupation_a[i] += n_in_a;	
-		    single_occupation_b[i] += n_in_a;	
+		    single_occupation_a[i] += n_o_in;	
+		    single_occupation_b[i] += n_o_in;	
 		}
                 
                 int* occupation_list_spin = (int*) malloc((dim_d+2*dim_s)*3*sizeof(int));
@@ -700,10 +700,10 @@ void build_H_diag2(double* h1e, double* h2e, double* H_diag, int N_p, int num_al
                     occupation_list_spin[(i+dim_d+dim_s)*3+0] = single_occupation_b[i];
                     occupation_list_spin[(i+dim_d+dim_s)*3+2] = 1; 
 		}
-		for (int i = 0; i < dim_d + 2*dim_s; i++) {
-		        printf("%4d%4d%4d\n", occupation_list_spin[i*3+0], occupation_list_spin[i*3+1], occupation_list_spin[i*3+2]);
-	 	    
-		}
+		//for (int i = 0; i < dim_d + 2*dim_s; i++) {
+		//        printf("%4d%4d%4d\n", occupation_list_spin[i*3+0], occupation_list_spin[i*3+1], occupation_list_spin[i*3+2]);
+	 	//    
+		//}
 		fflush(stdout);
 		double F = -1.0/(2*dim_s-1);
                 double c = 0;
@@ -732,13 +732,12 @@ void build_H_diag2(double* h1e, double* h2e, double* H_diag, int N_p, int num_al
 		    }
 		}
                 H_diag[Idet+start] = c + m * omega + Enuc + dc;
-	        printf("%4d%20.12lf\n",2*dim_s, H_diag[Idet+start]);
+	        //printf("%4d%20.12lf\n",2*dim_s, H_diag[Idet+start]);
 		free(double_active);
 		free(single_occupation_a);
 		free(single_occupation_b);
 		free(occupation_list_spin);
-	    //}
-	    printf("\n");
+	    //printf("\n");
 	}
 
 }
@@ -832,7 +831,8 @@ void build_H_diag(double* h1e, double* h2e, double* H_diag, int N_p, int num_alp
 }
 
 
-void get_string (double* h1e, double* h2e, double* H_diag, int* table, int* table1, int* table_creation, int* table_annihilation, int N_p, int num_alpha, int nmo, int N, int n_o, int n_in_a, double omega, double Enuc, double dc){
+void get_string (double* h1e, double* h2e, double* H_diag, int* b_array, int* table, int* table1, int* table_creation, int* table_annihilation, int N_p, int num_alpha, int nmo, int N, int n_o, 
+		int n_in_a, double omega, double Enuc, double dc, double target_spin){
 
 /*
      int rows4 = 3 * (6 - 3 + 1) ;
@@ -878,7 +878,12 @@ single_annihilation_list2(3,6, 2, Y3,table_annihilation);
      cols = 4;
      double itime, ftime, exec_time;
      itime = omp_get_wtime();
-     build_H_diag(h1e, h2e, H_diag, N_p, num_alpha, nmo, N, n_o, n_in_a, omega, Enuc, dc,Y);   
+     if (target_spin >=0) {
+         build_H_diag2(h1e, h2e, H_diag, N_p, num_alpha, nmo, N, n_o, n_in_a, omega, Enuc, dc,Y);   
+     }
+     else {
+         build_H_diag2(h1e, h2e, H_diag, N_p, num_alpha, nmo, N, n_o, n_in_a, omega, Enuc, dc,Y);   
+     }
      ftime = omp_get_wtime();
      time_taken = ((double)t)/CLOCKS_PER_SEC;
      exec_time = ftime - itime;
@@ -895,6 +900,17 @@ single_annihilation_list2(3,6, 2, Y3,table_annihilation);
      printf("single_replacement_list took %f seconds to execute \n", time_taken);
 
 
+     //int* b_array = (int*) malloc(num_alpha*n_o*n_o*2*sizeof(int));
+     //memset(b_array, -1, num_alpha*n_o*n_o*2*sizeof(int));
+     int num_links = N * (n_o-N) + N;
+     build_b_array(table1, b_array, num_alpha, num_links, n_o);
+     ////for (int i = 0; i < num_alpha; i++) {
+     ////    for (int j = 0; j < n_o*n_o; j++) {
+     ////        int q = j%n_o;
+     ////        int p = (j-q)/n_o; 	     
+     ////        printf("%4d%4d%4d%4d%4d\n",i,p,q,b_array[i*n_o*n_o*2+j*2+0],b_array[i*n_o*n_o*2+j*2+1]);		 
+     ////    }
+     ////}
 
      //for (int i = 0; i < rows; i++) {
      //    for (int j = 0; j < cols; j++) {
@@ -903,7 +919,6 @@ single_annihilation_list2(3,6, 2, Y3,table_annihilation);
      //    }
      //        printf("\n");
      //}
-
 free(Y);
 }
 void build_sigma(double* h1e, double* h2e, double* d_cmo, double* c_vectors, double *c1_vectors, 
@@ -1477,3 +1492,707 @@ void constant_terms_contraction(double* c_vectors,double* c1_vectors,int num_alp
 //
 //    free(Y);
 //}
+void build_b_array(int* table1, int* b_array, int num_alpha, int num_links, int n_o_ac) {
+    //int n_pq = nmo * (nmo-1)/2;	
+    //for (int index_ib = 0; index_ib < num_alpha; index_ib++) {
+    //    int stride = index_ib * num_links;
+    //    for (int pq = 0; pq < n_pq; pq++) {
+    //        int p = nmo - 2 - floor(sqrt(-8*pq + 4*nmo*(nmo-1)-7)/2.0 - 0.5);
+    //        int q = pq + p + 1 - n_pq + (nmo-p) * ((nmo-p)-1)/2;
+    //        for (int excitation = 0; excitation < num_links; excitation++) {
+    //            if (((table[(stride+excitation)*4+2] == p) && (table[(stride+excitation)*4+3] == q)) ||
+    //    		       	((table[(stride+excitation)*4+2] == q) && (table[(stride+excitation)*4+3] == p))) {
+    //                b_matrix[index_ib * n_pq + pq] = table[(stride+excitation)*4+0];
+    //            }
+    //  	    }
+    //    }
+    //}
+    for (int index_ib = 0; index_ib < num_alpha; index_ib++) {
+        int stride = index_ib * num_links;
+        for (int pq = 0; pq < n_o_ac*n_o_ac; pq++) {
+            int q = pq%n_o_ac;
+            int p = (pq -q)/n_o_ac;
+            for (int excitation = 0; excitation < num_links; excitation++) {
+                if ((table1[(stride+excitation)*4+2] == p) && (table1[(stride+excitation)*4+3] == q)) {
+                    b_array[index_ib*n_o_ac*n_o_ac*2 + pq*2+0] = table1[(stride+excitation)*4+0];
+                    b_array[index_ib*n_o_ac*n_o_ac*2 + pq*2+1] = table1[(stride+excitation)*4+1];
+                }
+      	    }
+        }
+    }
+}
+void build_s_square_matrix(double* S_diag, double* s_square, int* table1, int num_alpha, int num_links) {
+    size_t num_dets = num_alpha * num_alpha;
+    for (size_t index_J = 0; index_J < num_dets; index_J++) {
+        int index_jb = index_J%num_alpha;
+        int index_ja = (index_J-index_jb)/num_alpha;
+        int stride_b = index_jb * num_links;
+         for (int excitation_b = 0; excitation_b < num_links; excitation_b++) {
+             int index_ib = table1[(stride_b + excitation_b)*4+0];
+             int sign_b = table1[(stride_b + excitation_b)*4+1];
+             int q = table1[(stride_b + excitation_b)*4+2]; 
+             int p = table1[(stride_b + excitation_b)*4+3]; 
+	     int stride_a = index_ja * num_links;
+
+             for (int excitation_a = 0; excitation_a < num_links; excitation_a++) {
+                 if ((table1[(stride_a + excitation_a)*4+2] == p) && (table1[(stride_a + excitation_a)*4+3] == q)) {
+                     int index_ia = table1[(stride_a + excitation_a)*4+0];
+                     int sign_a = table1[(stride_a + excitation_a)*4+1];
+	             int index_I = index_ia * num_alpha + index_ib;		 
+	             int index_J = index_ja * num_alpha + index_jb;
+		     if (index_I != index_J) {
+		         s_square[index_I*num_dets +index_J] -= sign_b*sign_a;
+		     }
+		     else {
+		         s_square[index_I*num_dets +index_J] = S_diag[index_I];
+		     }
+      	         }
+      	     }
+	}
+    }
+}
+void build_S_diag(double* S_diag, int num_alpha, int nmo, int N_ac,int n_o_ac,int n_o_in, double shift) {
+    size_t num_dets = num_alpha * num_alpha;
+    int rows = N_ac*(n_o_ac-N_ac+1);
+    int cols = 3;
+    
+    Y = (int*) malloc(rows*cols*sizeof(int));
+    get_graph(N_ac,n_o_ac,Y);
+
+  
+     //#pragma omp parallel for num_threads(16)
+    for (size_t Idet = 0; Idet < num_dets; Idet++) {
+        int index_b = Idet%num_alpha;
+        int index_a = (Idet-index_b)/num_alpha;
+        size_t string_a = index_to_string(index_a,N_ac,n_o_ac,Y);
+        size_t string_b = index_to_string(index_b,N_ac,n_o_ac,Y);
+    	size_t ab = string_a & string_b;
+    	int length;
+    	int* double_active = string_to_obtlist(ab, nmo, &length);
+    	int dim_d = length+n_o_in;
+    	int double_occupation[dim_d];
+        for (int i = 0; i < dim_d; i++) {
+            if (i < n_o_in) {
+    	       double_occupation[i] = i;	    
+    	    }
+            else {
+    	       double_occupation[i] = double_active[i-n_o_in] + n_o_in;	
+    	    }
+    	}
+            
+        size_t e = string_a^string_b;
+        size_t ea = e&string_a;
+        size_t eb = e&string_b;
+        int dim_s;
+    	int* single_occupation_a = string_to_obtlist(ea, nmo, &dim_s);
+    	int* single_occupation_b = string_to_obtlist(eb, nmo, &dim_s);
+        for (int i = 0; i < dim_s; i++) {
+    	    single_occupation_a[i] += n_o_in;	
+    	    single_occupation_b[i] += n_o_in;	
+    	}
+            
+        int* occupation_list_spin = (int*) malloc((dim_d+2*dim_s)*3*sizeof(int));
+        memset(occupation_list_spin, 0, (dim_d+2*dim_s)*3*sizeof(int));
+        for (int i = 0; i < dim_d; i++) {
+            occupation_list_spin[i*3+0] = double_occupation[i];
+            occupation_list_spin[i*3+1] = 1; 
+            occupation_list_spin[i*3+2] = 1; 
+    	}
+        for (int i = 0; i < dim_s; i++) {
+            occupation_list_spin[(i+dim_d)*3+0] = single_occupation_a[i];
+            occupation_list_spin[(i+dim_d)*3+1] = 1; 
+            occupation_list_spin[(i+dim_d+dim_s)*3+0] = single_occupation_b[i];
+            occupation_list_spin[(i+dim_d+dim_s)*3+2] = 1; 
+    	}
+    	//for (int i = 0; i < dim_d + 2*dim_s; i++) {
+    	//    printf("%4d%4d%4d\n", occupation_list_spin[i*3+0], occupation_list_spin[i*3+1], occupation_list_spin[i*3+2]);
+    	//}
+    	//fflush(stdout);
+        int n_a = 0;
+	int n_b =0;
+	for (int a = 0; a < (dim_d+2*dim_s); a++) {
+            int n_ia = occupation_list_spin[a*3+1]; 
+            int n_ib = occupation_list_spin[a*3+2];
+	    if (n_ia + n_ib == 1) {
+                n_a += n_ia;
+	        n_b += n_ib;
+	    } 
+    	}
+	//printf("%4d\n", n_a+n_b);
+	//shift is I * <S^2> in equation 4 (J. Chem. Theory Comput. 2017, 13, 4162−4172)
+        S_diag[Idet] = 0.25 * (n_a - n_b) * (n_a - n_b) + 0.5 * (n_a+n_b) - shift;
+    	free(double_active);
+    	free(single_occupation_a);
+    	free(single_occupation_b);
+    	free(occupation_list_spin);
+        //printf("\n");
+    }
+	free(Y);
+}
+
+void build_sigma_s_square_off_diagonal(double* c_vectors, double* c1_vectors, int* b_array, int* table1, int num_alpha, int num_links, int n_o_ac, int photon_p1, int state_p1, 
+		int photon_p2, int state_p2, int num_photon, double scale) {
+    /*algorithm 2 in J.Chem.TheoryComput.2017, 13, 4162−4172
+    //not sure if I implemented it correctly. it's said that b_array contains only the index of j_b, but then we still need a sign of j_b, so I added the sign to array b
+    */
+    size_t num_dets = num_alpha * num_alpha;
+    for (int index_ia = 0; index_ia < num_alpha; index_ia++) {
+        for (int index_ib = 0; index_ib < num_alpha; index_ib++) {
+            int stride_a = index_ia * num_links;
+             for (int excitation_a = 0; excitation_a < num_links; excitation_a++) {
+                 int index_ja = table1[(stride_a + excitation_a)*4+0];
+                 int sign_a = table1[(stride_a + excitation_a)*4+1];
+                 int p = table1[(stride_a + excitation_a)*4+2]; 
+                 int q = table1[(stride_a + excitation_a)*4+3]; 
+                 int qp = q*n_o_ac + p;
+		 int index_jb = b_array[index_ib*n_o_ac*n_o_ac*2 + qp*2 + 0];
+                 int sign_b = b_array[index_ib*n_o_ac*n_o_ac*2 + qp*2 + 1];
+	         int index_I = index_ia * num_alpha + index_ib;		 
+	         int index_J = index_ja * num_alpha + index_jb;
+                 if ((p !=q) && (index_jb >=0) && (index_I != index_J)) {
+	             c1_vectors[(state_p2 * num_photon + photon_p2) * num_dets + index_I] -= sign_a
+		      *	scale *	sign_b * c_vectors[(state_p1 * num_photon + photon_p1) * num_dets + index_J]; 	
+		 } 
+	    }
+        }
+    }
+}
+void build_sigma_s_square_diagonal(double* c_vectors, double* c1_vectors, double* S_diag, int num_alpha, int photon_p1, int state_p1,
+		int photon_p2, int state_p2, int num_photon, double scale) {
+    size_t num_dets = num_alpha * num_alpha;
+    for (size_t index_I = 0; index_I < num_dets; index_I++) {
+        c1_vectors[(state_p2 * num_photon + photon_p2) * num_dets + index_I] += scale * S_diag[index_I] * c_vectors[(state_p1 * num_photon + photon_p1) * num_dets + index_I];
+    }
+}
+void build_sigma_s_square(double* c_vectors, double *c1_vectors, double* S_diag, int* b_array, int* table1, int num_links, int n_o_ac, int num_alpha, int num_state, int N_p, double scale) {
+    int np1 = N_p + 1;
+    //printf("total dim %d", num_alpha*num_alpha*num_state*np1);
+    #pragma omp parallel for num_threads(12) collapse(2)
+    for (int n = 0; n < num_state; n++) {
+        for (int m = 0; m < np1; m++) {
+            build_sigma_s_square_off_diagonal(c_vectors, c1_vectors, b_array, table1, num_alpha, num_links, n_o_ac, m, n, m, n, np1, scale);		
+            build_sigma_s_square_diagonal(c_vectors, c1_vectors, S_diag, num_alpha, m, n, m, n, np1, scale);		
+	}
+    }
+}
+void build_sigma_s_fourth_power(double* c_vectors, double *c1_vectors, double* S_diag, int* b_array, int* table1, int num_links, int n_o_ac, int num_alpha, int num_state, int N_p, double scale) {
+    int np1 = N_p + 1;
+    size_t num_dets = num_alpha * num_alpha;
+    double* sigma_s_square = (double*) malloc(num_dets*sizeof(double));
+
+
+    //printf("total dim %d", num_alpha*num_alpha*num_state*np1);
+    //#pragma omp parallel for num_threads(12) collapse(2)
+    for (int n = 0; n < num_state; n++) {
+        for (int m = 0; m < np1; m++) {
+            memset(sigma_s_square, 0, num_dets*sizeof(double));
+            build_sigma_s_square_off_diagonal(c_vectors, sigma_s_square, b_array, table1, num_alpha, num_links, n_o_ac, m, n, 0, 0, np1, scale);		
+            build_sigma_s_square_diagonal(c_vectors, sigma_s_square, S_diag, num_alpha, m, n, 0, 0, np1, scale);
+
+            build_sigma_s_square_off_diagonal(sigma_s_square, c1_vectors, b_array, table1, num_alpha, num_links, n_o_ac, 0, 0, m, n, np1, 1.0);		
+            build_sigma_s_square_diagonal(sigma_s_square, c1_vectors, S_diag, num_alpha, 0, 0, m, n, np1, 1.0);
+
+	}
+    }
+    free(sigma_s_square);
+}
+void gram_schmidt_orthogonalization(double* Q, int rows, int cols) {
+    double dotval, normval;
+    int k, i, rI;
+    int L = 0;
+    for (k = 0; k < rows; k++) {
+        if (L>0) {
+           // Q->print();
+            for (i = 0; i < L; i++) {
+                dotval = cblas_ddot(cols, &Q[i*cols], 1, &Q[k*cols], 1);
+                for (rI = 0; rI < cols; rI++) Q[k * cols + rI] -= dotval * Q[i * cols + rI];
+            }
+            //reorthogonalization
+            for (i = 0; i < L; i++) {
+                dotval = cblas_ddot(cols, &Q[i*cols], 1, &Q[k*cols], 1);
+                for (rI = 0; rI < cols; rI++) Q[k * cols + rI] -= dotval * Q[i * cols + rI];
+            }
+        }
+        normval = cblas_ddot(cols, &Q[k*cols], 1, &Q[k*cols], 1);
+        normval = sqrt(normval);
+        //outfile->Printf("trial vector norm%30.18lf\n",normval);
+        if (normval > 1e-20) {
+            for (rI = 0; rI < cols; rI++) {
+                Q[L * cols + rI] = Q[k * cols + rI] / normval;
+            }
+            L++;
+            //outfile->Printf("check orthogonality1\n");
+            ////for (int i = 0; i < L; i++) {
+            ////    for (int j = 0; j < L; j++) {
+            ////        double a = cblas_ddot(cols, &Q[i*cols], 1, &Q[j*cols], 1);
+            ////        //outfile->Printf("%d %d %30.16lf",i,j,a);
+            ////        if ((i!=j) && (fabs(a)>1e-12)) printf(" detect linear dependency\n");
+            ////        //outfile->Printf("\n");
+            ////    }
+            ////}
+        }
+    }
+}
+
+
+
+void gram_schmidt_add(double* Q, int rows, int cols, int rows2) {
+
+    double dotval, normval;
+    int k,i, rI;
+    for (k = rows; k < rows + rows2; k++) {
+        for (i = 0; i < k; i++) {
+            dotval = cblas_ddot(cols, &Q[i*cols], 1, &Q[k*cols], 1);
+            for (rI = 0; rI < cols; rI++) Q[k * cols + rI] -= dotval * Q[i * cols + rI];
+        }
+        //reorthogonalization
+        for (i = 0; i < k; i++) {
+            dotval = cblas_ddot(cols, &Q[i*cols], 1, &Q[k*cols], 1);
+            for (rI = 0; rI < cols; rI++) Q[k * cols + rI] -= dotval * Q[i * cols + rI];
+        }
+        normval = cblas_ddot(cols, &Q[k*cols], 1, &Q[k*cols], 1);
+        normval = sqrt(normval);
+        //outfile->Printf("trial vector norm2%30.18lf\n",normval);
+        if (normval > 1e-20) {
+            //printf("normval%20.12lf\n",normval);
+            for (rI = 0; rI < cols; rI++) {
+                Q[k * cols + rI] = Q[k * cols + rI] / normval;
+            }
+            //outfile->Printf("check orthogonality2\n");
+            ////for (int i = 0; i < L; i++) {
+            ////    for (int j = 0; j < L; j++) {
+            ////        double a = cblas_ddot(N, Q[i], 1, Q[j], 1);
+            ////        //outfile->Printf("%d %d %30.16lf",i,j,a);
+            ////        if (i!=j && fabs(a)>1e-12) outfile->Printf(" detect linear dependency\n");
+            ////        //outfile->Printf("\n");
+            ////    }
+            ////}
+        }
+    }
+
+}
+void build_sigma_spin(double* h1e, double* h2e, double* d_cmo, double* c_vectors, double *c1_vectors, 
+		 int* table,int* table1, int* table_creation, int* table_annihilation, int N_ac, int n_o_ac, int n_o_in, int nmo, 
+		 int num_state, int N_p, double Enuc, double dc, double omega, double d_exp, bool break_degeneracy, double target_spin) {
+
+
+    //int threads =omp_get_max_threads();
+    //printf(" numthread %d",threads);
+    //  #pragma omp parallel for num_threads(12)
+    // for (int i = 1; i <= 12; i++) {
+    //     int tid = omp_get_thread_num();
+    //     printf("The thread %d  executes i = %d\n", tid, i);
+    // }
+
+    int num_alpha = binomialCoeff(n_o_ac, N_ac);
+    int num_links = N_ac * (n_o_ac-N_ac) + N_ac + n_o_in;
+    int np1 = N_p + 1;
+    //printf("total dim %d", num_alpha*num_alpha*num_state*np1);
+    #pragma omp parallel for num_threads(12) collapse(2)
+    for (int n = 0; n < num_state; n++) {
+        for (int m = 0; m < np1; m++) {
+            sigma12_spin(h1e, h2e, c_vectors, c1_vectors, num_alpha, num_links, table, nmo, m, n, np1, target_spin); 
+            sigma3_spin(h2e, c_vectors, c1_vectors, table1, table_creation, table_annihilation, 
+       	   N_ac, n_o_ac, n_o_in, nmo, m, n, np1, target_spin);
+
+            double someconstant = m * omega + Enuc + dc;
+            if (break_degeneracy == true) {
+               someconstant = m * (omega + 1) + Enuc + dc;
+            }
+            constant_terms_contraction(c_vectors, c1_vectors, num_alpha, someconstant, m, m, n, np1);    
+	    if (N_p == 0) continue;
+            if ((0 < m) && (m < N_p)) {
+                someconstant = -sqrt(m * omega/2);
+                sigma_dipole_spin(d_cmo, c_vectors, c1_vectors, num_alpha, num_links, table, nmo, someconstant, m-1, m, n, np1, target_spin);  
+                constant_terms_contraction(c_vectors, c1_vectors, num_alpha, -d_exp * someconstant, m-1, m, n, np1);    
+                someconstant = -sqrt((m+1) * omega/2);
+                sigma_dipole_spin(d_cmo, c_vectors, c1_vectors, num_alpha, num_links, table, nmo, someconstant, m+1, m, n, np1, target_spin);  
+                constant_terms_contraction(c_vectors, c1_vectors, num_alpha, -d_exp * someconstant, m+1, m, n, np1);    
+            }
+            else if (m == N_p) {
+                someconstant = -sqrt(m * omega/2);
+                sigma_dipole_spin(d_cmo, c_vectors, c1_vectors, num_alpha, num_links, table, nmo, someconstant, m-1, m, n, np1, target_spin);  
+                constant_terms_contraction(c_vectors, c1_vectors, num_alpha, -d_exp * someconstant, m-1, m, n, np1);   
+            }
+            else {
+                someconstant = -sqrt((m+1) * omega/2);
+                sigma_dipole_spin(d_cmo, c_vectors, c1_vectors, num_alpha, num_links, table, nmo, someconstant, m+1, m, n, np1, target_spin);  
+                constant_terms_contraction(c_vectors, c1_vectors, num_alpha, -d_exp * someconstant, m+1, m, n, np1);   
+            }
+        }
+    }
+}
+
+void sigma3_spin(double* h2e, double* c_vectors, double* c1_vectors, int* table1,  int* table_creation, int* table_annihilation, 
+		 int N_ac, int n_o_ac, int n_o_in, int nmo, int photon_p, int state_p, int num_photon, double target_spin) {
+    //printf("he3\n");
+    //unsigned long currRealMem, peakRealMem, currVirtMem, peakVirtMem;
+    //int success2 = getMemory(&currRealMem, &peakRealMem, &currVirtMem, &peakVirtMem);
+    int num_alpha = binomialCoeff(n_o_ac, N_ac);
+    int num_alpha1 = binomialCoeff(n_o_ac, N_ac-1);
+    size_t num_dets = num_alpha * num_alpha;
+    int num_links = N_ac * (n_o_ac-N_ac) + N_ac;
+    int num_links1 = n_o_ac-N_ac+1;
+    int num_links2 = N_ac;
+    int length_sigma3 = num_alpha * num_alpha;
+    double* sigma3 = (double*) malloc(length_sigma3*sizeof(double));
+    memset(sigma3, 0, length_sigma3*sizeof(double));
+
+
+    //printf("%4d%4d%4d%4d%4d\n",N_ac,n_o_ac, n_o_in,nmo, num_links);
+    double* D = (double*) malloc(num_alpha1 * n_o_ac * num_alpha*sizeof(double));
+    memset(D, 0, num_alpha1 * n_o_ac * num_alpha * sizeof(double));
+    for (int index_ka = 0; index_ka < num_alpha1; index_ka++) {
+	int stride = index_ka * num_links1;    	
+        for (int creation = 0; creation < num_links1; creation++) {
+	    int index_ja = table_creation[(stride+creation)*3+0];
+	    int sign = table_creation[(stride+creation)*3+1];
+	    int j = table_creation[(stride+creation)*3+2];
+	    //printf("%4d%4d%4d\n",index_ja,sign,j);
+            for (int index_jb = 0; index_jb < num_alpha; index_jb++) {
+	        int index_J = index_ja * num_alpha + index_jb;
+                D[(index_jb * n_o_ac + j) * num_alpha1 + index_ka] += sign *
+                     c_vectors[(state_p * num_photon + photon_p) * num_dets + index_J];
+
+
+	    }
+	}
+		
+    }
+
+    //printf("\n");
+    double* T = (double*) malloc(num_alpha1 * n_o_ac * num_alpha*sizeof(double));
+    memset(T, 0, num_alpha1 * n_o_ac * num_alpha * sizeof(double));
+    for (int index_ib = 0; index_ib < num_alpha; index_ib++) {
+        //memset(F, 0, num_alpha*sizeof(double));
+        int stride = index_ib * num_links;
+        for (int excitation = 0; excitation < num_links; excitation++) {
+            int index_jb = table1[(stride + excitation)*4+0];
+            int sign = table1[(stride + excitation)*4+1];
+            int k = table1[(stride + excitation)*4+2]; 
+            int l = table1[(stride + excitation)*4+3]; 
+	    //printf("%4d%4d%4d%4d%10d\n",index_jb,sign,k,l,index_ib);
+            int kl = (k+n_o_in) * nmo + (l+n_o_in);
+            cblas_dgemm(CblasRowMajor, CblasNoTrans, CblasNoTrans, n_o_ac, num_alpha1, n_o_ac, sign, h2e+kl*nmo*nmo+n_o_in*nmo+n_o_in, 
+               	  nmo, D+index_jb*n_o_ac*num_alpha1, num_alpha1, 1.0, 
+            	  T+index_ib*n_o_ac*num_alpha1, num_alpha1);
+   
+            //for (int index_ka = 0; index_ka < num_alpha1; index_ka++) {
+            //    for (int i = 0; i < n_o_ac; i++) {
+            //        for (int j = 0; j < n_o_ac; j++) {
+            //            int ij = (i+n_o_in) * nmo + j+n_o_in;
+            //            T[(index_ib * n_o_ac + i) * num_alpha1 + index_ka] +=
+	    //    		sign * h2e[kl*nmo*nmo + ij] * D[(index_jb * n_o_ac  + j) * num_alpha1 + index_ka];
+	    //        }
+	    //    }
+	    //}
+
+        }
+    }
+
+
+    //printf("\n");
+    for (int index_ia = 0; index_ia < num_alpha; index_ia++) {
+        int stride = index_ia * num_links2;    	
+        for (int annihilation = 0; annihilation < num_links2; annihilation++) {
+            int index_ka = table_annihilation[(stride+annihilation)*3+0];
+            int sign = table_annihilation[(stride+annihilation)*3+1];
+            int i = table_annihilation[(stride+annihilation)*3+2];
+            //printf("%4d%4d%4d\n",index_ka,sign,i);
+            for (int index_ib = index_ia; index_ib < num_alpha; index_ib++) {
+                int index_I = index_ia * num_alpha + index_ib;
+                //c1_vectors[(state_p * num_photon + photon_p) * num_dets + index_I] += sign *
+                //T[(index_ib * n_o_ac + i) * num_alpha1 + index_ka];
+		sigma3[index_I] += sign * T[(index_ib * n_o_ac + i) * num_alpha1 + index_ka];
+
+            }
+        }
+        	
+    }
+    for (int index_ib = 0; index_ib < num_alpha; index_ib++) {
+        int stride = index_ib * num_links;
+        for (int excitation = 0; excitation < num_links; excitation++) {
+            int index_jb = table1[(stride + excitation)*4+0];
+            int sign = table1[(stride + excitation)*4+1];
+            int k = table1[(stride + excitation)*4+2]; 
+            int l = table1[(stride + excitation)*4+3]; 
+            //print(index_kb,sign1,k,l)
+            int kl = (k+n_o_in) * nmo + (l+n_o_in);
+	    double c = 0.0;
+            for (int i = 0; i < n_o_in; i++) {
+		int ii = i * nmo + i;    
+		c += h2e[ii*nmo*nmo + kl];   
+	    }
+            for (int index_ia = 0; index_ia <= index_ib; index_ia++) {
+                int index_I = index_ia * num_alpha + index_ib;
+                int index_J = index_ia * num_alpha + index_jb;
+                //for (int i = 0; i < n_o_in; i++) {
+	        //    int ii = i * nmo + i;    
+                 //// c1_vectors[(state_p * num_photon + photon_p) * num_dets + index_I] += sign *
+	         //// 	 c * c_vectors[(state_p * num_photon + photon_p) * num_dets + index_J];
+	        sigma3[index_I] += sign * c * c_vectors[(state_p * num_photon + photon_p) * num_dets + index_J];
+
+		//}
+            } 
+        }
+    }
+    for (int index_ia = 0; index_ia < num_alpha; index_ia++) {
+        int stride = index_ia * num_links;
+        for (int excitation = 0; excitation < num_links; excitation++) {
+            int index_ja = table1[(stride + excitation)*4+0];
+            int sign = table1[(stride + excitation)*4+1];
+            int k = table1[(stride + excitation)*4+2]; 
+            int l = table1[(stride + excitation)*4+3]; 
+            //print(index_kb,sign1,k,l)
+            int kl = (k+n_o_in) * nmo + (l+n_o_in);
+	    double c = 0.0;
+            for (int i = 0; i < n_o_in; i++) {
+		int ii = i * nmo + i;    
+		c += h2e[ii*nmo*nmo + kl];   
+	    }
+            for (int index_ib = index_ia; index_ib < num_alpha; index_ib++) {
+                int index_I = index_ia * num_alpha + index_ib;
+                int index_J = index_ja * num_alpha + index_ib;
+                //for (int i = 0; i < n_o_in; i++) {
+		//    int ii = i * nmo + i;    
+                   //// c1_vectors[(state_p * num_photon + photon_p) * num_dets + index_I] += sign * 
+    			////  c * c_vectors[(state_p * num_photon + photon_p) * num_dets + index_J];
+		sigma3[index_I] += sign * c * c_vectors[(state_p * num_photon + photon_p) * num_dets + index_J];
+
+	        //}
+	       
+            } 
+        }
+    }
+    //symmetrize/antisymmetrize CI coefficient if spin is even/odd 
+    for (int index_ia = 0; index_ia < num_alpha; index_ia++) {
+        for (int index_ib = index_ia; index_ib < num_alpha; index_ib++) {
+            int index_I1 = index_ia * num_alpha + index_ib;
+            int index_I2 = index_ib * num_alpha + index_ia;
+            c1_vectors[(state_p * num_photon + photon_p) * num_dets + index_I1] += sigma3[index_I1] / (1+(index_ia == index_ib));
+            c1_vectors[(state_p * num_photon + photon_p) * num_dets + index_I2] += pow(-1.0, target_spin) * sigma3[index_I1] / (1+(index_ia == index_ib));
+	}
+    }
+
+
+    double c = 0.0;
+    for (int i = 0; i < n_o_in; i++) {
+        for (int j = 0; j < n_o_in; j++) {
+            int ii = i * nmo +i; 
+            int jj = j * nmo +j; 
+            c += h2e[ii*nmo*nmo + jj];
+	}
+    }
+    for (size_t index_I = 0; index_I < num_dets; index_I++) {
+        c1_vectors[(state_p * num_photon + photon_p) * num_dets + index_I] += c * c_vectors[(state_p * num_photon + photon_p) * num_dets + index_I];
+    }
+
+//fflush(stdout);
+    
+//success2 = getMemory(&currRealMem, &peakRealMem, &currVirtMem, &peakVirtMem);
+//printf("he4\n");
+//fflush(stdout);
+free(sigma3);
+free(D);
+free(T);
+
+}
+
+
+
+
+
+
+
+void sigma12_spin(double* h1e, double* h2e, double* c_vectors,double* c1_vectors,int num_alpha,int num_links, int* table, int nmo, int photon_p, int state_p, int num_photon, double target_spin) {
+    //printf("he1\n");
+    //unsigned long currRealMem, peakRealMem, currVirtMem, peakVirtMem;
+    //int success2 = getMemory(&currRealMem, &peakRealMem, &currVirtMem, &peakVirtMem);
+
+    size_t num_dets = num_alpha * num_alpha;
+    double* F = (double*) malloc(num_alpha*sizeof(double));
+
+    double* s_resize = (double*) malloc(num_alpha*sizeof(double));
+    double* sigma1 = (double*) malloc(num_dets*sizeof(double));
+    memset(sigma1, 0, num_dets*sizeof(double));
+
+    for (int index_ib = 0; index_ib < num_alpha; index_ib++) {
+        memset(F, 0, num_alpha*sizeof(double));
+        int stride1 = index_ib * num_links;
+        for (int excitation1 = 0; excitation1 < num_links; excitation1++) {
+            int index_kb = table[(stride1 + excitation1)*4+0];
+            int sign1 = table[(stride1 + excitation1)*4+1];
+            int k = table[(stride1 + excitation1)*4+2]; 
+            int l = table[(stride1 + excitation1)*4+3]; 
+            //print(index_kb,sign1,k,l)
+            int kl = k * nmo + l;
+            F[index_kb] += sign1 * h1e[k*nmo+l];
+            int stride2 = index_kb * num_links;
+            for (int excitation2 = 0; excitation2 < num_links; excitation2++) {
+                int index_jb = table[(stride2 + excitation2)*4+0];
+                int sign2 = table[(stride2 + excitation2)*4+1];
+                int i = table[(stride2 + excitation2)*4+2]; 
+                int j = table[(stride2 + excitation2)*4+3]; 
+                int ij = i * nmo + j;
+                if (ij >= kl) {
+                    F[index_jb] += (sign1 * sign2 * h2e[ij*nmo*nmo+kl])/(1+(ij == kl));
+       	 }
+            }
+        }
+
+        memset(s_resize, 0, num_alpha*sizeof(double));
+        cblas_dgemm(CblasRowMajor, CblasNoTrans, CblasNoTrans, num_alpha, 1, num_alpha, 1.0, c_vectors 
+       		 + (state_p * num_photon + photon_p) * num_dets, num_alpha, F, 1, 0.0, s_resize, 1);
+        for (int index_ia = 0; index_ia < num_alpha; index_ia++) {
+            int index_I = index_ia * num_alpha + index_ib;
+            //c1_vectors[(state_p * num_photon + photon_p) * num_dets + index_I] += s_resize[index_ia];
+            sigma1[index_I] += s_resize[index_ia];
+        }
+    }
+    //symmetrize/antisymmetrize CI coefficient if spin is even/odd 
+    for (int index_ib = 0; index_ib < num_alpha; index_ib++) {
+        for (int index_ia = 0; index_ia < num_alpha; index_ia++) {
+            int index_I = index_ia * num_alpha + index_ib;
+            c1_vectors[(state_p * num_photon + photon_p) * num_dets + index_I] += sigma1[index_ia * num_alpha + index_ib];
+            c1_vectors[(state_p * num_photon + photon_p) * num_dets + index_I] += pow(-1.0, target_spin) * sigma1[index_ib * num_alpha + index_ia];
+	}
+    }
+
+
+    ////double* c_resize = (double*) malloc(num_dets*sizeof(double));
+    ////
+    ////for (int index_ja = 0; index_ja < num_alpha; index_ja++) {
+    ////    for (int index_ib = 0; index_ib < num_alpha; index_ib++) {
+    ////        int index_J = index_ja * num_alpha + index_ib;
+    ////        int index_Jt = index_ib * num_alpha + index_ja;
+    ////        c_resize[index_Jt] = c_vectors[
+    ////   	 (state_p * num_photon + photon_p) * num_dets + index_J];
+    ////    }
+    ////}
+    ////
+    ////
+    ////
+    ////for (int index_ia = 0; index_ia < num_alpha; index_ia++) {
+    ////    memset(F, 0, num_alpha*sizeof(double));
+    ////    int stride1 = index_ia * num_links;
+    ////    for (int excitation1 = 0; excitation1 < num_links; excitation1++) {
+    ////        int index_ka = table[(stride1 + excitation1)*4+0];
+    ////        int sign1 = table[(stride1 + excitation1)*4+1];
+    ////        int k = table[(stride1 + excitation1)*4+2]; 
+    ////        int l = table[(stride1 + excitation1)*4+3]; 
+    ////        //print(index_kb,sign1,k,l)
+    ////        int kl = k * nmo + l;
+    ////        F[index_ka] += sign1 * h1e[k*nmo+l];
+    ////        int stride2 = index_ka * num_links;
+    ////        for (int excitation2 = 0; excitation2 < num_links; excitation2++) {
+    ////            int index_ja = table[(stride2 + excitation2)*4+0];
+    ////            int sign2 = table[(stride2 + excitation2)*4+1];
+    ////            int i = table[(stride2 + excitation2)*4+2]; 
+    ////            int j = table[(stride2 + excitation2)*4+3]; 
+    ////            int ij = i * nmo + j;
+    ////            if (ij >= kl) {
+    ////                F[index_ja] += (sign1 * sign2 * h2e[ij*nmo*nmo+kl])/(1+(ij == kl));
+    ////   	        }
+    ////        }
+    ////    }
+    ////    cblas_dgemm(CblasRowMajor, CblasNoTrans, CblasNoTrans, num_alpha,1,num_alpha, 1.0, c_resize, num_alpha, F, 1, 1.0,
+    ////   		 c1_vectors+(state_p * num_photon + photon_p) * num_dets+index_ia*num_alpha, 1);
+
+    ////}
+    free(F); 
+    free(sigma1); 
+    //free(c_resize); 
+    free(s_resize);
+    //success2 = getMemory(&currRealMem, &peakRealMem, &currVirtMem, &peakVirtMem);
+    //printf("he2\n");
+
+
+    
+}
+void sigma_dipole_spin(double* h1e, double* c_vectors,double* c1_vectors,int num_alpha,int num_links, int* table, int nmo, double someconstant, int photon_p1, int photon_p2, 
+		int state_p, int num_photon, double target_spin) {
+    //printf("he5\n");
+    //unsigned long currRealMem, peakRealMem, currVirtMem, peakVirtMem;
+    //int success2 = getMemory(&currRealMem, &peakRealMem, &currVirtMem, &peakVirtMem);
+
+
+    size_t num_dets = num_alpha * num_alpha;
+    double* F = (double*) malloc(num_alpha*sizeof(double));
+    double* sigma1 = (double*) malloc(num_dets*sizeof(double));
+    memset(sigma1, 0, num_dets*sizeof(double));
+
+
+    double* s_resize = (double*) malloc(num_alpha*sizeof(double));
+
+    for (int index_ib = 0; index_ib < num_alpha; index_ib++) {
+        memset(F, 0, num_alpha*sizeof(double));
+        int stride1 = index_ib * num_links;
+        for (int excitation1 = 0; excitation1 < num_links; excitation1++) {
+            int index_kb = table[(stride1 + excitation1)*4+0];
+            int sign1 = table[(stride1 + excitation1)*4+1];
+            int k = table[(stride1 + excitation1)*4+2]; 
+            int l = table[(stride1 + excitation1)*4+3]; 
+            //print(index_kb,sign1,k,l)
+            F[index_kb] += sign1 * h1e[k*nmo+l];
+        }
+
+
+        memset(s_resize, 0, num_alpha*sizeof(double));
+        cblas_dgemm(CblasRowMajor, CblasNoTrans, CblasNoTrans, num_alpha, 1, num_alpha, someconstant, c_vectors 
+               	 + (state_p * num_photon + photon_p1) * num_dets, num_alpha, F, 1, 0.0, s_resize, 1);
+        for (int index_ia = 0; index_ia < num_alpha; index_ia++) {
+            int index_I = index_ia * num_alpha + index_ib;
+            sigma1[index_I] += s_resize[index_ia];
+        }
+    }
+    //symmetrize/antisymmetrize CI coefficient if spin is even/odd 
+    for (int index_ib = 0; index_ib < num_alpha; index_ib++) {
+        for (int index_ia = 0; index_ia < num_alpha; index_ia++) {
+            int index_I = index_ia * num_alpha + index_ib;
+            c1_vectors[(state_p * num_photon + photon_p2) * num_dets + index_I] += sigma1[index_ia * num_alpha + index_ib];
+            c1_vectors[(state_p * num_photon + photon_p2) * num_dets + index_I] += pow(-1.0, target_spin) * sigma1[index_ib * num_alpha + index_ia];
+	}
+    }
+    ////double* c_resize = (double*) malloc(num_dets*sizeof(double));
+    ////
+    ////for (int index_ja = 0; index_ja < num_alpha; index_ja++) {
+    ////    for (int index_ib = 0; index_ib < num_alpha; index_ib++) {
+    ////        int index_J = index_ja * num_alpha + index_ib;
+    ////        int index_Jt = index_ib * num_alpha + index_ja;
+    ////        c_resize[index_Jt] = c_vectors[
+    ////   	 (state_p * num_photon + photon_p1) * num_dets + index_J];
+    ////    }
+    ////}
+
+    ////for (int index_ia = 0; index_ia < num_alpha; index_ia++) {
+    ////    memset(F, 0, num_alpha*sizeof(double));
+    ////    int stride1 = index_ia * num_links;
+    ////    for (int excitation1 = 0; excitation1 < num_links; excitation1++) {
+    ////        int index_ka = table[(stride1 + excitation1)*4+0];
+    ////        int sign1 = table[(stride1 + excitation1)*4+1];
+    ////        int k = table[(stride1 + excitation1)*4+2]; 
+    ////        int l = table[(stride1 + excitation1)*4+3]; 
+    ////        //print(index_kb,sign1,k,l)
+    ////        F[index_ka] += sign1 * h1e[k*nmo+l];
+    ////    }
+    ////    cblas_dgemm(CblasRowMajor, CblasNoTrans, CblasNoTrans, num_alpha,1,num_alpha, someconstant, c_resize, num_alpha, F, 1, 1.0,
+    ////   		 c1_vectors+(state_p * num_photon + photon_p2) * num_dets+index_ia*num_alpha, 1);
+    ////}
+    free(sigma1);
+    free(F); 
+    //free(c_resize); 
+    free(s_resize); 
+    //success2 = getMemory(&currRealMem, &peakRealMem, &currVirtMem, &peakVirtMem);
+    //printf("he6\n");
+
+
+}
+void constant_terms_contraction_spin(double* c_vectors,double* c1_vectors,int num_alpha, double someconstant, int photon_p1, int photon_p2, int state_p, int num_photon) {
+     size_t num_dets = num_alpha * num_alpha;
+     for (size_t index_I = 0; index_I < num_dets; index_I++) {
+         c1_vectors[(state_p * num_photon + photon_p2) * num_dets + index_I] += someconstant * c_vectors[(state_p * num_photon + photon_p1) * num_dets + index_I];
+     }
+}
+
+
+
