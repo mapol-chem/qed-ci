@@ -1820,6 +1820,7 @@ class PFHamiltonianGenerator:
         Given an array of states, compute all the dipole moments between those states
         """
         _Ns = len(states)
+        loop_start = time.time()
         _singlet_dipole_moments = np.zeros((_Ns, _Ns, 3))
 
         for i in range(_Ns):
@@ -1830,7 +1831,38 @@ class PFHamiltonianGenerator:
                     a, b
                 ) + self.mu_nuc * (a == b)
 
+        loop_end = time.time()
+        """ Try a faster was to do this using einsum 
+        """
+        
+        _MuNuc_x = np.eye(_Ns) * self.mu_nuc[0]
+        _MuNuc_y = np.eye(_Ns) * self.mu_nuc[1]
+        _MuNuc_z = np.eye(_Ns) * self.mu_nuc[2]
+
+        _CI = self.CIvecs[:,states]
+
+        sum_start = time.time()
+        _MuElec_x = np.einsum("iI,ij,jJ->IJ", _CI, self.MU_X, _CI)
+        _MuElec_y = np.einsum("iI,ij,jJ->IJ", _CI, self.MU_Y, _CI)
+        _MuElec_z = np.einsum("iI,ij,jJ->IJ", _CI, self.MU_Z, _CI)
+
+        _fast_singlet_dipole_moments_x = _MuElec_x + _MuNuc_x
+        _fast_singlet_dipole_moments_y = _MuElec_y + _MuNuc_y
+        _fast_singlet_dipole_moments_z = _MuElec_z + _MuNuc_z 
+
+        sum_end = time.time()
+
+        print(F" Loop took {loop_end-loop_start} seconds")
+        print(F" Einsum took {sum_end-sum_start} seconds")
+
+
+        assert np.allclose(_fast_singlet_dipole_moments_x, _singlet_dipole_moments[:,:,0])
+        assert np.allclose(_fast_singlet_dipole_moments_y, _singlet_dipole_moments[:,:,1])
+        assert np.allclose(_fast_singlet_dipole_moments_z, _singlet_dipole_moments[:,:,2])
+
+
         return _singlet_dipole_moments
+    
 
     def compute_MuMu_Matrix(self, states):
         """
