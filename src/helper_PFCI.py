@@ -770,22 +770,32 @@ class PFHamiltonianGenerator:
 
         t_det_start = time.time()
         np1 = self.N_p + 1
-        # build the determinant list
+
+        # build the determinant list (for full diagonalization) or determinant tables (for direct) based on CI type
+
+        # cis - currently only full diagonalization available; build all QED-CIS determinants
         if self.ci_level == "cis":
             self.generateCISDeterminants()
             H_dim = self.CISnumDets * np1
             self.H_diag = np.zeros((H_dim))
+
+        # cas - can do full diagonalization of direct
         elif self.ci_level == "cas":
-            if self.test_mode:
+            if self.test_mode: 
+                # Build all QED-CAS determinants
                 self.generateCASCIDeterminants()
                 H_dim = self.CASnumDets * np1
                 self.H_diag2 = np.zeros((H_dim))
 
             if self.full_diagonalization:
+                # Build all QED-CAS determinants
                 self.generateCASCIDeterminants()
                 H_dim = self.CASnumDets * np1
                 self.H_diag = np.zeros((H_dim))
+
+            # direct is default
             else:
+                # build determinant tables but not all determinants
                 self.n_act_a = self.n_act_el // 2  # number of active alpha electrons
                 self.n_in_a = (self.ndocc - self.n_act_a)  # number of inactive alpha electrons
                 self.num_alpha = math.comb(self.n_act_orb, self.n_act_a)  # number of alpha strings
@@ -827,17 +837,24 @@ class PFHamiltonianGenerator:
                 c_s_diag(self.S_diag, self.num_alpha, self.nmo, self.n_act_a, self.n_act_orb, self.n_in_a, shift)
                 num_alpha1 = math.comb(self.n_act_orb, self.n_act_a - 1)  
                 print("mem_D+T", self.num_alpha * num_alpha1 * self.n_act_orb * 8 * 2 / 1024 / 1024) # intermediate in sigma3
+
+        # fci - can do full diagonalization or direct
         elif self.ci_level == "fci":
             if self.test_mode:
+                # build all QED-FCI determiants
                 self.generateFCIDeterminants()
                 H_dim = self.FCInumDets * np1
                 self.H_diag2 = np.zeros((H_dim))
 
             if self.full_diagonalization:
+                # build all QED-FCI determiants
                 self.generateFCIDeterminants()
                 H_dim = self.FCInumDets * np1
                 self.H_diag = np.zeros((H_dim))
+
+            # default is direct
             else:
+                # build determinant tables but not all determinants
                 self.n_act_a = self.ndocc #number of active alpha electrons
                 self.n_in_a = 0 #number of inactive alpha electrons
                 self.n_act_orb = self.nmo #number of active alpha orbitals 
@@ -873,6 +890,7 @@ class PFHamiltonianGenerator:
         t_det_end = time.time()
         print(f" Completed determinant list in {t_det_end - t_det_start} seconds ")
 
+        # if doing full-diagonalization, next step will be to build full Hamiltonian matrix
         if self.ci_level == "cis":
             # build Constant matrices
             self.buildConstantMatrices(self.ci_level)
@@ -894,15 +912,14 @@ class PFHamiltonianGenerator:
                     f" Completed constant offset matrix in {t_const_end - t_det_end} seconds"
                 )
 
-                # Build Matrix
+                # Build full Hamiltonian Matrix
                 self.generatePFHMatrix(self.ci_level)
                 t_H_build = time.time()
                 print(
                     f" Completed Hamiltonian build in {t_H_build - t_const_end} seconds"
                 )
                 self.H_diag2 = np.diag(self.H_PF)
-                # for i in range(self.H_PF.shape[0]):
-                #    print(self.H_diag2[i]-self.H_diag[i])
+
             if self.full_diagonalization:
                 # build Constant matrices
                 self.buildConstantMatrices(self.ci_level)
@@ -920,12 +937,16 @@ class PFHamiltonianGenerator:
             else:
                 # if using iterative solver, pass a small matrix to the solver that doesn't take up too much memory
                 self.H_PF = np.eye(2)
+
         if self.test_mode:
+            # call full diagonalization
             self.CIeigs, self.CIvecs = np.linalg.eigh(self.H_PF)
 
         if self.full_diagonalization:
+            # call full diagonalization
             self.CIeigs, self.CIvecs = np.linalg.eigh(self.H_PF)
 
+        # if doing direct method, call Davidson routine
         else:
             indim = self.davidson_indim * self.davidson_roots
             maxdim = self.davidson_maxdim * self.davidson_roots
@@ -1158,9 +1179,16 @@ class PFHamiltonianGenerator:
 
         """
 
+        # Standard 1-e integrals, kinetic and electron-nuclear attraction
         self.H_1e_ao = self.T_ao + self.V_ao
-        if self.ignore_coupling == False:
+
+        if self.ignore_coupling == False: 
+            # cavity-specific 1-e integrals, including quadrupole and 1-e dipole integrals
+            # note that d_PF_ao is <d_e> \hat{d}_e in the coherent state basis
+            # and       d_PF_ao is d_nuc \hat{d} in the photon number basis
+            # this assignment is taken care of in the parseArrays() method
             self.H_1e_ao += self.q_PF_ao + self.d_PF_ao
+
         # build H_spin
         # spatial part of 1-e integrals
         _H_spin = np.einsum("uj,vi,uv", self.C, self.C, self.H_1e_ao)
@@ -1239,13 +1267,12 @@ class PFHamiltonianGenerator:
         self.Omega_so = self.omega * _I
 
         # these terms are different depending on if we are in coherent state or number basis
-        self.dc_so = self.d_c * _I #<== we have already taken care of differentiating between d_c in lines 1204 and 1211
+        self.dc_so = self.d_c * _I #<== we have already taken care of differentiating between d_c in lines 1117 and 1124
 
-        if self.photon_number_basis: #<== -w/2 * d_N * I; negative sign taken care of at parsing line 1209
-            self.G_exp_so = np.sqrt(self.omega / 2) * self.d_exp * _I
 
-        else:  #<== +w/2 <d_el> * I
-            self.G_exp_so = np.sqrt(self.omega / 2) * self.d_exp * _I
+        #<== G_exp = +w/2 <d_el> * I in the coherent state basis and G_exp = -w/2 * d_N * I in the photon number basis
+        # the negative sign is taken care of in the parsing around line 1119
+        self.G_exp_so = np.sqrt(self.omega / 2) * self.d_exp * _I
 
         if self.ignore_coupling == True:
             self.G_exp_so *= 0
@@ -1405,8 +1432,7 @@ class PFHamiltonianGenerator:
         self.H_PF = np.zeros((2 * _numDets, 2 * _numDets))
         # one-electron version of Hamiltonian
         self.H_1E = np.zeros((2 * _numDets, 2 * _numDets))
-        # self.H_11E = np.zeros((2 * _numDets, 2 * _numDets))
-        # self.H_2E = np.zeros((2 * _numDets, 2 * _numDets))
+
 
         # dipole matrix
         self.dipole_block_x = np.zeros((_numDets, _numDets))
@@ -1436,7 +1462,7 @@ class PFHamiltonianGenerator:
         self.H_PF[:_numDets, :_numDets] = self.ApDmatrix + self.Enuc_so + self.dc_so
         # 1-e piece
         self.H_1E[:_numDets, :_numDets] = self.apdmatrix + self.Enuc_so + self.dc_so
-        # self.H_11E[:_numDets, :_numDets] = self.apdmatrix + self.dc_so
+
 
         # full Hamiltonian
         self.H_PF[_numDets:, _numDets:] = (
@@ -1447,12 +1473,9 @@ class PFHamiltonianGenerator:
         self.H_1E[_numDets:, _numDets:] = (
             self.apdmatrix + self.Enuc_so + self.dc_so + self.Omega_so
         )
-        # self.H_11E[_numDets:, _numDets:] = (
-        #    self.apdmatrix + self.dc_so + self.Omega_so
-        # )
+
         self.H_PF[_numDets:, :_numDets] = self.Gmatrix + self.G_exp_so
         self.H_PF[:_numDets, _numDets:] = self.Gmatrix + self.G_exp_so
-        # self.H_2E = self.H_PF - self.H_1E
 
     def calcApDMatrixElement(self, det1, det2, OneEpTwoE=True):
         """
@@ -1661,11 +1684,6 @@ class PFHamiltonianGenerator:
             H_dim = self.CISnumDets * 2
             t_det_end = time.time()
             print(f" Completed determinant list in {t_det_end - t_det_start} seconds ")
-            # indim = self.davidson_indim * self.davidson_roots
-            # maxdim = self.davidson_maxdim * self.davidson_roots
-            # if (indim > H_dim or maxdim > H_dim):
-            #    print('subspace size is too large, try to set maxdim and indim <',H_dim//self.davidson_roots)
-            #    sys.exit()
 
             # build Constant matrices
             self.buildConstantMatrices("cis")
@@ -1678,11 +1696,7 @@ class PFHamiltonianGenerator:
             self.generatePFHMatrix("cis")
             t_H_build = time.time()
             print(f" Completed Hamiltonian build in {t_H_build - t_const_end} seconds")
-            # dres = self.Davidson(self.H_PF, self.davidson_roots, self.davidson_threshold, indim, maxdim,self.davidson_maxiter)
-            # self.cis_e = dres["DAVIDSON EIGENVALUES"]
-            # self.cis_c = dres["DAVIDSON EIGENVECTORS"]
-            # t_dav_end = time.time()
-            # print(F' Completed Davidson iterations in {t_dav_end - t_H_build} seconds')
+
             self.cis_e, self.cis_c = np.linalg.eigh(self.H_PF)
             self.classifySpinState()
 
@@ -1737,7 +1751,7 @@ class PFHamiltonianGenerator:
         if self.full_diagonalization or self.test_mode or self.ci_level == "cis":
             self.eri_so = np.asarray(mints.mo_spin_eri(self.Ca, self.Ca))
 
-        # self.eri_spatial = np.asarray(mints.mo_eri(self.Ca, self.Ca, self.Ca, self.Ca))
+
         self.twoeint1 = np.asarray(mints.mo_eri(self.Ca, self.Ca, self.Ca, self.Ca))
         t_eri_end = time.time()
         print(f" Completed ERI Build in {t_eri_end - t_1H_end} seconds ")
@@ -1745,7 +1759,7 @@ class PFHamiltonianGenerator:
         # form the 2H in spin orbital basis
         self.build2DSO()
         t_2d_end = time.time()
-        # self.oneeint = self.H_spatial + self.contracted_twoeint
+
         print(psutil.Process().memory_info().rss / (1024 * 1024))
         self.gkl = np.zeros((self.nmo, self.nmo))
         for k in range(self.nmo):
@@ -2052,46 +2066,6 @@ class PFHamiltonianGenerator:
         else:
             return 1
 
-    # def single_replacement_list(self,num_strings,N,n_o,n_in_a,Y):
-    #    '''
-    #        getting the sign, string address and pq for sign(pq)E_pq\ket{I_a}
-    #        N = number of active alpha electrons
-    #        n_o = number of active alpha orbitals
-    #        n_in_a = number of inactive alpha orbitals
-    #        p=particle, q=hole
-    #    '''
-    #    rows, cols = (num_strings*(N*(n_o-N)+N), 4)
-    #    self.num_links = N*(n_o-N)+N
-    #    table = [[0 for i in range(cols)] for j in range(rows)]
-    #    count=0
-    #    for index in range(0,num_strings):
-    #        string = self.index_to_string(index,N,n_o,Y)
-    #        #d = self.string_to_binary(string,n_o)
-    #        #print('single replacement list for binary string',d,'string',string,'index',index)
-    #        occ=[]
-    #        vir=[]
-    #        #print(occ,vir)
-    #        for i in range(n_o):
-    #            if (string &(1<<i)):
-    #                occ.append(i)
-    #            else:
-    #                vir.append(i)
-    #        for i in range(N):
-    #            table[count][0] = index
-    #            table[count][1] = 1
-    #            table[count][2] = occ[i]
-    #            table[count][3] = occ[i]
-    #            count += 1
-    #        for i in range(N):
-    #            for a in range(n_o-N):
-    #                string1 = (string^(1<<occ[i])) | (1<<vir[a])
-    #                #c=string_to_binary(string1,n_o)
-    #                table[count][0] = self.string_to_index(string1,N,n_o,Y)
-    #                table[count][1] = self.phase_single_excitation(vir[a],occ[i],string)
-    #                table[count][2] = vir[a]
-    #                table[count][3] = occ[i]
-    #                count += 1
-    #    return table
 
     def single_replacement_list2(self, num_strings, N, n_o, n_in_a, Y):
         """getting the sign, string address and pq for sign(pq)E_pq\ket{I_a}
