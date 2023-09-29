@@ -109,6 +109,50 @@ def test_h2o_qed_fci_no_cavity():
     assert np.isclose(actual_g, expected_g)
     assert np.isclose(actual_e1, excpected_e1)
 
+def test_mghp_qed_cis_tdm_no_cavity():
+    # options for mgf
+    mol_str = """
+    Mg
+    H 1 2.2
+    symmetry c1
+    1 1
+    """
+
+    options_dict = {
+        "basis": "cc-pVDZ",
+        "scf_type": "pk",
+        "e_convergence": 1e-10,
+        "d_convergence": 1e-10,
+    }
+
+    cavity_dict = {
+        'omega_value' : 0.0,
+        'lambda_vector' : np.array([0, 0, 0]),
+        'ci_level' : 'cis',
+        'davidson_roots' : 8,
+        'davidson_threshold' : 1e-8,
+        'full_diagonalization' : True,
+    }
+
+    mol = psi4.geometry(mol_str)
+
+    psi4.set_options(options_dict)
+
+    expected_e4 = -199.69011028328705
+
+    #energy from psi4numpy
+    expected_mu_04 = np.array([-6.93218490e-16, -1.77990759e-15,  2.33258251e+00])
+    
+
+    test_pf = PFHamiltonianGenerator(
+        mol_str,
+        options_dict,
+        cavity_dict
+    )
+
+    pass
+
+
 
 def test_mghp_qed_cis_no_cavity():
     # options for mgf
@@ -204,6 +248,207 @@ def test_mghp_qed_cis_with_cavity():
     assert np.isclose(actual_g, expected_mghp_g_e)
     assert np.isclose(actual_lp, expected_mghp_lp_e)
     assert np.isclose(actual_up, expected_mghp_up_e)
+
+
+def test_mghp_qed_cis_with_cavity_canonical_mo():
+    # options for mgf
+    mol_str = """
+    Mg
+    H 1 2.2
+    symmetry c1
+    1 1
+    """
+
+    options_dict = {
+        "basis": "cc-pVDZ",
+        "scf_type": "pk",
+        "e_convergence": 1e-10,
+        "d_convergence": 1e-10,
+    }
+
+    cavity_dict = {
+        'omega_value' : 4.75 / psi4.constants.Hartree_energy_in_eV,
+        'lambda_vector' : np.array([0, 0, 0.0125]),
+        'ci_level' : 'cis',
+        'full_diagonalization' : True,
+        'canonical_mos' : True
+    }
+
+    mol = psi4.geometry(mol_str)
+
+    psi4.set_options(options_dict)
+
+    #energy from psi4numpy
+    expected_mghp_g_e = -199.86358254419457
+    expected_mghp_lp_e = -199.69776087489558
+    expected_mghp_up_e = -199.68066502792058
+
+
+    test_pf = PFHamiltonianGenerator(
+        mol_str,
+        options_dict,
+        cavity_dict
+    )
+
+    #e_fci, wavefunctions = np.linalg.eigh(test_pf.H_PF)
+    actual_g = test_pf.CIeigs[0] # <== ground state
+    actual_lp = test_pf.CIeigs[2] # <== root 3 is LP
+    actual_up = test_pf.CIeigs[5] # <== root 6 is UP
+
+    print(actual_g - expected_mghp_g_e)
+    print(actual_lp - expected_mghp_lp_e)
+    print(actual_up - expected_mghp_up_e)
+    pass
+
+def test_lih_direct_qed_fci_with_cavity():
+    """ Test LiH using direct FCI with cavity in coherent state basis compared to 
+        full diagonalization 
+    """
+
+    mol_str = """
+    Li
+    H 1 1.5
+    symmetry c1
+    """
+
+    options_dict = {
+        "basis": "sto-3g",
+        "scf_type": "pk",
+        "e_convergence": 1e-10,
+        "d_convergence": 1e-10,
+    }
+
+    cavity_dict = {
+        'omega_value' : 0.12086,
+        'lambda_vector' : np.array([0, 0, 0.05]),
+        'ci_level' : 'fci',
+        'davidson_roots' : 10,
+        'number_of_photons' : 1
+    }
+    
+    # this is with Np = 6 for full diagonalization
+    # _expected_eigs = np.array([[-7.878802702,  -7.7614561393, -7.75645532,   -7.7361601158,
+    #                            -7.7083528272, -7.7083528272, -7.6868798814, -7.6868798814,
+    #                            -7.6427875594, -7.6372558418]])
+
+    # Np = 1 results
+    _expected_eigs = np.array([-7.878792424,  -7.7601800101, -7.7547250121])
+
+    test_pf = PFHamiltonianGenerator(
+        mol_str,
+        options_dict,
+        cavity_dict
+    )
+
+    assert np.allclose(test_pf.CIeigs[:2], _expected_eigs[:2])
+
+def test_lih_number_basis_direct_qed_fci_with_cavity():
+    """ Test LiH using direct FCI with cavity in photon number basis compared to 
+        full diagonalization 
+            "model": {
+        "method": "qed-fci",
+        "orbital_basis": "sto-3g",
+        "photon_basis": "number_basis",
+        "number_of_photon_states": 10,
+        "lambda": [
+            0.0,
+            0.0,
+            0.05
+        ],
+        "omega": 0.12086
+    """
+
+    mol_str = """
+    Li
+    H 1 1.4
+    symmetry c1
+    """
+
+    options_dict = {
+        "basis": "sto-3g",
+        "scf_type": "pk",
+        "e_convergence": 1e-10,
+        "d_convergence": 1e-10,
+    }
+
+    cavity_dict = {
+        'omega_value' : 0.12086,
+        'lambda_vector' : np.array([0, 0, 0.05]),
+        'ci_level' : 'fci',
+        'davidson_roots' : 10,
+        'number_of_photons' : 10,
+        'photon_number_basis' : True,
+        'canonical_mos' : True,
+        'coherent_state_basis' : False
+    }
+    
+    # this is with Np = 10 for full diagonalization in photon number basis
+    #  "return_result": [
+    #    -7.8749559054562726,
+    #    -7.756654252046298,
+    #    -7.747674819146274,
+    #    -7.729087280855876,
+    #    -7.701685049223775,
+    #    -7.7016850492237685,
+    #    -7.678038607940438
+    #],
+
+    # Np = 10 results
+    _expected_eigs = np.array([-7.8749559054562726,
+        -7.756654252046298,
+        -7.747674819146274,
+        -7.729087280855876,
+        -7.701685049223775,
+        -7.7016850492237685,
+        -7.678038607940438])
+
+    test_pf = PFHamiltonianGenerator(
+        mol_str,
+        options_dict,
+        cavity_dict
+    )
+
+    assert np.allclose(test_pf.CIeigs[:4], _expected_eigs[:4])
+
+def test_lih_direct_qed_cas_with_cavity():
+    """ Test LiH using direct CASCI with cavity compared to 
+        full diagonalization 
+    """
+
+    mol_str = """
+    Li
+    H 1 1.5
+    symmetry c1
+    """
+
+    options_dict = {
+        "basis": "6-311G**",
+        "scf_type": "pk",
+        "e_convergence": 1e-10,
+        "d_convergence": 1e-10,
+    }
+
+    cavity_dict = {
+        'omega_value' : 0.12086,
+        'lambda_vector' : np.array([0, 0, 0.01]),
+        'ci_level' : 'cas',
+        'nact_orbs' : 6, 
+        'nact_els' : 4,
+        'davidson_roots' : 10,
+        'number_of_photons' : 1
+    }
+    
+    _expected_eigs = np.array([-7.9848177366, -7.8640432702, -7.8443027321, -7.8351500625, -7.7967681454,
+            -7.7967681454, -7.790848489,  -7.790848489,  -7.7563223937, -7.7437841386])
+
+
+    test_pf = PFHamiltonianGenerator(
+        mol_str,
+        options_dict,
+        cavity_dict
+    )
+
+    assert np.allclose(test_pf.CIeigs[:10], _expected_eigs)
 
 def test_build_1rdm():
 

@@ -22,3 +22,6 @@ The generation of determinant lists has been broken up into two methods based on
   - [ ] Unit tests for things like the trace of the 1RDMs and the 1e energy should be added sooner than later
 
 
+## Compile c shared library
+- gcc -fPIC -lm -Wall -fopenmp -pedantic -c -O3 cfunctions.c
+- gcc -shared -lgomp -o cfunctions.so cfunctions.o
