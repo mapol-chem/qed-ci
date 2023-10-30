@@ -1,5 +1,9 @@
 #include <stdint.h>
 #include <stdbool.h>
+typedef void (*callback_)(double* h1e, double* h2e, double* d_cmo, double* c_vectors, double *c1_vectors, 
+		 int* table,int* table1, int* table_creation, int* table_annihilation, int N_ac, int n_o_ac, int n_o_in, int nmo, 
+		 int num_state, int N_p, double Enuc, double dc, double omega, double d_exp, bool break_degeneracy);
+
 
 //int *Y;
 //int *table;
@@ -29,4 +33,13 @@ void build_sigma(double* h1e, double* h2e, double* d_cmo, double* c_vectors, dou
 void build_b_array(int* table, int* b_matrix, int num_alpha, int num_links, int nmo);
 
 void build_S_diag(double* S_diag, int num_alpha, int nmo, int N_ac,int n_o_ac,int n_o_in, double shift);
+void gram_schmidt_orthogonalization(double* Q, int rows, int cols);
+void gram_schmidt_add(double* Q, int rows, int cols, int rows2);
+void davidson(double* h1e, double* h2e, double* d_cmo, double* Hdiag, double* eigenvals, double* eigenvecs, int* table, int* table1, 
+		int* table_creation, int* table_annihilation, int *constint, double *constdouble, callback_ build_sigma);
+void get_roots(double* h1e, double* h2e, double* d_cmo, double* Hdiag, double* eigenvals, double* eigenvecs, int* table, int* table1, 
+		int* table_creation, int* table_annihilation, int *constint, double *constdouble);
+void symmetric_eigenvalue_problem(double* A, int N, double* eig);
+void getMemory2(unsigned long* currRealMem, unsigned long* peakRealMem, unsigned long* currVirtMem, unsigned long* peakVirtMem);
+
 

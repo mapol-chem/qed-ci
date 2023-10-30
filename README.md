@@ -23,5 +23,6 @@ The generation of determinant lists has been broken up into two methods based on
 
 
 ## Compile c shared library
-- gcc -fPIC -lm -Wall -fopenmp -pedantic -c -O3 cfunctions.c
-- gcc -shared -lgomp -o cfunctions.so cfunctions.o
+Intel compiler is required for the use of LAPACKE library
+- icx -fPIC -Wall -Wextra -qopenmp -c cfunctions.c  
+- icx -shared -o cfunctions.so cfunctions.o 

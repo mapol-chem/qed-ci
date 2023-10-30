@@ -6,7 +6,10 @@
 #include <cblas.h>
 #include<omp.h>
 #include<time.h>
+#include "mkl_lapacke.h"
+
 #define MIN(x, y) (((x) < (y)) ? (x) : (y))
+#define BIGNUM 1E100
 
 
 void matrix_product(double* A, double* B, double* C, int m, int n, int k) {
@@ -1033,6 +1036,263 @@ void constant_terms_contraction(double* c_vectors,double* c1_vectors,int num_alp
      }
 }
 
+void symmetric_eigenvalue_problem(double* A, int N, double* eig) {
+    MKL_INT n = N, lda = N, info;	
+    //double w[N];
+    
+    /* Solve eigenproblem */
+    info = LAPACKE_dsyev( LAPACK_ROW_MAJOR, 'V', 'U', n, A, lda, eig);
+    /* Check for convergence */
+    if( info > 0 ) {
+            printf( "The algorithm failed to compute eigenvalues.\n" );
+            exit( 1 );
+    }
+    
+
+
+    //stable selection sort
+    double* evrp = (double*) malloc(N*sizeof(double));
+    memset(evrp, 0, N*sizeof(double));
+ 
+    size_t i, j, jmin;
+
+    for (j = 0; j < N-1; j++) {
+        jmin = j;
+        // find index of minimum eigenvalue from j to n
+        for (i = j+1; i < N; i++) {
+            if (eig[jmin] > eig[i] ) {
+                jmin = i;
+            }
+        }
+        //save current eigenvalue and eigenvectors associated with index jmin
+        double eigr = eig[jmin];
+        for (i = 0; i < N; i++) {
+            evrp[i] = A[i * N + jmin];
+        }
+        //shift values
+        while (jmin > j) {
+            eig[jmin] = eig[jmin-1];
+            for (i = 0; i < N; i++) {
+                A[i * N + jmin] = A[i * N + jmin-1];
+            }
+            jmin--;
+        }
+        eig[j] = eigr;
+        for (i = 0; i < N; i++) {
+            A[i * N + j] = evrp[i];
+        }
+     }
+
+
+    free(evrp);
+}
+void get_roots(double* h1e, double* h2e, double* d_cmo, double* Hdiag, double* eigenvals, double* eigenvecs, int* table,int* table1, int* table_creation,
+	       	int* table_annihilation, int *constint, double *constdouble) {
+  
+    callback_ test_fn = &build_sigma;
+    double itime, ftime, exec_time;
+    itime = omp_get_wtime();
+
+
+    davidson(h1e, h2e, d_cmo, Hdiag, eigenvals, eigenvecs, table, table1, 
+		    table_creation, table_annihilation, constint, constdouble, test_fn);
+    ftime = omp_get_wtime();
+    exec_time = ftime - itime;
+    printf("Complete Davidson in %f seconds\n", exec_time);
+
+}
+
+void davidson(double* h1e, double* h2e, double* d_cmo, double* Hdiag, double* eigenvals, double* eigenvecs, int* table, int* table1, 
+		int* table_creation, int* table_annihilation, int *constint, double *constdouble, callback_ build_sigma_3) {
+    //unpack constant
+
+    int N_ac = constint[0]; 
+    int n_o_ac = constint[1]; 
+    int n_o_in = constint[2]; 
+    int nmo = constint[3];    
+    int N_p = constint[4];   
+    int indim = constint[5];         
+    int maxdim = constint[6];
+    int nroots = constint[7];
+    int maxiter = constint[8];
+    
+    double Enuc = constdouble[0]; 
+    double dc = constdouble[1]; 
+    double omega = constdouble[2]; 
+    double d_exp = constdouble[3];
+    double threshold = constdouble[4];
+
+    
+    int num_alpha = binomialCoeff(n_o_ac, N_ac);
+    size_t H_dim = (N_p + 1) * num_alpha * num_alpha;
+    
+    double* Hdiag2 = (double*)malloc(H_dim*sizeof(double));
+    cblas_dcopy(H_dim,Hdiag,1,Hdiag2,1);
+    double* Q = (double*) malloc(maxdim*H_dim*sizeof(double));
+    memset(Q, 0, maxdim*H_dim*sizeof(double));
+    double* S = (double*) malloc(maxdim*H_dim*sizeof(double));
+
+    double* w = (double*) malloc(nroots*H_dim*sizeof(double));
+    int* unconverged_idx = (int*) malloc(nroots*sizeof(int));
+    bool* convergence_check = (bool*) malloc(nroots*sizeof(bool));
+    double* theta = (double*) malloc(maxdim*sizeof(double));
+    memset(theta, 0, maxdim*sizeof(double));
+        
+    double minimum = 0.0;
+    int min_pos;
+    //use unit vectors as guess
+    for (int i = 0; i < indim; i++) {
+        minimum = Hdiag2[0];
+        min_pos = 0;
+        for (int j = 1; j < H_dim; j++){
+            if (Hdiag2[j] < minimum) {
+                minimum = Hdiag2[j];
+                min_pos = j;
+            }
+        }
+        Q[i * H_dim + min_pos] = 1.0;
+        Hdiag2[min_pos] = BIGNUM;
+       // lambda_oldp[i] = minimum;
+    }
+    free(Hdiag2);
+    int L = indim;
+    int Lmax = maxdim;
+    //int rows = num_alpha * (N_ac * (n_o_ac - N_ac) + N_ac + n_o_in);
+    //int num_links = rows/num_alpha;
+    //maxiter = 5; 
+    for (int a = 0; a < maxiter; a++) {
+        printf("\n"); 
+                
+        printf("ITERATION%4d subspace size%4d\n", a+1, L);
+        bool break_degeneracy = false;         
+        memset(S, 0, maxdim*H_dim*sizeof(double));
+        
+	double itime, ftime, exec_time;
+        itime = omp_get_wtime();
+
+        build_sigma_3(h1e, h2e, d_cmo, Q, S, table, table1, table_creation, table_annihilation, 
+                        N_ac, n_o_ac, n_o_in, nmo, L, N_p, Enuc, dc, omega, d_exp, break_degeneracy); 
+
+        ftime = omp_get_wtime();
+        exec_time = ftime - itime;
+        printf("build sigma took %f seconds to execute \n", exec_time);
+        double* G = (double*) malloc(L*L*sizeof(double));
+        memset(G, 0, L*L*sizeof(double));
+
+  
+        
+        cblas_dgemm(CblasRowMajor, CblasNoTrans, CblasTrans, L, L, H_dim, 1.0, S, H_dim, Q, H_dim, 0.0, G, L);
+        symmetric_eigenvalue_problem(G, L, theta);
+        
+        memset(w, 0, nroots*H_dim*sizeof(double));
+     
+	
+        cblas_dgemm(CblasRowMajor, CblasTrans, CblasNoTrans, nroots, H_dim, L, 1.0, G, L, S, H_dim, 0.0, w, H_dim);
+        for (int i = 0; i < nroots; i++) {
+            cblas_dgemv(CblasRowMajor, CblasTrans, L, H_dim, -theta[i], Q, H_dim, G+i, L, 1.0, w + i * H_dim, 1);
+	}
+        memset(unconverged_idx, 0, nroots*sizeof(int));
+        memset(convergence_check, 0, nroots*sizeof(bool));
+        unsigned long currRealMem, peakRealMem, currVirtMem, peakVirtMem;
+        getMemory2(&currRealMem, &peakRealMem, &currVirtMem, &peakVirtMem);
+
+
+
+        printf("  ROOT      RESIDUAL NORM        EIGENVALUE      CONVERGENCE\n");
+	int unconv = 0;
+        for (int i = 0; i < nroots; i++) {
+            double dotval = cblas_ddot(H_dim, w+i*H_dim, 1, w+i*H_dim, 1);
+            double residual_norm = sqrt(dotval);
+            if (residual_norm < threshold) {
+                convergence_check[i] = true;
+	    }
+	    else {
+                unconverged_idx[unconv] = i;
+                convergence_check[i] = false;
+                unconv += 1;
+	    }
+
+            printf("%4d %20.12lf %20.12lf      %s\n",i, residual_norm, theta[i], convergence_check[i]?"true":"false");
+        }
+    	fflush(stdout);
+	if (unconv == 0) {
+            cblas_dgemm(CblasRowMajor, CblasTrans, CblasNoTrans, nroots, H_dim, L, 1.0, G, L, Q, H_dim, 0.0, eigenvecs, H_dim);
+            cblas_dcopy(nroots, theta, 1, eigenvals, 1);
+	    printf("converged\n");
+	    break;
+	}
+	if ((a==maxiter-1) && (unconv > 0)) {
+	    printf("maximum iteration reaches!\n");
+	    break;
+	}
+	if (unconv > 0) {
+	    printf("unconverged roots\n");
+            for (int i = 0; i < unconv; i++) {
+	    	printf("%4d", unconverged_idx[i]);
+	    }
+	    printf("\n");
+	}
+        //precondition
+	double* w2 = (double*) malloc(unconv*H_dim*sizeof(double));
+        memset(w2, 0, unconv*H_dim*sizeof(double));
+
+	for (int i = 0; i < unconv; i++) {
+            for (int j = 0; j < H_dim; j++) {
+                for (int k = 0; k < L; k++) {
+                    double dum = theta[unconverged_idx[i]] - Hdiag[j];
+                    if (fabs(dum) >1e-16) {
+		        w2[i * H_dim + j] = w[unconverged_idx[i] * H_dim + j]/dum;
+		    }
+		    else {
+			w2[i * H_dim + j] = 0.0;
+		    }
+                }
+            }
+        }
+	
+        if (Lmax-L < unconv) {
+           printf("maximum subspace reaches, restart!\n");		
+           memset(w, 0, nroots*H_dim*sizeof(double));
+           cblas_dgemm(CblasRowMajor, CblasTrans, CblasNoTrans, nroots, H_dim, L, 1.0, G, L, Q, H_dim, 0.0, w, H_dim);
+           memset(Q, 0, maxdim*H_dim*sizeof(double));
+
+           for (int i = 0; i < nroots; i++) {
+               cblas_dcopy(H_dim, w+i*H_dim, 1, Q+i*H_dim, 1);
+	   }
+
+           for (int i = 0; i < unconv; i++) {
+               cblas_dcopy(H_dim, w2+i*H_dim, 1, Q+(i+nroots)*H_dim, 1);
+	   }
+           gram_schmidt_orthogonalization(Q, nroots+unconv, H_dim);
+	   L = nroots + unconv; 
+	}
+	else {
+           for (int i = 0; i < unconv; i++) {
+               cblas_dcopy(H_dim, w2+i*H_dim, 1, Q+(i+L)*H_dim, 1);
+	   }
+           gram_schmidt_add(Q, L, H_dim, unconv);
+           L += unconv;	   
+	}
+
+
+
+
+        free(G);
+        free(w2);
+        printf("\n"); 
+    }
+    free(Q);
+    free(S);
+    free(theta);
+    free(w);
+    free(unconverged_idx);
+    free(convergence_check);
+    
+
+
+}
+
+
 
 void build_b_array(int* table1, int* b_array, int num_alpha, int num_links, int n_o_ac) {
     for (int index_ib = 0; index_ib < num_alpha; index_ib++) {
@@ -1088,7 +1348,7 @@ void build_S_diag(double* S_diag, int num_alpha, int nmo, int N_ac,int n_o_ac,in
     get_graph(N_ac,n_o_ac,Y);
 
   
-     //#pragma omp parallel for num_threads(16)
+    #pragma omp parallel for num_threads(16)
     for (size_t Idet = 0; Idet < num_dets; Idet++) {
         int index_b = Idet%num_alpha;
         int index_a = (Idet-index_b)/num_alpha;
@@ -1199,3 +1459,109 @@ void build_sigma_s_square(double* c_vectors, double *c1_vectors, double* S_diag,
 	}
     }
 }
+void gram_schmidt_orthogonalization(double* Q, int rows, int cols) {
+    double dotval, normval;
+    int k, i, rI;
+    int L = 0;
+    for (k = 0; k < rows; k++) {
+        if (L>0) {
+           // Q->print();
+            for (i = 0; i < L; i++) {
+                dotval = cblas_ddot(cols, &Q[i*cols], 1, &Q[k*cols], 1);
+                for (rI = 0; rI < cols; rI++) Q[k * cols + rI] -= dotval * Q[i * cols + rI];
+            }
+            //reorthogonalization
+            for (i = 0; i < L; i++) {
+                dotval = cblas_ddot(cols, &Q[i*cols], 1, &Q[k*cols], 1);
+                for (rI = 0; rI < cols; rI++) Q[k * cols + rI] -= dotval * Q[i * cols + rI];
+            }
+        }
+        normval = cblas_ddot(cols, &Q[k*cols], 1, &Q[k*cols], 1);
+        normval = sqrt(normval);
+        //outfile->Printf("trial vector norm%30.18lf\n",normval);
+        if (normval > 1e-20) {
+            for (rI = 0; rI < cols; rI++) {
+                Q[L * cols + rI] = Q[k * cols + rI] / normval;
+            }
+            L++;
+            //outfile->Printf("check orthogonality1\n");
+            ////for (int i = 0; i < L; i++) {
+            ////    for (int j = 0; j < L; j++) {
+            ////        double a = cblas_ddot(cols, &Q[i*cols], 1, &Q[j*cols], 1);
+            ////        //outfile->Printf("%d %d %30.16lf",i,j,a);
+            ////        if ((i!=j) && (fabs(a)>1e-12)) printf(" detect linear dependency\n");
+            ////        //outfile->Printf("\n");
+            ////    }
+            ////}
+        }
+    }
+}
+
+
+
+void gram_schmidt_add(double* Q, int rows, int cols, int rows2) {
+
+    double dotval, normval;
+    int k,i, rI;
+    for (k = rows; k < rows + rows2; k++) {
+        for (i = 0; i < k; i++) {
+            dotval = cblas_ddot(cols, &Q[i*cols], 1, &Q[k*cols], 1);
+            for (rI = 0; rI < cols; rI++) Q[k * cols + rI] -= dotval * Q[i * cols + rI];
+        }
+        //reorthogonalization
+        for (i = 0; i < k; i++) {
+            dotval = cblas_ddot(cols, &Q[i*cols], 1, &Q[k*cols], 1);
+            for (rI = 0; rI < cols; rI++) Q[k * cols + rI] -= dotval * Q[i * cols + rI];
+        }
+        normval = cblas_ddot(cols, &Q[k*cols], 1, &Q[k*cols], 1);
+        normval = sqrt(normval);
+        //outfile->Printf("trial vector norm2%30.18lf\n",normval);
+        if (normval > 1e-20) {
+            //printf("normval%20.12lf\n",normval);
+            for (rI = 0; rI < cols; rI++) {
+                Q[k * cols + rI] = Q[k * cols + rI] / normval;
+            }
+            //outfile->Printf("check orthogonality2\n");
+            ////for (int i = 0; i < L; i++) {
+            ////    for (int j = 0; j < L; j++) {
+            ////        double a = cblas_ddot(N, Q[i], 1, Q[j], 1);
+            ////        //outfile->Printf("%d %d %30.16lf",i,j,a);
+            ////        if (i!=j && fabs(a)>1e-12) outfile->Printf(" detect linear dependency\n");
+            ////        //outfile->Printf("\n");
+            ////    }
+            ////}
+        }
+    }
+
+}
+void getMemory2(
+   unsigned long* currRealMem, unsigned long*  peakRealMem,
+   unsigned long* currVirtMem, unsigned long*  peakVirtMem) {
+
+    // stores each word in status file
+    char buffer[1024] = "";
+
+    // linux file contains this-process info
+    FILE* file = fopen("/proc/self/status", "r");
+
+    // read the entire file
+    while (fscanf(file, " %1023s", buffer) == 1) {
+
+        if (strcmp(buffer, "VmRSS:") == 0) {
+            fscanf(file, " %ld", currRealMem);
+        }
+        if (strcmp(buffer, "VmHWM:") == 0) {
+            fscanf(file, " %ld", peakRealMem);
+        }
+        if (strcmp(buffer, "VmSize:") == 0) {
+            fscanf(file, " %ld", currVirtMem);
+        }
+        if (strcmp(buffer, "VmPeak:") == 0) {
+            fscanf(file, " %ld", peakVirtMem);
+        }
+    }
+    fclose(file);
+    printf("resident%20.12lf peak resident%20.12lf\n",(double)*currRealMem/1024.0/1024.0,(double)*peakRealMem/1024.0/1024.0);
+
+}
+

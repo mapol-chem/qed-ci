@@ -92,6 +92,21 @@ cfunctions.build_sigma.argtypes = [
     ctypes.c_bool,
 ]
 
+cfunctions.get_roots.argtypes = [
+        np.ctypeslib.ndpointer(ctypes.c_double, ndim=2, flags='C_CONTIGUOUS'),
+        np.ctypeslib.ndpointer(ctypes.c_double, ndim=2, flags='C_CONTIGUOUS'),
+        np.ctypeslib.ndpointer(ctypes.c_double, ndim=2, flags='C_CONTIGUOUS'),
+        np.ctypeslib.ndpointer(ctypes.c_double, ndim=1, flags='C_CONTIGUOUS'),
+        np.ctypeslib.ndpointer(ctypes.c_double, ndim=1, flags='C_CONTIGUOUS'),
+        np.ctypeslib.ndpointer(ctypes.c_double, ndim=2, flags='C_CONTIGUOUS'),
+        np.ctypeslib.ndpointer(ctypes.c_int32,  ndim=1, flags='C_CONTIGUOUS'),
+        np.ctypeslib.ndpointer(ctypes.c_int32,  ndim=1, flags='C_CONTIGUOUS'),
+        np.ctypeslib.ndpointer(ctypes.c_int32,  ndim=1, flags='C_CONTIGUOUS'),
+        np.ctypeslib.ndpointer(ctypes.c_int32,  ndim=1, flags='C_CONTIGUOUS'),
+        np.ctypeslib.ndpointer(ctypes.c_int32,  ndim=1, flags='C_CONTIGUOUS'),
+        np.ctypeslib.ndpointer(ctypes.c_double, ndim=1, flags='C_CONTIGUOUS')]
+
+
 cfunctions.build_sigma_s_square.argtypes = [
         np.ctypeslib.ndpointer(ctypes.c_double, ndim=2, flags='C_CONTIGUOUS'),
         np.ctypeslib.ndpointer(ctypes.c_double, ndim=2, flags='C_CONTIGUOUS'),
@@ -211,6 +226,12 @@ def c_sigma_s_square(c_vectors, c1_vectors, S_diag, b_array, table1, num_links, 
 
 def c_s_diag(S_diag, num_alpha, nmo, N, n_o, n_in_a, shift):
     cfunctions.build_S_diag(S_diag, num_alpha, nmo, N, n_o, n_in_a, shift)
+
+def c_get_roots(h1e, h2e, d_cmo, Hdiag, eigenvals, eigenvecs, table, table1, table_creation, table_annihilation, 
+        constint, constdouble):
+    cfunctions.get_roots(h1e, h2e, d_cmo, Hdiag, eigenvals, eigenvecs, table, table1, table_creation, table_annihilation, 
+                        constint, constdouble)
+
 
 
 def compute_excitation_level(ket, ndocc):
@@ -889,7 +910,7 @@ class PFHamiltonianGenerator:
 
 
         t_det_end = time.time()
-        print(f" Completed determinant list in {t_det_end - t_det_start} seconds ")
+        print(f" Completed determinant list in {t_det_end - t_det_start} seconds ", flush = True)
 
         # if doing full-diagonalization, next step will be to build full Hamiltonian matrix
         if self.ci_level == "cis":
@@ -958,20 +979,105 @@ class PFHamiltonianGenerator:
                 )
                 sys.exit()
             t_H_build = time.time()
+            print('memory required for sigma and CI vectors',maxdim*H_dim*8*2/1024/1024,flush = True)
 
             print(psutil.Process().memory_info().rss / (1024 * 1024))
-            dres = self.Davidson(
-                self.H_PF,
-                self.davidson_roots,
-                self.davidson_threshold,
-                indim,
-                maxdim,
-                self.davidson_maxiter,
-                self.build_sigma,
-                self.H_diag,
-            )
-            self.CIeigs = dres["DAVIDSON EIGENVALUES"]
-            self.CIvecs = dres["DAVIDSON EIGENVECTORS"]
+            if self.ci_level == "cas" or self.ci_level == "fci":
+                sys.stderr.flush()
+                self.constint = np.zeros(9, dtype = np.int32)
+                self.constint[0] = self.n_act_a
+                self.constint[1] = self.n_act_orb
+                self.constint[2] = self.n_in_a
+                self.constint[3] = self.nmo   
+                self.constint[4] = self.N_p   
+                self.constint[5] = indim
+                self.constint[6] = maxdim
+                self.constint[7] = self.davidson_roots
+                self.constint[8] = self.davidson_maxiter
+                self.constdouble = np.zeros(5)
+                self.constdouble[0] = self.Enuc
+                self.constdouble[1] = self.d_c
+                self.constdouble[2] = self.omega
+                self.constdouble[3] = self.d_exp
+                self.constdouble[4] = self.davidson_threshold
+
+                eigenvals = np.zeros((self.davidson_roots))
+                eigenvecs = np.zeros((self.davidson_roots, H_dim))
+                #dres = self.Davidson(self.H_PF, self.davidson_roots, self.davidson_threshold, indim, maxdim,self.davidson_maxiter,self.build_sigma,self.H_diag)
+                c_get_roots(self.gkl, self.twoeint, self.d_cmo, self.H_diag, eigenvals, eigenvecs, self.table, self.table1, self.table_creation, self.table_annihilation, 
+                    self.constint, self.constdouble)
+                
+                self.CIeigs = eigenvals 
+                self.CIvecs = eigenvecs 
+
+                print("\nACTIVE PART OF DETERMINANTS THAT HAVE THE MOST IMPORTANT CONTRIBUTIONS")
+                Y = np.zeros(self.n_act_a*(self.n_act_orb-self.n_act_a+1)*3,dtype=np.int32)
+                c_graph(self.n_act_a, self.n_act_orb, Y);
+                np1 = self.N_p + 1 
+                singlet_count = 0
+                triplet_count = 0
+                for i in range(eigenvecs.shape[0]):
+                    total_spin = self.check_total_spin(eigenvecs[i:(i+1),:])
+                    print("state",i, "energy =",eigenvals[i], "<S^2>=", total_spin, end ="")
+                    if np.abs(total_spin) <1e-5:
+                        singlet_count +=1
+                        print("\tsinglet", singlet_count)
+                    elif np.abs(total_spin-2.0) <1e-5: 
+                        triplet_count +=1
+                        print("\ttriplet", triplet_count) 
+                    elif np.abs(total_spin-6.0) <1e-5: print("\tquintet") 
+
+
+
+                    #print("state",i, "energy =",theta[i])
+                    print("        amplitude","      position", "         most important determinants","             number of photon")
+                    index=np.argsort(np.abs(eigenvecs[i,:]))
+                    #print(index)
+                    Idet0 = index[eigenvecs.shape[1]-1]%self.num_det #determinant index of most significant contribution
+                    photon_p0 = (index[eigenvecs.shape[1]-1]-Idet0)//self.num_det # photon number block of determinant
+                    Ib0= Idet0%self.num_alpha
+                    Ia0= Idet0//self.num_alpha
+                    a0 = c_index_to_string(Ia0,self.n_act_a,self.n_act_orb,Y);
+                    b0 = c_index_to_string(Ib0,self.n_act_a,self.n_act_orb,Y);
+
+                    alphalist = Determinant.obtBits2ObtIndexList(a0)
+                    betalist = Determinant.obtBits2ObtIndexList(b0)
+                    for j in range(min(H_dim,10)):
+                        Idet = index[eigenvecs.shape[1]-j-1]%self.num_det
+                        photon_p = (index[eigenvecs.shape[1]-j-1]-Idet)//self.num_det
+                        Ib= Idet%self.num_alpha
+                        Ia= Idet//self.num_alpha
+                        a = c_index_to_string(Ia,self.n_act_a,self.n_act_orb,Y);
+                        b = c_index_to_string(Ib,self.n_act_a,self.n_act_orb,Y);
+
+
+                     
+                        alphalist = Determinant.obtBits2ObtIndexList(a)
+                        betalist = Determinant.obtBits2ObtIndexList(b)
+ 
+                        inactive_list = list(x for x in range(self.n_in_a))
+                        alphalist2 = [x + self.n_in_a for x in alphalist]
+                        #alphalist2[0:0] = inactive_list
+                        betalist2 = [x + self.n_in_a for x in betalist]
+                        #betalist2[0:0] = inactive_list
+
+                        print("%20.12lf"%(eigenvecs[i][index[eigenvecs.shape[1]-j-1]]),"%9.3d"%(index[eigenvecs.shape[1]-j-1]),
+                        "alpha",alphalist2,"   beta",betalist2,"%4.1d"%(photon_p), "photon")
+                
+        
+
+
+            elif self.ci_level == "cis":
+                dres = self.Davidson(self.H_PF, self.davidson_roots, self.davidson_threshold, indim, maxdim,self.davidson_maxiter,self.build_sigma,self.H_diag)
+                self.CIeigs = dres["DAVIDSON EIGENVALUES"]
+                self.CIvecs = dres["DAVIDSON EIGENVECTORS"]
+ 
+
+
+
+
+
+
             t_dav_end = time.time()
             print(f" Completed Davidson iterations in {t_dav_end - t_H_build} seconds")
 
@@ -1225,6 +1331,7 @@ class PFHamiltonianGenerator:
         # self.d_spatial = np.einsum("ij,kl->ijkl", _d_spin, _d_spin)
         self.twoeint = self.twoeint1 + np.einsum("ij,kl->ijkl", self.d_cmo, self.d_cmo)
         self.twoeint1 = None
+        del(self.twoeint1)
         # self.contracted_twoeint = -0.5 * np.einsum("illj->ij", self.twoeint)
         self.twoeint = np.reshape(
             self.twoeint, (self.nmo * self.nmo, self.nmo * self.nmo)
@@ -2771,16 +2878,16 @@ class PFHamiltonianGenerator:
             )
             if Lmax - L < len(unconverged_idx):
                 t_collapsing_begin = time.time()
-                unconverged_w = np.zeros((len(unconverged_idx), H_dim))
+                #unconverged_w = np.zeros((len(unconverged_idx), H_dim))
                 Q = np.dot(alpha.T, Q)
 
-                for i in range(len(unconverged_idx)):
-                    unconverged_w[i, :] = w[unconverged_idx[i], :]
+                #for i in range(len(unconverged_idx)):
+                #    unconverged_w[i, :] = w[unconverged_idx[i], :]
 
                 # Q=np.append(Q,unconverged_w)
                 # print(Q)
                 # print(unconverged_w)
-                Q = np.concatenate((Q, unconverged_w), axis=0)
+                Q = np.concatenate((Q, preconditioned_w), axis=0)
                 print(Q.shape)
                 # Q=np.column_stack(Qtup)
 
