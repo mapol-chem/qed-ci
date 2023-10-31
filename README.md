@@ -1,4 +1,4 @@
-# An efficient reference implementation of QED-CASCI utilizing the psi4numpy framework.
+# An efficient reference implementation of QED-CASCI and QED-FCI utilizing the psi4numpy framework.
 
 *Note:* A working installation of the [psi4 quantum chemistry package](https://psicode.org/psi4manual/master/build_obtaining.html) is needed to interface with this implementation.
 
