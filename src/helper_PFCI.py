@@ -1217,6 +1217,9 @@ class PFHamiltonianGenerator:
                 self.H_PF[bra_s:bra_e, ket_s:ket_e] = (
                     self.ApDmatrix + self.Enuc_so + self.dc_so + i * self.Omega_so
                 )
+                self.MU_X[bra_s:bra_e, ket_s:ket_e] = self.dipole_block_x
+                self.MU_Y[bra_s:bra_e, ket_s:ket_e] = self.dipole_block_y
+                self.MU_Z[bra_s:bra_e, ket_s:ket_e] = self.dipole_block_z
 
             for i in range(self.N_p + 1):
                 if i == 0:
@@ -2146,15 +2149,15 @@ class PFHamiltonianGenerator:
                 "             number of photon",
             )
             index = np.argsort(np.abs(Q[:, i]))
-            c0 = index[Q.shape[0] - 1] % (H_dim // 2)
-            d0 = (index[Q.shape[0] - 1] - c0) // (H_dim // 2)
+            c0 = index[Q.shape[0] - 1] % (H_dim // (self.N_p + 1) )
+            d0 = (index[Q.shape[0] - 1] - c0) // (H_dim // (self.N_p + 1) )
             a0, b0 = self.detmap[c0]
             alphalist = Determinant.obtBits2ObtIndexList(a0)
             betalist = Determinant.obtBits2ObtIndexList(b0)
             singlet = 1
             for j in range(min(H_dim, 10)):
-                c = index[Q.shape[0] - j - 1] % (H_dim // 2)
-                d = (index[Q.shape[0] - j - 1] - c) // (H_dim // 2)
+                c = index[Q.shape[0] - j - 1] % (H_dim // (self.N_p + 1))
+                d = (index[Q.shape[0] - j - 1] - c) // (H_dim // (self.N_p + 1))
                 a, b = self.detmap[c]
                 if (
                     a == b0
