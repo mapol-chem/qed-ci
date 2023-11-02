@@ -106,6 +106,19 @@ cfunctions.get_roots.argtypes = [
         np.ctypeslib.ndpointer(ctypes.c_int32,  ndim=1, flags='C_CONTIGUOUS'),
         np.ctypeslib.ndpointer(ctypes.c_double, ndim=1, flags='C_CONTIGUOUS')]
 
+cfunctions.one_electron_properties.argtypes = [
+        np.ctypeslib.ndpointer(ctypes.c_double, ndim=2, flags='C_CONTIGUOUS'),
+        np.ctypeslib.ndpointer(ctypes.c_double, ndim=2, flags='C_CONTIGUOUS'),
+        np.ctypeslib.ndpointer(ctypes.c_int32,  ndim=1, flags='C_CONTIGUOUS'),
+        ctypes.c_int32,
+        ctypes.c_int32,
+        ctypes.c_int32,
+        ctypes.c_int32,
+        ctypes.c_int32,
+        ctypes.c_int32,
+        ctypes.c_int32]
+
+
 
 cfunctions.build_sigma_s_square.argtypes = [
         np.ctypeslib.ndpointer(ctypes.c_double, ndim=2, flags='C_CONTIGUOUS'),
@@ -231,6 +244,9 @@ def c_get_roots(h1e, h2e, d_cmo, Hdiag, eigenvals, eigenvecs, table, table1, tab
         constint, constdouble):
     cfunctions.get_roots(h1e, h2e, d_cmo, Hdiag, eigenvals, eigenvecs, table, table1, table_creation, table_annihilation, 
                         constint, constdouble)
+
+def c_one_electron_properties(h1e, eigvec, table, N_ac, n_o_ac, n_o_in, nmo, num_photon, state_p1, state_p2):
+    cfunctions.one_electron_properties(h1e, eigvec, table, N_ac, n_o_ac, n_o_in, nmo, num_photon, state_p1, state_p2) 
 
 
 
@@ -1064,6 +1080,11 @@ class PFHamiltonianGenerator:
                         print("%20.12lf"%(eigenvecs[i][index[eigenvecs.shape[1]-j-1]]),"%9.3d"%(index[eigenvecs.shape[1]-j-1]),
                         "alpha",alphalist2,"   beta",betalist2,"%4.1d"%(photon_p), "photon")
                 
+                for i in range(self.davidson_roots):
+                    for j in range(i, self.davidson_roots):
+                        c_one_electron_properties(self.H_spatial2, eigenvecs, self.table, self.n_act_a, self.n_act_orb, self.n_in_a, self.nmo, np1, i, j)
+
+               
         
 
 

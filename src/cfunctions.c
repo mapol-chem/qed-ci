@@ -1222,7 +1222,9 @@ void davidson(double* h1e, double* h2e, double* d_cmo, double* Hdiag, double* ei
 	    break;
 	}
 	if ((a==maxiter-1) && (unconv > 0)) {
-	    printf("maximum iteration reaches!\n");
+	    printf("Maximum iteration reaches. Please increase maxiter!\n");
+            cblas_dgemm(CblasRowMajor, CblasTrans, CblasNoTrans, nroots, H_dim, L, 1.0, G, L, Q, H_dim, 0.0, eigenvecs, H_dim);
+	    cblas_dcopy(nroots, theta, 1, eigenvals, 1);
 	    break;
 	}
 	if (unconv > 0) {
@@ -1292,6 +1294,65 @@ void davidson(double* h1e, double* h2e, double* d_cmo, double* Hdiag, double* ei
 
 }
 
+void one_electron_properties(double* h1e, double* eigvec, int* table, int N_ac, int n_o_ac, int n_o_in, int nmo, int num_photon, int state_p1, int state_p2) {
+    int num_alpha = binomialCoeff(n_o_ac, N_ac);
+    int num_links = N_ac * (n_o_ac-N_ac) + N_ac + n_o_in;
+    size_t num_dets = num_alpha * num_alpha;
+    
+
+    double* D = (double*) malloc(nmo*nmo*sizeof(double));
+    memset(D, 0, nmo*nmo*sizeof(double));
+
+    for (int index_jb = 0; index_jb < num_alpha; index_jb++) {
+        int stride = index_jb * num_links;
+        for (int excitation = 0; excitation < num_links; excitation++) {
+            int index_ib = table[(stride + excitation)*4+0];
+            int sign = table[(stride + excitation)*4+1];
+            int p = table[(stride + excitation)*4+2]; 
+            int q = table[(stride + excitation)*4+3]; 
+            //print(index_kb,sign1,k,l)
+            int pq = p * nmo + q;
+            for (int index_ia = 0; index_ia < num_alpha; index_ia++) {
+                for (int photon_p = 0; photon_p < num_photon; photon_p++) {
+                    int index_I = index_ia * num_alpha + index_ib;
+                    int index_J = index_ia * num_alpha + index_jb;
+        	    D[pq] += sign * eigvec[(state_p1 * num_photon + photon_p) * num_dets + index_I]
+				* eigvec[(state_p2 * num_photon + photon_p) * num_dets + index_J];
+            
+                }
+            }
+        }
+    }
+    for (int index_ja = 0; index_ja < num_alpha; index_ja++) {
+        int stride = index_ja * num_links;
+        for (int excitation = 0; excitation < num_links; excitation++) {
+            int index_ia = table[(stride + excitation)*4+0];
+            int sign = table[(stride + excitation)*4+1];
+            int p = table[(stride + excitation)*4+2]; 
+            int q = table[(stride + excitation)*4+3]; 
+            //print(index_kb,sign1,k,l)
+            int pq = p * nmo + q;
+            for (int index_ib = 0; index_ib < num_alpha; index_ib++) {
+                for (int photon_p = 0; photon_p < num_photon; photon_p++) {
+                    int index_I = index_ia * num_alpha + index_ib;
+                    int index_J = index_ja * num_alpha + index_ib;
+        	    D[pq] += sign * eigvec[(state_p1 * num_photon + photon_p) * num_dets + index_I]
+				* eigvec[(state_p2 * num_photon + photon_p) * num_dets + index_J];
+            
+                }
+            }
+        }
+    }
+    double dum = 0.0;
+    for (int p = 0; p < nmo; p++) {
+	dum += D[p*nmo+p];
+    }
+    
+    double dum2 = cblas_ddot(nmo*nmo, h1e, 1, D, 1);
+    //print trace of 1-rdm or 1-tdm and corresponding trace of H1.D or H1.T
+    printf("%4d -> %4d %20.12lf <%d|H1|%d> = %20.12lf\n", state_p1, state_p2, dum, state_p1, state_p2, dum2);
+    free(D);
+}
 
 
 void build_b_array(int* table1, int* b_array, int num_alpha, int num_links, int n_o_ac) {
