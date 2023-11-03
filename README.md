@@ -26,3 +26,11 @@ The generation of determinant lists has been broken up into two methods based on
 Intel compiler is required for the use of LAPACKE library
 - icx -fPIC -Wall -Wextra -qopenmp -c cfunctions.c  
 - icx -shared -o cfunctions.so cfunctions.o 
+
+## Compile in MacOS
+Needs OpenBLAS and GNU gcc (`brew install openblas gcc`)
+
+```zsh
+gcc-13 -Ofast -fPIC -c -g -Wall -fopenmp -I/usr/local/opt/openblas/include cfunctions.c -DOPENBLAS
+gcc-13 -shared -Wl,-install_name,cfunctions.so -o cfunctions.so cfunctions.o -lgomp -L/usr/local/opt/openblas/lib -lopenblas
+```

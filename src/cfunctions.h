@@ -1,5 +1,6 @@
 #include <stdint.h>
 #include <stdbool.h>
+#include <cblas.h>
 typedef void (*callback_)(double* h1e, double* h2e, double* d_cmo, double* c_vectors, double *c1_vectors, 
 		 int* table,int* table1, int* table_creation, int* table_annihilation, int N_ac, int n_o_ac, int n_o_in, int nmo, 
 		 int num_state, int N_p, double Enuc, double dc, double omega, double d_exp, bool break_degeneracy);
@@ -7,6 +8,16 @@ typedef void (*callback_)(double* h1e, double* h2e, double* d_cmo, double* c_vec
 
 //int *Y;
 //int *table;
+void dgemm_wrapper(enum CBLAS_ORDER order, enum CBLAS_TRANSPOSE transA,
+                   enum CBLAS_TRANSPOSE transB, int m, int n, int k,
+		   double alpha, double* A, int ldaA, double* B, int ldaB,
+		   double beta, double*C, int ldaC);
+void dgemv_wrapper(enum CBLAS_ORDER order, enum CBLAS_TRANSPOSE transA, int m,
+    int n, double alpha, double* A, int ldaA, double* x, int incx, double beta,
+    double*y, int incy);
+void dcopy_wrapper(int n, double* x, int incx, double*y, int incy);
+double ddot_wrapper(int n, double* x, int incx, double*y, int incy);
+
 void matrix_product(double* A, double* B, double* C, int m,int n,int k);  
 void get_graph(size_t N, size_t n_o, int* Y);
 int* string_to_obtlist(size_t string, int nmo, int* length);

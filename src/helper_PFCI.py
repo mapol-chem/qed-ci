@@ -35,16 +35,16 @@ lib_path = os.path.join(script_dir, "cfunctions.so")
 cfunctions = cdll.LoadLibrary(lib_path)
 
 cfunctions.get_graph.argtypes = [
-    ctypes.c_int32,
-    ctypes.c_int32,
-    np.ctypeslib.ndpointer(ctypes.c_int32, ndim=1, flags="C_CONTIGUOUS"),
+    ctypes.c_int,
+    ctypes.c_int,
+    np.ctypeslib.ndpointer(ctypes.c_int, ndim=1, flags="C_CONTIGUOUS"),
 ]
 
 cfunctions.index_to_string.argtypes = [
-    ctypes.c_int32,
-    ctypes.c_int32,
-    ctypes.c_int32,
-    np.ctypeslib.ndpointer(ctypes.c_int32, ndim=1, flags="C_CONTIGUOUS"),
+    ctypes.c_int,
+    ctypes.c_int,
+    ctypes.c_int,
+    np.ctypeslib.ndpointer(ctypes.c_int, ndim=1, flags="C_CONTIGUOUS"),
 ]
 
 cfunctions.index_to_string.restype = ctypes.c_size_t
@@ -53,17 +53,17 @@ cfunctions.get_string.argtypes = [
     np.ctypeslib.ndpointer(ctypes.c_double, ndim=2, flags="C_CONTIGUOUS"),
     np.ctypeslib.ndpointer(ctypes.c_double, ndim=2, flags="C_CONTIGUOUS"),
     np.ctypeslib.ndpointer(ctypes.c_double, ndim=1, flags="C_CONTIGUOUS"),
-    np.ctypeslib.ndpointer(ctypes.c_int32, ndim=1, flags="C_CONTIGUOUS"),
-    np.ctypeslib.ndpointer(ctypes.c_int32, ndim=1, flags="C_CONTIGUOUS"),
-    np.ctypeslib.ndpointer(ctypes.c_int32, ndim=1, flags="C_CONTIGUOUS"),
-    np.ctypeslib.ndpointer(ctypes.c_int32, ndim=1, flags="C_CONTIGUOUS"),
-    np.ctypeslib.ndpointer(ctypes.c_int32, ndim=1, flags="C_CONTIGUOUS"),
-    ctypes.c_int32,
-    ctypes.c_int32,
-    ctypes.c_int32,
-    ctypes.c_int32,
-    ctypes.c_int32,
-    ctypes.c_int32,
+    np.ctypeslib.ndpointer(ctypes.c_int, ndim=1, flags="C_CONTIGUOUS"),
+    np.ctypeslib.ndpointer(ctypes.c_int, ndim=1, flags="C_CONTIGUOUS"),
+    np.ctypeslib.ndpointer(ctypes.c_int, ndim=1, flags="C_CONTIGUOUS"),
+    np.ctypeslib.ndpointer(ctypes.c_int, ndim=1, flags="C_CONTIGUOUS"),
+    np.ctypeslib.ndpointer(ctypes.c_int, ndim=1, flags="C_CONTIGUOUS"),
+    ctypes.c_int,
+    ctypes.c_int,
+    ctypes.c_int,
+    ctypes.c_int,
+    ctypes.c_int,
+    ctypes.c_int,
     ctypes.c_double,
     ctypes.c_double,
     ctypes.c_double,
@@ -75,16 +75,16 @@ cfunctions.build_sigma.argtypes = [
     np.ctypeslib.ndpointer(ctypes.c_double, ndim=2, flags="C_CONTIGUOUS"),
     np.ctypeslib.ndpointer(ctypes.c_double, ndim=2, flags="C_CONTIGUOUS"),
     np.ctypeslib.ndpointer(ctypes.c_double, ndim=2, flags="C_CONTIGUOUS"),
-    np.ctypeslib.ndpointer(ctypes.c_int32, ndim=1, flags="C_CONTIGUOUS"),
-    np.ctypeslib.ndpointer(ctypes.c_int32, ndim=1, flags="C_CONTIGUOUS"),
-    np.ctypeslib.ndpointer(ctypes.c_int32, ndim=1, flags="C_CONTIGUOUS"),
-    np.ctypeslib.ndpointer(ctypes.c_int32, ndim=1, flags="C_CONTIGUOUS"),
-    ctypes.c_int32,
-    ctypes.c_int32,
-    ctypes.c_int32,
-    ctypes.c_int32,
-    ctypes.c_int32,
-    ctypes.c_int32,
+    np.ctypeslib.ndpointer(ctypes.c_int, ndim=1, flags="C_CONTIGUOUS"),
+    np.ctypeslib.ndpointer(ctypes.c_int, ndim=1, flags="C_CONTIGUOUS"),
+    np.ctypeslib.ndpointer(ctypes.c_int, ndim=1, flags="C_CONTIGUOUS"),
+    np.ctypeslib.ndpointer(ctypes.c_int, ndim=1, flags="C_CONTIGUOUS"),
+    ctypes.c_int,
+    ctypes.c_int,
+    ctypes.c_int,
+    ctypes.c_int,
+    ctypes.c_int,
+    ctypes.c_int,
     ctypes.c_double,
     ctypes.c_double,
     ctypes.c_double,
@@ -99,24 +99,24 @@ cfunctions.get_roots.argtypes = [
         np.ctypeslib.ndpointer(ctypes.c_double, ndim=1, flags='C_CONTIGUOUS'),
         np.ctypeslib.ndpointer(ctypes.c_double, ndim=1, flags='C_CONTIGUOUS'),
         np.ctypeslib.ndpointer(ctypes.c_double, ndim=2, flags='C_CONTIGUOUS'),
-        np.ctypeslib.ndpointer(ctypes.c_int32,  ndim=1, flags='C_CONTIGUOUS'),
-        np.ctypeslib.ndpointer(ctypes.c_int32,  ndim=1, flags='C_CONTIGUOUS'),
-        np.ctypeslib.ndpointer(ctypes.c_int32,  ndim=1, flags='C_CONTIGUOUS'),
-        np.ctypeslib.ndpointer(ctypes.c_int32,  ndim=1, flags='C_CONTIGUOUS'),
-        np.ctypeslib.ndpointer(ctypes.c_int32,  ndim=1, flags='C_CONTIGUOUS'),
+        np.ctypeslib.ndpointer(ctypes.c_int,  ndim=1, flags='C_CONTIGUOUS'),
+        np.ctypeslib.ndpointer(ctypes.c_int,  ndim=1, flags='C_CONTIGUOUS'),
+        np.ctypeslib.ndpointer(ctypes.c_int,  ndim=1, flags='C_CONTIGUOUS'),
+        np.ctypeslib.ndpointer(ctypes.c_int,  ndim=1, flags='C_CONTIGUOUS'),
+        np.ctypeslib.ndpointer(ctypes.c_int,  ndim=1, flags='C_CONTIGUOUS'),
         np.ctypeslib.ndpointer(ctypes.c_double, ndim=1, flags='C_CONTIGUOUS')]
 
 cfunctions.one_electron_properties.argtypes = [
         np.ctypeslib.ndpointer(ctypes.c_double, ndim=2, flags='C_CONTIGUOUS'),
         np.ctypeslib.ndpointer(ctypes.c_double, ndim=2, flags='C_CONTIGUOUS'),
-        np.ctypeslib.ndpointer(ctypes.c_int32,  ndim=1, flags='C_CONTIGUOUS'),
-        ctypes.c_int32,
-        ctypes.c_int32,
-        ctypes.c_int32,
-        ctypes.c_int32,
-        ctypes.c_int32,
-        ctypes.c_int32,
-        ctypes.c_int32]
+        np.ctypeslib.ndpointer(ctypes.c_int,  ndim=1, flags='C_CONTIGUOUS'),
+        ctypes.c_int,
+        ctypes.c_int,
+        ctypes.c_int,
+        ctypes.c_int,
+        ctypes.c_int,
+        ctypes.c_int,
+        ctypes.c_int]
 
 
 
@@ -124,22 +124,22 @@ cfunctions.build_sigma_s_square.argtypes = [
         np.ctypeslib.ndpointer(ctypes.c_double, ndim=2, flags='C_CONTIGUOUS'),
         np.ctypeslib.ndpointer(ctypes.c_double, ndim=2, flags='C_CONTIGUOUS'),
         np.ctypeslib.ndpointer(ctypes.c_double, ndim=1, flags='C_CONTIGUOUS'),
-        np.ctypeslib.ndpointer(ctypes.c_int32,  ndim=1, flags='C_CONTIGUOUS'),
-        np.ctypeslib.ndpointer(ctypes.c_int32,  ndim=1, flags='C_CONTIGUOUS'),
-        ctypes.c_int32,
-        ctypes.c_int32,
-        ctypes.c_int32,
-        ctypes.c_int32,
-        ctypes.c_int32,
+        np.ctypeslib.ndpointer(ctypes.c_int,  ndim=1, flags='C_CONTIGUOUS'),
+        np.ctypeslib.ndpointer(ctypes.c_int,  ndim=1, flags='C_CONTIGUOUS'),
+        ctypes.c_int,
+        ctypes.c_int,
+        ctypes.c_int,
+        ctypes.c_int,
+        ctypes.c_int,
         ctypes.c_double]
 
 cfunctions.build_S_diag.argtypes = [
         np.ctypeslib.ndpointer(ctypes.c_double, ndim=1, flags='C_CONTIGUOUS'),
-        ctypes.c_int32,
-        ctypes.c_int32,
-        ctypes.c_int32,
-        ctypes.c_int32,
-        ctypes.c_int32,
+        ctypes.c_int,
+        ctypes.c_int,
+        ctypes.c_int,
+        ctypes.c_int,
+        ctypes.c_int,
         ctypes.c_double]
 
 def c_string(
@@ -291,7 +291,7 @@ def spin_idx_to_spat_idx_and_spin(P):
     else:
         p = (P - 1) / 2
         spin = -1
-    return np.array([p, spin], dtype=int)
+    return np.array([p, spin], dtype=np.int)
 
 
 def map_spatial_to_spin(tei_spatial, I, J, K, L):
@@ -841,16 +841,16 @@ class PFHamiltonianGenerator:
                 self.CASnumDets = self.num_det
                 H_dim = self.CASnumDets * np1
                 self.H_diag = np.zeros(H_dim)
-                self.table = np.zeros(self.num_alpha * (self.n_act_a * (self.n_act_orb - self.n_act_a) + self.n_act_a + self.n_in_a) * 4, dtype=np.int32)
-                self.table1 = np.zeros(self.num_alpha * (self.n_act_a * (self.n_act_orb - self.n_act_a) + self.n_act_a) * 4, dtype=np.int32)
+                self.table = np.zeros(self.num_alpha * (self.n_act_a * (self.n_act_orb - self.n_act_a) + self.n_act_a + self.n_in_a) * 4, dtype=ctypes.c_int)
+                self.table1 = np.zeros(self.num_alpha * (self.n_act_a * (self.n_act_orb - self.n_act_a) + self.n_act_a) * 4, dtype=ctypes.c_int)
                 num_links1 = self.n_act_orb - self.n_act_a + 1
                 rows1 = math.comb(self.n_act_orb, self.n_act_a - 1) * num_links1
-                self.table_creation = np.zeros(rows1 * 3, dtype=np.int32)
+                self.table_creation = np.zeros(rows1 * 3, dtype=ctypes.c_int)
                 num_links2 = self.n_act_a
                 rows2 = self.num_alpha * num_links2
-                self.table_annihilation = np.zeros(rows2 * 3, dtype=np.int32)
+                self.table_annihilation = np.zeros(rows2 * 3, dtype=ctypes.c_int)
                 
-                self.b_array = np.zeros(self.num_alpha*self.n_act_orb*self.n_act_orb*2, dtype=np.int32)
+                self.b_array = np.zeros(self.num_alpha*self.n_act_orb*self.n_act_orb*2, dtype=ctypes.c_int)
                 c_string(
                     self.H_spatial2,
                     self.twoeint,
@@ -902,16 +902,16 @@ class PFHamiltonianGenerator:
                 self.FCInumDets = self.num_det
                 H_dim = self.FCInumDets * np1
                 self.H_diag = np.zeros(H_dim)
-                self.table = np.zeros(self.num_alpha*(self.n_act_a*(self.n_act_orb-self.n_act_a)+self.n_act_a+self.n_in_a)*4,dtype=np.int32)
-                self.table1 = np.zeros(self.num_alpha*(self.n_act_a*(self.n_act_orb-self.n_act_a)+self.n_act_a)*4,dtype=np.int32)
+                self.table = np.zeros(self.num_alpha*(self.n_act_a*(self.n_act_orb-self.n_act_a)+self.n_act_a+self.n_in_a)*4,dtype=ctypes.c_int)
+                self.table1 = np.zeros(self.num_alpha*(self.n_act_a*(self.n_act_orb-self.n_act_a)+self.n_act_a)*4,dtype=ctypes.c_int)
                 num_links1 = self.n_act_orb-self.n_act_a+1
                 rows1 = math.comb(self.n_act_orb,self.n_act_a-1) * num_links1
-                self.table_creation = np.zeros(rows1*3,dtype=np.int32)
+                self.table_creation = np.zeros(rows1*3,dtype=ctypes.c_int)
                 num_links2 = self.n_act_a
                 rows2 = self.num_alpha * num_links2
-                self.table_annihilation = np.zeros(rows2*3,dtype=np.int32)
+                self.table_annihilation = np.zeros(rows2*3,dtype=ctypes.c_int)
 
-                self.b_array = np.zeros(self.num_alpha*self.n_act_orb*self.n_act_orb*2, dtype=np.int32)
+                self.b_array = np.zeros(self.num_alpha*self.n_act_orb*self.n_act_orb*2, dtype=ctypes.c_int)
                 c_string(self.H_spatial2, self.twoeint, self.H_diag, self.b_array, self.table, self.table1, self.table_creation, 
                         self.table_annihilation, self.N_p, self.num_alpha, self.nmo, self.n_act_a, self.n_act_orb, self.n_in_a, self.omega, self.Enuc, self.d_c)
             
@@ -1000,7 +1000,7 @@ class PFHamiltonianGenerator:
             print(psutil.Process().memory_info().rss / (1024 * 1024))
             if self.ci_level == "cas" or self.ci_level == "fci":
                 sys.stderr.flush()
-                self.constint = np.zeros(9, dtype = np.int32)
+                self.constint = np.zeros(9, dtype = ctypes.c_int)
                 self.constint[0] = self.n_act_a
                 self.constint[1] = self.n_act_orb
                 self.constint[2] = self.n_in_a
@@ -1027,7 +1027,7 @@ class PFHamiltonianGenerator:
                 self.CIvecs = eigenvecs 
 
                 print("\nACTIVE PART OF DETERMINANTS THAT HAVE THE MOST IMPORTANT CONTRIBUTIONS")
-                Y = np.zeros(self.n_act_a*(self.n_act_orb-self.n_act_a+1)*3,dtype=np.int32)
+                Y = np.zeros(self.n_act_a*(self.n_act_orb-self.n_act_a+1)*3,dtype=ctypes.c_int)
                 c_graph(self.n_act_a, self.n_act_orb, Y);
                 np1 = self.N_p + 1 
                 singlet_count = 0
@@ -3000,7 +3000,7 @@ class PFHamiltonianGenerator:
                 "\nACTIVE PART OF DETERMINANTS THAT HAVE THE MOST IMPORTANT CONTRIBUTIONS"
             )
             Y = np.zeros(
-                self.n_act_a * (self.n_act_orb - self.n_act_a + 1) * 3, dtype=np.int32
+                self.n_act_a * (self.n_act_orb - self.n_act_a + 1) * 3, dtype=ctypes.c_int
             )
             c_graph(self.n_act_a, self.n_act_orb, Y)
             np1 = self.N_p + 1
