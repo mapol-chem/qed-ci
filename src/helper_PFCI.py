@@ -1295,7 +1295,7 @@ class PFHamiltonianGenerator:
         _mu_z_spin = np.repeat(_mu_z_spin, 2, axis=0)
         _mu_z_spin = np.repeat(_mu_z_spin, 2, axis=1)
 
-        _spin_ind = np.arange(_mu_z_spin.shape[0], dtype=np.int) % 2
+        _spin_ind = np.arange(_mu_z_spin.shape[0], dtype=int) % 2
 
         self.mu_x_spin = _mu_x_spin * (_spin_ind.reshape(-1, 1) == _spin_ind)
         self.mu_y_spin = _mu_y_spin * (_spin_ind.reshape(-1, 1) == _spin_ind)
@@ -1326,7 +1326,7 @@ class PFHamiltonianGenerator:
             _H_spin = np.repeat(_H_spin, 2, axis=0)
             _H_spin = np.repeat(_H_spin, 2, axis=1)
             # spin part of 1-e integrals
-            spin_ind = np.arange(_H_spin.shape[0], dtype=np.int) % 2
+            spin_ind = np.arange(_H_spin.shape[0], dtype=int) % 2
             # product of spatial and spin parts
             self.Hspin = _H_spin * (spin_ind.reshape(-1, 1) == spin_ind)
 
@@ -1342,7 +1342,7 @@ class PFHamiltonianGenerator:
             # try a more efficient way of computing the 2-e d terms
             _d_spin = np.repeat(_d_spin, 2, axis=0)
             _d_spin = np.repeat(_d_spin, 2, axis=1)
-            spin_ind = np.arange(_d_spin.shape[0], dtype=np.int) % 2
+            spin_ind = np.arange(_d_spin.shape[0], dtype=int) % 2
             self.d_spin = _d_spin * (spin_ind.reshape(-1, 1) == spin_ind)
 
             t1 = np.einsum("ik,jl->ijkl", self.d_spin, self.d_spin)
@@ -1369,7 +1369,7 @@ class PFHamiltonianGenerator:
         _g = np.repeat(_g, 2, axis=0)
         _g = np.repeat(_g, 2, axis=1)
 
-        spin_ind = np.arange(_g.shape[0], dtype=np.int) % 2
+        spin_ind = np.arange(_g.shape[0], dtype=int) % 2
         # product of spatial and spin parts
         self.g_so = _g * (spin_ind.reshape(-1, 1) == spin_ind)
         if self.ignore_coupling == True:
@@ -2696,7 +2696,7 @@ class PFHamiltonianGenerator:
                 dim_sa = len(single_occupation_a)
                 dim_sb = len(single_occupation_b)
                 # print(double_occupation,single_occupation_a,single_occupation_b)
-                occupation_list_spin = np.zeros((dim_sa + dim_sb + dim_d, 3), dtype=np.int)
+                occupation_list_spin = np.zeros((dim_sa + dim_sb + dim_d, 3), dtype=int)
                 for i in range(dim_d):
                     occupation_list_spin[i][0] = double_occupation[i]
                     occupation_list_spin[i][1] = 1
