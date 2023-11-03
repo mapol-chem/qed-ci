@@ -117,6 +117,7 @@ cfunctions.one_electron_properties.argtypes = [
         ctypes.c_int,
         ctypes.c_int,
         ctypes.c_int]
+cfunctions.one_electron_properties.restype = ctypes.c_double
 
 
 
@@ -246,7 +247,8 @@ def c_get_roots(h1e, h2e, d_cmo, Hdiag, eigenvals, eigenvecs, table, table1, tab
                         constint, constdouble)
 
 def c_one_electron_properties(h1e, eigvec, table, N_ac, n_o_ac, n_o_in, nmo, num_photon, state_p1, state_p2):
-    cfunctions.one_electron_properties(h1e, eigvec, table, N_ac, n_o_ac, n_o_in, nmo, num_photon, state_p1, state_p2) 
+    value = cfunctions.one_electron_properties(h1e, eigvec, table, N_ac, n_o_ac, n_o_in, nmo, num_photon, state_p1, state_p2) 
+    return value
 
 
 
