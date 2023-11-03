@@ -4,17 +4,48 @@
 #include <string.h>
 #include <math.h>
 #include <cblas.h>
-#include<omp.h>
-#include<time.h>
+#include <omp.h>
+#include <time.h>
+#ifdef OPENBLAS
+#include <lapacke.h>
+#else
 #include "mkl_lapacke.h"
+#endif
+#ifdef __APPLE__
+#include<mach/mach.h>
+#endif
 
 #define MIN(x, y) (((x) < (y)) ? (x) : (y))
 #define BIGNUM 1E100
 
 
 void matrix_product(double* A, double* B, double* C, int m, int n, int k) {
-     cblas_dgemm(CblasRowMajor, CblasNoTrans, CblasNoTrans, m, n, k, 1.0, A, k, B, n, 0.0, C, n);
+     dgemm_wrapper(CblasRowMajor, CblasNoTrans, CblasNoTrans, m, n, k, 1.0, A, k, B, n, 0.0, C, n);
 }
+
+void dgemm_wrapper(enum CBLAS_ORDER order, enum CBLAS_TRANSPOSE transA,
+                   enum CBLAS_TRANSPOSE transB, int m, int n, int k,
+		   double alpha, double* A, int ldaA, double* B, int ldaB,
+		   double beta, double*C, int ldaC) {
+  blasint _m = m, _n = n, _k = k;
+  blasint _ldaA = ldaA, _ldaB = ldaB, _ldaC = ldaC;
+  cblas_dgemm(order, transA, transB, _m, _n, _k, alpha, A, _ldaA, B, _ldaB, beta, C, _ldaC);
+}
+
+void dgemv_wrapper(enum CBLAS_ORDER order, enum CBLAS_TRANSPOSE transA, int m,
+    int n, double alpha, double* A, int ldaA, double* x, int incx, double beta,
+    double*y, int incy) {
+  cblas_dgemv(order, transA, (blasint) m, (blasint) n, alpha, A, (blasint) ldaA, x, (blasint) incx, beta, y, (blasint) incy);
+}
+
+void dcopy_wrapper(int n, double* x, int incx, double* y, int incy) {
+  cblas_dcopy( (blasint) n, x, (blasint) incx, y, (blasint) incy);
+}
+
+double ddot_wrapper(int n, double*x, int incx, double* y, int incy) {
+  return cblas_ddot((blasint) n, x, (blasint) incx, y, (blasint) incy);
+}
+
 
 int binomialCoeff(int n, int k)
 {
@@ -545,7 +576,6 @@ void get_string(double* h1e, double* h2e, double* H_diag, int* b_array, int* tab
     itime = omp_get_wtime();
     build_H_diag(h1e, h2e, H_diag, N_p, num_alpha, nmo, N, n_o, n_in_a, omega, Enuc, dc,Y);   
     ftime = omp_get_wtime();
-    time_taken = ((double)t)/CLOCKS_PER_SEC;
     exec_time = ftime - itime;
     printf("buil_H_diag took %f seconds to execute \n", exec_time);
 
@@ -746,7 +776,7 @@ void sigma3(double* h2e, double* c_vectors, double* c1_vectors, int* table1,  in
             int k = table1[(stride + excitation)*4+2]; 
             int l = table1[(stride + excitation)*4+3]; 
             int kl = (k+n_o_in) * nmo + (l+n_o_in);
-            cblas_dgemm(CblasRowMajor, CblasNoTrans, CblasNoTrans, n_o_ac, num_alpha1, n_o_ac, sign, h2e+kl*nmo*nmo+n_o_in*nmo+n_o_in, 
+            dgemm_wrapper(CblasRowMajor, CblasNoTrans, CblasNoTrans, n_o_ac, num_alpha1, n_o_ac, (double) sign, h2e+kl*nmo*nmo+n_o_in*nmo+n_o_in, 
                	  nmo, D+index_jb*n_o_ac*num_alpha1, num_alpha1, 1.0, 
             	  T+index_ib*n_o_ac*num_alpha1, num_alpha1);
    
@@ -876,7 +906,7 @@ void sigma12(double* h1e, double* h2e, double* c_vectors,double* c1_vectors,int 
         }
 
         memset(s_resize, 0, num_alpha*sizeof(double));
-        cblas_dgemm(CblasRowMajor, CblasNoTrans, CblasNoTrans, num_alpha, 1, num_alpha, 1.0, c_vectors 
+        dgemm_wrapper(CblasRowMajor, CblasNoTrans, CblasNoTrans, num_alpha, 1, num_alpha, 1.0, c_vectors 
        		 + (state_p * num_photon + photon_p) * num_dets, num_alpha, F, 1, 0.0, s_resize, 1);
         for (int index_ia = 0; index_ia < num_alpha; index_ia++) {
             int index_I = index_ia * num_alpha + index_ib;
@@ -930,7 +960,7 @@ void sigma12(double* h1e, double* h2e, double* c_vectors,double* c1_vectors,int 
        	        }
             }
         }
-        cblas_dgemm(CblasRowMajor, CblasNoTrans, CblasNoTrans, num_alpha,1,num_alpha, 1.0, c_resize, num_alpha, F, 1, 1.0,
+        dgemm_wrapper(CblasRowMajor, CblasNoTrans, CblasNoTrans, num_alpha,1,num_alpha, 1.0, c_resize, num_alpha, F, 1, 1.0,
        		 c1_vectors+(state_p * num_photon + photon_p) * num_dets+index_ia*num_alpha, 1);
 
 
@@ -969,7 +999,7 @@ void sigma_dipole(double* h1e, double* c_vectors,double* c1_vectors,int num_alph
 
 
          memset(s_resize, 0, num_alpha*sizeof(double));
-         cblas_dgemm(CblasRowMajor, CblasNoTrans, CblasNoTrans, num_alpha, 1, num_alpha, someconstant, c_vectors 
+         dgemm_wrapper(CblasRowMajor, CblasNoTrans, CblasNoTrans, num_alpha, 1, num_alpha, someconstant, c_vectors 
 	        	 + (state_p * num_photon + photon_p1) * num_dets, num_alpha, F, 1, 0.0, s_resize, 1);
          for (int index_ia = 0; index_ia < num_alpha; index_ia++) {
              int index_I = index_ia * num_alpha + index_ib;
@@ -1009,7 +1039,7 @@ void sigma_dipole(double* h1e, double* c_vectors,double* c1_vectors,int num_alph
              int l = table[(stride1 + excitation1)*4+3]; 
              F[index_ka] += sign1 * h1e[k*nmo+l];
 	 }
-         cblas_dgemm(CblasRowMajor, CblasNoTrans, CblasNoTrans, num_alpha,1,num_alpha, someconstant, c_resize, num_alpha, F, 1, 1.0,
+         dgemm_wrapper(CblasRowMajor, CblasNoTrans, CblasNoTrans, num_alpha,1,num_alpha, someconstant, c_resize, num_alpha, F, 1, 1.0,
 			 c1_vectors+(state_p * num_photon + photon_p2) * num_dets+index_ia*num_alpha, 1);
 
          //for (int index_ja = 0; index_ja < num_alpha; index_ja++) {
@@ -1037,7 +1067,12 @@ void constant_terms_contraction(double* c_vectors,double* c1_vectors,int num_alp
 }
 
 void symmetric_eigenvalue_problem(double* A, int N, double* eig) {
-    MKL_INT n = N, lda = N, info;	
+#ifdef OPENBLAS
+    lapack_int n = N, lda = N, info;	
+#else
+    MKL_INT n = N, lda = N, info;
+#endif
+
     //double w[N];
     
     /* Solve eigenproblem */
@@ -1088,7 +1123,7 @@ void symmetric_eigenvalue_problem(double* A, int N, double* eig) {
 }
 void get_roots(double* h1e, double* h2e, double* d_cmo, double* Hdiag, double* eigenvals, double* eigenvecs, int* table,int* table1, int* table_creation,
 	       	int* table_annihilation, int *constint, double *constdouble) {
-  
+
     callback_ test_fn = &build_sigma;
     double itime, ftime, exec_time;
     itime = omp_get_wtime();
@@ -1127,7 +1162,7 @@ void davidson(double* h1e, double* h2e, double* d_cmo, double* Hdiag, double* ei
     size_t H_dim = (N_p + 1) * num_alpha * num_alpha;
     
     double* Hdiag2 = (double*)malloc(H_dim*sizeof(double));
-    cblas_dcopy(H_dim,Hdiag,1,Hdiag2,1);
+    dcopy_wrapper(H_dim,Hdiag,1,Hdiag2,1);
     double* Q = (double*) malloc(maxdim*H_dim*sizeof(double));
     memset(Q, 0, maxdim*H_dim*sizeof(double));
     double* S = (double*) malloc(maxdim*H_dim*sizeof(double));
@@ -1181,15 +1216,15 @@ void davidson(double* h1e, double* h2e, double* d_cmo, double* Hdiag, double* ei
 
   
         
-        cblas_dgemm(CblasRowMajor, CblasNoTrans, CblasTrans, L, L, H_dim, 1.0, S, H_dim, Q, H_dim, 0.0, G, L);
+        dgemm_wrapper(CblasRowMajor, CblasNoTrans, CblasTrans, L, L, H_dim, 1.0, S, H_dim, Q, H_dim, 0.0, G, L);
         symmetric_eigenvalue_problem(G, L, theta);
         
         memset(w, 0, nroots*H_dim*sizeof(double));
      
 	
-        cblas_dgemm(CblasRowMajor, CblasTrans, CblasNoTrans, nroots, H_dim, L, 1.0, G, L, S, H_dim, 0.0, w, H_dim);
+        dgemm_wrapper(CblasRowMajor, CblasTrans, CblasNoTrans, nroots, H_dim, L, 1.0, G, L, S, H_dim, 0.0, w, H_dim);
         for (int i = 0; i < nroots; i++) {
-            cblas_dgemv(CblasRowMajor, CblasTrans, L, H_dim, -theta[i], Q, H_dim, G+i, L, 1.0, w + i * H_dim, 1);
+            dgemv_wrapper(CblasRowMajor, CblasTrans, L, H_dim, -theta[i], Q, H_dim, G+i, L, 1.0, w + i * H_dim, 1);
 	}
         memset(unconverged_idx, 0, nroots*sizeof(int));
         memset(convergence_check, 0, nroots*sizeof(bool));
@@ -1201,7 +1236,7 @@ void davidson(double* h1e, double* h2e, double* d_cmo, double* Hdiag, double* ei
         printf("  ROOT      RESIDUAL NORM        EIGENVALUE      CONVERGENCE\n");
 	int unconv = 0;
         for (int i = 0; i < nroots; i++) {
-            double dotval = cblas_ddot(H_dim, w+i*H_dim, 1, w+i*H_dim, 1);
+            double dotval = ddot_wrapper(H_dim, w+i*H_dim, 1, w+i*H_dim, 1);
             double residual_norm = sqrt(dotval);
             if (residual_norm < threshold) {
                 convergence_check[i] = true;
@@ -1216,15 +1251,15 @@ void davidson(double* h1e, double* h2e, double* d_cmo, double* Hdiag, double* ei
         }
     	fflush(stdout);
 	if (unconv == 0) {
-            cblas_dgemm(CblasRowMajor, CblasTrans, CblasNoTrans, nroots, H_dim, L, 1.0, G, L, Q, H_dim, 0.0, eigenvecs, H_dim);
-            cblas_dcopy(nroots, theta, 1, eigenvals, 1);
+            dgemm_wrapper(CblasRowMajor, CblasTrans, CblasNoTrans, nroots, H_dim, L, 1.0, G, L, Q, H_dim, 0.0, eigenvecs, H_dim);
+            dcopy_wrapper(nroots, theta, 1, eigenvals, 1);
 	    printf("converged\n");
 	    break;
 	}
 	if ((a==maxiter-1) && (unconv > 0)) {
 	    printf("Maximum iteration reaches. Please increase maxiter!\n");
-            cblas_dgemm(CblasRowMajor, CblasTrans, CblasNoTrans, nroots, H_dim, L, 1.0, G, L, Q, H_dim, 0.0, eigenvecs, H_dim);
-	    cblas_dcopy(nroots, theta, 1, eigenvals, 1);
+            dgemm_wrapper(CblasRowMajor, CblasTrans, CblasNoTrans, nroots, H_dim, L, 1.0, G, L, Q, H_dim, 0.0, eigenvecs, H_dim);
+	    dcopy_wrapper(nroots, theta, 1, eigenvals, 1);
 	    break;
 	}
 	if (unconv > 0) {
@@ -1255,22 +1290,22 @@ void davidson(double* h1e, double* h2e, double* d_cmo, double* Hdiag, double* ei
         if (Lmax-L < unconv) {
            printf("maximum subspace reaches, restart!\n");		
            memset(w, 0, nroots*H_dim*sizeof(double));
-           cblas_dgemm(CblasRowMajor, CblasTrans, CblasNoTrans, nroots, H_dim, L, 1.0, G, L, Q, H_dim, 0.0, w, H_dim);
+           dgemm_wrapper(CblasRowMajor, CblasTrans, CblasNoTrans, nroots, H_dim, L, 1.0, G, L, Q, H_dim, 0.0, w, H_dim);
            memset(Q, 0, maxdim*H_dim*sizeof(double));
 
            for (int i = 0; i < nroots; i++) {
-               cblas_dcopy(H_dim, w+i*H_dim, 1, Q+i*H_dim, 1);
+               dcopy_wrapper(H_dim, w+i*H_dim, 1, Q+i*H_dim, 1);
 	   }
 
            for (int i = 0; i < unconv; i++) {
-               cblas_dcopy(H_dim, w2+i*H_dim, 1, Q+(i+nroots)*H_dim, 1);
+               dcopy_wrapper(H_dim, w2+i*H_dim, 1, Q+(i+nroots)*H_dim, 1);
 	   }
            gram_schmidt_orthogonalization(Q, nroots+unconv, H_dim);
 	   L = nroots + unconv; 
 	}
 	else {
            for (int i = 0; i < unconv; i++) {
-               cblas_dcopy(H_dim, w2+i*H_dim, 1, Q+(i+L)*H_dim, 1);
+               dcopy_wrapper(H_dim, w2+i*H_dim, 1, Q+(i+L)*H_dim, 1);
 	   }
            gram_schmidt_add(Q, L, H_dim, unconv);
            L += unconv;	   
@@ -1348,7 +1383,7 @@ void one_electron_properties(double* h1e, double* eigvec, int* table, int N_ac, 
 	dum += D[p*nmo+p];
     }
     
-    double dum2 = cblas_ddot(nmo*nmo, h1e, 1, D, 1);
+    double dum2 = ddot_wrapper(nmo*nmo, h1e, 1, D, 1);
     //print trace of 1-rdm or 1-tdm and corresponding trace of H1.D or H1.T
     printf("%4d -> %4d %20.12lf <%d|H1|%d> = %20.12lf\n", state_p1, state_p2, dum, state_p1, state_p2, dum2);
     free(D);
@@ -1528,16 +1563,16 @@ void gram_schmidt_orthogonalization(double* Q, int rows, int cols) {
         if (L>0) {
            // Q->print();
             for (i = 0; i < L; i++) {
-                dotval = cblas_ddot(cols, &Q[i*cols], 1, &Q[k*cols], 1);
+                dotval = ddot_wrapper(cols, &Q[i*cols], 1, &Q[k*cols], 1);
                 for (rI = 0; rI < cols; rI++) Q[k * cols + rI] -= dotval * Q[i * cols + rI];
             }
             //reorthogonalization
             for (i = 0; i < L; i++) {
-                dotval = cblas_ddot(cols, &Q[i*cols], 1, &Q[k*cols], 1);
+                dotval = ddot_wrapper(cols, &Q[i*cols], 1, &Q[k*cols], 1);
                 for (rI = 0; rI < cols; rI++) Q[k * cols + rI] -= dotval * Q[i * cols + rI];
             }
         }
-        normval = cblas_ddot(cols, &Q[k*cols], 1, &Q[k*cols], 1);
+        normval = ddot_wrapper(cols, &Q[k*cols], 1, &Q[k*cols], 1);
         normval = sqrt(normval);
         //outfile->Printf("trial vector norm%30.18lf\n",normval);
         if (normval > 1e-20) {
@@ -1548,7 +1583,7 @@ void gram_schmidt_orthogonalization(double* Q, int rows, int cols) {
             //outfile->Printf("check orthogonality1\n");
             ////for (int i = 0; i < L; i++) {
             ////    for (int j = 0; j < L; j++) {
-            ////        double a = cblas_ddot(cols, &Q[i*cols], 1, &Q[j*cols], 1);
+            ////        double a = ddot_wrapper(cols, &Q[i*cols], 1, &Q[j*cols], 1);
             ////        //outfile->Printf("%d %d %30.16lf",i,j,a);
             ////        if ((i!=j) && (fabs(a)>1e-12)) printf(" detect linear dependency\n");
             ////        //outfile->Printf("\n");
@@ -1566,15 +1601,15 @@ void gram_schmidt_add(double* Q, int rows, int cols, int rows2) {
     int k,i, rI;
     for (k = rows; k < rows + rows2; k++) {
         for (i = 0; i < k; i++) {
-            dotval = cblas_ddot(cols, &Q[i*cols], 1, &Q[k*cols], 1);
+            dotval = ddot_wrapper(cols, &Q[i*cols], 1, &Q[k*cols], 1);
             for (rI = 0; rI < cols; rI++) Q[k * cols + rI] -= dotval * Q[i * cols + rI];
         }
         //reorthogonalization
         for (i = 0; i < k; i++) {
-            dotval = cblas_ddot(cols, &Q[i*cols], 1, &Q[k*cols], 1);
+            dotval = ddot_wrapper(cols, &Q[i*cols], 1, &Q[k*cols], 1);
             for (rI = 0; rI < cols; rI++) Q[k * cols + rI] -= dotval * Q[i * cols + rI];
         }
-        normval = cblas_ddot(cols, &Q[k*cols], 1, &Q[k*cols], 1);
+        normval = ddot_wrapper(cols, &Q[k*cols], 1, &Q[k*cols], 1);
         normval = sqrt(normval);
         //outfile->Printf("trial vector norm2%30.18lf\n",normval);
         if (normval > 1e-20) {
@@ -1585,7 +1620,7 @@ void gram_schmidt_add(double* Q, int rows, int cols, int rows2) {
             //outfile->Printf("check orthogonality2\n");
             ////for (int i = 0; i < L; i++) {
             ////    for (int j = 0; j < L; j++) {
-            ////        double a = cblas_ddot(N, Q[i], 1, Q[j], 1);
+            ////        double a = ddot_wrapper(N, Q[i], 1, Q[j], 1);
             ////        //outfile->Printf("%d %d %30.16lf",i,j,a);
             ////        if (i!=j && fabs(a)>1e-12) outfile->Printf(" detect linear dependency\n");
             ////        //outfile->Printf("\n");
@@ -1598,6 +1633,23 @@ void gram_schmidt_add(double* Q, int rows, int cols, int rows2) {
 void getMemory2(
    unsigned long* currRealMem, unsigned long*  peakRealMem,
    unsigned long* currVirtMem, unsigned long*  peakVirtMem) {
+#ifdef __APPLE__
+
+struct task_basic_info t_info;
+mach_msg_type_number_t t_info_count = TASK_BASIC_INFO_COUNT;
+
+if (KERN_SUCCESS != task_info(mach_task_self(),
+                              TASK_BASIC_INFO, (task_info_t)&t_info,
+                              &t_info_count)) return;
+printf("resident%20.12lf virtual%20.12lf\n",(double)t_info.resident_size/1024.0/1024.0,(double)t_info.virtual_size/1024.0/1024.0);
+
+*currRealMem = t_info.resident_size;
+*peakRealMem = t_info.resident_size;
+*currVirtMem = t_info.virtual_size;
+*peakVirtMem = t_info.virtual_size;
+
+
+#else
 
     // stores each word in status file
     char buffer[1024] = "";
@@ -1623,6 +1675,7 @@ void getMemory2(
     }
     fclose(file);
     printf("resident%20.12lf peak resident%20.12lf\n",(double)*currRealMem/1024.0/1024.0,(double)*peakRealMem/1024.0/1024.0);
-
+#endif
 }
+
 
