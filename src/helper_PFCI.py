@@ -117,7 +117,7 @@ cfunctions.one_electron_properties.argtypes = [
         ctypes.c_int32,
         ctypes.c_int32,
         ctypes.c_int32]
-
+cfunctions.one_electron_properties.restype = ctypes.c_double
 
 
 cfunctions.build_sigma_s_square.argtypes = [
@@ -246,8 +246,8 @@ def c_get_roots(h1e, h2e, d_cmo, Hdiag, eigenvals, eigenvecs, table, table1, tab
                         constint, constdouble)
 
 def c_one_electron_properties(h1e, eigvec, table, N_ac, n_o_ac, n_o_in, nmo, num_photon, state_p1, state_p2):
-    cfunctions.one_electron_properties(h1e, eigvec, table, N_ac, n_o_ac, n_o_in, nmo, num_photon, state_p1, state_p2) 
-
+    one_e_property = cfunctions.one_electron_properties(h1e, eigvec, table, N_ac, n_o_ac, n_o_in, nmo, num_photon, state_p1, state_p2) 
+    return one_e_property
 
 
 def compute_excitation_level(ket, ndocc):
@@ -1080,12 +1080,23 @@ class PFHamiltonianGenerator:
                         print("%20.12lf"%(eigenvecs[i][index[eigenvecs.shape[1]-j-1]]),"%9.3d"%(index[eigenvecs.shape[1]-j-1]),
                         "alpha",alphalist2,"   beta",betalist2,"%4.1d"%(photon_p), "photon")
                 
+                _mu_x_spin = np.einsum("uj,vi,uv", self.C, self.C, self.mu_x_ao)
+                _mu_y_spin = np.einsum("uj,vi,uv", self.C, self.C, self.mu_y_ao)
+                _mu_z_spin = np.einsum("uj,vi,uv", self.C, self.C, self.mu_z_ao)
+                _mu_x_spin = np.ascontiguousarray(_mu_x_spin)
+                _mu_y_spin = np.ascontiguousarray(_mu_y_spin)
+                _mu_z_spin = np.ascontiguousarray(_mu_z_spin)
+                
                 for i in range(self.davidson_roots):
                     for j in range(i, self.davidson_roots):
-                        c_one_electron_properties(self.H_spatial2, eigenvecs, self.table, self.n_act_a, self.n_act_orb, self.n_in_a, self.nmo, np1, i, j)
+                        print('{:4d}'.format(i), "->",'{:4d}'.format(j))
+                        print('{:^20s}'.format('dipole x'), '{:^20s}'.format('dipole y'), '{:^20s}'.format('dipole z'))
+                        dipole_x = c_one_electron_properties(_mu_x_spin, eigenvecs, self.table, self.n_act_a, self.n_act_orb, self.n_in_a, self.nmo, np1, i, j)
+                        dipole_y = c_one_electron_properties(_mu_y_spin, eigenvecs, self.table, self.n_act_a, self.n_act_orb, self.n_in_a, self.nmo, np1, i, j)
+                        dipole_z = c_one_electron_properties(_mu_z_spin, eigenvecs, self.table, self.n_act_a, self.n_act_orb, self.n_in_a, self.nmo, np1, i, j)
+                        print('{:20.12f}'.format(dipole_x), '{:20.12f}'.format(dipole_y), '{:20.12f}'.format(dipole_z))
 
-               
-        
+
 
 
             elif self.ci_level == "cis":

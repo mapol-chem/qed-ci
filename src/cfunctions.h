@@ -38,7 +38,7 @@ void gram_schmidt_add(double* Q, int rows, int cols, int rows2);
 void davidson(double* h1e, double* h2e, double* d_cmo, double* Hdiag, double* eigenvals, double* eigenvecs, int* table, int* table1, 
 		int* table_creation, int* table_annihilation, int *constint, double *constdouble, callback_ build_sigma);
 
-void one_electron_properties(double* h1e, double* eigvec, int* table, int N_ac, int n_o_ac, int n_o_in, int nmo, int num_photon, int state_p1, int state_p2);
+double one_electron_properties(double* h1e, double* eigvec, int* table, int N_ac, int n_o_ac, int n_o_in, int nmo, int num_photon, int state_p1, int state_p2);
 void get_roots(double* h1e, double* h2e, double* d_cmo, double* Hdiag, double* eigenvals, double* eigenvecs, int* table, int* table1, 
 		int* table_creation, int* table_annihilation, int *constint, double *constdouble);
 void symmetric_eigenvalue_problem(double* A, int N, double* eig);

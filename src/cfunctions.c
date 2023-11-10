@@ -1294,7 +1294,7 @@ void davidson(double* h1e, double* h2e, double* d_cmo, double* Hdiag, double* ei
 
 }
 
-void one_electron_properties(double* h1e, double* eigvec, int* table, int N_ac, int n_o_ac, int n_o_in, int nmo, int num_photon, int state_p1, int state_p2) {
+double one_electron_properties(double* h1e, double* eigvec, int* table, int N_ac, int n_o_ac, int n_o_in, int nmo, int num_photon, int state_p1, int state_p2) {
     int num_alpha = binomialCoeff(n_o_ac, N_ac);
     int num_links = N_ac * (n_o_ac-N_ac) + N_ac + n_o_in;
     size_t num_dets = num_alpha * num_alpha;
@@ -1350,8 +1350,10 @@ void one_electron_properties(double* h1e, double* eigvec, int* table, int N_ac, 
     
     double dum2 = cblas_ddot(nmo*nmo, h1e, 1, D, 1);
     //print trace of 1-rdm or 1-tdm and corresponding trace of H1.D or H1.T
-    printf("%4d -> %4d %20.12lf <%d|H1|%d> = %20.12lf\n", state_p1, state_p2, dum, state_p1, state_p2, dum2);
+    //printf("%4d -> %4d %20.12lf <%d|H1|%d> = %20.12lf\n", state_p1, state_p2, dum, state_p1, state_p2, dum2);
+    //printf("%4d -> %4d %20.12lf", state_p1, state_p2, dum2);
     free(D);
+    return(dum2);
 }
 
 
