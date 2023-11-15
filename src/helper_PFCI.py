@@ -1087,14 +1087,13 @@ class PFHamiltonianGenerator:
                 _mu_y_spin = np.ascontiguousarray(_mu_y_spin)
                 _mu_z_spin = np.ascontiguousarray(_mu_z_spin)
                 
+                print('{:^14s}'.format(' '),'{:^20s}'.format('dipole x'), '{:^20s}'.format('dipole y'), '{:^20s}'.format('dipole z'))
                 for i in range(self.davidson_roots):
                     for j in range(i, self.davidson_roots):
-                        print('{:4d}'.format(i), "->",'{:4d}'.format(j))
-                        print('{:^20s}'.format('dipole x'), '{:^20s}'.format('dipole y'), '{:^20s}'.format('dipole z'))
                         dipole_x = c_one_electron_properties(_mu_x_spin, eigenvecs, self.table, self.n_act_a, self.n_act_orb, self.n_in_a, self.nmo, np1, i, j)
                         dipole_y = c_one_electron_properties(_mu_y_spin, eigenvecs, self.table, self.n_act_a, self.n_act_orb, self.n_in_a, self.nmo, np1, i, j)
                         dipole_z = c_one_electron_properties(_mu_z_spin, eigenvecs, self.table, self.n_act_a, self.n_act_orb, self.n_in_a, self.nmo, np1, i, j)
-                        print('{:20.12f}'.format(dipole_x), '{:20.12f}'.format(dipole_y), '{:20.12f}'.format(dipole_z))
+                        print('{:4d}'.format(i), "->",'{:4d}'.format(j),'{:20.12f}'.format(dipole_x), '{:20.12f}'.format(dipole_y), '{:20.12f}'.format(dipole_z))
 
 
 
