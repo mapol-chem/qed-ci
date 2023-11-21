@@ -1,12 +1,104 @@
 import psi4
 from helper_PFCI import PFHamiltonianGenerator
-from helper_PFCI import Determinant
 from helper_cqed_rhf import cqed_rhf
 import numpy as np
 import pytest
 import sys
 
 np.set_printoptions(threshold=sys.maxsize)
+
+def test_lih_dipole_matrix_elements_no_cavity():
+
+    mol_str = """
+    Li
+    H 1 1.4
+    symmetry c1
+    """
+
+    options_dict = {
+            "basis": "6-31g",
+            "scf_type": "pk",
+            "e_convergence": 1e-10,
+            "d_convergence": 1e-10,
+    }
+
+    cavity_dict = {
+            'omega_value' : 0.,
+            'lambda_vector' : np.array([0, 0, 0.0]),
+            'ci_level' : 'fci',
+            'davidson_roots' : 5,
+            'number_of_photons' : 0,
+            'photon_number_basis' : True,
+            'canonical_mos' : True,
+            'coherent_state_basis' : False
+    }
+
+    test_pf = PFHamiltonianGenerator(
+            mol_str,
+            options_dict,
+            cavity_dict
+    )
+
+    _expected_mu_11 = np.array([-0.000000000000,       0.000000000000,      -3.376439427877])
+    _expected_mu_12 = np.array([0.000000000000,       0.000000000000,       0.000000000000])
+    _expected_mu_13 = np.array([-0.000000000000,       0.000000000000,       0.941984023359])
+    _expected_mu_14 = np.array([-0.000000000000,      -0.000000000002,       0.000000000000])
+    _expected_mu_22 = np.array([0.000000000000,      -0.000000000000,       0.392085681226])
+
+    assert np.allclose(test_pf.test_pf.dipole_array[0,0,:], _expected_mu_11)
+    assert np.allclose(test_pf.test_pf.dipole_array[0,1,:], _expected_mu_12)
+    assert np.allclose(test_pf.test_pf.dipole_array[0,2,:], _expected_mu_13)
+    assert np.allclose(test_pf.test_pf.dipole_array[0,3,:], _expected_mu_14)
+    assert np.allclose(test_pf.test_pf.dipole_array[1,1,:], _expected_mu_22)
+
+
+def test_lih_dipole_matrix_elements_with_cavity():
+
+    mol_str = """
+    Li
+    H 1 1.4
+    symmetry c1
+    """
+
+    options_dict = {
+            "basis": "6-31g",
+            "scf_type": "pk",
+            "e_convergence": 1e-10,
+            "d_convergence": 1e-10,
+    }
+    
+    cavity_dict = {
+        'omega_value' : 0.12086,
+        'lambda_vector' : np.array([0, 0, 0.05]),
+        'ci_level' : 'fci',
+        'davidson_roots' : 5,
+        'number_of_photons' : 10,
+        'photon_number_basis' : True,
+        'canonical_mos' : True,
+        'coherent_state_basis' : False
+        
+    }
+
+
+    test_pf = PFHamiltonianGenerator(
+            mol_str,
+            options_dict,
+            cavity_dict
+    )
+
+    _expected_mu_11 = np.array([-0.000000000000,       0.000000000000,      -3.378315615821])
+    _expected_mu_12 = np.array([0.000000000000,       0.000000000000,       -0.561039417045])
+    _expected_mu_13 = np.array([-0.000000000000,       0.000000000000,        0.000000000000])
+    _expected_mu_14 = np.array([-0.000000000000,      -0.000000000000,       0.700426875294])
+    _expected_mu_22 = np.array([0.000000000000,      -0.000000000000,       -2.133477501518])
+
+    assert np.allclose(test_pf.test_pf.dipole_array[0,0,:], _expected_mu_11)
+    assert np.allclose(test_pf.test_pf.dipole_array[0,1,:], _expected_mu_12)
+    assert np.allclose(test_pf.test_pf.dipole_array[0,2,:], _expected_mu_13)
+    assert np.allclose(test_pf.test_pf.dipole_array[0,3,:], _expected_mu_14)
+    assert np.allclose(test_pf.test_pf.dipole_array[1,1,:], _expected_mu_22)
+
+
 
 def test_h2o_qed_rhf():
     # options for H2O
