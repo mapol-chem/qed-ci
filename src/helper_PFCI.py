@@ -1079,21 +1079,28 @@ class PFHamiltonianGenerator:
 
                         print("%20.12lf"%(eigenvecs[i][index[eigenvecs.shape[1]-j-1]]),"%9.3d"%(index[eigenvecs.shape[1]-j-1]),
                         "alpha",alphalist2,"   beta",betalist2,"%4.1d"%(photon_p), "photon")
-                
+
+                print(" GOING TO COMPUTE 1-E PROPERTIES!")
                 _mu_x_spin = np.einsum("uj,vi,uv", self.C, self.C, self.mu_x_ao)
                 _mu_y_spin = np.einsum("uj,vi,uv", self.C, self.C, self.mu_y_ao)
                 _mu_z_spin = np.einsum("uj,vi,uv", self.C, self.C, self.mu_z_ao)
                 _mu_x_spin = np.ascontiguousarray(_mu_x_spin)
                 _mu_y_spin = np.ascontiguousarray(_mu_y_spin)
                 _mu_z_spin = np.ascontiguousarray(_mu_z_spin)
-                
-                print('{:^14s}'.format(' '),'{:^20s}'.format('dipole x'), '{:^20s}'.format('dipole y'), '{:^20s}'.format('dipole z'))
+
+                # store dipole moments as attributes
+                self.dipole_array = np.zeros((self.davidson_roots, self.davidson_roots, 3))
                 for i in range(self.davidson_roots):
                     for j in range(i, self.davidson_roots):
+                        print('{:4d}'.format(i), "->",'{:4d}'.format(j))
+                        print('{:^20s}'.format('dipole x'), '{:^20s}'.format('dipole y'), '{:^20s}'.format('dipole z'))
                         dipole_x = c_one_electron_properties(_mu_x_spin, eigenvecs, self.table, self.n_act_a, self.n_act_orb, self.n_in_a, self.nmo, np1, i, j)
                         dipole_y = c_one_electron_properties(_mu_y_spin, eigenvecs, self.table, self.n_act_a, self.n_act_orb, self.n_in_a, self.nmo, np1, i, j)
                         dipole_z = c_one_electron_properties(_mu_z_spin, eigenvecs, self.table, self.n_act_a, self.n_act_orb, self.n_in_a, self.nmo, np1, i, j)
-                        print('{:4d}'.format(i), "->",'{:4d}'.format(j),'{:20.12f}'.format(dipole_x), '{:20.12f}'.format(dipole_y), '{:20.12f}'.format(dipole_z))
+                        print('{:20.12f}'.format(dipole_x), '{:20.12f}'.format(dipole_y), '{:20.12f}'.format(dipole_z))
+                        self.dipole_array[i, j, 0] = dipole_x
+                        self.dipole_array[i, j, 1] = dipole_y
+                        self.dipole_array[i, j, 2] = dipole_z
 
 
 
