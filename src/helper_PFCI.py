@@ -1089,7 +1089,19 @@ class PFHamiltonianGenerator:
                 _mu_z_spin = np.ascontiguousarray(_mu_z_spin)
 
                 # store dipole moments as attributes
+                # total dipole moments, mu_el + mu_nuc
                 self.dipole_array = np.zeros((self.davidson_roots, self.davidson_roots, 3))
+
+                # only electronic contribution
+                self.electronic_dipole_array = np.zeros_like(self.dipole_array)
+
+                # only nuclear contribution
+                self.nuclear_dipole_array = np.zeros_like(self.dipole_array)
+                
+                self.nuclear_dipole_array[:,:,0] = np.eye(self.davidson_roots) * self.nuclear_dipole_moment[0]
+                self.nuclear_dipole_array[:,:,1] = np.eye(self.davidson_roots) * self.nuclear_dipole_moment[1]
+                self.nuclear_dipole_array[:,:,2] = np.eye(self.davidson_roots) * self.nuclear_dipole_moment[2]
+
                 for i in range(self.davidson_roots):
                     for j in range(i, self.davidson_roots):
                         print('{:4d}'.format(i), "->",'{:4d}'.format(j))
@@ -1098,9 +1110,13 @@ class PFHamiltonianGenerator:
                         dipole_y = c_one_electron_properties(_mu_y_spin, eigenvecs, self.table, self.n_act_a, self.n_act_orb, self.n_in_a, self.nmo, np1, i, j)
                         dipole_z = c_one_electron_properties(_mu_z_spin, eigenvecs, self.table, self.n_act_a, self.n_act_orb, self.n_in_a, self.nmo, np1, i, j)
                         print('{:20.12f}'.format(dipole_x), '{:20.12f}'.format(dipole_y), '{:20.12f}'.format(dipole_z))
-                        self.dipole_array[i, j, 0] = dipole_x
-                        self.dipole_array[i, j, 1] = dipole_y
-                        self.dipole_array[i, j, 2] = dipole_z
+                        self.electronic_dipole_array[i, j, 0] = dipole_x 
+                        self.electronic_dipole_array[i, j, 1] = dipole_y 
+                        self.electronic_dipole_array[i, j, 2] = dipole_z
+
+                # combine nuclear and electronic parts for the total dipole array
+                self.dipole_array =  self.electronic_dipole_array + self.nuclear_dipole_array
+
 
 
 
@@ -1249,6 +1265,7 @@ class PFHamiltonianGenerator:
         wfn = cqed_rhf_dict["PSI4 WFN"]
         self.rhf_reference_energy = cqed_rhf_dict["RHF ENERGY"]
         self.Enuc = cqed_rhf_dict["NUCLEAR REPULSION ENERGY"]
+        self.nuclear_dipole_moment = cqed_rhf_dict["NUCLEAR DIPOLE MOMENT"]
         self.mu_x_ao = cqed_rhf_dict["DIPOLE AO X"]
         self.mu_y_ao = cqed_rhf_dict["DIPOLE AO Y"]
         self.mu_z_ao = cqed_rhf_dict["DIPOLE AO Z"]
