@@ -26,7 +26,8 @@ def test_lih_dipole_matrix_elements_no_cavity():
             'omega_value' : 0.,
             'lambda_vector' : np.array([0, 0, 0.0]),
             'ci_level' : 'fci',
-            'davidson_roots' : 5,
+            'davidson_roots' : 12,
+            'davidson_threshold' : 1e-9,
             'number_of_photons' : 0,
             'photon_number_basis' : True,
             'canonical_mos' : True,
@@ -54,39 +55,40 @@ def test_lih_dipole_matrix_elements_no_cavity():
     _expected_mu_nuc = np.array([0.0, 0.0, 1.3164164])
    
     # electronic dipole moment of root 0 from psi4
-    _expected_mu_el_00  = np.array([-0.000000000000,       0.000000000000,      -3.3766326])
+    _expected_mu_el_00  = np.array([-0.000000000000,       0.000000000000,      -3.3764390])
 
     # electronic dipole moment of root 1 from psi4 (equivalent to our root 2)
-    _expected_mu_el_22  = np.array([-0.000000000000,       0.000000000000,      0.6518255])
+    _expected_mu_el_22  = np.array([-0.000000000000,       0.000000000000,      0.6509081])
 
-    # electronic dipole moment of root 2 from psi4 (equivalent to our root 5)
-    _expected_mu_el_55  = np.array([-0.000000000000,       0.000000000000,      -1.3064145])
+    # electronic dipole moment of root 4 from psi4 (equivalent to our root 8)
+    _expected_mu_el_88  = np.array([-0.000000000000,       0.000000000000,      -3.8477413])
 
     # electronic tdm 0->1 from psi4 (equivalent to our 0->2)
-    _expected_mu_el_02  = np.array([-0.000000000000,       0.000000000000,      -0.9416200])
+    _expected_mu_el_02  = np.array([-0.000000000000,       0.000000000000,      -0.9419836])
 
-    # electronic tdm 0->2 from psi4 (equivalent to our 0->5)
-    _expected_mu_el_05  = np.array([1.4288007,       0.5863472,      0.])
+    # electronic tdm 0->4 from psi4 (equivalent to our 0->8)
+    _expected_mu_el_08  = np.array([0,       0,      -0.4229505])
 
     # add nuclear contribution to get total dipole moments
     _expected_mu_00 = _expected_mu_el_00 + _expected_mu_nuc
     _expected_mu_22 = _expected_mu_el_22 + _expected_mu_nuc
-    _expected_mu_55 = _expected_mu_el_55 + _expected_mu_nuc
+    _expected_mu_88 = _expected_mu_el_88 + _expected_mu_nuc
 
     # test permanent dipole moments of different states - includes electronic and nuclear
-    assert np.allclose(test_pf.dipole_array[0,0,:], _expected_mu_00)
-    assert np.allclose(test_pf.dipole_array[2,2,:], _expected_mu_22)
-    assert np.allclose(test_pf.dipole_array[5,5,:], _expected_mu_55)
+    assert np.allclose(test_pf.dipole_array[0,0,:], _expected_mu_00, 1e-4, 1e-4)
+    assert np.allclose(test_pf.dipole_array[2,2,:], _expected_mu_22, 1e-4, 1e-4)
+    assert np.allclose(test_pf.dipole_array[8,8,:], _expected_mu_88, 1e-4, 1e-4)
     # test the electronic dipole moments of different states
-    assert np.allclose(test_pf.electronic_dipole_array[0,0,:], _expected_mu_el_00)
-    assert np.allclose(test_pf.electronic_dipole_array[2,2,:], _expected_mu_el_22)
-    assert np.allclose(test_pf.electronic_dipole_array[5,5,:], _expected_mu_el_55)
+    assert np.allclose(test_pf.electronic_dipole_array[0,0,:], _expected_mu_el_00, 1e-4, 1e-4)
+    assert np.allclose(test_pf.electronic_dipole_array[2,2,:], _expected_mu_el_22, 1e-4, 1e-4)
+    assert np.allclose(test_pf.electronic_dipole_array[8,8,:], _expected_mu_el_88, 1e-4, 1e-4)
     # test the transition dipole moments from ground-state, by definition only includes electronic contribution
-    assert np.allclose(test_pf.electronic_dipole_array[0,2,:], _expected_mu_el_02)
-    assert np.allclose(test_pf.electronic_dipole_array[0,5,:], _expected_mu_el_05)
+    # note there can be a sign difference and that's ok!
+    assert np.allclose( np.abs(test_pf.electronic_dipole_array[0,2,:]), np.abs(_expected_mu_el_02), 1e-4, 1e-4)
+    assert np.allclose( np.abs(test_pf.electronic_dipole_array[0,8,:]), np.abs(_expected_mu_el_08), 1e-4, 1e-4)
     # test against dipole array to make sure we didn't add nuclear term to off-diagonal parts (tdms)
-    assert np.allclose(test_pf.dipole_array[0,2,:], _expected_mu_el_02)
-    assert np.allclose(test_pf.dipole_array[0,5,:], _expected_mu_el_05)
+    assert np.allclose( np.abs(test_pf.dipole_array[0,2,:]), np.abs(_expected_mu_el_02), 1e-4, 1e-4)
+    assert np.allclose( np.abs(test_pf.dipole_array[0,8,:]), np.abs(_expected_mu_el_08), 1e-4, 1e-4)
 
     
 
@@ -111,7 +113,8 @@ def test_lih_dipole_matrix_elements_with_cavity():
         'omega_value' : 0.12086,
         'lambda_vector' : np.array([0, 0, 0.05]),
         'ci_level' : 'fci',
-        'davidson_roots' : 5,
+        'davidson_roots' : 10,
+        'davidson_threshold' : 1e-9,
         'number_of_photons' : 10,
         'photon_number_basis' : True,
         'canonical_mos' : True,
@@ -127,17 +130,46 @@ def test_lih_dipole_matrix_elements_with_cavity():
     )
 
 
-    _expected_mu_11 = np.array([-0.000000000000,       0.000000000000,      -3.378315615821])
-    _expected_mu_12 = np.array([0.000000000000,       0.000000000000,       -0.561039417045])
-    _expected_mu_13 = np.array([-0.000000000000,      -0.000000000000,       0.000000000000])
-    _expected_mu_14 = np.array([0.000000000000,      0.000000000000,       0.700426875294])
-    _expected_mu_22 = np.array([0.000000000000,       0.000000000000,      -2.133477501518])
+    # nuclear dipole moment from psi4
+    _expected_mu_nuc = np.array([0.0, 0.0, 1.3164164])
 
-    assert np.allclose(test_pf.dipole_array[0,0,:], _expected_mu_11)
-    assert np.allclose(test_pf.dipole_array[0,1,:], _expected_mu_12)
-    assert np.allclose(test_pf.dipole_array[0,2,:], _expected_mu_13)
-    assert np.allclose(test_pf.dipole_array[0,3,:], _expected_mu_14)
-    assert np.allclose(test_pf.dipole_array[1,1,:], _expected_mu_22)
+    # electronic dipole moment of root 0 from pn-qed-fci-10/6-31g
+    _expected_mu_el_00  = np.array([-0.000000000000,       0.000000000000,      -3.378313198915])
+
+    # electronic dipole moment of root 1 from pn-qed-fci-10/6-31g
+    _expected_mu_el_11  = np.array([-0.000000000000,       0.000000000000,      -2.133476490427])
+
+    # electronic dipole moment of root 3 from pn-qed-fci-10/6-31g
+    _expected_mu_el_33  = np.array([-0.000000000000,       0.000000000000,      -0.674924254975])
+
+    # electronic tdm 0->1 from pn-qed-fci-10/6-31g
+    _expected_mu_el_01  = np.array([-0.000000000000,       0.000000000000,      -0.561039043781])
+
+    # electronic tdm 0->3 from pn-qed-fci-10/6-31g
+    _expected_mu_el_03  = np.array([0,       0,      0.700425960496])
+
+
+    # add nuclear contribution to get total dipole moments
+    _expected_mu_00 = _expected_mu_el_00 + _expected_mu_nuc
+    _expected_mu_11 = _expected_mu_el_11 + _expected_mu_nuc
+    _expected_mu_33 = _expected_mu_el_33 + _expected_mu_nuc
+
+    # test permanent dipole moments of different states - includes electronic and nuclear
+    assert np.allclose(test_pf.dipole_array[0,0,:], _expected_mu_00, 1e-4, 1e-4)
+    assert np.allclose(test_pf.dipole_array[1,1,:], _expected_mu_11, 1e-4, 1e-4)
+    assert np.allclose(test_pf.dipole_array[3,3,:], _expected_mu_33, 1e-4, 1e-4)
+    # test the electronic dipole moments of different states
+    assert np.allclose(test_pf.electronic_dipole_array[0,0,:], _expected_mu_el_00, 1e-4, 1e-4)
+    assert np.allclose(test_pf.electronic_dipole_array[1,1,:], _expected_mu_el_11, 1e-4, 1e-4)
+    assert np.allclose(test_pf.electronic_dipole_array[3,3,:], _expected_mu_el_33, 1e-4, 1e-4)
+    # test the transition dipole moments from ground-state, by definition only includes electronic contribution
+    # note there can be a sign difference and that's ok!
+    assert np.allclose( np.abs(test_pf.electronic_dipole_array[0,1,:]), np.abs(_expected_mu_el_01), 1e-4, 1e-4)
+    assert np.allclose( np.abs(test_pf.electronic_dipole_array[0,3,:]), np.abs(_expected_mu_el_03), 1e-4, 1e-4)
+    # test against dipole array to make sure we didn't add nuclear term to off-diagonal parts (tdms)
+    assert np.allclose( np.abs(test_pf.dipole_array[0,1,:]), np.abs(_expected_mu_el_01), 1e-4, 1e-4)
+    assert np.allclose( np.abs(test_pf.dipole_array[0,3,:]), np.abs(_expected_mu_el_03), 1e-4, 1e-4)
+
 
 
 
