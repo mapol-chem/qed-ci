@@ -39,7 +39,7 @@ def test_lih_dipole_matrix_elements_no_cavity():
             cavity_dict
     )
 
-    #### MAPPINT BETWEEN OUR ROOTS AND PSI4s ROOTS for LiH FCI/6-31G at r = 1.4
+    #### MAPPING BETWEEN OUR ROOTS AND PSI4s ROOTS for LiH FCI/6-31G at r = 1.4
     #0       0.000001288442      -7.988942118138  -> psi4 root 0
     #1       0.000001822213      -7.876497218749  -> triplet
     #2       0.000003108562      -7.860341938452  -> psi4 root 1
