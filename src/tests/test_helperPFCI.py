@@ -45,11 +45,12 @@ def test_lih_dipole_matrix_elements_no_cavity():
     _expected_mu_14 = np.array([-0.000000000000,      -0.000000000002,       0.000000000000])
     _expected_mu_22 = np.array([0.000000000000,      -0.000000000000,       0.392085681226])
 
-    assert np.allclose(test_pf.test_pf.dipole_array[0,0,:], _expected_mu_11)
-    assert np.allclose(test_pf.test_pf.dipole_array[0,1,:], _expected_mu_12)
-    assert np.allclose(test_pf.test_pf.dipole_array[0,2,:], _expected_mu_13)
-    assert np.allclose(test_pf.test_pf.dipole_array[0,3,:], _expected_mu_14)
-    assert np.allclose(test_pf.test_pf.dipole_array[1,1,:], _expected_mu_22)
+
+    assert np.allclose(test_pf.dipole_array[0,0,:], _expected_mu_11)
+    assert np.allclose(test_pf.dipole_array[0,1,:], _expected_mu_12)
+    assert np.allclose(test_pf.dipole_array[0,2,:], _expected_mu_13)
+    assert np.allclose(test_pf.dipole_array[0,3,:], _expected_mu_14)
+    assert np.allclose(test_pf.dipole_array[1,1,:], _expected_mu_22)
 
 
 def test_lih_dipole_matrix_elements_with_cavity():
@@ -92,11 +93,11 @@ def test_lih_dipole_matrix_elements_with_cavity():
     _expected_mu_14 = np.array([-0.000000000000,      -0.000000000000,       0.700426875294])
     _expected_mu_22 = np.array([0.000000000000,      -0.000000000000,       -2.133477501518])
 
-    assert np.allclose(test_pf.test_pf.dipole_array[0,0,:], _expected_mu_11)
-    assert np.allclose(test_pf.test_pf.dipole_array[0,1,:], _expected_mu_12)
-    assert np.allclose(test_pf.test_pf.dipole_array[0,2,:], _expected_mu_13)
-    assert np.allclose(test_pf.test_pf.dipole_array[0,3,:], _expected_mu_14)
-    assert np.allclose(test_pf.test_pf.dipole_array[1,1,:], _expected_mu_22)
+    assert np.allclose(test_pf.dipole_array[0,0,:], _expected_mu_11)
+    assert np.allclose(test_pf.dipole_array[0,1,:], _expected_mu_12)
+    assert np.allclose(test_pf.dipole_array[0,2,:], _expected_mu_13)
+    assert np.allclose(test_pf.dipole_array[0,3,:], _expected_mu_14)
+    assert np.allclose(test_pf.dipole_array[1,1,:], _expected_mu_22)
 
 
 
