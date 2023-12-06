@@ -106,9 +106,9 @@ cfunctions.get_roots.argtypes = [
         np.ctypeslib.ndpointer(ctypes.c_int32,  ndim=1, flags='C_CONTIGUOUS'),
         np.ctypeslib.ndpointer(ctypes.c_double, ndim=1, flags='C_CONTIGUOUS')]
 
-cfunctions.one_electron_properties.argtypes = [
+cfunctions.build_one_rdm.argtypes = [
         np.ctypeslib.ndpointer(ctypes.c_double, ndim=2, flags='C_CONTIGUOUS'),
-        np.ctypeslib.ndpointer(ctypes.c_double, ndim=2, flags='C_CONTIGUOUS'),
+        np.ctypeslib.ndpointer(ctypes.c_double, ndim=1, flags='C_CONTIGUOUS'),
         np.ctypeslib.ndpointer(ctypes.c_int32,  ndim=1, flags='C_CONTIGUOUS'),
         ctypes.c_int32,
         ctypes.c_int32,
@@ -117,7 +117,6 @@ cfunctions.one_electron_properties.argtypes = [
         ctypes.c_int32,
         ctypes.c_int32,
         ctypes.c_int32]
-cfunctions.one_electron_properties.restype = ctypes.c_double
 
 
 cfunctions.build_sigma_s_square.argtypes = [
@@ -245,9 +244,8 @@ def c_get_roots(h1e, h2e, d_cmo, Hdiag, eigenvals, eigenvecs, table, table1, tab
     cfunctions.get_roots(h1e, h2e, d_cmo, Hdiag, eigenvals, eigenvecs, table, table1, table_creation, table_annihilation, 
                         constint, constdouble)
 
-def c_one_electron_properties(h1e, eigvec, table, N_ac, n_o_ac, n_o_in, nmo, num_photon, state_p1, state_p2):
-    one_e_property = cfunctions.one_electron_properties(h1e, eigvec, table, N_ac, n_o_ac, n_o_in, nmo, num_photon, state_p1, state_p2) 
-    return one_e_property
+def c_build_one_rdm(eigvec, D, table, N_ac, n_o_ac, n_o_in, nmo, num_photon, state_p1, state_p2):
+    cfunctions.build_one_rdm(eigvec, D, table, N_ac, n_o_ac, n_o_in, nmo, num_photon, state_p1, state_p2) 
 
 
 def compute_excitation_level(ket, ndocc):
@@ -1101,22 +1099,29 @@ class PFHamiltonianGenerator:
                 self.nuclear_dipole_array[:,:,0] = np.eye(self.davidson_roots) * self.nuclear_dipole_moment[0]
                 self.nuclear_dipole_array[:,:,1] = np.eye(self.davidson_roots) * self.nuclear_dipole_moment[1]
                 self.nuclear_dipole_array[:,:,2] = np.eye(self.davidson_roots) * self.nuclear_dipole_moment[2]
+                self.nat_obt_number = np.zeros((self.davidson_roots, self.nmo))
 
+                print('{:^15s}'.format(' '), '{:^20s}'.format('dipole x'), '{:^20s}'.format('dipole y'), '{:^20s}'.format('dipole z'))
                 for i in range(self.davidson_roots):
                     for j in range(i, self.davidson_roots):
-                        print('{:4d}'.format(i), "->",'{:4d}'.format(j))
-                        print('{:^20s}'.format('dipole x'), '{:^20s}'.format('dipole y'), '{:^20s}'.format('dipole z'))
-                        dipole_x = c_one_electron_properties(_mu_x_spin, eigenvecs, self.table, self.n_act_a, self.n_act_orb, self.n_in_a, self.nmo, np1, i, j)
-                        dipole_y = c_one_electron_properties(_mu_y_spin, eigenvecs, self.table, self.n_act_a, self.n_act_orb, self.n_in_a, self.nmo, np1, i, j)
-                        dipole_z = c_one_electron_properties(_mu_z_spin, eigenvecs, self.table, self.n_act_a, self.n_act_orb, self.n_in_a, self.nmo, np1, i, j)
-                        print('{:20.12f}'.format(dipole_x), '{:20.12f}'.format(dipole_y), '{:20.12f}'.format(dipole_z))
+                        one_rdm = np.zeros((self.nmo* self.nmo))
+                        c_build_one_rdm(eigenvecs, one_rdm, self.table, self.n_act_a, self.n_act_orb, self.n_in_a, self.nmo, np1, i, j)
+                        dipole_x = np.dot(_mu_x_spin.flatten(), one_rdm)
+                        dipole_y = np.dot(_mu_y_spin.flatten(), one_rdm)
+                        dipole_z = np.dot(_mu_z_spin.flatten(), one_rdm)
+                        #dipole_x = c_one_electron_properties(_mu_x_spin, eigenvecs, rdm_eig, self.table, self.n_act_a, self.n_act_orb, self.n_in_a, self.nmo, np1, i, j)
+                        print('{:4d}'.format(i), "->",'{:4d}'.format(j), '{:20.12f}'.format(dipole_x), '{:20.12f}'.format(dipole_y), '{:20.12f}'.format(dipole_z))
+                        if i == j:
+                            one_rdm = np.reshape(one_rdm, (self.nmo, self.nmo))
+                            rdm_eig = np.linalg.eigvalsh(one_rdm)
+                            self.nat_obt_number[i,:] = rdm_eig[np.argsort(-rdm_eig)][:]
                         self.electronic_dipole_array[i, j, 0] = dipole_x 
                         self.electronic_dipole_array[i, j, 1] = dipole_y 
                         self.electronic_dipole_array[i, j, 2] = dipole_z
 
                 # combine nuclear and electronic parts for the total dipole array
                 self.dipole_array =  self.electronic_dipole_array + self.nuclear_dipole_array
-
+                #print(self.nat_obt_number)
 
 
 

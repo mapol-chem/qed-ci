@@ -1294,14 +1294,14 @@ void davidson(double* h1e, double* h2e, double* d_cmo, double* Hdiag, double* ei
 
 }
 
-double one_electron_properties(double* h1e, double* eigvec, int* table, int N_ac, int n_o_ac, int n_o_in, int nmo, int num_photon, int state_p1, int state_p2) {
+void build_one_rdm(double* eigvec, double* D, int* table, int N_ac, int n_o_ac, int n_o_in, int nmo, int num_photon, int state_p1, int state_p2) {
     int num_alpha = binomialCoeff(n_o_ac, N_ac);
     int num_links = N_ac * (n_o_ac-N_ac) + N_ac + n_o_in;
     size_t num_dets = num_alpha * num_alpha;
     
 
-    double* D = (double*) malloc(nmo*nmo*sizeof(double));
-    memset(D, 0, nmo*nmo*sizeof(double));
+    //double* D = (double*) malloc(nmo*nmo*sizeof(double));
+    //memset(D, 0, nmo*nmo*sizeof(double));
 
     for (int index_jb = 0; index_jb < num_alpha; index_jb++) {
         int stride = index_jb * num_links;
@@ -1330,7 +1330,6 @@ double one_electron_properties(double* h1e, double* eigvec, int* table, int N_ac
             int sign = table[(stride + excitation)*4+1];
             int p = table[(stride + excitation)*4+2]; 
             int q = table[(stride + excitation)*4+3]; 
-            //print(index_kb,sign1,k,l)
             int pq = p * nmo + q;
             for (int index_ib = 0; index_ib < num_alpha; index_ib++) {
                 for (int photon_p = 0; photon_p < num_photon; photon_p++) {
@@ -1343,17 +1342,31 @@ double one_electron_properties(double* h1e, double* eigvec, int* table, int N_ac
             }
         }
     }
-    double dum = 0.0;
-    for (int p = 0; p < nmo; p++) {
-	dum += D[p*nmo+p];
-    }
+ 
+    ////double* D2 = (double*)malloc(nmo*nmo*sizeof(double));
+    ////cblas_dcopy(nmo*nmo,D,1,D2,1);
+    ////double* theta = (double*)malloc(nmo*sizeof(double));
+    ////memset(theta, 0, nmo*sizeof(double));
+    ////if (state_p1 == state_p2) {
+    ////   symmetric_eigenvalue_problem(D2, nmo, theta);
+    ////   for (int i = 0; i < nmo; i++) {
+    ////       printf( "%20.12lf\n", theta[i]);    
+    ////   }
+    ////   printf("%4d%4d%4d\n", state_p1, state_p2, nmo);
+    ////}
+    ////free(D2);
+    ////free(theta);
+
+    //double dum = 0.0;
+    //for (int p = 0; p < nmo; p++) {
+    //    dum += D[p*nmo+p];
+    //}
     
-    double dum2 = cblas_ddot(nmo*nmo, h1e, 1, D, 1);
+    //double dum2 = cblas_ddot(nmo*nmo, h1e, 1, D, 1);
     //print trace of 1-rdm or 1-tdm and corresponding trace of H1.D or H1.T
     //printf("%4d -> %4d %20.12lf <%d|H1|%d> = %20.12lf\n", state_p1, state_p2, dum, state_p1, state_p2, dum2);
     //printf("%4d -> %4d %20.12lf", state_p1, state_p2, dum2);
-    free(D);
-    return(dum2);
+    //return(dum2);
 }
 
 
