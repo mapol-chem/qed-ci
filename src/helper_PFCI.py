@@ -106,9 +106,9 @@ cfunctions.get_roots.argtypes = [
         np.ctypeslib.ndpointer(ctypes.c_int32,  ndim=1, flags='C_CONTIGUOUS'),
         np.ctypeslib.ndpointer(ctypes.c_double, ndim=1, flags='C_CONTIGUOUS')]
 
-cfunctions.build_one_rdm.argtypes = [
+cfunctions.one_electron_properties.argtypes = [
         np.ctypeslib.ndpointer(ctypes.c_double, ndim=2, flags='C_CONTIGUOUS'),
-        np.ctypeslib.ndpointer(ctypes.c_double, ndim=1, flags='C_CONTIGUOUS'),
+        np.ctypeslib.ndpointer(ctypes.c_double, ndim=2, flags='C_CONTIGUOUS'),
         np.ctypeslib.ndpointer(ctypes.c_int32,  ndim=1, flags='C_CONTIGUOUS'),
         ctypes.c_int32,
         ctypes.c_int32,
@@ -117,6 +117,7 @@ cfunctions.build_one_rdm.argtypes = [
         ctypes.c_int32,
         ctypes.c_int32,
         ctypes.c_int32]
+cfunctions.one_electron_properties.restype = ctypes.c_double
 
 
 cfunctions.build_sigma_s_square.argtypes = [
@@ -244,8 +245,9 @@ def c_get_roots(h1e, h2e, d_cmo, Hdiag, eigenvals, eigenvecs, table, table1, tab
     cfunctions.get_roots(h1e, h2e, d_cmo, Hdiag, eigenvals, eigenvecs, table, table1, table_creation, table_annihilation, 
                         constint, constdouble)
 
-def c_build_one_rdm(eigvec, D, table, N_ac, n_o_ac, n_o_in, nmo, num_photon, state_p1, state_p2):
-    cfunctions.build_one_rdm(eigvec, D, table, N_ac, n_o_ac, n_o_in, nmo, num_photon, state_p1, state_p2) 
+def c_one_electron_properties(h1e, eigvec, table, N_ac, n_o_ac, n_o_in, nmo, num_photon, state_p1, state_p2):
+    one_e_property = cfunctions.one_electron_properties(h1e, eigvec, table, N_ac, n_o_ac, n_o_in, nmo, num_photon, state_p1, state_p2) 
+    return one_e_property
 
 
 def compute_excitation_level(ket, ndocc):
@@ -1099,29 +1101,22 @@ class PFHamiltonianGenerator:
                 self.nuclear_dipole_array[:,:,0] = np.eye(self.davidson_roots) * self.nuclear_dipole_moment[0]
                 self.nuclear_dipole_array[:,:,1] = np.eye(self.davidson_roots) * self.nuclear_dipole_moment[1]
                 self.nuclear_dipole_array[:,:,2] = np.eye(self.davidson_roots) * self.nuclear_dipole_moment[2]
-                self.nat_obt_number = np.zeros((self.davidson_roots, self.nmo))
 
-                print('{:^15s}'.format(' '), '{:^20s}'.format('dipole x'), '{:^20s}'.format('dipole y'), '{:^20s}'.format('dipole z'))
                 for i in range(self.davidson_roots):
-                    for j in range(i, self.davidson_roots):
-                        one_rdm = np.zeros((self.nmo* self.nmo))
-                        c_build_one_rdm(eigenvecs, one_rdm, self.table, self.n_act_a, self.n_act_orb, self.n_in_a, self.nmo, np1, i, j)
-                        dipole_x = np.dot(_mu_x_spin.flatten(), one_rdm)
-                        dipole_y = np.dot(_mu_y_spin.flatten(), one_rdm)
-                        dipole_z = np.dot(_mu_z_spin.flatten(), one_rdm)
-                        #dipole_x = c_one_electron_properties(_mu_x_spin, eigenvecs, rdm_eig, self.table, self.n_act_a, self.n_act_orb, self.n_in_a, self.nmo, np1, i, j)
-                        print('{:4d}'.format(i), "->",'{:4d}'.format(j), '{:20.12f}'.format(dipole_x), '{:20.12f}'.format(dipole_y), '{:20.12f}'.format(dipole_z))
-                        if i == j:
-                            one_rdm = np.reshape(one_rdm, (self.nmo, self.nmo))
-                            rdm_eig = np.linalg.eigvalsh(one_rdm)
-                            self.nat_obt_number[i,:] = rdm_eig[np.argsort(-rdm_eig)][:]
+                    for j in range(self.davidson_roots):
+                        print('{:4d}'.format(i), "->",'{:4d}'.format(j))
+                        print('{:^20s}'.format('dipole x'), '{:^20s}'.format('dipole y'), '{:^20s}'.format('dipole z'))
+                        dipole_x = c_one_electron_properties(_mu_x_spin, eigenvecs, self.table, self.n_act_a, self.n_act_orb, self.n_in_a, self.nmo, np1, i, j)
+                        dipole_y = c_one_electron_properties(_mu_y_spin, eigenvecs, self.table, self.n_act_a, self.n_act_orb, self.n_in_a, self.nmo, np1, i, j)
+                        dipole_z = c_one_electron_properties(_mu_z_spin, eigenvecs, self.table, self.n_act_a, self.n_act_orb, self.n_in_a, self.nmo, np1, i, j)
+                        print('{:20.12f}'.format(dipole_x), '{:20.12f}'.format(dipole_y), '{:20.12f}'.format(dipole_z))
                         self.electronic_dipole_array[i, j, 0] = dipole_x 
                         self.electronic_dipole_array[i, j, 1] = dipole_y 
                         self.electronic_dipole_array[i, j, 2] = dipole_z
 
                 # combine nuclear and electronic parts for the total dipole array
                 self.dipole_array =  self.electronic_dipole_array + self.nuclear_dipole_array
-                #print(self.nat_obt_number)
+
 
 
 
@@ -1139,6 +1134,55 @@ class PFHamiltonianGenerator:
 
             t_dav_end = time.time()
             print(f" Completed Davidson iterations in {t_dav_end - t_H_build} seconds")
+
+            print(f' # Printing electron repulsion integrals in spatial MO basis')
+            for i in range(self.nmo):
+                for j in range(0,i+1):
+                    for k in range(self.nmo):
+                        for l in range(0,k+1):
+                            teint = self.eri_dump[i,j,k,l]
+                            if np.abs(teint)>0.0:
+                                print(f'  {teint:30.20e} \t {i+1} {j+1} {k+1} {l+1}')
+
+            print(f' # Printing T + V integrals in spatial MO basis')
+            for i in range(self.nmo):
+                for j in range(self.nmo):
+                    oeint = self.T_p_V_mo[i,j]
+                    print(f'  {oeint:30.20e} \t {i+1} {j+1} {0} {0}')
+
+            print(f' # Printing -1/2 \lambda \lambda q integrals in spatial MO basis')
+            for i in range(self.nmo):
+                for j in range(self.nmo):
+                    oeint = self.q_mo[i,j]
+                    print(f'  {oeint:30.20e} \t {i+1} {j+1} {0} {0}')
+
+            print(f' # Printing \lambda mu integrals in spatial MO basis')
+            for i in range(self.nmo):
+                for j in range(self.nmo):
+                    oeint = self.d_cmo[i,j]
+                    print(f'  {oeint:30.20e} \t {i+1} {j+1} {0} {0}')
+
+            print(f' # Printing nuclear repulsion energy')
+            print(f'  {self.Enuc:30.20e} \t {0} {0} {0} {0}')
+
+            print(f' # Printing photon energy')
+            print(f'  {self.omega:30.20e} \t {0} {0} {0} {0}')
+            
+            print(f' # Printing lambda vector')
+            print(f'  {self.lambda_vector[0]:16.10e}, {self.lambda_vector[1]:16.10e}, {self.lambda_vector[2]:16.10e} \t {0} {0} {0} {0}')
+            
+            print(f' # Printing RHF Electronic Dipole Moment')
+            print(f'  {self.electronic_dipole_moment[0]:16.10e}, {self.electronic_dipole_moment[1]:16.10e}, {self.electronic_dipole_moment[2]:16.10e} \t {0} {0} {0} {0}')
+
+            print(f' # Printing Nuclear Dipole Moment')
+            print(f'  {self.nuclear_dipole_moment[0]:16.10e}, {self.nuclear_dipole_moment[1]:16.10e}, {self.nuclear_dipole_moment[2]:16.10e} \t {0} {0} {0} {0}')
+
+            print(f' # Printing RHF Energy')
+            print(f'  {self.rhf_reference_energy:30.20e} \t {0} {0} {0} {0}')
+
+            print(f' # Printing FCI Ground-state Energy')
+            print(f'  {self.CIeigs[0]:30.20e} \t {0} {0} {0} {0}')
+
 
     def parseCavityOptions(self, cavity_dictionary):
         """
@@ -1271,6 +1315,7 @@ class PFHamiltonianGenerator:
         self.rhf_reference_energy = cqed_rhf_dict["RHF ENERGY"]
         self.Enuc = cqed_rhf_dict["NUCLEAR REPULSION ENERGY"]
         self.nuclear_dipole_moment = cqed_rhf_dict["NUCLEAR DIPOLE MOMENT"]
+        self.electronic_dipole_moment = cqed_rhf_dict["RHF DIPOLE MOMENT"] - self.nuclear_dipole_moment
         self.mu_x_ao = cqed_rhf_dict["DIPOLE AO X"]
         self.mu_y_ao = cqed_rhf_dict["DIPOLE AO Y"]
         self.mu_z_ao = cqed_rhf_dict["DIPOLE AO Z"]
@@ -1358,12 +1403,18 @@ class PFHamiltonianGenerator:
 
         # build H_spin
         # spatial part of 1-e integrals
+        self.T_p_V_mo = np.einsum("uj,vi,uv", self.C, self.C, (self.T_ao + self.V_ao))
+        # spatial part of \lambda \lambda q
+        self.q_mo = np.einsum("uf,vi,uv", self.C, self.C, self.q_PF_ao)
+
+
         _H_spin = np.einsum("uj,vi,uv", self.C, self.C, self.H_1e_ao)
         self.H_spatial = _H_spin
         self.H_spatial2 = np.ascontiguousarray(_H_spin)
         if self.full_diagonalization or self.test_mode or self.ci_level == "cis":
             _H_spin = np.repeat(_H_spin, 2, axis=0)
             _H_spin = np.repeat(_H_spin, 2, axis=1)
+
             # spin part of 1-e integrals
             spin_ind = np.arange(_H_spin.shape[0], dtype=int) % 2
             # product of spatial and spin parts
@@ -1919,10 +1970,40 @@ class PFHamiltonianGenerator:
         if self.full_diagonalization or self.test_mode or self.ci_level == "cis":
             self.eri_so = np.asarray(mints.mo_spin_eri(self.Ca, self.Ca))
 
+        #self.eri_spatial = np.asarray(mints.mo_eri(self.Ca, self.Ca, self.Ca, self.Ca))
 
         self.twoeint1 = np.asarray(mints.mo_eri(self.Ca, self.Ca, self.Ca, self.Ca))
+        self.eri_dump = np.copy(self.twoeint1)
+
         t_eri_end = time.time()
         print(f" Completed ERI Build in {t_eri_end - t_1H_end} seconds ")
+        fcidump_1111 =   1.65746225568124572192E+00  # 1   1   1   1
+        fcidump_1121 =   1.23210600872631553804E-01  # 1   1   2   1
+        fcidump_1122 =   3.93597799685008187254E-01  # 1   1   2   2
+        fcidump_1131 =   1.36465241834231754137E-01  # 1   1   3   1
+        fcidump_1132 =   9.55749466986739217023E-03  # 1   1   3   2
+        fcidump_1133 =   3.96123829133834925997E-01  # 1   1   3   3
+        fcidump_1144 =   3.96290895985614177732E-01  # 1   1   4   4
+        fcidump_1155 =   3.96290895985614510799E-01  # 1   1   5   5
+        fcidump_1161 =   3.02122452903166686944E-02  # 1   1   6   1
+        fcidump_1162 =   1.28575557310917215625E-02  # 1   1   6   2
+        fcidump_1163 =  -1.74475961074684222940E-02  # 1   1   6   3
+        fcidump_1166 =   3.61297642622271875101E-01  # 1   1   6   6
+        #print(f" ERI[0,0,0,0] is {self.twoeint1[0,0,0,0]}")
+        #assert np.isclose(self.twoeint1[0,0,0,0],fcidump_1111)
+        #assert np.isclose(self.twoeint1[0,0,1,0],fcidump_1121)
+        #assert np.isclose(self.twoeint1[0,0,1,1],fcidump_1122)
+        #assert np.isclose(self.twoeint1[0,0,2,0],fcidump_1131)
+        #assert np.isclose(self.twoeint1[0,0,2,1],fcidump_1132)
+
+        #for i in range(self.nmo):
+        #    for j in range(0,i+1):
+        #        for k in range(self.nmo):
+        #            for l in range(0,k+1):
+        #                teint = self.twoeint1[i,j,k,l]
+        #                if np.abs(teint)>0.0:
+        #                    print(f'  {teint:30.20e} {i+1} {j+1} {k+1} {l+1}')
+
 
         # form the 2H in spin orbital basis
         self.build2DSO()

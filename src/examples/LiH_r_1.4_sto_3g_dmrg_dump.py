@@ -11,18 +11,19 @@ symmetry c1
 """
 
 options_dict = {
-        "basis": "6-311g",
+        "basis": "sto-3g",
         "scf_type": "pk",
         "e_convergence": 1e-10,
         "d_convergence": 1e-10,
 }
 
 cavity_dict = {
-        'omega_value' : 0.,
-        'lambda_vector' : np.array([0, 0, 0.0]),
+        'omega_value' : 0.12086,
+        'lambda_vector' : np.array([0, 0, 0.05]),
         'ci_level' : 'fci',
-        'davidson_roots' : 50,
-        'number_of_photons' : 0,
+        'davidson_roots' : 5,
+        'number_of_photons' : 10,
+        'davidson_threshold' : 1e-9,
         'photon_number_basis' : True,
         'canonical_mos' : True,
         'coherent_state_basis' : False
@@ -36,10 +37,10 @@ test_pf = PFHamiltonianGenerator(
 
 # save eigenvalues and dipole elements to npy files 
 #C_string = file_string + "_Eigenvectors"
-E_string = file_string + "_Energies"
-Mu_string = file_string + "_Dipoles"
+#E_string = file_string + "_Energies"
+#Mu_string = file_string + "_Dipoles"
 
 #np.save(C_string, test_pf.CIvecs)
-np.save(E_string, test_pf.CIeigs)
-np.save(Mu_string, test_pf.dipole_array)
+#np.save(E_string, test_pf.CIeigs)
+#np.save(Mu_string, test_pf.dipole_array)
 
