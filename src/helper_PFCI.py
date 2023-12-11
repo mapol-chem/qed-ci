@@ -1742,6 +1742,10 @@ class PFHamiltonianGenerator:
         # build 2eInt in cqed-rhf basis
         mints = psi4.core.MintsHelper(p4_wfn.basisset())
         self.eri_so = np.asarray(mints.mo_spin_eri(self.Ca, self.Ca))
+        eri_spatial = np.asarray(mints.mo_eri(self.Ca, self.Ca,self.Ca, self.Ca))
+        
+        #assert np.isclose(eri_spatial[0,0,0,0], 1.65894986029948787731E+00)
+
         t_eri_end = time.time()
         print(f" Completed ERI Build in {t_eri_end - t_1H_end} seconds ")
 
