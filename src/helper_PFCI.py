@@ -1121,6 +1121,10 @@ class PFHamiltonianGenerator:
         # G matrix
         self.Gmatrix = np.zeros((_numDets, _numDets))
 
+        # build arrays in the full N_el * N_ph space
+        self.H_2E = np.zeros((_numDets, _numDets))
+        self.h_one_e = np.zeros((_numDets, _numDets))
+
         # dipole matrix
         self.dipole_block_x = np.zeros((_numDets, _numDets))
         self.dipole_block_y = np.zeros((_numDets, _numDets))
@@ -1133,15 +1137,23 @@ class PFHamiltonianGenerator:
                 apd_dict = self.calcApDMatrixElement(
                     _dets[i], _dets[j], OneEpTwoE=False
                 )
+                _H2e = APD_Dict["H2e"]
+                _H1e = APD_Dict["H1e"]
                 _ApD = APD_Dict["A+Delta"]
                 _M = APD_Dict["MuMu"]
                 _apd = apd_dict["A+Delta"]
                 _D = APD_Dict["Delta"]
 
+                self.H_2E[i, j] = _H2e
+                self.h_one_e[i, j] = _H1e
+
                 self.ApDmatrix[i, j] = _ApD
                 self.apdmatrix[i, j] = _apd
                 self.MUMU[i, j, :] = _M
                 self.Delta[i, j] = _D
+
+                self.H_2E[j, i] = _H2e
+                self.h_one_e[j, i] = _H1e
 
                 self.ApDmatrix[j, i] = _ApD
                 self.apdmatrix[j, i] = _apd
@@ -1162,12 +1174,12 @@ class PFHamiltonianGenerator:
         # dimension of composite dimension
         _compDim = (self.N_p + 1) * _numDets
 
-        # build arrays in the full N_el * N_ph space
-        self.H_PF = np.zeros((_compDim, _compDim))
+
         # _tryHPF = np.zeros((_compDim, _compDim))
 
         # one-electron version of Hamiltonian
         self.H_1E = np.zeros((_compDim, _compDim))
+        self.H_PF = np.zeros((_compDim, _compDim))
 
         # dipole matrix in CI basis
         self.MU_X = np.zeros((_compDim, _compDim))
@@ -1175,6 +1187,7 @@ class PFHamiltonianGenerator:
         self.MU_Z = np.zeros((_compDim, _compDim))
 
         if self.N_p == 0:
+            #self.H_2E[:_numDets, :_numDets] = self.ApDmatrix
             self.H_PF[:_numDets, :_numDets] = self.ApDmatrix + self.Enuc_so + self.dc_so
             self.H_1E[:_numDets, :_numDets] = self.apdmatrix + self.Enuc_so + self.dc_so
             self.MU_X[:_numDets, :_numDets] = self.dipole_block_x
@@ -1289,6 +1302,8 @@ class PFHamiltonianGenerator:
             else:
                 #
                 slater_condon_dict = {
+                    "H2e" : 0.0,
+                    "H1e" : 0.0,
                     "A+Delta": 0.0,
                     "MuMu": np.array([0.0, 0.0, 0.0, 0.0, 0.0, 0.0]),
                     "Delta" : 0.0
@@ -1302,6 +1317,8 @@ class PFHamiltonianGenerator:
                 return self.calcMatrixElementDiffIn1(det1, det2, omit2E=True)
             else:
                 slater_condon_dict = {
+                    "H2e" : 0.0,
+                    "H1e" : 0.0,
                     "A+Delta": 0.0,
                     "MuMu": np.array([0.0, 0.0, 0.0, 0.0, 0.0, 0.0]),
                     "Delta" : 0.0
@@ -1310,6 +1327,8 @@ class PFHamiltonianGenerator:
 
         else:
             slater_condon_dict = {
+                "H2e" : 0.0,
+                "H1e" : 0.0,
                 "A+Delta": 0.0,
                 "MuMu": np.array([0.0, 0.0, 0.0, 0.0, 0.0, 0.0]),
                 "Delta" : 0.0
@@ -1379,6 +1398,8 @@ class PFHamiltonianGenerator:
         assert np.isclose(testM2, _D)
         
         slater_condon_dict = {
+            "H2e" : _ApD,
+            "H1e" : 0.0,
             "A+Delta": _ApD,
             "MuMu": np.array([M2xx, M2yy, M2zz, M2xy, M2xz, M2yz]),
             "Delta": _D
@@ -1466,6 +1487,8 @@ class PFHamiltonianGenerator:
 
         # return sign * (Helem + Relem)
         slater_condon_dict = {
+            "H2e" : sign * Relem,
+            "H1e" : sign * Helem,
             "A+Delta": _ApD_elem,
              #uncomment for MuMu including 1e and 2e terms 
             "MuMu": np.array([_Mxx, _Myy, _Mzz, _Mxy, _Mxz, _Myz]),
@@ -1620,6 +1643,8 @@ class PFHamiltonianGenerator:
         assert np.isclose(testMuMu, (D2elem + Q1elem) )
 
         slater_condon_dict = {
+            "H2e" : Relem,
+            "H1e" : Helem,
             "A+Delta": _ApDelem,
             # uncomment for MuMu including 1e and 2e terms 
             "MuMu": np.array([_Mxx, _Myy, _Mzz, _Mxy, _Mxz, _Myz]),
@@ -1770,6 +1795,31 @@ class PFHamiltonianGenerator:
         self.build1QSO()
         self.build2MuSO()
 
+    def compute_1_and_2_electron_energy(self, root_index):
+        """
+        Compute the 1-electron energy from root root_index
+        
+        """
+        _tmp1e = np.dot(self.h_one_e, self.CIvecs[:, root_index])
+        self.one_electron_energy = np.dot(self.CIvecs[:, root_index], _tmp1e)
+
+        _tmp2e = np.dot(self.H_2E, self.CIvecs[:, root_index])
+        self.two_electron_energy = np.dot(self.CIvecs[:, root_index], _tmp2e)
+
+        self.total_energy = self.one_electron_energy + self.two_electron_energy  + self.Enuc
+
+        print(F'One Electron Energy is      {self.one_electron_energy:16.12f}')
+        print(F'Two Electron Energy is      {self.two_electron_energy:16.12f}')
+        print(F'Nuclear Electron Energy is  {self.Enuc:16.12f}')
+        print(F'Total Energy is             {self.total_energy:16.12f}')
+        print(F'Corresponding Eigenvalue is {self.CIeigs[root_index]}')
+
+
+
+
+
+
+    
     # Some post-processing methods
     def compute_dipole_moment(self, braI, ketJ):
         """
