@@ -119,7 +119,18 @@ cfunctions.build_one_rdm.argtypes = [
     ctypes.c_int32,
     ctypes.c_int32,
 ]
-
+cfunctions.build_two_rdm.argtypes = [
+    np.ctypeslib.ndpointer(ctypes.c_double, ndim=2, flags="C_CONTIGUOUS"),
+    np.ctypeslib.ndpointer(ctypes.c_double, ndim=1, flags="C_CONTIGUOUS"),
+    np.ctypeslib.ndpointer(ctypes.c_int32, ndim=1, flags="C_CONTIGUOUS"),
+    ctypes.c_int32,
+    ctypes.c_int32,
+    ctypes.c_int32,
+    ctypes.c_int32,
+    ctypes.c_int32,
+    ctypes.c_int32,
+    ctypes.c_int32,
+]
 
 cfunctions.build_sigma_s_square.argtypes = [
     np.ctypeslib.ndpointer(ctypes.c_double, ndim=2, flags="C_CONTIGUOUS"),
@@ -309,6 +320,15 @@ def c_build_one_rdm(
     cfunctions.build_one_rdm(
         eigvec, D, table, N_ac, n_o_ac, n_o_in, nmo, num_photon, state_p1, state_p2
     )
+
+def c_build_two_rdm(
+    eigvec, D, table, N_ac, n_o_ac, n_o_in, nmo, num_photon, state_p1, state_p2
+):
+    cfunctions.build_two_rdm(
+        eigvec, D, table, N_ac, n_o_ac, n_o_in, nmo, num_photon, state_p1, state_p2
+    )
+
+
 
 
 def compute_excitation_level(ket, ndocc):
@@ -1341,7 +1361,45 @@ class PFHamiltonianGenerator:
                     self.electronic_dipole_array + self.nuclear_dipole_array
                 )
                 # print(self.nat_obt_number)
-
+                print("one and two electrron energies")
+                #change ERI to physicist's notation
+                twoeint2 = self.twoeint.reshape((self.nmo, self.nmo, self.nmo, self.nmo))
+                twoeint2 = twoeint2.transpose(0, 2, 1, 3)
+                for i in range(self.davidson_roots):
+                    one_rdm = np.zeros((self.nmo * self.nmo))
+                    c_build_one_rdm(
+                        eigenvecs,
+                        one_rdm,
+                        self.table,
+                        self.n_act_a,
+                        self.n_act_orb,
+                        self.n_in_a,
+                        self.nmo,
+                        np1,
+                        i,
+                        i,
+                    )
+                    two_rdm = np.zeros((self.nmo * self.nmo * self.nmo * self.nmo))
+                    c_build_two_rdm(
+                        eigenvecs,
+                        two_rdm,
+                        self.table,
+                        self.n_act_a,
+                        self.n_act_orb,
+                        self.n_in_a,
+                        self.nmo,
+                        np1,
+                        i,
+                        i,
+                    )
+                    one_e_energy = np.dot(self.H_spatial2.flatten(), one_rdm)
+                    two_e_energy = 0.5 * np.dot(twoeint2.flatten(), two_rdm)
+                    print(
+                        "{:4s}".format("state"),
+                        "{:4d}".format(i),
+                        "{:20.12f}".format(one_e_energy),
+                        "{:20.12f}".format(two_e_energy),
+                    )
             elif self.ci_level == "cis":
                 dres = self.Davidson(
                     self.H_PF,

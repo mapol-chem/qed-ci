@@ -1357,10 +1357,11 @@ void build_one_rdm(double* eigvec, double* D, int* table, int N_ac, int n_o_ac, 
     ////free(D2);
     ////free(theta);
 
-    //double dum = 0.0;
-    //for (int p = 0; p < nmo; p++) {
-    //    dum += D[p*nmo+p];
-    //}
+    ////double dum = 0.0;
+    ////for (int p = 0; p < nmo; p++) {
+    ////    dum += D[p*nmo+p];
+    ////}
+    ////printf( "%20.12lf\n", dum);    
     
     //double dum2 = cblas_ddot(nmo*nmo, h1e, 1, D, 1);
     //print trace of 1-rdm or 1-tdm and corresponding trace of H1.D or H1.T
@@ -1368,6 +1369,90 @@ void build_one_rdm(double* eigvec, double* D, int* table, int N_ac, int n_o_ac, 
     //printf("%4d -> %4d %20.12lf", state_p1, state_p2, dum2);
     //return(dum2);
 }
+
+void build_two_rdm(double* eigvec, double* D, int* table, int N_ac, int n_o_ac, int n_o_in, int nmo, int num_photon, int state_p1, int state_p2) {
+    int num_alpha = binomialCoeff(n_o_ac, N_ac);
+    int num_links = N_ac * (n_o_ac-N_ac) + N_ac + n_o_in;
+    size_t num_dets = num_alpha * num_alpha;
+    
+    //Eq. 25 in Mol. Phys.,2010, 433–451
+
+    for (int index_jb = 0; index_jb < num_alpha; index_jb++) {
+        int stride1 = index_jb * num_links;
+        for (int excitation1 = 0; excitation1 < num_links; excitation1++) {
+            int index_kb = table[(stride1 + excitation1)*4+0];
+            int sign1 = table[(stride1 + excitation1)*4+1];
+            int q = table[(stride1 + excitation1)*4+2]; 
+            int s = table[(stride1 + excitation1)*4+3]; 
+            for (int p = 0; p < nmo; p++) {
+                for (int index_ia = 0; index_ia < num_alpha; index_ia++) {
+                    for (int photon_p = 0; photon_p < num_photon; photon_p++) {
+                        int index_I = index_ia * num_alpha + index_kb;
+                        int index_J = index_ia * num_alpha + index_jb;
+                        D[q * nmo*nmo*nmo + p * nmo*nmo + p * nmo + s] += -2.0 * sign1 * eigvec[(state_p1 * num_photon + photon_p) * num_dets + index_I]
+	            		* eigvec[(state_p2 * num_photon + photon_p) * num_dets + index_J];
+                
+                    }
+                }
+            }
+
+            int stride2 = index_kb * num_links;
+            for (int excitation2 = 0; excitation2 < num_links; excitation2++) {
+                int index_ib = table[(stride2 + excitation2)*4+0];
+                int sign2 = table[(stride2 + excitation2)*4+1];
+                int p = table[(stride2 + excitation2)*4+2]; 
+                int r = table[(stride2 + excitation2)*4+3]; 
+                for (int index_ia = 0; index_ia < num_alpha; index_ia++) {
+                    for (int photon_p = 0; photon_p < num_photon; photon_p++) {
+                        int index_I = index_ia * num_alpha + index_ib;
+                        int index_J = index_ia * num_alpha + index_jb;
+                        D[p * nmo*nmo*nmo + q * nmo*nmo + r * nmo + s] += 2.0 * sign1 * sign2 * eigvec[(state_p1 * num_photon + photon_p) * num_dets + index_I]
+	            		* eigvec[(state_p2 * num_photon + photon_p) * num_dets + index_J];
+                
+                    }
+                }
+            }
+
+        }
+    }
+    for (int index_jb = 0; index_jb < num_alpha; index_jb++) {
+        int stride_b = index_jb * num_links;
+        for (int excitation_b = 0; excitation_b < num_links; excitation_b++) {
+            int index_ib = table[(stride_b+ excitation_b)*4+0];
+            int sign_b = table[(stride_b + excitation_b)*4+1];
+            int p = table[(stride_b + excitation_b)*4+2]; 
+            int r = table[(stride_b + excitation_b)*4+3]; 
+            
+
+            for (int index_ja = 0; index_ja < num_alpha; index_ja++) {
+                int stride_a = index_ja * num_links;
+                for (int excitation_a = 0; excitation_a < num_links; excitation_a++) {
+                    int index_ia = table[(stride_a + excitation_a)*4+0];
+                    int sign_a = table[(stride_a + excitation_a)*4+1];
+                    int q = table[(stride_a + excitation_a)*4+2]; 
+                    int s = table[(stride_a + excitation_a)*4+3]; 
+                    for (int photon_p = 0; photon_p < num_photon; photon_p++) {
+                        int index_I = index_ia * num_alpha + index_ib;
+                        int index_J = index_ja * num_alpha + index_jb;
+                        D[p * nmo*nmo*nmo + q * nmo*nmo + r * nmo + s] += 2.0 * sign_a * sign_b * eigvec[(state_p1 * num_photon + photon_p) * num_dets + index_I]
+	            		* eigvec[(state_p2 * num_photon + photon_p) * num_dets + index_J];
+                    
+                    }
+                }
+	    }
+
+        }
+    }
+    ////////test trace of 2-RDM
+    ////double dum = 0.0;
+    ////for (int p = 0; p < nmo*nmo; p++) {
+    ////    dum += D[p*nmo*nmo+p];
+    ////}
+    ////printf( "%20.12lf\n", dum);    
+    
+    
+}
+
 
 
 void build_b_array(int* table1, int* b_array, int num_alpha, int num_links, int n_o_ac) {
