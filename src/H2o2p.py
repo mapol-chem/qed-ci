@@ -2,19 +2,29 @@ import psi4
 from helper_PFCI import PFHamiltonianGenerator
 import numpy as np
 
-
 mol_str = """
-Li
-H 1 1.4
+2 1
+o 
+h 1 1.0
+h 1 1.0 2 104.5
 symmetry c1
+no_reorient
+nocom
 """
 
-options_dict = {
-        "basis": "sto-3g",
-        "scf_type": "pk",
-        "e_convergence": 1e-10,
-        "d_convergence": 1e-10,
-}
+options_dict = {'basis': 'sto-3g',
+                  'scf_type': 'pk',
+                  'e_convergence': 1e-10,
+                  'd_convergence': 1e-10
+                  }
+
+mol = psi4.geometry(mol_str)
+
+psi4.set_options(options_dict)
+psi4.core.set_output_file('h2o_0.6.out', False)
+
+#H2_PF = PFHamiltonianGenerator(mol_str, options_dict, cavity_options)
+
 
 
 cavity_dict = {
