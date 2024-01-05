@@ -1146,6 +1146,7 @@ class PFHamiltonianGenerator:
         else:
             indim = self.davidson_indim * self.davidson_roots
             maxdim = self.davidson_maxdim * self.davidson_roots
+            #print(H_dim, self.n_act_a,self.nmo)
             if indim > H_dim or maxdim > H_dim:
                 print(
                     "subspace size is too large, try to set maxdim and indim <",
@@ -1174,7 +1175,10 @@ class PFHamiltonianGenerator:
                 self.constint[8] = self.davidson_maxiter
                 self.constdouble = np.zeros(5)
                 self.constdouble[0] = self.Enuc
-                self.constdouble[1] = self.d_c
+                if self.ignore_dse_terms:
+                    self.constdouble[1] = 0.0
+                else:  
+                    self.constdouble[1] = self.d_c
                 self.constdouble[2] = self.omega
                 self.constdouble[3] = self.d_exp
                 self.constdouble[4] = self.davidson_threshold
@@ -1334,7 +1338,7 @@ class PFHamiltonianGenerator:
                             self.nmo,
                             np1,
                             i,
-                            j,
+                            j
                         )
                         dipole_x = np.dot(_mu_x_spin.flatten(), one_rdm)
                         dipole_y = np.dot(_mu_y_spin.flatten(), one_rdm)
@@ -1361,7 +1365,7 @@ class PFHamiltonianGenerator:
                     self.electronic_dipole_array + self.nuclear_dipole_array
                 )
                 # print(self.nat_obt_number)
-                print("one and two electrron energies")
+                print("one and two electron energies")
                 #change ERI to physicist's notation
                 twoeint2 = self.twoeint.reshape((self.nmo, self.nmo, self.nmo, self.nmo))
                 twoeint2 = twoeint2.transpose(0, 2, 1, 3)
@@ -1377,7 +1381,7 @@ class PFHamiltonianGenerator:
                         self.nmo,
                         np1,
                         i,
-                        i,
+                        i
                     )
                     two_rdm = np.zeros((self.nmo * self.nmo * self.nmo * self.nmo))
                     c_build_two_rdm(
@@ -1390,15 +1394,24 @@ class PFHamiltonianGenerator:
                         self.nmo,
                         np1,
                         i,
-                        i,
+                        i
                     )
+                    #one_rdm2 = np.zeros((self.nmo * self.nmo))
+                    #for p in range(self.nmo):
+                    #    for q in range(self.nmo):
+                    #        dum = 0.0
+                    #        for r in range(self.nmo):
+                    #            dum += 0.5/(self.n_act_a+self.n_in_a-0.5) * two_rdm[p * self.nmo * self.nmo * self.nmo + r * self.nmo * self.nmo + q * self.nmo + r]
+                    #        one_rdm2[p * self.nmo + q] = dum
+                            
+                    #one_e_energy2 = np.dot(self.H_spatial2.flatten(), one_rdm2)
                     one_e_energy = np.dot(self.H_spatial2.flatten(), one_rdm)
                     two_e_energy = 0.5 * np.dot(twoeint2.flatten(), two_rdm)
                     print(
                         "{:4s}".format("state"),
                         "{:4d}".format(i),
                         "{:20.12f}".format(one_e_energy),
-                        "{:20.12f}".format(two_e_energy),
+                        "{:20.12f}".format(two_e_energy)
                     )
             elif self.ci_level == "cis":
                 dres = self.Davidson(
@@ -1480,6 +1493,16 @@ class PFHamiltonianGenerator:
         if self.coherent_state_basis:
             self.canonical_mos = False
             self.photon_number_basis = False
+        
+        if "ignore_dse_terms" in cavity_dictionary:
+            self.ignore_dse_terms = cavity_dictionary["ignore_dse_terms"]
+        else:
+            self.ignore_dse_terms = False
+
+        if self.ignore_dse_terms:
+            self.ignore_dse_terms = True
+            self.photon_number_basis = True
+            self.coherent_state_basis = False
 
         if self.natural_orbitals:
             if "rdm_weights" in cavity_dictionary:
@@ -1625,7 +1648,7 @@ class PFHamiltonianGenerator:
         # Standard 1-e integrals, kinetic and electron-nuclear attraction
         self.H_1e_ao = self.T_ao + self.V_ao
 
-        if self.ignore_coupling == False:
+        if self.ignore_coupling == False or self.ignore_dse_terms == False:
             # cavity-specific 1-e integrals, including quadrupole and 1-e dipole integrals
             # note that d_PF_ao is <d_e> \hat{d}_e in the coherent state basis
             # and       d_PF_ao is d_nuc \hat{d} in the photon number basis
@@ -1665,7 +1688,10 @@ class PFHamiltonianGenerator:
             self.TDI_spin = t1 - t2
             self.antiSym2eInt = self.eri_so + self.TDI_spin
         # self.d_spatial = np.einsum("ij,kl->ijkl", _d_spin, _d_spin)
-        self.twoeint = self.twoeint1 + np.einsum("ij,kl->ijkl", self.d_cmo, self.d_cmo)
+        if self.ignore_dse_terms:
+            self.twoeint = self.twoeint1 
+        else:
+            self.twoeint = self.twoeint1 + np.einsum("ij,kl->ijkl", self.d_cmo, self.d_cmo)
         self.twoeint1 = None
         del self.twoeint1
         # self.contracted_twoeint = -0.5 * np.einsum("illj->ij", self.twoeint)
@@ -3129,7 +3155,8 @@ class PFHamiltonianGenerator:
                 # S = np.einsum("pq,qi->pi", H, Q)
                 t_sigma_begin = time.time()
                 # build_sigma(Q,S,H_dim)
-
+                if self.ignore_dse_terms:
+                    self.d_c = 0.0
                 print(psutil.Process().memory_info().rss / (1024 * 1024))
 
                 c_sigma(
