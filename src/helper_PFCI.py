@@ -1648,7 +1648,7 @@ class PFHamiltonianGenerator:
         # Standard 1-e integrals, kinetic and electron-nuclear attraction
         self.H_1e_ao = self.T_ao + self.V_ao
 
-        if self.ignore_coupling == False or self.ignore_dse_terms == False:
+        if self.ignore_coupling == False and self.ignore_dse_terms == False:
             # cavity-specific 1-e integrals, including quadrupole and 1-e dipole integrals
             # note that d_PF_ao is <d_e> \hat{d}_e in the coherent state basis
             # and       d_PF_ao is d_nuc \hat{d} in the photon number basis
