@@ -30,7 +30,4 @@ test_pf = PFHamiltonianGenerator(
         options_dict,
         cavity_dict
 )
-~                                                                                                                                                                                                                     
-~                                                                                                                                                                                                                     
-~                                                                                                                                                                                                                     
-~                                      
+                                    
