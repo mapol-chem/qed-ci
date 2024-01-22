@@ -106,19 +106,18 @@ cfunctions.get_roots.argtypes = [
         np.ctypeslib.ndpointer(ctypes.c_int32,  ndim=1, flags='C_CONTIGUOUS'),
         np.ctypeslib.ndpointer(ctypes.c_double, ndim=1, flags='C_CONTIGUOUS')]
 
-cfunctions.one_electron_properties.argtypes = [
-        np.ctypeslib.ndpointer(ctypes.c_double, ndim=2, flags='C_CONTIGUOUS'),
-        np.ctypeslib.ndpointer(ctypes.c_double, ndim=2, flags='C_CONTIGUOUS'),
-        np.ctypeslib.ndpointer(ctypes.c_int32,  ndim=1, flags='C_CONTIGUOUS'),
-        ctypes.c_int32,
-        ctypes.c_int32,
-        ctypes.c_int32,
-        ctypes.c_int32,
-        ctypes.c_int32,
-        ctypes.c_int32,
-        ctypes.c_int32]
-cfunctions.one_electron_properties.restype = ctypes.c_double
-
+cfunctions.build_one_rdm.argtypes = [
+    np.ctypeslib.ndpointer(ctypes.c_double, ndim=2, flags="C_CONTIGUOUS"),
+    np.ctypeslib.ndpointer(ctypes.c_double, ndim=1, flags="C_CONTIGUOUS"),
+    np.ctypeslib.ndpointer(ctypes.c_int32, ndim=1, flags="C_CONTIGUOUS"),
+    ctypes.c_int32,
+    ctypes.c_int32,
+    ctypes.c_int32,
+    ctypes.c_int32,
+    ctypes.c_int32,
+    ctypes.c_int32,
+    ctypes.c_int32,
+]
 
 cfunctions.build_sigma_s_square.argtypes = [
         np.ctypeslib.ndpointer(ctypes.c_double, ndim=2, flags='C_CONTIGUOUS'),
@@ -245,9 +244,12 @@ def c_get_roots(h1e, h2e, d_cmo, Hdiag, eigenvals, eigenvecs, table, table1, tab
     cfunctions.get_roots(h1e, h2e, d_cmo, Hdiag, eigenvals, eigenvecs, table, table1, table_creation, table_annihilation, 
                         constint, constdouble)
 
-def c_one_electron_properties(h1e, eigvec, table, N_ac, n_o_ac, n_o_in, nmo, num_photon, state_p1, state_p2):
-    one_e_property = cfunctions.one_electron_properties(h1e, eigvec, table, N_ac, n_o_ac, n_o_in, nmo, num_photon, state_p1, state_p2) 
-    return one_e_property
+def c_build_one_rdm(
+    eigvec, D, table, N_ac, n_o_ac, n_o_in, nmo, num_photon, state_p1, state_p2
+):
+    cfunctions.build_one_rdm(
+        eigvec, D, table, N_ac, n_o_ac, n_o_in, nmo, num_photon, state_p1, state_p2
+    )
 
 
 def compute_excitation_level(ket, ndocc):
@@ -1101,18 +1103,40 @@ class PFHamiltonianGenerator:
                 self.nuclear_dipole_array[:,:,0] = np.eye(self.davidson_roots) * self.nuclear_dipole_moment[0]
                 self.nuclear_dipole_array[:,:,1] = np.eye(self.davidson_roots) * self.nuclear_dipole_moment[1]
                 self.nuclear_dipole_array[:,:,2] = np.eye(self.davidson_roots) * self.nuclear_dipole_moment[2]
-
+                print(
+                    "{:^15s}".format(" "),
+                    "{:^20s}".format("dipole x"),
+                    "{:^20s}".format("dipole y"),
+                    "{:^20s}".format("dipole z"),
+                )
                 for i in range(self.davidson_roots):
-                    for j in range(self.davidson_roots):
-                        print('{:4d}'.format(i), "->",'{:4d}'.format(j))
-                        print('{:^20s}'.format('dipole x'), '{:^20s}'.format('dipole y'), '{:^20s}'.format('dipole z'))
-                        dipole_x = c_one_electron_properties(_mu_x_spin, eigenvecs, self.table, self.n_act_a, self.n_act_orb, self.n_in_a, self.nmo, np1, i, j)
-                        dipole_y = c_one_electron_properties(_mu_y_spin, eigenvecs, self.table, self.n_act_a, self.n_act_orb, self.n_in_a, self.nmo, np1, i, j)
-                        dipole_z = c_one_electron_properties(_mu_z_spin, eigenvecs, self.table, self.n_act_a, self.n_act_orb, self.n_in_a, self.nmo, np1, i, j)
-                        print('{:20.12f}'.format(dipole_x), '{:20.12f}'.format(dipole_y), '{:20.12f}'.format(dipole_z))
-                        self.electronic_dipole_array[i, j, 0] = dipole_x 
-                        self.electronic_dipole_array[i, j, 1] = dipole_y 
-                        self.electronic_dipole_array[i, j, 2] = dipole_z
+                    for j in range(i, self.davidson_roots):
+                        one_rdm = np.zeros((self.nmo * self.nmo))
+                        c_build_one_rdm(
+                            eigenvecs,
+                            one_rdm,
+                            self.table,
+                            self.n_act_a,
+                            self.n_act_orb,
+                            self.n_in_a,
+                            self.nmo,
+                            np1,
+                            i,
+                            j
+                        )
+                        dipole_x = np.dot(_mu_x_spin.flatten(), one_rdm)
+                        dipole_y = np.dot(_mu_y_spin.flatten(), one_rdm)
+                        dipole_z = np.dot(_mu_z_spin.flatten(), one_rdm)
+                        # dipole_x = c_one_electron_properties(_mu_x_spin, eigenvecs, rdm_eig, self.table, self.n_act_a, self.n_act_orb, self.n_in_a, self.nmo, np1, i, j)
+                        print(
+                            "{:4d}".format(i),
+                            "->",
+                            "{:4d}".format(j),
+                            "{:20.12f}".format(dipole_x),
+                            "{:20.12f}".format(dipole_y),
+                            "{:20.12f}".format(dipole_z),
+                        )
+
 
                 # combine nuclear and electronic parts for the total dipole array
                 self.dipole_array =  self.electronic_dipole_array + self.nuclear_dipole_array
@@ -1197,6 +1221,12 @@ class PFHamiltonianGenerator:
             self.lambda_vector = cavity_dictionary["lambda_vector"]
         else:
             self.lambda_vector = np.array([0, 0, 0])
+
+        if "manual_ordering" in cavity_dictionary:
+            self.manual_ordering = cavity_dictionary["manual_ordering"]
+        else:
+            self.manual_ordering = [0]
+
         if "number_of_photons" in cavity_dictionary:
             self.N_p = cavity_dictionary["number_of_photons"]
         else:
@@ -1354,6 +1384,24 @@ class PFHamiltonianGenerator:
 
         # Grab data from wavfunction class
         self.Ca = wfn.Ca()
+        size_order = len(self.manual_ordering)
+        if len(self.manual_ordering) > 1:
+            C_temp = np.asarray(wfn.Ca())
+            #print(C_temp)
+            C_temp[:,:size_order] = C_temp[:,:size_order][:,self.manual_ordering]
+            
+            wfn_dict = psi4.core.Wavefunction.to_file(wfn)
+            # update wfn_dict with reordered orbitals 
+            wfn_dict["matrix"]["Ca"] = C_temp
+            wfn_dict["matrix"]["Cb"] = C_temp
+
+            # update wfn object
+            wfn = psi4.core.Wavefunction.from_file(wfn_dict)
+
+            # Grab data from wavfunction class
+            self.Ca = wfn.Ca()
+
+        
         self.ndocc = wfn.doccpi()[0]
         self.nmo = wfn.nmo()
         self.nso = 2 * self.nmo
@@ -1969,7 +2017,6 @@ class PFHamiltonianGenerator:
         mints = psi4.core.MintsHelper(p4_wfn.basisset())
         if self.full_diagonalization or self.test_mode or self.ci_level == "cis":
             self.eri_so = np.asarray(mints.mo_spin_eri(self.Ca, self.Ca))
-
         #self.eri_spatial = np.asarray(mints.mo_eri(self.Ca, self.Ca, self.Ca, self.Ca))
 
         self.twoeint1 = np.asarray(mints.mo_eri(self.Ca, self.Ca, self.Ca, self.Ca))
