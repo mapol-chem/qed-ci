@@ -57,7 +57,6 @@ cfunctions.get_string.argtypes = [
     np.ctypeslib.ndpointer(ctypes.c_int32, ndim=1, flags="C_CONTIGUOUS"),
     np.ctypeslib.ndpointer(ctypes.c_int32, ndim=1, flags="C_CONTIGUOUS"),
     np.ctypeslib.ndpointer(ctypes.c_int32, ndim=1, flags="C_CONTIGUOUS"),
-    np.ctypeslib.ndpointer(ctypes.c_int32, ndim=1, flags="C_CONTIGUOUS"),
     ctypes.c_int32,
     ctypes.c_int32,
     ctypes.c_int32,
@@ -75,7 +74,6 @@ cfunctions.build_sigma.argtypes = [
     np.ctypeslib.ndpointer(ctypes.c_double, ndim=2, flags="C_CONTIGUOUS"),
     np.ctypeslib.ndpointer(ctypes.c_double, ndim=2, flags="C_CONTIGUOUS"),
     np.ctypeslib.ndpointer(ctypes.c_double, ndim=2, flags="C_CONTIGUOUS"),
-    np.ctypeslib.ndpointer(ctypes.c_int32, ndim=1, flags="C_CONTIGUOUS"),
     np.ctypeslib.ndpointer(ctypes.c_int32, ndim=1, flags="C_CONTIGUOUS"),
     np.ctypeslib.ndpointer(ctypes.c_int32, ndim=1, flags="C_CONTIGUOUS"),
     np.ctypeslib.ndpointer(ctypes.c_int32, ndim=1, flags="C_CONTIGUOUS"),
@@ -103,7 +101,6 @@ cfunctions.get_roots.argtypes = [
     np.ctypeslib.ndpointer(ctypes.c_int32, ndim=1, flags="C_CONTIGUOUS"),
     np.ctypeslib.ndpointer(ctypes.c_int32, ndim=1, flags="C_CONTIGUOUS"),
     np.ctypeslib.ndpointer(ctypes.c_int32, ndim=1, flags="C_CONTIGUOUS"),
-    np.ctypeslib.ndpointer(ctypes.c_int32, ndim=1, flags="C_CONTIGUOUS"),
     np.ctypeslib.ndpointer(ctypes.c_double, ndim=1, flags="C_CONTIGUOUS"),
 ]
 
@@ -117,13 +114,11 @@ cfunctions.build_one_rdm.argtypes = [
     ctypes.c_int32,
     ctypes.c_int32,
     ctypes.c_int32,
-    ctypes.c_int32,
 ]
 cfunctions.build_two_rdm.argtypes = [
     np.ctypeslib.ndpointer(ctypes.c_double, ndim=2, flags="C_CONTIGUOUS"),
     np.ctypeslib.ndpointer(ctypes.c_double, ndim=1, flags="C_CONTIGUOUS"),
     np.ctypeslib.ndpointer(ctypes.c_int32, ndim=1, flags="C_CONTIGUOUS"),
-    ctypes.c_int32,
     ctypes.c_int32,
     ctypes.c_int32,
     ctypes.c_int32,
@@ -163,7 +158,6 @@ def c_string(
     H_diag,
     b_array,
     table,
-    table1,
     table_creation,
     table_annihilation,
     N_p,
@@ -182,7 +176,6 @@ def c_string(
         H_diag,
         b_array,
         table,
-        table1,
         table_creation,
         table_annihilation,
         N_p,
@@ -213,7 +206,6 @@ def c_sigma(
     c_vectors,
     s_vectors,
     table,
-    table1,
     table_creation,
     table_annihilation,
     N_ac,
@@ -235,7 +227,6 @@ def c_sigma(
         c_vectors,
         s_vectors,
         table,
-        table1,
         table_creation,
         table_annihilation,
         N_ac,
@@ -257,7 +248,7 @@ def c_sigma_s_square(
     c1_vectors,
     S_diag,
     b_array,
-    table1,
+    table,
     num_links,
     n_o_ac,
     num_alpha,
@@ -270,7 +261,7 @@ def c_sigma_s_square(
         c1_vectors,
         S_diag,
         b_array,
-        table1,
+        table,
         num_links,
         n_o_ac,
         num_alpha,
@@ -292,7 +283,6 @@ def c_get_roots(
     eigenvals,
     eigenvecs,
     table,
-    table1,
     table_creation,
     table_annihilation,
     constint,
@@ -306,7 +296,6 @@ def c_get_roots(
         eigenvals,
         eigenvecs,
         table,
-        table1,
         table_creation,
         table_annihilation,
         constint,
@@ -315,17 +304,17 @@ def c_get_roots(
 
 
 def c_build_one_rdm(
-    eigvec, D, table, N_ac, n_o_ac, n_o_in, nmo, num_photon, state_p1, state_p2
+    eigvec, D, table, N_ac, n_o_ac, n_o_in, num_photon, state_p1, state_p2
 ):
     cfunctions.build_one_rdm(
-        eigvec, D, table, N_ac, n_o_ac, n_o_in, nmo, num_photon, state_p1, state_p2
+        eigvec, D, table, N_ac, n_o_ac, n_o_in, num_photon, state_p1, state_p2
     )
 
 def c_build_two_rdm(
-    eigvec, D, table, N_ac, n_o_ac, n_o_in, nmo, num_photon, state_p1, state_p2
+    eigvec, D, table, N_ac, n_o_ac, n_o_in, num_photon, state_p1, state_p2
 ):
     cfunctions.build_two_rdm(
-        eigvec, D, table, N_ac, n_o_ac, n_o_in, nmo, num_photon, state_p1, state_p2
+        eigvec, D, table, N_ac, n_o_ac, n_o_in, num_photon, state_p1, state_p2
     )
 
 
@@ -926,17 +915,31 @@ class PFHamiltonianGenerator:
                 self.CASnumDets = self.num_det
                 H_dim = self.CASnumDets * np1
                 self.H_diag = np.zeros(H_dim)
+               
+                #build core Fock matrix
+                self.fock_core = np.zeros((self.nmo, self.nmo))
+                for k in range(self.nmo):
+                    for l in range(self.nmo):
+                        kl = k * self.nmo + l
+                        self.fock_core[k][l] = self.H_spatial2[k][l]
+                        for j in range(self.n_in_a):
+                            jj = j * self.nmo + j
+                            kj = k * self.nmo + j
+                            jl = j * self.nmo + l
+                            self.fock_core[k][l] += 2.0 * self.twoeint[kl][jj] - self.twoeint[kj][jl]
+                self.gkl2 = np.zeros((self.n_act_orb, self.n_act_orb))
+                for k in range(self.n_act_orb):
+                    for l in range(self.n_act_orb):
+                        self.gkl2[k][l] = self.fock_core[k+self.n_in_a][l+self.n_in_a]
+                        for j in range(self.n_act_orb):
+                            kj = (k + self.n_in_a) * self.nmo + (j + self.n_in_a)
+                            jl = (j + self.n_in_a) * self.nmo + (l + self.n_in_a)
+                            self.gkl2[k][l] -= 0.5 * self.twoeint[kj][jl]
+
+                self.E_core = 0.0  
+                for i in range(self.n_in_a):
+                    self.E_core += self.H_spatial2[i][i] + self.fock_core[i][i] 
                 self.table = np.zeros(
-                    self.num_alpha
-                    * (
-                        self.n_act_a * (self.n_act_orb - self.n_act_a)
-                        + self.n_act_a
-                        + self.n_in_a
-                    )
-                    * 4,
-                    dtype=np.int32,
-                )
-                self.table1 = np.zeros(
                     self.num_alpha
                     * (self.n_act_a * (self.n_act_orb - self.n_act_a) + self.n_act_a)
                     * 4,
@@ -958,7 +961,6 @@ class PFHamiltonianGenerator:
                     self.H_diag,
                     self.b_array,
                     self.table,
-                    self.table1,
                     self.table_creation,
                     self.table_annihilation,
                     self.N_p,
@@ -1016,17 +1018,31 @@ class PFHamiltonianGenerator:
                 self.FCInumDets = self.num_det
                 H_dim = self.FCInumDets * np1
                 self.H_diag = np.zeros(H_dim)
+  
+                #build core Fock matrix
+                self.fock_core = np.zeros((self.nmo, self.nmo))
+                for k in range(self.nmo):
+                    for l in range(self.nmo):
+                        kl = k * self.nmo + l
+                        self.fock_core[k][l] = self.H_spatial2[k][l]
+                        for j in range(self.n_in_a):
+                            jj = j * self.nmo + j
+                            kj = k * self.nmo + j
+                            jl = j * self.nmo + l
+                            self.fock_core[k][l] += 2.0 * self.twoeint[kl][jj] - self.twoeint[kj][jl]
+                self.gkl2 = np.zeros((self.n_act_orb, self.n_act_orb))
+                for k in range(self.n_act_orb):
+                    for l in range(self.n_act_orb):
+                        self.gkl2[k][l] = self.fock_core[k+self.n_in_a][l+self.n_in_a]
+                        for j in range(self.n_act_orb):
+                            kj = (k + self.n_in_a) * self.nmo + (j + self.n_in_a)
+                            jl = (j + self.n_in_a) * self.nmo + (l + self.n_in_a)
+                            self.gkl2[k][l] -= 0.5 * self.twoeint[kj][jl]
+
+                self.E_core = 0.0  
+                for i in range(self.n_in_a):
+                    self.E_core += self.H_spatial2[i][i] + self.fock_core[i][i] 
                 self.table = np.zeros(
-                    self.num_alpha
-                    * (
-                        self.n_act_a * (self.n_act_orb - self.n_act_a)
-                        + self.n_act_a
-                        + self.n_in_a
-                    )
-                    * 4,
-                    dtype=np.int32,
-                )
-                self.table1 = np.zeros(
                     self.num_alpha
                     * (self.n_act_a * (self.n_act_orb - self.n_act_a) + self.n_act_a)
                     * 4,
@@ -1048,7 +1064,6 @@ class PFHamiltonianGenerator:
                     self.H_diag,
                     self.b_array,
                     self.table,
-                    self.table1,
                     self.table_creation,
                     self.table_annihilation,
                     self.N_p,
@@ -1163,6 +1178,10 @@ class PFHamiltonianGenerator:
             print(psutil.Process().memory_info().rss / (1024 * 1024))
             if self.ci_level == "cas" or self.ci_level == "fci":
                 sys.stderr.flush()
+                d_diag = 0.0
+                for i in range(self.n_in_a):
+                    d_diag += 2.0 * self.d_cmo[i][i]
+                #print(d_diag, self.d_exp, self.N_p, self.n_act_orb, self.nmo, self.omega, self.num_alpha)
                 self.constint = np.zeros(9, dtype=np.int32)
                 self.constint[0] = self.n_act_a
                 self.constint[1] = self.n_act_orb
@@ -1173,28 +1192,27 @@ class PFHamiltonianGenerator:
                 self.constint[6] = maxdim
                 self.constint[7] = self.davidson_roots
                 self.constint[8] = self.davidson_maxiter
-                self.constdouble = np.zeros(5)
+                self.constdouble = np.zeros(6)
                 self.constdouble[0] = self.Enuc
                 if self.ignore_dse_terms:
                     self.constdouble[1] = 0.0
                 else:  
                     self.constdouble[1] = self.d_c
                 self.constdouble[2] = self.omega
-                self.constdouble[3] = self.d_exp
+                self.constdouble[3] = self.d_exp - d_diag
                 self.constdouble[4] = self.davidson_threshold
-
+                self.constdouble[5] = self.E_core
                 eigenvals = np.zeros((self.davidson_roots))
                 eigenvecs = np.zeros((self.davidson_roots, H_dim))
                 # dres = self.Davidson(self.H_PF, self.davidson_roots, self.davidson_threshold, indim, maxdim,self.davidson_maxiter,self.build_sigma,self.H_diag)
                 c_get_roots(
-                    self.gkl,
+                    self.gkl2,
                     self.twoeint,
                     self.d_cmo,
                     self.H_diag,
                     eigenvals,
                     eigenvecs,
                     self.table,
-                    self.table1,
                     self.table_creation,
                     self.table_annihilation,
                     self.constint,
@@ -1289,9 +1307,10 @@ class PFHamiltonianGenerator:
                         )
 
                 print(" GOING TO COMPUTE 1-E PROPERTIES!")
-                _mu_x_spin = np.einsum("uj,vi,uv", self.C, self.C, self.mu_x_ao)
-                _mu_y_spin = np.einsum("uj,vi,uv", self.C, self.C, self.mu_y_ao)
-                _mu_z_spin = np.einsum("uj,vi,uv", self.C, self.C, self.mu_z_ao)
+                self.n_occupied = self.n_act_orb + self.n_in_a
+                _mu_x_spin = np.einsum("uj,vi,uv", self.C[:,:self.n_occupied], self.C[:,:self.n_occupied], self.mu_x_ao)
+                _mu_y_spin = np.einsum("uj,vi,uv", self.C[:,:self.n_occupied], self.C[:,:self.n_occupied], self.mu_y_ao)
+                _mu_z_spin = np.einsum("uj,vi,uv", self.C[:,:self.n_occupied], self.C[:,:self.n_occupied], self.mu_z_ao)
                 _mu_x_spin = np.ascontiguousarray(_mu_x_spin)
                 _mu_y_spin = np.ascontiguousarray(_mu_y_spin)
                 _mu_z_spin = np.ascontiguousarray(_mu_z_spin)
@@ -1317,7 +1336,7 @@ class PFHamiltonianGenerator:
                 self.nuclear_dipole_array[:, :, 2] = (
                     np.eye(self.davidson_roots) * self.nuclear_dipole_moment[2]
                 )
-                self.nat_obt_number = np.zeros((self.davidson_roots, self.nmo))
+                self.nat_obt_number = np.zeros((self.davidson_roots, self.n_occupied))
 
                 print(
                     "{:^15s}".format(" "),
@@ -1327,7 +1346,7 @@ class PFHamiltonianGenerator:
                 )
                 for i in range(self.davidson_roots):
                     for j in range(i, self.davidson_roots):
-                        one_rdm = np.zeros((self.nmo * self.nmo))
+                        one_rdm = np.zeros((self.n_occupied * self.n_occupied))
                         c_build_one_rdm(
                             eigenvecs,
                             one_rdm,
@@ -1335,7 +1354,6 @@ class PFHamiltonianGenerator:
                             self.n_act_a,
                             self.n_act_orb,
                             self.n_in_a,
-                            self.nmo,
                             np1,
                             i,
                             j
@@ -1353,7 +1371,7 @@ class PFHamiltonianGenerator:
                             "{:20.12f}".format(dipole_z),
                         )
                         if i == j:
-                            one_rdm = np.reshape(one_rdm, (self.nmo, self.nmo))
+                            one_rdm = np.reshape(one_rdm, (self.n_occupied, self.n_occupied))
                             rdm_eig = np.linalg.eigvalsh(one_rdm)
                             self.nat_obt_number[i, :] = rdm_eig[np.argsort(-rdm_eig)][:]
                         self.electronic_dipole_array[i, j, 0] = dipole_x
@@ -1366,11 +1384,10 @@ class PFHamiltonianGenerator:
                 )
                 # print(self.nat_obt_number)
                 print("one and two electron energies")
-                #change ERI to physicist's notation
                 twoeint2 = self.twoeint.reshape((self.nmo, self.nmo, self.nmo, self.nmo))
-                twoeint2 = twoeint2.transpose(0, 2, 1, 3)
+                twoeint2 = twoeint2[:self.n_occupied,:self.n_occupied,:self.n_occupied,:self.n_occupied]
                 for i in range(self.davidson_roots):
-                    one_rdm = np.zeros((self.nmo * self.nmo))
+                    one_rdm = np.zeros((self.n_occupied * self.n_occupied))
                     c_build_one_rdm(
                         eigenvecs,
                         one_rdm,
@@ -1378,12 +1395,11 @@ class PFHamiltonianGenerator:
                         self.n_act_a,
                         self.n_act_orb,
                         self.n_in_a,
-                        self.nmo,
                         np1,
                         i,
                         i
                     )
-                    two_rdm = np.zeros((self.nmo * self.nmo * self.nmo * self.nmo))
+                    two_rdm = np.zeros((self.n_occupied * self.n_occupied * self.n_occupied * self.n_occupied))
                     c_build_two_rdm(
                         eigenvecs,
                         two_rdm,
@@ -1391,11 +1407,14 @@ class PFHamiltonianGenerator:
                         self.n_act_a,
                         self.n_act_orb,
                         self.n_in_a,
-                        self.nmo,
                         np1,
                         i,
                         i
                     )
+                    two_rdm2 = two_rdm.reshape((self.n_occupied * self.n_occupied, self.n_occupied * self.n_occupied))
+                    #print(two_rdm2[:(self.n_in_a*self.n_in_a),:(self.n_in_a*self.n_in_a)])
+                    #np.savetxt('correct_rdm.txt', two_rdm2) 
+                    
                     #one_rdm2 = np.zeros((self.nmo * self.nmo))
                     #for p in range(self.nmo):
                     #    for q in range(self.nmo):
@@ -1404,15 +1423,30 @@ class PFHamiltonianGenerator:
                     #            dum += 0.5/(self.n_act_a+self.n_in_a-0.5) * two_rdm[p * self.nmo * self.nmo * self.nmo + r * self.nmo * self.nmo + q * self.nmo + r]
                     #        one_rdm2[p * self.nmo + q] = dum
                             
-                    #one_e_energy2 = np.dot(self.H_spatial2.flatten(), one_rdm2)
-                    one_e_energy = np.dot(self.H_spatial2.flatten(), one_rdm)
+                    one_e_energy = np.dot(self.H_spatial2[:self.n_occupied,:self.n_occupied].flatten(), one_rdm)
                     two_e_energy = 0.5 * np.dot(twoeint2.flatten(), two_rdm)
+                    sum_energy = one_e_energy + two_e_energy + self.Enuc
                     print(
                         "{:4s}".format("state"),
                         "{:4d}".format(i),
                         "{:20.12f}".format(one_e_energy),
                         "{:20.12f}".format(two_e_energy)
+                        #"{:20.12f}".format(sum_energy)
                     )
+                self.one_rdm = np.zeros((self.n_occupied * self.n_occupied))
+                #c_build_one_rdm(
+                #    eigenvecs,
+                #    self.one_rdm,
+                #    self.table,
+                #    self.n_act_a,
+                #    self.n_act_orb,
+                #    self.n_in_a,
+                #    np1,
+                #    1,
+                #    1
+                #)
+               
+
             elif self.ci_level == "cis":
                 dres = self.Davidson(
                     self.H_PF,
@@ -1648,7 +1682,7 @@ class PFHamiltonianGenerator:
         # Standard 1-e integrals, kinetic and electron-nuclear attraction
         self.H_1e_ao = self.T_ao + self.V_ao
 
-        if self.ignore_coupling == False and self.ignore_dse_terms == False:
+        if self.ignore_coupling == False or self.ignore_dse_terms == False:
             # cavity-specific 1-e integrals, including quadrupole and 1-e dipole integrals
             # note that d_PF_ao is <d_e> \hat{d}_e in the coherent state basis
             # and       d_PF_ao is d_nuc \hat{d} in the photon number basis
@@ -2249,7 +2283,6 @@ class PFHamiltonianGenerator:
         print("mem_twoeint", self.twoeint.size * self.twoeint.itemsize / 1024 / 1024)
         print("mem_d_cmo", self.d_cmo.size * self.d_cmo.itemsize / 1024 / 1024)
 
-        # self.gkl2 = np.reshape(self.gkl,(self.nmo*self.nmo))
 
         print(f" Completed 2D build in {t_2d_end - t_eri_end} seconds")
         if self.full_diagonalization or self.test_mode or self.ci_level == "cis":
@@ -3076,7 +3109,7 @@ class PFHamiltonianGenerator:
             newS,
             self.S_diag,
             self.b_array,
-            self.table1,
+            self.table,
             num_links0,
             self.n_act_orb,
             self.num_alpha,
@@ -3160,13 +3193,12 @@ class PFHamiltonianGenerator:
                 print(psutil.Process().memory_info().rss / (1024 * 1024))
 
                 c_sigma(
-                    self.gkl,
+                    self.gkl2,
                     self.twoeint,
                     self.d_cmo,
                     Q,
                     S,
                     self.table,
-                    self.table1,
                     self.table_creation,
                     self.table_annihilation,
                     self.n_act_a,
