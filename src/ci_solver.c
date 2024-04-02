@@ -522,11 +522,10 @@ void get_string(double* h1e, double* h2e, double* H_diag, int* b_array, int* tab
 void build_sigma(double* h1e, double* h2e, double* d_cmo, double* c_vectors, double *c1_vectors, 
     int* table, int* table_creation, int* table_annihilation, int N_ac, int n_o_ac, int n_o_in, int nmo, 
     int num_state, int N_p, double Enuc, double dc, double omega, double d_exp, double E_core, bool break_degeneracy) {
-
+    
     int num_alpha = binomialCoeff(n_o_ac, N_ac);
     int num_links = N_ac * (n_o_ac-N_ac) + N_ac;
     int np1 = N_p + 1;
-    printf("num alpha%d", num_alpha);
     #pragma omp parallel for num_threads(12) collapse(2)
     for (int n = 0; n < num_state; n++) {
         for (int m = 0; m < np1; m++) {
@@ -1480,7 +1479,210 @@ void build_two_rdm(double* eigvec, double* D, int* table, int N_ac, int n_o_ac, 
     
 }
 
+void build_symmetrized_active_rdm(double* eigvec, double* D_tu, double* D_tuvw, int* table, int N_ac, int n_o_ac, int num_photon, int state_p1, int state_p2) {
+    int num_alpha = binomialCoeff(n_o_ac, N_ac);
+    int num_links = N_ac * (n_o_ac-N_ac) + N_ac;
+    size_t num_dets = num_alpha * num_alpha;
+   
+    
+    for (int index_jb = 0; index_jb < num_alpha; index_jb++) {
+        int stride = index_jb * num_links;
+        for (int excitation = 0; excitation < num_links; excitation++) {
+            int index_ib = table[(stride + excitation)*4+0];
+            int sign = table[(stride + excitation)*4+1];
+            int p = table[(stride + excitation)*4+2]; 
+            int q = table[(stride + excitation)*4+3]; 
+            int pq = p * n_o_ac + q;
+            for (int index_ia = 0; index_ia < num_alpha; index_ia++) {
+                for (int photon_p = 0; photon_p < num_photon; photon_p++) {
+                    int index_I = index_ia * num_alpha + index_ib;
+                    int index_J = index_ia * num_alpha + index_jb;
+        	    D_tu[pq] += sign * eigvec[(state_p1 * num_photon + photon_p) * num_dets + index_I]
+				* eigvec[(state_p2 * num_photon + photon_p) * num_dets + index_J];
+            
+                }
+            }
+        }
+    }
+    for (int index_ja = 0; index_ja < num_alpha; index_ja++) {
+        int stride = index_ja * num_links;
+        for (int excitation = 0; excitation < num_links; excitation++) {
+            int index_ia = table[(stride + excitation)*4+0];
+            int sign = table[(stride + excitation)*4+1];
+            int p = table[(stride + excitation)*4+2]; 
+            int q = table[(stride + excitation)*4+3]; 
+            int pq = p * n_o_ac + q;
+            for (int index_ib = 0; index_ib < num_alpha; index_ib++) {
+                for (int photon_p = 0; photon_p < num_photon; photon_p++) {
+                    int index_I = index_ia * num_alpha + index_ib;
+                    int index_J = index_ja * num_alpha + index_ib;
+        	    D_tu[pq] += sign * eigvec[(state_p1 * num_photon + photon_p) * num_dets + index_I]
+				* eigvec[(state_p2 * num_photon + photon_p) * num_dets + index_J];
+            
+                }
+            }
+        }
+    }
+    
+    for (int index_jb = 0; index_jb < num_alpha; index_jb++) {
+        int stride1 = index_jb * num_links;
+        for (int excitation1 = 0; excitation1 < num_links; excitation1++) {
+            int index_kb = table[(stride1 + excitation1)*4+0];
+            int sign1 = table[(stride1 + excitation1)*4+1];
+            int q = table[(stride1 + excitation1)*4+2]; 
+            int s = table[(stride1 + excitation1)*4+3]; 
+            for (int p = 0; p < n_o_ac; p++) {
+                for (int index_ia = 0; index_ia < num_alpha; index_ia++) {
+                    for (int photon_p = 0; photon_p < num_photon; photon_p++) {
+                        int index_I = index_ia * num_alpha + index_kb;
+                        int index_J = index_ia * num_alpha + index_jb;
+			int qp = q * n_o_ac + p;
+			int ps = p * n_o_ac + s;
+                        D_tuvw[qp * n_o_ac * n_o_ac + ps] += -2.0 * sign1 * eigvec[(state_p1 * num_photon + photon_p) * num_dets + index_I]
+	            		* eigvec[(state_p2 * num_photon + photon_p) * num_dets + index_J];
+                
+                    }
+                }
+            }
 
+            int stride2 = index_kb * num_links;
+            for (int excitation2 = 0; excitation2 < num_links; excitation2++) {
+                int index_ib = table[(stride2 + excitation2)*4+0];
+                int sign2 = table[(stride2 + excitation2)*4+1];
+                int p = table[(stride2 + excitation2)*4+2]; 
+                int r = table[(stride2 + excitation2)*4+3]; 
+                for (int index_ia = 0; index_ia < num_alpha; index_ia++) {
+                    for (int photon_p = 0; photon_p < num_photon; photon_p++) {
+                        int index_I = index_ia * num_alpha + index_ib;
+                        int index_J = index_ia * num_alpha + index_jb;
+			int pr = p * n_o_ac + r;
+			int qs = q * n_o_ac + s;
+                        D_tuvw[pr * n_o_ac * n_o_ac + qs] += 2.0 * sign1 * sign2 * eigvec[(state_p1 * num_photon + photon_p) * num_dets + index_I]
+	            		* eigvec[(state_p2 * num_photon + photon_p) * num_dets + index_J];
+                
+                    }
+                }
+            }
+
+        }
+    }
+    for (int index_jb = 0; index_jb < num_alpha; index_jb++) {
+        int stride_b = index_jb * num_links;
+        for (int excitation_b = 0; excitation_b < num_links; excitation_b++) {
+            int index_ib = table[(stride_b+ excitation_b)*4+0];
+            int sign_b = table[(stride_b + excitation_b)*4+1];
+            int p = table[(stride_b + excitation_b)*4+2]; 
+            int r = table[(stride_b + excitation_b)*4+3]; 
+            
+
+            for (int index_ja = 0; index_ja < num_alpha; index_ja++) {
+                int stride_a = index_ja * num_links;
+                for (int excitation_a = 0; excitation_a < num_links; excitation_a++) {
+                    int index_ia = table[(stride_a + excitation_a)*4+0];
+                    int sign_a = table[(stride_a + excitation_a)*4+1];
+                    int q = table[(stride_a + excitation_a)*4+2]; 
+                    int s = table[(stride_a + excitation_a)*4+3]; 
+                    for (int photon_p = 0; photon_p < num_photon; photon_p++) {
+                        int index_I = index_ia * num_alpha + index_ib;
+                        int index_J = index_ja * num_alpha + index_jb;
+			int pr = p * n_o_ac + r;
+			int qs = q * n_o_ac + s;
+                        D_tuvw[pr * n_o_ac * n_o_ac + qs] += 2.0 * sign_a * sign_b * eigvec[(state_p1 * num_photon + photon_p) * num_dets + index_I]
+	            		* eigvec[(state_p2 * num_photon + photon_p) * num_dets + index_J];
+                    
+                    }
+                }
+	    }
+
+        }
+    }
+    //Symmetrize 2-rdm
+    for (int t = 0; t < n_o_ac; t++) {
+        for (int u = 0; u < n_o_ac; u++) {
+            for (int v = 0; v < n_o_ac; v++) {
+                for (int w = 0; w < n_o_ac; w++) {
+	            int tu = t * n_o_ac + u;
+	            int ut = u * n_o_ac + t;
+	            int vw = v * n_o_ac + w;
+		    double dum = 0.5 * (D_tuvw[tu * n_o_ac * n_o_ac + vw] + D_tuvw[ut * n_o_ac * n_o_ac + vw]);
+                    D_tuvw[tu * n_o_ac * n_o_ac + vw] = dum;
+		}
+	    }
+	}
+    }
+    
+}
+
+void build_active_photon_electron_one_rdm(double* eigvec, double* Dpe_tu, int* table, int N_ac, int n_o_ac, int num_photon, int state_p1, int state_p2) {
+    int num_alpha = binomialCoeff(n_o_ac, N_ac);
+    int num_links = N_ac * (n_o_ac-N_ac) + N_ac;
+    size_t num_dets = num_alpha * num_alpha;
+   
+    int N_p = num_photon - 1;
+    for (int index_jb = 0; index_jb < num_alpha; index_jb++) {
+        int stride = index_jb * num_links;
+        for (int excitation = 0; excitation < num_links; excitation++) {
+            int index_ib = table[(stride + excitation)*4+0];
+            int sign = table[(stride + excitation)*4+1];
+            int p = table[(stride + excitation)*4+2]; 
+            int q = table[(stride + excitation)*4+3]; 
+            int pq = p * n_o_ac + q;
+            for (int index_ia = 0; index_ia < num_alpha; index_ia++) {
+                for (int photon_p = 0; photon_p < num_photon; photon_p++) {
+                    int index_I = index_ia * num_alpha + index_ib;
+                    int index_J = index_ia * num_alpha + index_jb;
+		    if (N_p == 0) continue;
+                    if ((0 < photon_p) && (photon_p < N_p)) {
+        	        Dpe_tu[pq] += sign * sqrt(photon_p)   * eigvec[(state_p1 * num_photon + photon_p) * num_dets + index_I]
+				* eigvec[(state_p2 * num_photon + photon_p - 1) * num_dets + index_J];
+        	        Dpe_tu[pq] += sign * sqrt(photon_p+1) * eigvec[(state_p1 * num_photon + photon_p) * num_dets + index_I]
+				* eigvec[(state_p2 * num_photon + photon_p + 1) * num_dets + index_J];
+		    }
+                    else if (photon_p == N_p) {
+        	        Dpe_tu[pq] += sign * sqrt(photon_p)   * eigvec[(state_p1 * num_photon + photon_p) * num_dets + index_I]
+				* eigvec[(state_p2 * num_photon + photon_p - 1) * num_dets + index_J];
+		    }
+                    else{
+        	        Dpe_tu[pq] += sign * sqrt(photon_p+1) * eigvec[(state_p1 * num_photon + photon_p) * num_dets + index_I]
+				* eigvec[(state_p2 * num_photon + photon_p + 1) * num_dets + index_J];
+		    }
+                }
+            }
+        }
+    }
+    for (int index_ja = 0; index_ja < num_alpha; index_ja++) {
+        int stride = index_ja * num_links;
+        for (int excitation = 0; excitation < num_links; excitation++) {
+            int index_ia = table[(stride + excitation)*4+0];
+            int sign = table[(stride + excitation)*4+1];
+            int p = table[(stride + excitation)*4+2]; 
+            int q = table[(stride + excitation)*4+3]; 
+            int pq = p * n_o_ac + q;
+            for (int index_ib = 0; index_ib < num_alpha; index_ib++) {
+                for (int photon_p = 0; photon_p < num_photon; photon_p++) {
+                    int index_I = index_ia * num_alpha + index_ib;
+                    int index_J = index_ja * num_alpha + index_ib;
+                    if (N_p == 0) continue;
+                    if ((0 < photon_p) && (photon_p < N_p)) {
+        	        Dpe_tu[pq] += sign * sqrt(photon_p)   * eigvec[(state_p1 * num_photon + photon_p) * num_dets + index_I]
+				* eigvec[(state_p2 * num_photon + photon_p - 1) * num_dets + index_J];
+        	        Dpe_tu[pq] += sign * sqrt(photon_p+1) * eigvec[(state_p1 * num_photon + photon_p) * num_dets + index_I]
+				* eigvec[(state_p2 * num_photon + photon_p + 1) * num_dets + index_J];
+		    }
+                    else if (photon_p == N_p) {
+        	        Dpe_tu[pq] += sign * sqrt(photon_p)   * eigvec[(state_p1 * num_photon + photon_p) * num_dets + index_I]
+				* eigvec[(state_p2 * num_photon + photon_p - 1) * num_dets + index_J];
+		    }
+                    else{
+        	        Dpe_tu[pq] += sign * sqrt(photon_p+1) * eigvec[(state_p1 * num_photon + photon_p) * num_dets + index_I]
+				* eigvec[(state_p2 * num_photon + photon_p + 1) * num_dets + index_J];
+		    }
+                }
+            }
+        }
+    }
+ 
+}
 
 void build_b_array(int* table1, int* b_array, int num_alpha, int num_links, int n_o_ac) {
     for (int index_ib = 0; index_ib < num_alpha; index_ib++) {

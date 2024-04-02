@@ -87,6 +87,7 @@ cfunctions.build_sigma.argtypes = [
     ctypes.c_double,
     ctypes.c_double,
     ctypes.c_double,
+    ctypes.c_double,
     ctypes.c_bool,
 ]
 
@@ -120,6 +121,27 @@ cfunctions.build_two_rdm.argtypes = [
     np.ctypeslib.ndpointer(ctypes.c_double, ndim=1, flags="C_CONTIGUOUS"),
     np.ctypeslib.ndpointer(ctypes.c_int32, ndim=1, flags="C_CONTIGUOUS"),
     ctypes.c_int32,
+    ctypes.c_int32,
+    ctypes.c_int32,
+    ctypes.c_int32,
+    ctypes.c_int32,
+    ctypes.c_int32,
+]
+cfunctions.build_symmetrized_active_rdm.argtypes = [
+    np.ctypeslib.ndpointer(ctypes.c_double, ndim=2, flags="C_CONTIGUOUS"),
+    np.ctypeslib.ndpointer(ctypes.c_double, ndim=1, flags="C_CONTIGUOUS"),
+    np.ctypeslib.ndpointer(ctypes.c_double, ndim=1, flags="C_CONTIGUOUS"),
+    np.ctypeslib.ndpointer(ctypes.c_int32, ndim=1, flags="C_CONTIGUOUS"),
+    ctypes.c_int32,
+    ctypes.c_int32,
+    ctypes.c_int32,
+    ctypes.c_int32,
+    ctypes.c_int32,
+]
+cfunctions.build_active_photon_electron_one_rdm.argtypes = [
+    np.ctypeslib.ndpointer(ctypes.c_double, ndim=2, flags="C_CONTIGUOUS"),
+    np.ctypeslib.ndpointer(ctypes.c_double, ndim=1, flags="C_CONTIGUOUS"),
+    np.ctypeslib.ndpointer(ctypes.c_int32, ndim=1, flags="C_CONTIGUOUS"),
     ctypes.c_int32,
     ctypes.c_int32,
     ctypes.c_int32,
@@ -218,6 +240,7 @@ def c_sigma(
     dc,
     omega,
     d_exp,
+    E_core,
     break_degeneracy,
 ):
     cfunctions.build_sigma(
@@ -239,6 +262,7 @@ def c_sigma(
         dc,
         omega,
         d_exp,
+        E_core,
         break_degeneracy,
     )
 
@@ -316,6 +340,20 @@ def c_build_two_rdm(
     cfunctions.build_two_rdm(
         eigvec, D, table, N_ac, n_o_ac, n_o_in, num_photon, state_p1, state_p2
     )
+
+def c_build_symmetrized_active_rdm(
+    eigvec, D_tu, D_tuvw, table, N_ac, n_o_ac, num_photon, state_p1, state_p2
+):
+    cfunctions.build_symmetrized_active_rdm(
+        eigvec, D_tu, D_tuvw, table, N_ac, n_o_ac, num_photon, state_p1, state_p2
+    )
+def c_build_active_photon_electron_one_rdm(
+    eigvec, Dpe_tu, table, N_ac, n_o_ac, num_photon, state_p1, state_p2
+):
+    cfunctions.build_active_photon_electron_one_rdm(
+        eigvec, Dpe_tu, table, N_ac, n_o_ac, num_photon, state_p1, state_p2
+    )
+
 
 
 
@@ -1383,7 +1421,7 @@ class PFHamiltonianGenerator:
                     self.electronic_dipole_array + self.nuclear_dipole_array
                 )
                 # print(self.nat_obt_number)
-                print("one and two electron energies")
+                print("one and two electron energies from rdms in occupied space")
                 twoeint2 = self.twoeint.reshape((self.nmo, self.nmo, self.nmo, self.nmo))
                 twoeint2 = twoeint2[:self.n_occupied,:self.n_occupied,:self.n_occupied,:self.n_occupied]
                 for i in range(self.davidson_roots):
@@ -1430,10 +1468,10 @@ class PFHamiltonianGenerator:
                         "{:4s}".format("state"),
                         "{:4d}".format(i),
                         "{:20.12f}".format(one_e_energy),
-                        "{:20.12f}".format(two_e_energy)
-                        #"{:20.12f}".format(sum_energy)
+                        "{:20.12f}".format(two_e_energy),
+                        "{:20.12f}".format(sum_energy)
                     )
-                self.one_rdm = np.zeros((self.n_occupied * self.n_occupied))
+                #self.one_rdm = np.zeros((self.n_occupied * self.n_occupied))
                 #c_build_one_rdm(
                 #    eigenvecs,
                 #    self.one_rdm,
@@ -1445,7 +1483,61 @@ class PFHamiltonianGenerator:
                 #    1,
                 #    1
                 #)
-               
+                ###check total energy
+                print("check total energy using active rdms")
+                print("{:10s}".format("state"), "{:20s}".format("total energies"), "{:20s}".format("eigenvalues"), "error")
+                active_twoeint = twoeint2[self.n_in_a:self.n_occupied,self.n_in_a:self.n_occupied,self.n_in_a:self.n_occupied,self.n_in_a:self.n_occupied]
+                active_fock_core = self.fock_core[self.n_in_a:self.n_occupied,self.n_in_a:self.n_occupied]
+                for i in range(self.davidson_roots):
+                    self.D_tu = np.zeros((self.n_act_orb * self.n_act_orb))
+                    self.Dpe_tu = np.zeros((self.n_act_orb * self.n_act_orb))
+                    self.D_tuvw = np.zeros((self.n_act_orb * self.n_act_orb * self.n_act_orb * self.n_act_orb))
+                    sum_energy = 0.0
+                    off_diagonal_constant_energy = 0.0
+                    photon_energy = 0.0
+                    eigenvecs2 = eigenvecs[i].reshape((np1, self.num_det))
+                    eigenvecs2 = eigenvecs2.transpose(1,0)
+                    for m in range(np1):
+                        if (self.N_p ==0): continue
+                        if (m > 0 and m < self.N_p):
+                            off_diagonal_constant_energy  += np.sqrt(m * self.omega/2) * (self.d_exp - d_diag) * np.dot(eigenvecs2[:,m:(m+1)].flatten(),eigenvecs2[:,(m-1):m].flatten())
+                            off_diagonal_constant_energy += np.sqrt((m+1) * self.omega/2) * (self.d_exp - d_diag) * np.dot(eigenvecs2[:,m:(m+1)].flatten(),eigenvecs2[:,(m+1):(m+2)].flatten())
+                        elif (m == self.N_p):
+                            off_diagonal_constant_energy  += np.sqrt(m * self.omega/2) * (self.d_exp - d_diag) * np.dot(eigenvecs2[:,m:(m+1)].flatten(),eigenvecs2[:,(m-1):m].flatten())
+                        else:
+                            off_diagonal_constant_energy  += np.sqrt((m+1) * self.omega/2) * (self.d_exp - d_diag) * np.dot(eigenvecs2[:,m:(m+1)].flatten(),eigenvecs2[:,(m+1):(m+2)].flatten())
+                        photon_energy  += m * self.omega * np.dot(eigenvecs2[:,m:(m+1)].flatten(),eigenvecs2[:,m:(m+1)].flatten())
+                    c_build_symmetrized_active_rdm(eigenvecs,
+                            self.D_tu,
+                            self.D_tuvw,
+                            self.table,
+                            self.n_act_a,
+                            self.n_act_orb,
+                            np1,
+                            i,
+                            i
+                    )
+                    c_build_active_photon_electron_one_rdm(eigenvecs,
+                            self.Dpe_tu,
+                            self.table,
+                            self.n_act_a,
+                            self.n_act_orb,
+                            np1,
+                            i,
+                            i
+                    )
+                    active_one_e_energy = np.dot(active_fock_core.flatten(), self.D_tu)
+                    active_two_e_energy = 0.5 * np.dot(active_twoeint.flatten(), self.D_tuvw)
+                    active_one_pe_energy = -np.sqrt(self.omega/2) * np.dot(self.d_cmo[self.n_in_a:self.n_occupied,self.n_in_a:self.n_occupied].flatten(), self.Dpe_tu)
+                    sum_energy = (active_one_e_energy + active_two_e_energy + active_one_pe_energy + self.E_core +
+                            self.Enuc + self.d_c + off_diagonal_constant_energy + photon_energy)
+                    print(
+                        "{:4d}".format(i),
+                        "{:20.12f}".format(eigenvals[i]),
+                        "{:20.12f}".format(sum_energy),
+                        "{:20.12f}".format(eigenvals[i] - sum_energy)
+
+                    )
 
             elif self.ci_level == "cis":
                 dres = self.Davidson(
@@ -3211,6 +3303,7 @@ class PFHamiltonianGenerator:
                     self.d_c,
                     self.omega,
                     self.d_exp,
+                    self.E_core,
                     self.break_degeneracy,
                 )
 
