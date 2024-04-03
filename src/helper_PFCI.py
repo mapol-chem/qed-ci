@@ -1531,6 +1531,13 @@ class PFHamiltonianGenerator:
                     active_one_pe_energy = -np.sqrt(self.omega/2) * np.dot(self.d_cmo[self.n_in_a:self.n_occupied,self.n_in_a:self.n_occupied].flatten(), self.Dpe_tu)
                     sum_energy = (active_one_e_energy + active_two_e_energy + active_one_pe_energy + self.E_core +
                             self.Enuc + self.d_c + off_diagonal_constant_energy + photon_energy)
+
+                    # store the RDMs as a self attribute if the current state matches the rdm root
+                    if self.rdm_root == i:
+                        self.one_electron_rdm = np.copy(self.D_tu)
+                        self.one_electron_one_photon_rdm = np.copy(self.Dpe_tu)
+                        self.two_electron_rdm = np.copy(self.D_tuvw)
+                        self.total_energy_from_rdms = sum_energy
                     print(
                         "{:4d}".format(i),
                         "{:20.12f}".format(eigenvals[i]),
@@ -1675,6 +1682,11 @@ class PFHamiltonianGenerator:
             self.davidson_maxiter = cavity_dictionary["davidson_maxiter"]
         else:
             self.davidson_maxiter = 100
+        # rdm will be stored for this state
+        if "rdm_root" in cavity_dictionary:
+            self.rdm_root = cavity_dictionary["rdm_root"]
+        else:
+            self.rdm_root = 0
 
         # only need nact and nels if ci_level == "CAS"
         if self.ci_level == "cas" or self.ci_level == "CAS":
