@@ -3,7 +3,7 @@
 #include "cfunctions.h"
 #include <string.h>
 #include <math.h>
-#include <cblas.h>
+#include <mkl_cblas.h>
 #include<omp.h>
 #include<time.h>
 #define MIN(x, y) (((x) < (y)) ? (x) : (y))
