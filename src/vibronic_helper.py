@@ -1,4 +1,4 @@
-#from helper_PFCI import PFHamiltonianGenerator
+from helper_PFCI import PFHamiltonianGenerator
 import numpy as np
 from scipy import optimize
 from scipy.constants import h, hbar, c, u
@@ -50,7 +50,7 @@ class Vibronic:
         if "number_of_photons" in options:
             self.number_of_photons = options["number_of_photons"]
         else:
-            self.number_of_photons = 1
+            self.number_of_photons = 0
         if "number_of_electronic_states" in options:
             self.number_of_electron_states = options["number_of_electronic_states"]
         else:
@@ -75,6 +75,7 @@ class Vibronic:
     def compute_qed_energy(self):
         # if qed-ci is specified, prepare dictionaries for qed-ci 
         if self.qed_type == "qed-ci":
+            print("GOING to run QED-CI")
             options_dict = {
                 'basis' : self.orbital_basis,
                 'scf_type' : 'pk',
@@ -98,8 +99,8 @@ class Vibronic:
                 cavity_dict['nact_els'] = self.nact_els
 
             print(self.mol_str, options_dict, cavity_dict)
-            #qed_ci_inst = PFHamiltonianGenerator(self.mol_str, options_dict, cavity_dict)
-            #return qed_ci_inst.CIeigs[self.target_root]
+            qed_ci_inst = PFHamiltonianGenerator(self.mol_str, options_dict, cavity_dict)
+            return qed_ci_inst.CIeigs[self.target_root]
 
         elif self.qed_type == "pcqed":
             options_dict = {
@@ -126,15 +127,15 @@ class Vibronic:
 
             print(self.mol_str, options_dict, cavity_dict)
 
-            #qed_ci_inst = PFHamiltonianGenerator(self.mol_str, options_dict, cavity_dict)
+            qed_ci_inst = PFHamiltonianGenerator(self.mol_str, options_dict, cavity_dict)
             self.fast_build_pcqed_pf_hamiltonian(self.number_of_electron_states,
-                                                 self.number_of_photons,
+                                                 self.number_of_photons+1,
                                                  self.omega,
                                                  self.lambda_vector, 
                                                  qed_ci_inst.CIeigs,
                                                  qed_ci_inst.dipole_array
                                                  )
-            #return qed_ci_inst.CIeigs[self.target_root]
+            return qed_ci_inst.CIeigs[self.target_root]
 
     
 
@@ -316,5 +317,7 @@ class Vibronic:
             self.d_array = (
                 self.d_array + self.d_array.T - np.diag(np.diag(self.d_array))
             )
+
+    
      
      
