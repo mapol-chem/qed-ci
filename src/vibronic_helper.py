@@ -13,12 +13,19 @@ class Vibronic:
         # make sure all values are lower case
         options = {k.lower(): v for k, v in options.items()}
 
-        if "molecule_string" in options:
-            self.mol_str = options["molecule_string"]
-            print(self.mol_str)
+        if "molecule_template" in options:
+            self.molecule_template = options["molecule_template"]
+            print(self.molecule_template)
         else:
-            print(F'Geometry has not been specified!  Please restart with a proper geometry string')
+            print(F'molecule_template!  Please restart with a proper molecule_template')
             exit()
+
+        if "guess_bondlength" in options:
+            self.r = options["guess_bondlength"]
+        else:
+            print(F'guess_bondlength not specified!  Please restart with a guess r')
+            exit()
+        self.zmatrix_string = self.molecule_template.replace("**R**", str(self.r))
 
         if "qed_type" in options:
             self.qed_type = options["qed_type"]
@@ -71,8 +78,31 @@ class Vibronic:
             # default is ground state
             self.target_root = 0
 
+        if "r_step" in options:
+            self.dr = options["r_step"]
+        else:
+            self.dr = 0.005
+
+    def compute_qed_gradient(self):
+        r_array = np.array([self.r - 2 * self.dr,
+                            self.r - self.dr,
+                            self.r, 
+                            self.r + self.dr,
+                            self.r + 2 * self.dr])
+        f = np.zeros(5)
+        for i in range(5):
+            self.r = r_array[i]
+            f[i] = self.compute_qed_energy()
+
+            
+        self.f_x = (1*f[0]-8*f[1]+0*f[2]]+8*f[3]-1*f[4])/(12*1.0*self.dr**1)
+        self.f_xx = (-1*f[0]+16*f[1]-30*f[2]+16*f[3]-1*f[4])/(12*1.0*self.dr**2)
+        self.f_xxx = (-1*f[0]+2*f[1]+0*f[2]-2*f[3]+1*f[4])/(2*1.0*self.dr**3)
         
     def compute_qed_energy(self):
+
+        # make sure geometry is up to date!
+        self.zmatrix_string = self.molecule_template.replace("**R**", str(self.r))
         # if qed-ci is specified, prepare dictionaries for qed-ci 
         if self.qed_type == "qed-ci":
             print("GOING to run QED-CI")
@@ -98,8 +128,8 @@ class Vibronic:
                 cavity_dict['nact_orbs'] = self.nact_orbs
                 cavity_dict['nact_els'] = self.nact_els
 
-            print(self.mol_str, options_dict, cavity_dict)
-            qed_ci_inst = PFHamiltonianGenerator(self.mol_str, options_dict, cavity_dict)
+            print(self.zmatrix_string, options_dict, cavity_dict)
+            qed_ci_inst = PFHamiltonianGenerator(self.zmatrix_string, options_dict, cavity_dict)
             return qed_ci_inst.CIeigs[self.target_root]
 
         elif self.qed_type == "pcqed":
@@ -136,13 +166,25 @@ class Vibronic:
                                                  qed_ci_inst.dipole_array
                                                  )
             return qed_ci_inst.CIeigs[self.target_root]
-
-    
-
-
-
-
         
+    def optimize_geometry(self):
+        
+        print(f" Going to perform a geometry optimization using {self.qed_type}")
+        energy_start = self.compute_qed_energy()
+        print(f" Initial Energy is     {energy_start}")
+        print(f" Initial bondlength is {self.r}")
+        
+
+        optimize_return = minimize(
+            self.self.compute_qed_energy(),
+            self.r,
+            method="BFGS",
+            jac=False,
+        )
+        print(f" Geometry Optimization Complete!")
+        energy_end = self.compute_qed_energy()
+        print(f" Final Energy is     {energy_end}")
+        print(f" Final bondlength is {self.r}")
         
 
 

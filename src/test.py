@@ -9,12 +9,13 @@ symmetry c1
 
 options = {
 "qed_type" : "qed-ci",
-"molecule_string" : 
+"molecule_template" : 
 """
 H
 H 1 **R**
 symmetry c1
 """,
+"guess_bondlength" : 0.74,
 }
 X = Vibronic(options)
 
