@@ -8,6 +8,13 @@ symmetry c1
 """
 
 options = {
+"number_of_photons" : 0,
+"number_of_electronic_states" : 10,
+"omega" : 0,
+"lambda_vector" : np.array([0, 0, 0]),
+"target_root" : 0,
+"mass_A" : 1,
+"mass_B" : 1,
 "qed_type" : "qed-ci",
 "molecule_template" : 
 """
@@ -19,4 +26,4 @@ symmetry c1
 }
 X = Vibronic(options)
 
-X.compute_qed_energy()
+X.optimize_geometry()
