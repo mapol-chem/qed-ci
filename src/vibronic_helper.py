@@ -5,11 +5,11 @@ from scipy.constants import h, hbar, c, u
 from scipy.special import factorial
 from scipy.special import genlaguerre, gamma
 
+
 class Vibronic:
-    """ A class for performing geometry optimization and vibrational analysis with QED methods """
+    """A class for performing geometry optimization and vibrational analysis with QED methods"""
 
     def __init__(self, options):
-
         # make sure all values are lower case
         options = {k.lower(): v for k, v in options.items()}
 
@@ -17,13 +17,13 @@ class Vibronic:
             self.molecule_template = options["molecule_template"]
             print(self.molecule_template)
         else:
-            print(F'molecule_template!  Please restart with a proper molecule_template')
+            print(f"molecule_template!  Please restart with a proper molecule_template")
             exit()
 
         if "guess_bondlength" in options:
             self.r = options["guess_bondlength"]
         else:
-            print(F'guess_bondlength not specified!  Please restart with a guess r')
+            print(f"guess_bondlength not specified!  Please restart with a guess r")
             exit()
         self.zmatrix_string = self.molecule_template.replace("**R**", str(self.r))
 
@@ -42,13 +42,17 @@ class Vibronic:
             if "nact_orbs" in options:
                 self.nact_orbs = options["nact_orbs"]
             else:
-                print(" Specification of the number of active orbitals 'nact_orbs' needed")
+                print(
+                    " Specification of the number of active orbitals 'nact_orbs' needed"
+                )
                 exit()
             if "nact_els" in options:
                 self.nact_els = options["nact_els"]
             else:
-                print(" Specification of the number of active electrons 'nact_els' needed")
-                exit()    
+                print(
+                    " Specification of the number of active electrons 'nact_els' needed"
+                )
+                exit()
 
         if "basis" in options:
             self.orbital_basis = options["basis"]
@@ -81,112 +85,174 @@ class Vibronic:
         if "r_step" in options:
             self.dr = options["r_step"]
         else:
-            self.dr = 0.005
+            self.dr = 0.0005
+
+        if "mass_A" in options:
+            self.mA = options["mass_A"]
+            print(f" Mass of atom A is {self.mA} AMUs")
+        else:
+            print(
+                "mass_A not defined!  Please restart and specify both mass_A and mass_B in amu"
+            )
+
+        if "mass_B" in options:
+            self.mB = options["mass_B"]
+            print(f" Mass of atom B is {self.mB} AMUs")
+        else:
+            print(
+                "mass_B not defined!  Please restart and specify both mass_A and mass_B in amu"
+            )
+        self.mu_AMU = self.mA * self.mB / (self.mA + self.mB)
+
+        self.amu_to_au = 1822.89
+        self.mu_au = self.mu_AMU * self.amu_to_au
 
     def compute_qed_gradient(self):
-        r_array = np.array([self.r - 2 * self.dr,
-                            self.r - self.dr,
-                            self.r, 
-                            self.r + self.dr,
-                            self.r + 2 * self.dr])
+        # displaced geomeries in angstroms
+        r_array = np.array(
+            [
+                self.r - 2 * self.dr,
+                self.r - self.dr,
+                self.r,
+                self.r + self.dr,
+                self.r + 2 * self.dr,
+            ]
+        )
+        self.au_to_ang = 0.52917721067121
+
+        h = self.dr / self.au_to_ang
         f = np.zeros(5)
         for i in range(5):
             self.r = r_array[i]
             f[i] = self.compute_qed_energy()
 
-            
-        self.f_x = (1*f[0]-8*f[1]+0*f[2]]+8*f[3]-1*f[4])/(12*1.0*self.dr**1)
-        self.f_xx = (-1*f[0]+16*f[1]-30*f[2]+16*f[3]-1*f[4])/(12*1.0*self.dr**2)
-        self.f_xxx = (-1*f[0]+2*f[1]+0*f[2]-2*f[3]+1*f[4])/(2*1.0*self.dr**3)
-        
-    def compute_qed_energy(self):
+        self.f_x = (1 * f[0] - 8 * f[1] + 0 * f[2] + 8 * f[3] - 1 * f[4]) / (
+            12 * 1.0 * h
+        )
+        self.f_xx = (-1 * f[0] + 16 * f[1] - 30 * f[2] + 16 * f[3] - 1 * f[4]) / (
+            12 * 1.0 * h**2
+        )
+        self.f_xxx = (-1 * f[0] + 2 * f[1] + 0 * f[2] - 2 * f[3] + 1 * f[4]) / (
+            2 * 1.0 * h**3
+        )
 
+        # going to return energy and gradient
+        return f[2], self.f_x
+
+    def compute_qed_energy(self):
         # make sure geometry is up to date!
         self.zmatrix_string = self.molecule_template.replace("**R**", str(self.r))
-        # if qed-ci is specified, prepare dictionaries for qed-ci 
+        # if qed-ci is specified, prepare dictionaries for qed-ci
         if self.qed_type == "qed-ci":
             print("GOING to run QED-CI")
             options_dict = {
-                'basis' : self.orbital_basis,
-                'scf_type' : 'pk',
-                'e_convergence' : 1e-10,
-                'd_convergence' : 1e-10
+                "basis": self.orbital_basis,
+                "scf_type": "pk",
+                "e_convergence": 1e-10,
+                "d_convergence": 1e-10,
             }
             cavity_dict = {
-                'omega_value' : self.omega,
-                'lambda_vector' : self.lambda_vector,
-                'ci_level' : self.ci_level,
-                'davidson_roots' : self.number_of_electron_states,
-                'canonical_mos' : True,
-                'coherent_state_basis' : False,
-                'full_diagonalization' : False,
-                'number_of_photons' : self.number_of_photons,
-                'nact_orbs' : 0,
-                'nact_els' : 0
+                "omega_value": self.omega,
+                "lambda_vector": self.lambda_vector,
+                "ci_level": self.ci_level,
+                "davidson_roots": self.number_of_electron_states,
+                "canonical_mos": True,
+                "coherent_state_basis": False,
+                "full_diagonalization": False,
+                "number_of_photons": self.number_of_photons,
+                "nact_orbs": 0,
+                "nact_els": 0,
             }
             if self.ci_level == "cas":
-                cavity_dict['nact_orbs'] = self.nact_orbs
-                cavity_dict['nact_els'] = self.nact_els
+                cavity_dict["nact_orbs"] = self.nact_orbs
+                cavity_dict["nact_els"] = self.nact_els
 
             print(self.zmatrix_string, options_dict, cavity_dict)
-            qed_ci_inst = PFHamiltonianGenerator(self.zmatrix_string, options_dict, cavity_dict)
+            qed_ci_inst = PFHamiltonianGenerator(
+                self.zmatrix_string, options_dict, cavity_dict
+            )
             return qed_ci_inst.CIeigs[self.target_root]
 
         elif self.qed_type == "pcqed":
             options_dict = {
-                'basis' : self.orbital_basis,
-                'scf_type' : 'pk',
-                'e_convergence' : 1e-10,
-                'd_convergence' : 1e-10
+                "basis": self.orbital_basis,
+                "scf_type": "pk",
+                "e_convergence": 1e-10,
+                "d_convergence": 1e-10,
             }
             cavity_dict = {
-                'omega_value' : 0,
-                'lambda_vector' : np.array([0, 0, 0]),
-                'ci_level' : self.ci_level,
-                'davidson_roots' : self.number_of_electron_states,
-                'canonical_mos' : True,
-                'coherent_state_basis' : False,
-                'full_diagonalization' : False,
-                'number_of_photons' : 0,
-                'nact_orbs' : 0,
-                'nact_els' : 0
+                "omega_value": 0,
+                "lambda_vector": np.array([0, 0, 0]),
+                "ci_level": self.ci_level,
+                "davidson_roots": self.number_of_electron_states,
+                "canonical_mos": True,
+                "coherent_state_basis": False,
+                "full_diagonalization": False,
+                "number_of_photons": 0,
+                "nact_orbs": 0,
+                "nact_els": 0,
             }
             if self.ci_level == "cas":
-                cavity_dict['nact_orbs'] = self.nact_orbs
-                cavity_dict['nact_els'] = self.nact_els
+                cavity_dict["nact_orbs"] = self.nact_orbs
+                cavity_dict["nact_els"] = self.nact_els
 
             print(self.mol_str, options_dict, cavity_dict)
 
-            qed_ci_inst = PFHamiltonianGenerator(self.mol_str, options_dict, cavity_dict)
-            self.fast_build_pcqed_pf_hamiltonian(self.number_of_electron_states,
-                                                 self.number_of_photons+1,
-                                                 self.omega,
-                                                 self.lambda_vector, 
-                                                 qed_ci_inst.CIeigs,
-                                                 qed_ci_inst.dipole_array
-                                                 )
+            qed_ci_inst = PFHamiltonianGenerator(
+                self.mol_str, options_dict, cavity_dict
+            )
+            self.fast_build_pcqed_pf_hamiltonian(
+                self.number_of_electron_states,
+                self.number_of_photons + 1,
+                self.omega,
+                self.lambda_vector,
+                qed_ci_inst.CIeigs,
+                qed_ci_inst.dipole_array,
+            )
             return qed_ci_inst.CIeigs[self.target_root]
-        
+
     def optimize_geometry(self):
-        
         print(f" Going to perform a geometry optimization using {self.qed_type}")
-        energy_start = self.compute_qed_energy()
+        energy_start, gradient_start = self.compute_qed_gradient()
         print(f" Initial Energy is     {energy_start}")
         print(f" Initial bondlength is {self.r}")
-        
+        print(f" Initial Gradient is     {gradient_start}")
 
         optimize_return = minimize(
-            self.self.compute_qed_energy(),
+            self.compute_qed_gradient(),
             self.r,
             method="BFGS",
-            jac=False,
+            jac=True,
         )
-        print(f" Geometry Optimization Complete!")
-        energy_end = self.compute_qed_energy()
-        print(f" Final Energy is     {energy_end}")
-        print(f" Final bondlength is {self.r}")
-        
 
+        # make sure we capture the optimized bond length
+        self.r = optimize_return.x
+        print(f" Geometry Optimization Complete!")
+        energy_end, gradient_end = self.compute_qed_gradient()
+        print(f" Final Energy is     {energy_end}")
+        print()
+        print(f" Final bondlength is {self.r}")
+        print(f" Final gradient is   {gradient_end} ")
+
+    def compute_morse_parameters(self):
+        # compute the second and third derivatives
+        self.compute_qed_gradient()
+
+        # compute beta and De parameters from 2nd and 3rd derivatives
+        self.morse_beta_au = -2 * self.f_xxx / (6 * self.f_xx)
+        self.morse_De_au = self.f_xx / (2 * self.morse_beta**2)
+
+        # compute omega_e and xe in atomic units
+        self.morse_omega_au = np.sqrt(
+            2 * self.morse_De_au * self.morse_beta_au**2 / self.mu_au
+        )
+        self.morse_xe_au = self.morse_omega_au / (4 * self.morse_De_au)
+
+        # convert to wavenumbers
+        self.au_to_wn = 219474.63068
+
+        self.morse_omega_wn = self.morse_omega_au * self.au_to_wn
+        self.morse_xe_wn = self.morse_xe_au * self.au_to_wn
 
     def fast_build_pcqed_pf_hamiltonian(
         self,
@@ -359,7 +425,3 @@ class Vibronic:
             self.d_array = (
                 self.d_array + self.d_array.T - np.diag(np.diag(self.d_array))
             )
-
-    
-     
-     
