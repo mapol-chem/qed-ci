@@ -253,6 +253,7 @@ class Vibronic:
 
         self.morse_omega_wn = self.morse_omega_au * self.au_to_wn
         self.morse_xe_wn = self.morse_xe_au * self.au_to_wn
+        
 
     def fast_build_pcqed_pf_hamiltonian(
         self,
