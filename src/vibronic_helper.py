@@ -294,6 +294,9 @@ class Vibronic:
 
         self.morse_omega_wn = self.morse_omega_au * self.au_to_wn
         self.morse_xe_wn = self.morse_xe_au * self.au_to_wn
+        print(F" Morse we:           {self.morse_omega_wn} cm^-1")
+        print(F" Morse wexe:         {self.morse_omega_wn * self.morse_xe_wn} cm^-1")
+
 
         self.harmonic_omega_au = np.sqrt( self.f_xx / self.mu_au )
         self.harmonic_omega_wn = self.harmonic_omega_au * self.au_to_wn
