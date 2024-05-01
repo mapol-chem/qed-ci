@@ -336,13 +336,15 @@ class Vibronic:
 
 
         """
+        _dim = n_el * n_ph
+        print(F' DIMENSIONS OF THE PCQED HAMILTONIAN: {_dim}')
 
-        self.PCQED_H_PF = np.zeros((n_el * n_ph, n_el * n_ph))
-        self.PCQED_H_EL = np.zeros((n_el * n_ph, n_el * n_ph))
-        self.PCQED_H_PH = np.zeros((n_el * n_ph, n_el * n_ph))
-        self.PCQED_H_DSE = np.zeros((n_el * n_ph, n_el * n_ph))
-        self.PCQED_H_BLC = np.zeros((n_el * n_ph, n_el * n_ph))
-        self.PCQED_MU = np.zeros((n_el * n_ph, n_el * n_ph))
+        self.PCQED_H_PF = np.zeros((_dim, _dim))
+        self.PCQED_H_EL = np.zeros((_dim, _dim))
+        self.PCQED_H_PH = np.zeros((_dim, _dim))
+        self.PCQED_H_DSE = np.zeros((_dim, _dim))
+        self.PCQED_H_BLC = np.zeros((_dim, _dim))
+        self.PCQED_MU = np.zeros((_dim, _dim))
 
         # create identity array of dimensions n_el x n_el
         _I = np.eye(n_el)
@@ -362,6 +364,7 @@ class Vibronic:
             n_el, lambda_vector, mu_array, coherent_state=coherent_state_option
         )
         _d = np.copy(self.d_array)
+        print(F' SHAPE OF _d ARRAY: {np.shape(_d)}')
 
         # create D array using matrix multiplication
         if neglect_DSE:
