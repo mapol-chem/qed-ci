@@ -38,22 +38,6 @@ class Vibronic:
         else:
             self.ci_level = "fci"
 
-        if self.ci_level == "cas":
-            if "nact_orbs" in options:
-                self.nact_orbs = options["nact_orbs"]
-            else:
-                print(
-                    " Specification of the number of active orbitals 'nact_orbs' needed"
-                )
-                exit()
-            if "nact_els" in options:
-                self.nact_els = options["nact_els"]
-            else:
-                print(
-                    " Specification of the number of active electrons 'nact_els' needed"
-                )
-                exit()
-
         if "basis" in options:
             self.orbital_basis = options["basis"]
         else:
@@ -113,12 +97,28 @@ class Vibronic:
         else:
             self.step_tol = 0.5
 
-        self.mA = 1
-        self.mB = 1
+        #self.mA = 1
+        #self.mB = 1
         self.mu_AMU = self.mA * self.mB / (self.mA + self.mB)
 
         self.amu_to_au = 1822.89
         self.mu_au = self.mu_AMU * self.amu_to_au
+
+        if self.ci_level == "cas":
+            if "nact_orbs" in options:
+                self.nact_orbs = options["nact_orbs"]
+            else:
+                print(
+                    " Specification of the number of active orbitals 'nact_orbs' needed"
+                )
+                exit()
+            if "nact_els" in options:
+                self.nact_els = options["nact_els"]
+            else:
+                print(
+                    " Specification of the number of active electrons 'nact_els' needed"
+                )
+                exit()
 
     def compute_qed_gradient(self, r0):
         # copy r0 element to a value
