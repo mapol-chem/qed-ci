@@ -70,19 +70,19 @@ class Vibronic:
             self.dr = options_dictionary["r_step"]
         else:
             self.dr = 0.0005
-        if "mass_A" in options_dictionary:
-            self.mA = options_dictionary["mass_A"]
+        if "mass_a" in options_dictionary:
+            self.mA = options_dictionary["mass_a"]
             print(f" Mass of atom A is {self.mA} AMUs")
         else:
             print(
-                "mass_A not defined!  Please restart and specify both mass_A and mass_B in amu"
+                "mass_A not defined!  Please restart and specify both mass_a and mass_a in amu"
             )
-        if "mass_B" in options_dictionary:
-            self.mB = options_dictionary["mass_B"]
+        if "mass_a" in options_dictionary:
+            self.mB = options_dictionary["mass_a"]
             print(f" Mass of atom B is {self.mB} AMUs")
         else:
             print(
-                "mass_B not defined!  Please restart and specify both mass_A and mass_B in amu"
+                "mass_B not defined!  Please restart and specify both mass_a and mass_a in amu"
             )
         if "gradient_tol" in options_dictionary:
             self.gradient_tol = options_dictionary["gradient_tol"]
