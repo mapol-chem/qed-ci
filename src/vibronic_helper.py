@@ -295,22 +295,22 @@ class Vibronic:
         self.morse_omega_au = np.sqrt(
             2 * self.morse_De_au * self.morse_beta_au**2 / self.mu_au
         )
-        self.morse_xe_au = self.morse_omega_au / (4 * self.morse_De_au)
+        # this is unitless!
+        self.morse_xe = self.morse_omega_au / (4 * self.morse_De_au)
 
         # convert to wavenumbers
         self.au_to_wn = 219474.63068
 
         self.morse_omega_wn = self.morse_omega_au * self.au_to_wn
-        self.morse_xe_wn = self.morse_xe_au * self.au_to_wn
         print(F" Morse we:           {self.morse_omega_wn} cm^-1")
-        print(F" Morse wexe:         {self.morse_omega_wn * self.morse_xe_wn} cm^-1")
+        print(F" Morse wexe:         {self.morse_omega_wn * self.morse_xe} cm^-1")
 
 
         self.harmonic_omega_au = np.sqrt( self.f_xx / self.mu_au )
         self.harmonic_omega_wn = self.harmonic_omega_au * self.au_to_wn
 
-        E_1_morse = self.morse_omega_au * 3/2 - self.morse_omega_au * self.morse_xe_au * 3/2 ** 2
-        E_0_morse = self.morse_omega_au * 1/2 - self.morse_omega_au * self.morse_xe_au * 1/2 ** 2
+        E_1_morse = self.morse_omega_au * 3/2 - self.morse_omega_au * self.morse_xe * 3/2 ** 2
+        E_0_morse = self.morse_omega_au * 1/2 - self.morse_omega_au * self.morse_xe * 1/2 ** 2
         morse_fundamental_au = E_1_morse - E_0_morse
         morse_fundamental_wn = morse_fundamental_au * self.au_to_wn
         print(F" Harmonic Fundamental Frequency: {self.harmonic_omega_wn} cm^-1")
