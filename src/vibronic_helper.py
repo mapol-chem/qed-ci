@@ -281,7 +281,7 @@ class Vibronic:
 
         # compute beta and De parameters from 2nd and 3rd derivatives
         self.morse_beta_au = -2 * self.f_xxx / (6 * self.f_xx)
-        self.morse_De_au = self.f_xx / (2 * self.morse_beta**2)
+        self.morse_De_au = self.f_xx / (2 * self.morse_beta_au**2)
 
         # compute omega_e and xe in atomic units
         self.morse_omega_au = np.sqrt(
