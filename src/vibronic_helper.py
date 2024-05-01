@@ -1,6 +1,6 @@
 from helper_PFCI import PFHamiltonianGenerator
 import numpy as np
-from scipy import optimize
+from scipy.optimize import minimize 
 from scipy.constants import h, hbar, c, u
 from scipy.special import factorial
 from scipy.special import genlaguerre, gamma
@@ -21,11 +21,11 @@ class Vibronic:
             exit()
 
         if "guess_bondlength" in options:
-            self.r = options["guess_bondlength"]
+            self.r = np.array([options["guess_bondlength"]])
         else:
             print(f"guess_bondlength not specified!  Please restart with a guess r")
             exit()
-        self.zmatrix_string = self.molecule_template.replace("**R**", str(self.r))
+        self.zmatrix_string = self.molecule_template.replace("**R**", str(self.r[0]))
 
         if "qed_type" in options:
             self.qed_type = options["qed_type"]
@@ -102,20 +102,25 @@ class Vibronic:
             print(
                 "mass_B not defined!  Please restart and specify both mass_A and mass_B in amu"
             )
+
+        self.mA = 1
+        self.mB = 1
         self.mu_AMU = self.mA * self.mB / (self.mA + self.mB)
 
         self.amu_to_au = 1822.89
         self.mu_au = self.mu_AMU * self.amu_to_au
 
-    def compute_qed_gradient(self):
+    def compute_qed_gradient(self, r0):
+        # copy r0 element to a value
+        rv = r0[0]
         # displaced geomeries in angstroms
         r_array = np.array(
             [
-                self.r - 2 * self.dr,
-                self.r - self.dr,
-                self.r,
-                self.r + self.dr,
-                self.r + 2 * self.dr,
+                rv - 2 * self.dr,
+                rv - self.dr,
+                rv,
+                rv + self.dr,
+                rv + 2 * self.dr,
             ]
         )
         self.au_to_ang = 0.52917721067121
@@ -123,7 +128,7 @@ class Vibronic:
         h = self.dr / self.au_to_ang
         f = np.zeros(5)
         for i in range(5):
-            self.r = r_array[i]
+            self.r = np.copy( np.array([r_array[i]]) )
             f[i] = self.compute_qed_energy()
 
         self.f_x = (1 * f[0] - 8 * f[1] + 0 * f[2] + 8 * f[3] - 1 * f[4]) / (
@@ -141,7 +146,7 @@ class Vibronic:
 
     def compute_qed_energy(self):
         # make sure geometry is up to date!
-        self.zmatrix_string = self.molecule_template.replace("**R**", str(self.r))
+        self.zmatrix_string = self.molecule_template.replace("**R**", str(self.r[0]))
         # if qed-ci is specified, prepare dictionaries for qed-ci
         if self.qed_type == "qed-ci":
             print("GOING to run QED-CI")
@@ -211,24 +216,35 @@ class Vibronic:
             )
             return qed_ci_inst.CIeigs[self.target_root]
 
+    def optimize_geometry_full_nr(self):
+        print(f" Going to perform a full Newton-Raphson geometry optimization using {self.qed_type}")
+        energy_start, gradient_start = self.compute_qed_gradient(self.r)
+        print(f" Initial Energy is     {energy_start}")
+        print(f" Initial bondlength is {self.r}")
+        print(f" Initial Gradient is   {gradient_start}")
+        print(f" Initial Hessian is    {self.f_xx}")
+        _delta_x = - self.f_x / self.f_xx
+        print(f" Initial Update is     {_delta_x} ")
+
+    
     def optimize_geometry(self):
         print(f" Going to perform a geometry optimization using {self.qed_type}")
-        energy_start, gradient_start = self.compute_qed_gradient()
+        energy_start, gradient_start = self.compute_qed_gradient(self.r)
         print(f" Initial Energy is     {energy_start}")
         print(f" Initial bondlength is {self.r}")
         print(f" Initial Gradient is     {gradient_start}")
 
         optimize_return = minimize(
-            self.compute_qed_gradient(),
+            self.compute_qed_gradient,
             self.r,
             method="BFGS",
             jac=True,
         )
 
         # make sure we capture the optimized bond length
-        self.r = optimize_return.x
+        self.r = np.copy(optimize_return.x)
         print(f" Geometry Optimization Complete!")
-        energy_end, gradient_end = self.compute_qed_gradient()
+        energy_end, gradient_end = self.compute_qed_gradient(self.r)
         print(f" Final Energy is     {energy_end}")
         print()
         print(f" Final bondlength is {self.r}")
