@@ -14,6 +14,7 @@ class Vibronic:
         opt_dict = {k.lower(): v for k, v in opt_dict.items()}
         print(opt_dict)
         print("Going to parse options!")
+        self.wn_to_J = 100 * h * c
 
         self.parseOptions(opt_dict)
 
@@ -101,6 +102,7 @@ class Vibronic:
 
         self.amu_to_au = 1822.89
         self.mu_au = self.mu_AMU * self.amu_to_au
+        self.mu_SI = self.mu_AMU * u
 
         if self.ci_level == "cas":
             if "nact_orbs" in options_dictionary:
