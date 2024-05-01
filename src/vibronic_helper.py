@@ -249,6 +249,7 @@ class Vibronic:
             print(F' Hessian:        {self.f_xx}')
             _delta_x = - self.f_x / self.f_xx
             print(F' Update:         {_delta_x}')
+            iter_count += 1
 
 
 
