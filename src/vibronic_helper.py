@@ -210,10 +210,10 @@ class Vibronic:
                 cavity_dict["nact_orbs"] = self.nact_orbs
                 cavity_dict["nact_els"] = self.nact_els
 
-            print(self.mol_str, options_dict, cavity_dict)
+            print(self.zmatrix_string, options_dict, cavity_dict)
 
             qed_ci_inst = PFHamiltonianGenerator(
-                self.mol_str, options_dict, cavity_dict
+                self.zmatrix_string, options_dict, cavity_dict
             )
             self.fast_build_pcqed_pf_hamiltonian(
                 self.number_of_electron_states,
