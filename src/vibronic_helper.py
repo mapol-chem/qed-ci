@@ -150,6 +150,8 @@ class Vibronic:
             2 * 1.0 * h**3
         )
 
+        # return self.r to midpoint
+        self.r = np.copy(r0)
         # going to return energy and gradient
         return f[2], self.f_x
 
