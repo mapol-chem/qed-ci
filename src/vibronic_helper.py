@@ -19,25 +19,19 @@ class Vibronic:
         else:
             print(f"molecule_template!  Please restart with a proper molecule_template")
             exit()
-
         if "guess_bondlength" in options:
             self.r = np.array([options["guess_bondlength"]])
         else:
             print(f"guess_bondlength not specified!  Please restart with a guess r")
             exit()
-        self.zmatrix_string = self.molecule_template.replace("**R**", str(self.r[0]))
-
         if "qed_type" in options:
             self.qed_type = options["qed_type"]
         else:
             self.qed_type = "qed-ci"
-        print(self.qed_type)
-
         if "ci_level" in options:
             self.ci_level = options["ci_level"]
         else:
             self.ci_level = "fci"
-
         if "basis" in options:
             self.orbital_basis = options["basis"]
         else:
@@ -66,12 +60,10 @@ class Vibronic:
         else:
             # default is ground state
             self.target_root = 0
-
         if "r_step" in options:
             self.dr = options["r_step"]
         else:
             self.dr = 0.0005
-
         if "mass_A" in options:
             self.mA = options["mass_A"]
             print(f" Mass of atom A is {self.mA} AMUs")
@@ -79,7 +71,6 @@ class Vibronic:
             print(
                 "mass_A not defined!  Please restart and specify both mass_A and mass_B in amu"
             )
-
         if "mass_B" in options:
             self.mB = options["mass_B"]
             print(f" Mass of atom B is {self.mB} AMUs")
@@ -87,7 +78,6 @@ class Vibronic:
             print(
                 "mass_B not defined!  Please restart and specify both mass_A and mass_B in amu"
             )
-
         if "gradient_tol" in options:
             self.gradient_tol = options["gradient_tol"]
         else:
@@ -99,6 +89,8 @@ class Vibronic:
 
         #self.mA = 1
         #self.mB = 1
+        print(self.qed_type)
+        self.zmatrix_string = self.molecule_template.replace("**R**", str(self.r[0]))
         self.mu_AMU = self.mA * self.mB / (self.mA + self.mB)
 
         self.amu_to_au = 1822.89
