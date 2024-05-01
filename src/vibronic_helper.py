@@ -60,6 +60,7 @@ class Vibronic:
             self.orbital_basis = "sto-3g"
         if "number_of_photons" in options:
             self.number_of_photons = options["number_of_photons"]
+            print(F" SET NUMBER OF PHOTONS TO {self.number_of_photons} ")
         else:
             self.number_of_photons = 0
         if "number_of_electronic_states" in options:
