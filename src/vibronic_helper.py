@@ -9,81 +9,85 @@ from scipy.special import genlaguerre, gamma
 class Vibronic:
     """A class for performing geometry optimization and vibrational analysis with QED methods"""
 
-    def __init__(self, options):
+    def __init__(self, opt_dict):
         # make sure all values are lower case
-        options = {k.lower(): v for k, v in options.items()}
+        opt_dict = {k.lower(): v for k, v in opt_dict.items()}
 
-        if "molecule_template" in options:
-            self.molecule_template = options["molecule_template"]
+        self.parseOptions(opt_dict)
+
+    
+    def parseOptions(self, options_dictionary):
+        if "molecule_template" in options_dictionary:
+            self.molecule_template = options_dictionary["molecule_template"]
             print(self.molecule_template)
         else:
             print(f"molecule_template!  Please restart with a proper molecule_template")
             exit()
-        if "guess_bondlength" in options:
-            self.r = np.array([options["guess_bondlength"]])
+        if "guess_bondlength" in options_dictionary:
+            self.r = np.array([options_dictionary["guess_bondlength"]])
         else:
             print(f"guess_bondlength not specified!  Please restart with a guess r")
             exit()
-        if "qed_type" in options:
-            self.qed_type = options["qed_type"]
+        if "qed_type" in options_dictionary:
+            self.qed_type = options_dictionary["qed_type"]
         else:
             self.qed_type = "qed-ci"
-        if "ci_level" in options:
-            self.ci_level = options["ci_level"]
+        if "ci_level" in options_dictionary:
+            self.ci_level = options_dictionary["ci_level"]
         else:
             self.ci_level = "fci"
-        if "basis" in options:
-            self.orbital_basis = options["basis"]
+        if "basis" in options_dictionary:
+            self.orbital_basis = options_dictionary["basis"]
         else:
             self.orbital_basis = "sto-3g"
-        if "number_of_photons" in options:
-            self.number_of_photons = options["number_of_photons"]
+        if "number_of_photons" in options_dictionary:
+            self.number_of_photons = options_dictionary["number_of_photons"]
             print(F" SET NUMBER OF PHOTONS TO {self.number_of_photons} ")
         else:
             self.number_of_photons = 0
-        if "number_of_electronic_states" in options:
-            self.number_of_electron_states = options["number_of_electronic_states"]
+        if "number_of_electronic_states" in options_dictionary:
+            self.number_of_electron_states = options_dictionary["number_of_electronic_states"]
         else:
             self.number_of_electron_states = 10
-        if "omega" in options:
-            self.omega = options["omega"]
+        if "omega" in options_dictionary:
+            self.omega = options_dictionary["omega"]
         else:
             self.omega = 0.0
 
-        if "lambda_vector" in options:
-            self.lambda_vector = np.array(options["lambda_vector"])
+        if "lambda_vector" in options_dictionary:
+            self.lambda_vector = np.array(options_dictionary["lambda_vector"])
         else:
             self.lambda_vector = np.array([0, 0, 0])
         # which root do you want to follow for geometry opt / frequency analysis?
-        if "target_root" in options:
-            self.target_root = options["target_root"]
+        if "target_root" in options_dictionary:
+            self.target_root = options_dictionary["target_root"]
         else:
             # default is ground state
             self.target_root = 0
-        if "r_step" in options:
-            self.dr = options["r_step"]
+        if "r_step" in options_dictionary:
+            self.dr = options_dictionary["r_step"]
         else:
             self.dr = 0.0005
-        if "mass_A" in options:
-            self.mA = options["mass_A"]
+        if "mass_A" in options_dictionary:
+            self.mA = options_dictionary["mass_A"]
             print(f" Mass of atom A is {self.mA} AMUs")
         else:
             print(
                 "mass_A not defined!  Please restart and specify both mass_A and mass_B in amu"
             )
-        if "mass_B" in options:
-            self.mB = options["mass_B"]
+        if "mass_B" in options_dictionary:
+            self.mB = options_dictionary["mass_B"]
             print(f" Mass of atom B is {self.mB} AMUs")
         else:
             print(
                 "mass_B not defined!  Please restart and specify both mass_A and mass_B in amu"
             )
-        if "gradient_tol" in options:
-            self.gradient_tol = options["gradient_tol"]
+        if "gradient_tol" in options_dictionary:
+            self.gradient_tol = options_dictionary["gradient_tol"]
         else:
             self.gradient_tol = 1e-4
-        if "step_tol" in options:
-            self.step_tol = options["step_tol"]
+        if "step_tol" in options_dictionary:
+            self.step_tol = options_dictionary["step_tol"]
         else:
             self.step_tol = 0.5
 
@@ -97,20 +101,21 @@ class Vibronic:
         self.mu_au = self.mu_AMU * self.amu_to_au
 
         if self.ci_level == "cas":
-            if "nact_orbs" in options:
-                self.nact_orbs = options["nact_orbs"]
+            if "nact_orbs" in options_dictionary:
+                self.nact_orbs = options_dictionary["nact_orbs"]
             else:
                 print(
                     " Specification of the number of active orbitals 'nact_orbs' needed"
                 )
                 exit()
-            if "nact_els" in options:
-                self.nact_els = options["nact_els"]
+            if "nact_els" in options_dictionary:
+                self.nact_els = options_dictionary["nact_els"]
             else:
                 print(
                     " Specification of the number of active electrons 'nact_els' needed"
                 )
                 exit()
+        
 
     def compute_qed_gradient(self, r0):
         # copy r0 element to a value
@@ -243,10 +248,6 @@ class Vibronic:
             _delta_x = - self.f_x / self.f_xx
             print(F' Update:         {_delta_x}')
             iter_count += 1
-
-
-
-
 
     
     def optimize_geometry(self):
