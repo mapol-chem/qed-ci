@@ -1,5 +1,5 @@
 from vibronic_helper import Vibronic
-
+import numpy as np
 
 mol_str = """
 H
@@ -26,4 +26,4 @@ symmetry c1
 }
 X = Vibronic(options)
 
-X.optimize_geometry()
+X.optimize_geometry_full_nr()
