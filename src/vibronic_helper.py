@@ -276,9 +276,17 @@ class Vibronic:
         print(f" Final gradient is   {gradient_end} ")
 
     def compute_morse_parameters(self):
+
+        
         # compute the second and third derivatives
         self.compute_qed_gradient(self.r)
+        print(" Going to compute vibrational frequencies")
+        print(F" Current bondlength is  {self.r[0]} ")
+        print(F" Current Gradient is    {self.f_x} ")
+        print(F" Current Hessian is     {self.f_xx} ")
+        print(F" Current 3rd Deriv is   {self.f_xxx} ")
 
+    
         # compute beta and De parameters from 2nd and 3rd derivatives
         self.morse_beta_au = -2 * self.f_xxx / (6 * self.f_xx)
         self.morse_De_au = self.f_xx / (2 * self.morse_beta_au**2)
