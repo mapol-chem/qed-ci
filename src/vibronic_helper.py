@@ -77,8 +77,8 @@ class Vibronic:
             print(
                 "mass_A not defined!  Please restart and specify both mass_a and mass_a in amu"
             )
-        if "mass_a" in options_dictionary:
-            self.mB = options_dictionary["mass_a"]
+        if "mass_b" in options_dictionary:
+            self.mB = options_dictionary["mass_b"]
             print(f" Mass of atom B is {self.mB} AMUs")
         else:
             print(
