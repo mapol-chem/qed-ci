@@ -423,6 +423,7 @@ class Vibronic:
                 ket_e = (m + 1) * n_el
 
                 print(F' n : {n}, bra_s : {bra_s}, bra_e : {bra_e}, ket_s : {ket_s}, ket_e : {ket_e}')
+                print(np.shape( np.sqrt(omega/2) * _d * np.sqrt(m)))
 
                 self.PCQED_H_PF[bra_s:bra_e, ket_s:ket_e] = (
                     -np.sqrt(omega / 2) * _d * np.sqrt(m)
