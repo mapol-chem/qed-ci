@@ -277,7 +277,7 @@ class Vibronic:
 
     def compute_morse_parameters(self):
         # compute the second and third derivatives
-        self.compute_qed_gradient()
+        self.compute_qed_gradient(self.r)
 
         # compute beta and De parameters from 2nd and 3rd derivatives
         self.morse_beta_au = -2 * self.f_xxx / (6 * self.f_xx)
