@@ -12,6 +12,8 @@ class Vibronic:
     def __init__(self, opt_dict):
         # make sure all values are lower case
         opt_dict = {k.lower(): v for k, v in opt_dict.items()}
+        print(opt_dict)
+        print("Going to parse options!")
 
         self.parseOptions(opt_dict)
 
