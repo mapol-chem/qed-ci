@@ -103,6 +103,15 @@ class Vibronic:
                 "mass_B not defined!  Please restart and specify both mass_A and mass_B in amu"
             )
 
+        if "gradient_tol" in options:
+            self.gradient_tol = options["gradient_tol"]
+        else:
+            self.gradient_tol = 1e-4
+        if "step_tol" in options:
+            self.step_tol = options["step_tol"]
+        else:
+            self.step_tol = 0.5
+
         self.mA = 1
         self.mB = 1
         self.mu_AMU = self.mA * self.mB / (self.mA + self.mB)
@@ -225,6 +234,25 @@ class Vibronic:
         print(f" Initial Hessian is    {self.f_xx}")
         _delta_x = - self.f_x / self.f_xx
         print(f" Initial Update is     {_delta_x} ")
+
+        iter_count = 1
+        while np.abs(self.f_x) > self.gradient_tol:
+            if np.abs(_delta_x) < self.step_tol:
+                self.r[0] += _delta_x
+            else:
+                self.r[0] += _delta_x / np.abs(_delta_x) * self.step_tol
+            energy, gradient = self.compute_qed_gradient(self.r)
+            print(F' Geometry Update {iter_count}')
+            print(F' Bondlength:     {self.r[0]}')
+            print(F' Energy:         {energy}')
+            print(F' Gradient:       {gradient}')
+            print(F' Hessian:        {self.f_xx}')
+            _delta_x = - self.f_x / self.f_xx
+            print(F' Update:         {_delta_x}')
+
+
+
+
 
     
     def optimize_geometry(self):
