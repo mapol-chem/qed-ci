@@ -264,7 +264,7 @@ class Vibronic:
             _delta_x = - self.f_x / self.f_xx
             print(F' Update:         {_delta_x}')
             iter_count += 1
-        self.r_eq_SI = self.r[0] * 1e-9
+        self.r_eq_SI = self.r[0] * 1e-10
 
     
     def optimize_geometry(self):
