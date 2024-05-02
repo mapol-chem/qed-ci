@@ -20,6 +20,10 @@ class Vibronic:
 
     
     def parseOptions(self, options_dictionary):
+        if "damping_factor" in options_dictionary:
+            self.damping_factor = options_dictionary["damping_factor"]
+        else:
+            self.damping_factor = 1
         if "molecule_template" in options_dictionary:
             self.molecule_template = options_dictionary["molecule_template"]
             print(self.molecule_template)
@@ -152,6 +156,8 @@ class Vibronic:
             2 * 1.0 * h**3
         )
 
+        # energy at mindpoint
+        self.f = f[2]
         # return self.r to midpoint
         self.r = np.copy(r0)
         # going to return energy and gradient
@@ -180,6 +186,8 @@ class Vibronic:
                 "number_of_photons": self.number_of_photons,
                 "nact_orbs": 0,
                 "nact_els": 0,
+                "compute_properties" : True,
+                "check_rdms" : False
             }
             if self.ci_level == "cas":
                 cavity_dict["nact_orbs"] = self.nact_orbs
@@ -209,6 +217,8 @@ class Vibronic:
                 "number_of_photons": 0,
                 "nact_orbs": 0,
                 "nact_els": 0,
+                "compute_properties" : True,
+                "check_rdms" : False,
             }
             if self.ci_level == "cas":
                 cavity_dict["nact_orbs"] = self.nact_orbs
@@ -240,9 +250,9 @@ class Vibronic:
         print(f" Initial Update is     {_delta_x} ")
 
         iter_count = 1
-        while np.abs(self.f_x) > self.gradient_tol:
+        while np.abs(self.f_x) > self.gradient_tol and iter_count < 200:
             if np.abs(_delta_x) < self.step_tol:
-                self.r[0] += _delta_x
+                self.r[0] += self.damping_factor * _delta_x
             else:
                 self.r[0] += _delta_x / np.abs(_delta_x) * self.step_tol
             energy, gradient = self.compute_qed_gradient(self.r)
@@ -254,6 +264,7 @@ class Vibronic:
             _delta_x = - self.f_x / self.f_xx
             print(F' Update:         {_delta_x}')
             iter_count += 1
+        self.r_eq_SI = self.r[0] * 1e-9
 
     
     def optimize_geometry(self):
@@ -279,6 +290,7 @@ class Vibronic:
         print(f" Final bondlength is {self.r}")
         print(f" Final gradient is   {gradient_end} ")
 
+
     def compute_morse_parameters(self):
 
         
@@ -286,6 +298,7 @@ class Vibronic:
         self.compute_qed_gradient(self.r)
         print(" Going to compute vibrational frequencies")
         print(F" Current bondlength is  {self.r[0]} ")
+        print(F" Current Energy is      {self.f}")
         print(F" Current Gradient is    {self.f_x} ")
         print(F" Current Hessian is     {self.f_xx} ")
         print(F" Current 3rd Deriv is   {self.f_xxx} ")
@@ -316,12 +329,16 @@ class Vibronic:
         self.harmonic_omega_au = np.sqrt( self.f_xx / self.mu_au )
         self.harmonic_omega_wn = self.harmonic_omega_au * self.au_to_wn
 
+        # electronic energy in cm^-1
+        self.Te_wn = self.f * self.au_to_wn
+
         E_1_morse = self.morse_omega_au * 3/2 - self.morse_omega_au * self.morse_xe * 3/2 ** 2
         E_0_morse = self.morse_omega_au * 1/2 - self.morse_omega_au * self.morse_xe * 1/2 ** 2
         morse_fundamental_au = E_1_morse - E_0_morse
         morse_fundamental_wn = morse_fundamental_au * self.au_to_wn
         print(F" Harmonic Fundamental Frequency: {self.harmonic_omega_wn} cm^-1")
         print(F" Morse Fundamental Frequency:    {morse_fundamental_wn} cm^-1")
+        print(F" Electronic Energy:              {self.Te_wn} cm^-1")
 
         
 
