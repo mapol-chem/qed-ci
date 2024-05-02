@@ -1,3 +1,4 @@
+from morse import Morse
 from vibronic_helper import Vibronic
 import numpy as np
 
@@ -28,4 +29,12 @@ symmetry c1
 X = Vibronic(options)
 
 X.optimize_geometry_full_nr()
+
+# get Morse parameters
+
+# instantiate Morse object
+
+# compute Morse eigenfunctions
+
+# repeat for next electronic state of interest
                          
