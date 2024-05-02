@@ -42,7 +42,7 @@ X = Vibronic(options_e_state)
 
 X.compute_morse_parameters()
 
-X_v = Morse(X.mA, X.mB, X.morse_omega_wn, X.morse_omega_wn * X.morse_x, X.r_eq_SI, X.Te_wn)
+X_v = Morse(X.mA, X.mB, X.morse_omega_wn, X.morse_omega_wn * X.morse_xe, X.r_eq_SI, X.Te_wn)
 X_v.make_rgrid()
 X_v.V = X_v.Vmorse(X_v.r)
 
@@ -68,7 +68,7 @@ Y = Vibronic(options_g_state)
 
 Y.compute_morse_parameters()
 
-Y_v = Morse(Y.mA, Y.mB, Y.morse_omega_wn, Y.morse_omega_wn * Y.morse_x, Y.r_eq_SI, Y.Te_wn)
+Y_v = Morse(Y.mA, Y.mB, Y.morse_omega_wn, Y.morse_omega_wn * Y.morse_xe, Y.r_eq_SI, Y.Te_wn)
 Y_v.make_rgrid()
 Y_v.V = Y_v.Vmorse(Y_v.r)
 
