@@ -53,9 +53,9 @@ class Vibronic:
         else:
             self.number_of_photons = 0
         if "number_of_electronic_states" in options_dictionary:
-            self.number_of_electron_states = options_dictionary["number_of_electronic_states"]
+            self.number_of_electronic_states = options_dictionary["number_of_electronic_states"]
         else:
-            self.number_of_electron_states = 10
+            self.number_of_electronic_states = 10
         if "omega" in options_dictionary:
             self.omega = options_dictionary["omega"]
         else:
@@ -179,7 +179,7 @@ class Vibronic:
                 "omega_value": self.omega,
                 "lambda_vector": self.lambda_vector,
                 "ci_level": self.ci_level,
-                "davidson_roots": self.number_of_electron_states,
+                "davidson_roots": self.number_of_electronic_states,
                 "canonical_mos": True,
                 "coherent_state_basis": False,
                 "full_diagonalization": False,
@@ -197,6 +197,7 @@ class Vibronic:
             qed_ci_inst = PFHamiltonianGenerator(
                 self.zmatrix_string, options_dict, cavity_dict
             )
+            self.qed_energies = np.copy(qed_ci_inst.CIeigs)
             return qed_ci_inst.CIeigs[self.target_root]
 
         elif self.qed_type == "pcqed":
@@ -210,7 +211,7 @@ class Vibronic:
                 "omega_value": 0,
                 "lambda_vector": np.array([0, 0, 0]),
                 "ci_level": self.ci_level,
-                "davidson_roots": self.number_of_electron_states,
+                "davidson_roots": self.number_of_electronic_states,
                 "canonical_mos": True,
                 "coherent_state_basis": False,
                 "full_diagonalization": False,
@@ -230,14 +231,15 @@ class Vibronic:
                 self.zmatrix_string, options_dict, cavity_dict
             )
             self.fast_build_pcqed_pf_hamiltonian(
-                self.number_of_electron_states,
+                self.number_of_electronic_states,
                 self.number_of_photons + 1,
                 self.omega,
                 self.lambda_vector,
                 qed_ci_inst.CIeigs,
                 qed_ci_inst.dipole_array,
             )
-            return qed_ci_inst.CIeigs[self.target_root]
+            self.qed_energies = np.copy(self.PCQED_pf_eigs)
+            return self.PCQED_pf_eigs[self.target_root]
 
     def optimize_geometry_full_nr(self):
         print(f" Going to perform a full Newton-Raphson geometry optimization using {self.qed_type}")
@@ -265,6 +267,24 @@ class Vibronic:
             print(F' Update:         {_delta_x}')
             iter_count += 1
         self.r_eq_SI = self.r[0] * 1e-10
+
+    def compute_potential_scan(self, r_min=0.5, r_max=2.5, N_points=50, filename="test.npy"):
+
+        r_array = np.linspace(r_min, r_max, N_points)
+        pes_array = np.zeros((N_points, self.number_of_electronic_states + 1 ))
+
+        for i in range(N_points):
+            self.r[0] = r_array[i]
+            self.compute_qed_energy()
+            pes_array[i,0] = r_array[i]
+            pes_array[i,1:] = np.copy(self.qed_energies)
+
+        np.save(file=filename, pes_array)
+
+        
+
+        
+
 
     
     def optimize_geometry(self):
