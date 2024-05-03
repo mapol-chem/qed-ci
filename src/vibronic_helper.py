@@ -186,7 +186,7 @@ class Vibronic:
                 "number_of_photons": self.number_of_photons,
                 "nact_orbs": 0,
                 "nact_els": 0,
-                "compute_properties" : True,
+                "compute_properties" : False,
                 "check_rdms" : False
             }
             if self.ci_level == "cas":
