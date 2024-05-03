@@ -279,7 +279,7 @@ class Vibronic:
             pes_array[i,0] = r_array[i]
             pes_array[i,1:] = np.copy(self.qed_energies)
 
-        np.save(file=filename, pes_array)
+        np.save(filename, pes_array)
 
         
 
