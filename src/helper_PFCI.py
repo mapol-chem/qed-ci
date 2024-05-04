@@ -1274,7 +1274,8 @@ class PFHamiltonianGenerator:
                     self.constint,
                     self.constdouble,
                 )
-
+                self.CISingletEigs = []
+                self.CITripletEigs = []
                 self.CIeigs = eigenvals
                 self.CIvecs = eigenvecs
 
@@ -1302,9 +1303,11 @@ class PFHamiltonianGenerator:
                     )
                     if np.abs(total_spin) < 1e-5:
                         singlet_count += 1
+                        self.CISingletEigs.append(eigenvals[i])
                         print("\tsinglet", singlet_count)
                     elif np.abs(total_spin - 2.0) < 1e-5:
                         triplet_count += 1
+                        self.CITripletEigs.append(eigenvals[i])
                         print("\ttriplet", triplet_count)
                     elif np.abs(total_spin - 6.0) < 1e-5:
                         print("\tquintet")
