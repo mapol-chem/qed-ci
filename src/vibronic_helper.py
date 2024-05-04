@@ -20,6 +20,13 @@ class Vibronic:
 
     
     def parseOptions(self, options_dictionary):
+        # do we want to only keep singlets from qed-ci?  
+        # needs a bit more work to keep only singlets from pcqed 
+        if "only_singlets" in options_dictionary:
+            self.only_singlets = options_dictionary["only_singlets"]
+        else:
+            self.only_singlets = False
+
         if "damping_factor" in options_dictionary:
             self.damping_factor = options_dictionary["damping_factor"]
         else:
@@ -197,8 +204,12 @@ class Vibronic:
             qed_ci_inst = PFHamiltonianGenerator(
                 self.zmatrix_string, options_dict, cavity_dict
             )
-            self.qed_energies = np.copy(qed_ci_inst.CIeigs)
-            return qed_ci_inst.CIeigs[self.target_root]
+            if self.only_singlets:
+                self.qed_energies = np.copy(qed_ci_inst.CISingletEigs)
+                return qed_ci_inst.CISingletEigs[self.target_root]
+            else:
+                self.qed_energies = np.copy(qed_ci_inst.CIeigs)
+                return qed_ci_inst.CIeigs[self.target_root]
 
         elif self.qed_type == "pcqed":
             options_dict = {

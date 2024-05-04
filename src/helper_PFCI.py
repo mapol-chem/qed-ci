@@ -1274,10 +1274,10 @@ class PFHamiltonianGenerator:
                     self.constint,
                     self.constdouble,
                 )
-                self.CISingletEigs = []
-                self.CITripletEigs = []
                 self.CIeigs = eigenvals
                 self.CIvecs = eigenvecs
+                self.CISingletEigs = np.zeros_like(self.CIeigs)
+                self.CITripletEigs = np.zeros_like(self.CIeigs)
 
                 print(
                     "\nACTIVE PART OF DETERMINANTS THAT HAVE THE MOST IMPORTANT CONTRIBUTIONS"
@@ -1302,12 +1302,12 @@ class PFHamiltonianGenerator:
                         end="",
                     )
                     if np.abs(total_spin) < 1e-5:
+                        self.CISingletEigs[singlet_count] = eigenvals[i]
                         singlet_count += 1
-                        self.CISingletEigs.append(eigenvals[i])
                         print("\tsinglet", singlet_count)
                     elif np.abs(total_spin - 2.0) < 1e-5:
+                        self.CITripletEigs[triplet_count] = eigenvals[i]
                         triplet_count += 1
-                        self.CITripletEigs.append(eigenvals[i])
                         print("\ttriplet", triplet_count)
                     elif np.abs(total_spin - 6.0) < 1e-5:
                         print("\tquintet")
