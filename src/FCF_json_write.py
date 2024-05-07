@@ -16,7 +16,7 @@ g_options = {
 "max_vibrational_state" : 10,
 "omega" : 0,
 "basis" : "6-311++G**",
-"lambda_vector" : np.array([0, 0, 0]),
+"lambda_vector" : [0, 0, 0],
 "target_root" : 0,
 "mass_A" : 1.0,
 "mass_B" : 19.0,
