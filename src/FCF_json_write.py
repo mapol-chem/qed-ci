@@ -1,6 +1,7 @@
 from morse import Morse
 from vibronic_helper import Vibronic
 import numpy as np
+import json
 
 mol_str = """
 H
@@ -12,6 +13,7 @@ g_options = {
 "only_singlets" : True,
 "number_of_photons" : 0,
 "number_of_electronic_states" : 15,
+"max_vibrational_state" : 10,
 "omega" : 0,
 "basis" : "6-311++G**",
 "lambda_vector" : np.array([0, 0, 0]),
@@ -55,87 +57,72 @@ D = Morse(Dv.mA, Dv.mB, Dv.morse_omega_wn, Dv.morse_omega_wn * Dv.morse_xe, Dv.r
 D.make_rgrid()
 D.V = D.Vmorse(D.r)
 
+g_max = g_options["max_vibrational_state"]
+d_max = d_options["max_vibrational_state"]
+
+# prepare dictionary for json writing
+results_dict = {
+    "molecule" : g_options,
+
+    "return_results" : {
+        "state_1_energy" : Xv.f,
+        "state_1_gradient" : Xv.f_x,
+        "state_1_equilibrium_geometry_SI" : Xv.r_eq_SI,
+        "state_1_equilibrium_geometry" : g_options["guess_bondlength"],
+        "state_1_we_wn" : Xv.morse_omega_wn,
+        "state_1_wexe_wn" : Xv.morse_omega_wn * Xv.morse_xe,
+        "state_1_target_root" : g_options["target_root"],
+
+        "state_2_energy" : Dv.f,
+        "state_2_gradient" : Dv.f_x,
+        "state_2_equilibrium_geometry_SI" : Dv.r_eq_SI,
+        "state_2_equilibrium_geometry" : d_options["guess_bondlength"],
+        "state_2_we_wn" : Dv.morse_omega_wn,
+        "state_2_wexe_wn" : Dv.morse_omega_wn * Dv.morse_xe,
+        "franck_condon_factors" : [],
+        "state_1_overlap_matrix" : [],
+        "state_2_overlap_matrix" : [],
+        "maximum_franck_condon_factor" : (g_max, d_max)
+    }
+}
 
 
-# calculate vibrational wavefunctions in atomic units for ground state
-temp = X.calc_psi_z(0)
-psi_g_0 = np.copy(X.psi_au)
 
-temp = X.calc_psi_z(1)
-psi_g_1 = np.copy(X.psi_au)
+for i in range(g_max):
+    # temporary arries for fcf and overlaps
+    fcf = []
+    s1_o = []
+    s2_o = []
 
-temp = X.calc_psi_z(2)
-psi_g_2 = np.copy(X.psi_au)
+    # bra states 
+    temp_X = X.calc_psi_z(i)
+    temp_D = D.calc_psi_z(i)
 
-temp = X.calc_psi_z(3)
-psi_g_3 = np.copy(X.psi_au)
+    bra_x = np.copy(X.psi_au)
+    bra_d = np.copy(D.psi_au)
+    for j in range(d_max):
+        # ket states
+        temp_X = X.calc_psi_z(j)
+        temp_D = D.calc_psi_z(j)
+        ket_x = np.copy(X.psi_au)
+        ket_d = np.copy(D.psi_au)
 
+        # overlaps
+        xij = np.trapz(bra_x * ket_x, X.r_au)
+        dij = np.trapz(bra_d * ket_d, X.r_au)
 
-temp = D.calc_psi_z(0)
-psi_d_0 = np.copy(D.psi_au)
+        # fcf
+        fij = np.trapz(bra_x * ket_d, X.r_au)
 
-temp = D.calc_psi_z(1)
-psi_d_1 = np.copy(D.psi_au)
+        s1_o.append(xij)
+        s2_o.append(dij)
+        fcf.append(fij)
 
-temp = D.calc_psi_z(2)
-psi_d_2 = np.copy(D.psi_au)
-
-temp = D.calc_psi_z(3)
-psi_d_3 = np.copy(D.psi_au)
-
-
-ng00 = np.trapz(psi_g_0**2, X.r_au)
-ng11 = np.trapz(psi_g_1**2, X.r_au)
-ng22 = np.trapz(psi_g_2**2, X.r_au)
-ng33 = np.trapz(psi_g_3**2, X.r_au)
-
-nd00 = np.trapz(psi_d_0**2, X.r_au)
-nd11 = np.trapz(psi_d_1**2, X.r_au)
-nd22 = np.trapz(psi_d_2**2, X.r_au)
-nd33 = np.trapz(psi_d_3**2, X.r_au)
-
-FCF00 = np.trapz(psi_g_0 * psi_d_0, X.r_au)
-FCF01 = np.trapz(psi_g_0 * psi_d_1, X.r_au)
-FCF02 = np.trapz(psi_g_0 * psi_d_2, X.r_au)
-FCF03 = np.trapz(psi_g_0 * psi_d_3, X.r_au)
-
-FCF10 = np.trapz(psi_g_1 * psi_d_0, X.r_au)
-FCF11 = np.trapz(psi_g_1 * psi_d_1, X.r_au)
-FCF12 = np.trapz(psi_g_1 * psi_d_2, X.r_au)
-FCF13 = np.trapz(psi_g_1 * psi_d_3, X.r_au)
-
-FCF20 = np.trapz(psi_g_2 * psi_d_0, X.r_au)
-FCF21 = np.trapz(psi_g_2 * psi_d_1, X.r_au)
-FCF22 = np.trapz(psi_g_2 * psi_d_2, X.r_au)
-FCF23 = np.trapz(psi_g_2 * psi_d_3, X.r_au)
-
-FCF30 = np.trapz(psi_g_3 * psi_d_0, X.r_au)
-FCF31 = np.trapz(psi_g_3 * psi_d_1, X.r_au)
-FCF32 = np.trapz(psi_g_3 * psi_d_2, X.r_au)
-FCF33 = np.trapz(psi_g_3 * psi_d_3, X.r_au)
-
-print(F' ng00: {ng00}')
-print(F' ng11: {ng11}')
-print(F' ng22: {ng22}')
-print(F' ng33: {ng33}')
-
-print(F' nd00: {nd00}')
-print(F' nd11: {nd11}')
-print(F' nd22: {nd22}')
-print(F' nd33: {nd33}')
+    results_dict["return_results"]["state_1_overlap_matrix"].append(s1_o)
+    results_dict["return_results"]["state_2_overlap_matrix"].append(s2_o)
+    results_dict["return_results"]["franck_condon_factors"].append(fcf)
 
 
-print(F' FCF00: {FCF00}')
-print(F' FCF01: {FCF01}')
-print(F' FCF02: {FCF02}')
-print(F' FCF03: {FCF03}')
-
-print(F' FCF10: {FCF10}')
-print(F' FCF11: {FCF11}')
-print(F' FCF12: {FCF12}')
-print(F' FCF13: {FCF13}')
-
-print(F' FCF20: {FCF20}')
-print(F' FCF21: {FCF21}')
-print(F' FCF22: {FCF22}')
-print(F' FCF23: {FCF23}')
+json_object = json.dumps(results_dict, indent=4)
+with open("test_fcf.json", "w") as outfile:
+    outfile.write(json_object)
