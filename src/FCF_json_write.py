@@ -57,43 +57,18 @@ D = Morse(Dv.mA, Dv.mB, Dv.morse_omega_wn, Dv.morse_omega_wn * Dv.morse_xe, Dv.r
 D.make_rgrid()
 D.V = D.Vmorse(D.r)
 
+
+# prepare to compute FCF and overlaps
 g_max = g_options["max_vibrational_state"]
 d_max = d_options["max_vibrational_state"]
 
-# prepare dictionary for json writing
-results_dict = {
-    "molecule" : g_options,
 
-    "return_results" : {
-        "state_1_energy" : Xv.f,
-        "state_1_gradient" : Xv.f_x,
-        "state_1_equilibrium_geometry_SI" : Xv.r_eq_SI,
-        "state_1_equilibrium_geometry" : g_options["guess_bondlength"],
-        "state_1_we_wn" : Xv.morse_omega_wn,
-        "state_1_wexe_wn" : Xv.morse_omega_wn * Xv.morse_xe,
-        "state_1_target_root" : g_options["target_root"],
-
-        "state_2_energy" : Dv.f,
-        "state_2_gradient" : Dv.f_x,
-        "state_2_equilibrium_geometry_SI" : Dv.r_eq_SI,
-        "state_2_equilibrium_geometry" : d_options["guess_bondlength"],
-        "state_2_we_wn" : Dv.morse_omega_wn,
-        "state_2_wexe_wn" : Dv.morse_omega_wn * Dv.morse_xe,
-        "franck_condon_factors" : [],
-        "state_1_overlap_matrix" : [],
-        "state_2_overlap_matrix" : [],
-        "maximum_franck_condon_factor" : (g_max, d_max)
-    }
-}
-
-
+# arrays for Franck-Condon and overlaps
+fcf = []
+s1_o = []
+s2_o = []
 
 for i in range(g_max):
-    # temporary arries for fcf and overlaps
-    fcf = []
-    s1_o = []
-    s2_o = []
-
     # bra states 
     temp_X = X.calc_psi_z(i)
     temp_D = D.calc_psi_z(i)
@@ -118,10 +93,32 @@ for i in range(g_max):
         s2_o.append(dij)
         fcf.append(fij)
 
-    results_dict["return_results"]["state_1_overlap_matrix"].append(s1_o)
-    results_dict["return_results"]["state_2_overlap_matrix"].append(s2_o)
-    results_dict["return_results"]["franck_condon_factors"].append(fcf)
 
+# prepare dictionary for json writing
+results_dict = {
+    "molecule" : g_options,
+
+    "return_results" : {
+        "state_1_energy" : Xv.f,
+        "state_1_gradient" : Xv.f_x,
+        "state_1_equilibrium_geometry_SI" : Xv.r_eq_SI,
+        "state_1_equilibrium_geometry" : g_options["guess_bondlength"],
+        "state_1_we_wn" : Xv.morse_omega_wn,
+        "state_1_wexe_wn" : Xv.morse_omega_wn * Xv.morse_xe,
+        "state_1_target_root" : g_options["target_root"],
+
+        "state_2_energy" : Dv.f,
+        "state_2_gradient" : Dv.f_x,
+        "state_2_equilibrium_geometry_SI" : Dv.r_eq_SI,
+        "state_2_equilibrium_geometry" : d_options["guess_bondlength"],
+        "state_2_we_wn" : Dv.morse_omega_wn,
+        "state_2_wexe_wn" : Dv.morse_omega_wn * Dv.morse_xe,
+        "franck_condon_factors" : fcf,
+        "state_1_overlap_matrix" : s1_o,
+        "state_2_overlap_matrix" : s2_o,
+        "maximum_franck_condon_factor" : (g_max, d_max)
+    }
+}
 
 json_object = json.dumps(results_dict, indent=4)
 with open("test_fcf.json", "w") as outfile:
