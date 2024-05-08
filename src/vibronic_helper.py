@@ -108,8 +108,6 @@ class Vibronic:
         #self.mA = 1
         #self.mB = 1
         print(self.qed_type)
-        if self.qed_type == "pcqed":
-            self.number_of_photons += 1 
         self.zmatrix_string = self.molecule_template.replace("**R**", str(self.r[0]))
         self.mu_AMU = self.mA * self.mB / (self.mA + self.mB)
 
