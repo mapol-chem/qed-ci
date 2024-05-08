@@ -1483,9 +1483,11 @@ class PFHamiltonianGenerator:
                     print(" PRINTING SINGLET INDICES!")
                     print(self.singlet_indices)
                     print(" PRINTING DIPOLE ARRAY FOR SINGLETS ONLY!")
-                    self.singlet_dipole_array = self.dipole_array[
-                        self.singlet_indices, self.singlet_indices, :
-                    ]
+                    for i in range(self.singlet_count):
+                        si = self.singlet_indices[i]
+                        for j in range(self.singlet_count):
+                            sj = self.singlet_indices[j]
+                            self.singlet_dipole_array[i, j, :] = self.dipole_array[si, sj, :]
                     print(self.singlet_dipole_array)
                     # print(self.nat_obt_number)
                 ###check total energy
