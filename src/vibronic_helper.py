@@ -1,6 +1,6 @@
 from helper_PFCI import PFHamiltonianGenerator
 import numpy as np
-from scipy.optimize import minimize 
+from scipy.optimize import minimize
 from scipy.constants import h, hbar, c, u
 from scipy.special import factorial
 from scipy.special import genlaguerre, gamma
@@ -18,10 +18,9 @@ class Vibronic:
 
         self.parseOptions(opt_dict)
 
-    
     def parseOptions(self, options_dictionary):
-        # do we want to only keep singlets from qed-ci?  
-        # needs a bit more work to keep only singlets from pcqed 
+        # do we want to only keep singlets from qed-ci?
+        # needs a bit more work to keep only singlets from pcqed
         if "only_singlets" in options_dictionary:
             self.only_singlets = options_dictionary["only_singlets"]
         else:
@@ -56,11 +55,13 @@ class Vibronic:
             self.orbital_basis = "sto-3g"
         if "number_of_photons" in options_dictionary:
             self.number_of_photons = options_dictionary["number_of_photons"]
-            print(F" SET NUMBER OF PHOTONS TO {self.number_of_photons} ")
+            print(f" SET NUMBER OF PHOTONS TO {self.number_of_photons} ")
         else:
             self.number_of_photons = 0
         if "number_of_electronic_states" in options_dictionary:
-            self.number_of_electronic_states = options_dictionary["number_of_electronic_states"]
+            self.number_of_electronic_states = options_dictionary[
+                "number_of_electronic_states"
+            ]
         else:
             self.number_of_electronic_states = 10
         if "omega" in options_dictionary:
@@ -105,8 +106,8 @@ class Vibronic:
         else:
             self.step_tol = 0.5
 
-        #self.mA = 1
-        #self.mB = 1
+        # self.mA = 1
+        # self.mB = 1
         print(self.qed_type)
         self.zmatrix_string = self.molecule_template.replace("**R**", str(self.r[0]))
         self.mu_AMU = self.mA * self.mB / (self.mA + self.mB)
@@ -130,7 +131,6 @@ class Vibronic:
                     " Specification of the number of active electrons 'nact_els' needed"
                 )
                 exit()
-        
 
     def compute_qed_gradient(self, r0):
         # copy r0 element to a value
@@ -150,7 +150,7 @@ class Vibronic:
         h = self.dr / self.au_to_ang
         f = np.zeros(5)
         for i in range(5):
-            self.r = np.copy( np.array([r_array[i]]) )
+            self.r = np.copy(np.array([r_array[i]]))
             f[i] = self.compute_qed_energy()
 
         self.f_x = (1 * f[0] - 8 * f[1] + 0 * f[2] + 8 * f[3] - 1 * f[4]) / (
@@ -193,8 +193,8 @@ class Vibronic:
                 "number_of_photons": self.number_of_photons,
                 "nact_orbs": 0,
                 "nact_els": 0,
-                "compute_properties" : False,
-                "check_rdms" : False
+                "compute_properties": False,
+                "check_rdms": False,
             }
             if self.ci_level == "cas":
                 cavity_dict["nact_orbs"] = self.nact_orbs
@@ -229,8 +229,8 @@ class Vibronic:
                 "number_of_photons": 0,
                 "nact_orbs": 0,
                 "nact_els": 0,
-                "compute_properties" : True,
-                "check_rdms" : False,
+                "compute_properties": True,
+                "check_rdms": False,
             }
             if self.ci_level == "cas":
                 cavity_dict["nact_orbs"] = self.nact_orbs
@@ -241,25 +241,37 @@ class Vibronic:
             qed_ci_inst = PFHamiltonianGenerator(
                 self.zmatrix_string, options_dict, cavity_dict
             )
-            self.fast_build_pcqed_pf_hamiltonian(
-                self.number_of_electronic_states,
-                self.number_of_photons + 1,
-                self.omega,
-                self.lambda_vector,
-                qed_ci_inst.CIeigs,
-                qed_ci_inst.dipole_array,
-            )
+            if self.only_singlets:
+                self.fast_build_pcqed_pf_hamiltonian(
+                    qed_ci_inst.singlet_count,
+                    self.number_of_photons + 1,
+                    self.omega,
+                    self.lambda_vector,
+                    qed_ci_inst.CISingletEigs,
+                    qed_ci_inst.singlet_dipole_array,
+                )
+            else:
+                self.fast_build_pcqed_pf_hamiltonian(
+                    self.number_of_electronic_states,
+                    self.number_of_photons + 1,
+                    self.omega,
+                    self.lambda_vector,
+                    qed_ci_inst.CIeigs,
+                    qed_ci_inst.dipole_array,
+                )
             self.qed_energies = np.copy(self.PCQED_pf_eigs)
             return self.PCQED_pf_eigs[self.target_root]
 
     def optimize_geometry_full_nr(self):
-        print(f" Going to perform a full Newton-Raphson geometry optimization using {self.qed_type}")
+        print(
+            f" Going to perform a full Newton-Raphson geometry optimization using {self.qed_type}"
+        )
         energy_start, gradient_start = self.compute_qed_gradient(self.r)
         print(f" Initial Energy is     {energy_start}")
         print(f" Initial bondlength is {self.r}")
         print(f" Initial Gradient is   {gradient_start}")
         print(f" Initial Hessian is    {self.f_xx}")
-        _delta_x = - self.f_x / self.f_xx
+        _delta_x = -self.f_x / self.f_xx
         print(f" Initial Update is     {_delta_x} ")
 
         iter_count = 1
@@ -269,35 +281,30 @@ class Vibronic:
             else:
                 self.r[0] += _delta_x / np.abs(_delta_x) * self.step_tol
             energy, gradient = self.compute_qed_gradient(self.r)
-            print(F' Geometry Update {iter_count}')
-            print(F' Bondlength:     {self.r[0]}')
-            print(F' Energy:         {energy}')
-            print(F' Gradient:       {gradient}')
-            print(F' Hessian:        {self.f_xx}')
-            _delta_x = - self.f_x / self.f_xx
-            print(F' Update:         {_delta_x}')
+            print(f" Geometry Update {iter_count}")
+            print(f" Bondlength:     {self.r[0]}")
+            print(f" Energy:         {energy}")
+            print(f" Gradient:       {gradient}")
+            print(f" Hessian:        {self.f_xx}")
+            _delta_x = -self.f_x / self.f_xx
+            print(f" Update:         {_delta_x}")
             iter_count += 1
         self.r_eq_SI = self.r[0] * 1e-10
 
-    def compute_potential_scan(self, r_min=0.5, r_max=2.5, N_points=50, filename="test.npy"):
-
+    def compute_potential_scan(
+        self, r_min=0.5, r_max=2.5, N_points=50, filename="test.npy"
+    ):
         r_array = np.linspace(r_min, r_max, N_points)
-        pes_array = np.zeros((N_points, self.number_of_electronic_states + 1 ))
+        pes_array = np.zeros((N_points, self.number_of_electronic_states + 1))
 
         for i in range(N_points):
             self.r[0] = r_array[i]
             self.compute_qed_energy()
-            pes_array[i,0] = r_array[i]
-            pes_array[i,1:] = np.copy(self.qed_energies)
+            pes_array[i, 0] = r_array[i]
+            pes_array[i, 1:] = np.copy(self.qed_energies)
 
         np.save(filename, pes_array)
 
-        
-
-        
-
-
-    
     def optimize_geometry(self):
         print(f" Going to perform a geometry optimization using {self.qed_type}")
         energy_start, gradient_start = self.compute_qed_gradient(self.r)
@@ -322,24 +329,21 @@ class Vibronic:
         print(f" Final gradient is   {gradient_end} ")
         self.r_eq_SI = self.r[0] * 1e-9
 
-
     def compute_morse_parameters(self):
         # assume current bondlength is the equilibrium!
         self.r_eq_SI = self.r[0] * 1e-9
         # compute the second and third derivatives
         self.compute_qed_gradient(self.r)
         print(" Going to compute vibrational frequencies")
-        print(F" Current bondlength is  {self.r[0]} ")
-        print(F" Current Energy is      {self.f}")
-        print(F" Current Gradient is    {self.f_x} ")
-        print(F" Current Hessian is     {self.f_xx} ")
-        print(F" Current 3rd Deriv is   {self.f_xxx} ")
+        print(f" Current bondlength is  {self.r[0]} ")
+        print(f" Current Energy is      {self.f}")
+        print(f" Current Gradient is    {self.f_x} ")
+        print(f" Current Hessian is     {self.f_xx} ")
+        print(f" Current 3rd Deriv is   {self.f_xxx} ")
 
-    
         # compute beta and De parameters from 2nd and 3rd derivatives
         self.morse_beta_au = -2 * self.f_xxx / (6 * self.f_xx)
         self.morse_De_au = self.f_xx / (2 * self.morse_beta_au**2)
-        
 
         # compute omega_e and xe in atomic units
         self.morse_omega_au = np.sqrt(
@@ -354,25 +358,28 @@ class Vibronic:
         self.morse_De_J = self.morse_De_wn * self.wn_to_J
 
         self.morse_omega_wn = self.morse_omega_au * self.au_to_wn
-        print(F" Morse we:           {self.morse_omega_wn} cm^-1")
-        print(F" Morse wexe:         {self.morse_omega_wn * self.morse_xe} cm^-1")
+        print(f" Morse we:           {self.morse_omega_wn} cm^-1")
+        print(f" Morse wexe:         {self.morse_omega_wn * self.morse_xe} cm^-1")
 
-
-        self.harmonic_omega_au = np.sqrt( self.f_xx / self.mu_au )
+        self.harmonic_omega_au = np.sqrt(self.f_xx / self.mu_au)
         self.harmonic_omega_wn = self.harmonic_omega_au * self.au_to_wn
 
         # electronic energy in cm^-1
         self.Te_wn = self.f * self.au_to_wn
 
-        E_1_morse = self.morse_omega_au * 3/2 - self.morse_omega_au * self.morse_xe * 3/2 ** 2
-        E_0_morse = self.morse_omega_au * 1/2 - self.morse_omega_au * self.morse_xe * 1/2 ** 2
+        E_1_morse = (
+            self.morse_omega_au * 3 / 2
+            - self.morse_omega_au * self.morse_xe * 3 / 2**2
+        )
+        E_0_morse = (
+            self.morse_omega_au * 1 / 2
+            - self.morse_omega_au * self.morse_xe * 1 / 2**2
+        )
         morse_fundamental_au = E_1_morse - E_0_morse
         morse_fundamental_wn = morse_fundamental_au * self.au_to_wn
-        print(F" Harmonic Fundamental Frequency: {self.harmonic_omega_wn} cm^-1")
-        print(F" Morse Fundamental Frequency:    {morse_fundamental_wn} cm^-1")
-        print(F" Electronic Energy:              {self.Te_wn} cm^-1")
-
-        
+        print(f" Harmonic Fundamental Frequency: {self.harmonic_omega_wn} cm^-1")
+        print(f" Morse Fundamental Frequency:    {morse_fundamental_wn} cm^-1")
+        print(f" Electronic Energy:              {self.Te_wn} cm^-1")
 
     def fast_build_pcqed_pf_hamiltonian(
         self,
@@ -411,7 +418,7 @@ class Vibronic:
 
         """
         _dim = n_el * n_ph
-        print(F' DIMENSIONS OF THE PCQED HAMILTONIAN: {_dim}')
+        print(f" DIMENSIONS OF THE PCQED HAMILTONIAN: {_dim}")
 
         self.PCQED_H_PF = np.zeros((_dim, _dim))
         self.PCQED_H_EL = np.zeros((_dim, _dim))
@@ -438,7 +445,7 @@ class Vibronic:
             n_el, lambda_vector, mu_array, coherent_state=coherent_state_option
         )
         _d = np.copy(self.d_array)
-        print(F' SHAPE OF _d ARRAY: {np.shape(_d)}')
+        print(f" SHAPE OF _d ARRAY: {np.shape(_d)}")
 
         # create D array using matrix multiplication
         if neglect_DSE:
@@ -465,9 +472,11 @@ class Vibronic:
                 ket_s = m * n_el
                 ket_e = (m + 1) * n_el
 
-                print(F' n : {n}, bra_s : {bra_s}, bra_e : {bra_e}, ket_s : {ket_s}, ket_e : {ket_e}')
+                print(
+                    f" n : {n}, bra_s : {bra_s}, bra_e : {bra_e}, ket_s : {ket_s}, ket_e : {ket_e}"
+                )
                 print("Printing shape")
-                print(np.shape( np.sqrt(omega/2) * _d * np.sqrt(m)))
+                print(np.shape(np.sqrt(omega / 2) * _d * np.sqrt(m)))
 
                 self.PCQED_H_PF[bra_s:bra_e, ket_s:ket_e] = (
                     -np.sqrt(omega / 2) * _d * np.sqrt(m)
@@ -483,9 +492,11 @@ class Vibronic:
                 ket_s = m * n_el
                 ket_e = (m + 1) * n_el
 
-                print(F' n : {n}, bra_s : {bra_s}, bra_e : {bra_e}, ket_s : {ket_s}, ket_e : {ket_e}')
+                print(
+                    f" n : {n}, bra_s : {bra_s}, bra_e : {bra_e}, ket_s : {ket_s}, ket_e : {ket_e}"
+                )
                 print("Printing shape")
-                print(np.shape( np.sqrt(omega/2) * _d * np.sqrt(m)))
+                print(np.shape(np.sqrt(omega / 2) * _d * np.sqrt(m)))
                 self.PCQED_H_PF[bra_s:bra_e, ket_s:ket_e] = (
                     -np.sqrt(omega / 2) * _d * np.sqrt(m + 1)
                 )
@@ -500,9 +511,11 @@ class Vibronic:
                 ket_s = m * n_el
                 ket_e = (m + 1) * n_el
 
-                print(F' n : {n}, bra_s : {bra_s}, bra_e : {bra_e}, ket_s : {ket_s}, ket_e : {ket_e}')
+                print(
+                    f" n : {n}, bra_s : {bra_s}, bra_e : {bra_e}, ket_s : {ket_s}, ket_e : {ket_e}"
+                )
                 print("Printing shape")
-                print(np.shape( np.sqrt(omega/2) * _d * np.sqrt(m)))
+                print(np.shape(np.sqrt(omega / 2) * _d * np.sqrt(m)))
 
                 self.PCQED_H_PF[bra_s:bra_e, ket_s:ket_e] = (
                     -np.sqrt(omega / 2) * _d * np.sqrt(m)
@@ -517,9 +530,11 @@ class Vibronic:
                 ket_s = m * n_el
                 ket_e = (m + 1) * n_el
 
-                print(F' n : {n}, bra_s : {bra_s}, bra_e : {bra_e}, ket_s : {ket_s}, ket_e : {ket_e}')
+                print(
+                    f" n : {n}, bra_s : {bra_s}, bra_e : {bra_e}, ket_s : {ket_s}, ket_e : {ket_e}"
+                )
                 print("Printing shape")
-                print(np.shape( np.sqrt(omega/2) * _d * np.sqrt(m)))
+                print(np.shape(np.sqrt(omega / 2) * _d * np.sqrt(m)))
                 self.PCQED_H_PF[bra_s:bra_e, ket_s:ket_e] = (
                     -np.sqrt(omega / 2) * _d * np.sqrt(m + 1)
                 )
