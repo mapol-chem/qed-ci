@@ -1478,9 +1478,15 @@ class PFHamiltonianGenerator:
                     self.dipole_array = (
                         self.electronic_dipole_array + self.nuclear_dipole_array
                     )
+                    print(" PRINTING FULL DIPOLE ARRAY!")
+                    print(self.dipole_array)
+                    print(" PRINTING SINGLET INDICES!")
+                    print(self.singlet_indices)
+                    print(" PRINTING DIPOLE ARRAY FOR SINGLETS ONLY!")
                     self.singlet_dipole_array = self.dipole_array[
                         self.singlet_indices, self.singlet_indices, :
                     ]
+                    print(self.singlet_dipole_array)
                     # print(self.nat_obt_number)
                 ###check total energy
                 if self.check_rdms:
