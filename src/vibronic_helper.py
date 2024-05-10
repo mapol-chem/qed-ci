@@ -392,8 +392,8 @@ class Vibronic:
         b = -2 * self.r_eq_au
         c = self.r_eq_au ** 2 - np.sqrt(1 / (self.f_xx * self.mu_au))
 
-        self.x0_p_au = (-b + np.sqr(b ** 2 - 4 * a * c) ) / (2 * a)
-        self.x0_m_au = (-b - np.sqr(b ** 2 - 4 * a * c) ) / (2 * a)
+        self.x0_p_au = (-b + np.sqrt(b ** 2 - 4 * a * c) ) / (2 * a)
+        self.x0_m_au = (-b - np.sqrt(b ** 2 - 4 * a * c) ) / (2 * a)
 
         # check to make sure this checks out
         V_x0_p = self.f_xx * (self.x0_p_au - self.r_eq_au) ** 2
