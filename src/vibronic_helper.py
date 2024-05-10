@@ -386,11 +386,11 @@ class Vibronic:
         print(f" Electronic Energy:              {self.Te_wn} cm^-1")
 
         # compute classical turning point solving
-        # x_0^2 - 2 x_eq x_0 + (x_eq^2 - sqrt{1/(k * mu)})
-        # a = 1
-        a = 1
-        b = -2 * self.r_eq_au
-        c = self.r_eq_au ** 2 - np.sqrt(1 / (self.f_xx * self.mu_au))
+        # k x_0^2 - 2 k x_eq x_0 + (x_eq^2 - sqrt{k / mu})
+        # 
+        a = self.f_xx 
+        b = -2 * self.f_xx * self.r_eq_au
+        c = self.f_xx * self.r_eq_au ** 2 - self.harmonic_omega_au
 
         self.x0_p_au = (-b + np.sqrt(b ** 2 - 4 * a * c) ) / (2 * a)
         self.x0_m_au = (-b - np.sqrt(b ** 2 - 4 * a * c) ) / (2 * a)
