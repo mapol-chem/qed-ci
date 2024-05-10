@@ -357,6 +357,10 @@ class Vibronic:
         self.morse_De_wn = self.morse_De_au * self.au_to_wn
         self.morse_De_J = self.morse_De_wn * self.wn_to_J
 
+        # conversion from au to meters
+        self.au_to_m = 5.29177210903e-11
+        self.r_eq_au = self.r_eq_SI / self.au_to_m
+
         self.morse_omega_wn = self.morse_omega_au * self.au_to_wn
         print(f" Morse we:           {self.morse_omega_wn} cm^-1")
         print(f" Morse wexe:         {self.morse_omega_wn * self.morse_xe} cm^-1")
@@ -380,6 +384,25 @@ class Vibronic:
         print(f" Harmonic Fundamental Frequency: {self.harmonic_omega_wn} cm^-1")
         print(f" Morse Fundamental Frequency:    {morse_fundamental_wn} cm^-1")
         print(f" Electronic Energy:              {self.Te_wn} cm^-1")
+
+        # compute classical turning point solving
+        # x_0^2 - 2 x_eq x_0 + (x_eq^2 - sqrt{1/(k * mu)})
+        # a = 1
+        a = 1
+        b = -2 * self.r_eq_au
+        c = self.r_eq_au ** 2 - np.sqrt(1 / (self.f_xx * self.mu_au))
+
+        self.x0_p_au = (-b + np.sqr(b ** 2 - 4 * a * c) ) / (2 * a)
+        self.x0_m_au = (-b - np.sqr(b ** 2 - 4 * a * c) ) / (2 * a)
+
+        # check to make sure this checks out
+        V_x0_p = self.f_xx * (self.x0_p_au - self.r_eq_au) ** 2
+        V_x0_m = self.f_xx * (self.x0_m_au - self.r_eq_au) ** 2
+
+        assert np.isclose(V_x0_m, self.harmonic_omega_au)
+        assert np.isclose(V_x0_p, self.harmonic_omega_au)
+
+
 
     def fast_build_pcqed_pf_hamiltonian(
         self,
