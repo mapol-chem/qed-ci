@@ -327,11 +327,11 @@ class Vibronic:
         print()
         print(f" Final bondlength is {self.r}")
         print(f" Final gradient is   {gradient_end} ")
-        self.r_eq_SI = self.r[0] * 1e-9
+        self.r_eq_SI = self.r[0] * 1e-10
 
     def compute_morse_parameters(self):
         # assume current bondlength is the equilibrium!
-        self.r_eq_SI = self.r[0] * 1e-9
+        self.r_eq_SI = self.r[0] * 1e-10
         # compute the second and third derivatives
         self.compute_qed_gradient(self.r)
         print(" Going to compute vibrational frequencies")
