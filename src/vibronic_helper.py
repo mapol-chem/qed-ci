@@ -395,7 +395,13 @@ class Vibronic:
         self.x0_p_au = (-b + np.sqrt(b ** 2 - 4 * a * c) ) / (2 * a)
         self.x0_m_au = (-b - np.sqrt(b ** 2 - 4 * a * c) ) / (2 * a)
 
-        # check to make sure this checks out
+        # let's also define x_0 as offsets from equilibrium, e.g. solve for when r_eq = 0:
+        self.x0_offset_p_au = ( 1 / (self.f_xx * self.mu_au) ) ** (1/4)
+        self.x0_offset_m_au = ( 1 / (self.f_xx * self.mu_au) ) ** (1/4)
+
+        
+
+        # check to make sure this checks out using 1/2 k (x0 - x_e) ** 2 = 1/2 sqrt(k/mu) -> k (x0 - x_e) ** 2 = sqrt(k/mu)
         V_x0_p = self.f_xx * (self.x0_p_au - self.r_eq_au) ** 2
         V_x0_m = self.f_xx * (self.x0_m_au - self.r_eq_au) ** 2
 
