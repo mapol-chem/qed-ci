@@ -397,8 +397,10 @@ class Vibronic:
 
         # let's also define x_0 as offsets from equilibrium, e.g. solve for when r_eq = 0:
         self.x0_offset_p_au = ( 1 / (self.f_xx * self.mu_au) ) ** (1/4)
-        self.x0_offset_m_au = ( 1 / (self.f_xx * self.mu_au) ) ** (1/4)
+        self.x0_offset_m_au = -( 1 / (self.f_xx * self.mu_au) ) ** (1/4)
 
+        assert np.isclose(self.x0_p_au - self.r_eq_au, self.x0_offset_p_au)
+        assert np.isclose(self.x0_m_au - self.r_eq_au, self.x0_offset_m_au)
         
 
         # check to make sure this checks out using 1/2 k (x0 - x_e) ** 2 = 1/2 sqrt(k/mu) -> k (x0 - x_e) ** 2 = sqrt(k/mu)
