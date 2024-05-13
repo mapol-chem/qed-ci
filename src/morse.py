@@ -70,7 +70,7 @@ class Morse:
         self.vmax = int(np.floor(self.lam - 0.5))
 
         # grid in SI
-        self.make_rgrid()
+        self.make_rgrid(n = 1000, rmin = 3e-11, rmax = 6e-10)
 
         # potential in SI
         self.V = self.Vmorse(self.r)
@@ -90,6 +90,8 @@ class Morse:
     def make_rgrid(self, n=500, rmin=None, rmax=None, retstep=False):
         """Make a suitable grid of internuclear separations."""
 
+        print(" Did I get the values of rmin and rmax right?")
+        print(rmin, rmax)
         self.rmin, self.rmax = rmin, rmax
         if rmin is None:
             # minimum r where V(r)=De on repulsive edge
@@ -100,6 +102,9 @@ class Morse:
             self.rmax = self.re - 1.25 *  np.log(1-f)/self.a
         self.r, self.dr = np.linspace(self.rmin, self.rmax, n,
                                       retstep=True)
+        print(" just formed self.r")
+        print(" First point is ", self.r[0])
+        print(" Last point is ", self.r[n-1])
         if retstep:
             return self.r, self.dr
         return self.r
