@@ -52,6 +52,12 @@ print(np.trapz(D_psi0 ** 2, X.r_au))
 print("<d0|d0> on D.r_au")
 print(np.trapz(D_psi0 ** 2, D.r_au))
 
+print("<x0|d0> on X.r_au")
+print(np.trapz(X_psi0 * D_psi0, X.r_au))
+
+print("<x0|d0> on D.r_au")
+print(np.trapz(X_psi0 * D_psi0, D.r_au))
+
 #norm_psip0 = np.trapz(psip_0 ** 2, Y_v.r)
 #FC_00 = np.trapz(psi_0 * psip_0, X_v.r)
 #FC_00p = np.trapz(psi_0 * psip_0, Y_v.r)
