@@ -213,8 +213,9 @@ class Vibronic:
                 self.qed_energies = np.copy(qed_ci_inst.CIeigs)
                 self.qed_dipole_moments = np.copy(qed_ci_inst.dipole_array)
                 return qed_ci_inst.CIeigs[self.target_root]
+            
+        elif self.qed_type == "qed-pt" or self.qed_type == "pcqed":
 
-        elif self.qed_type == "pcqed":
             options_dict = {
                 "basis": self.orbital_basis,
                 "scf_type": "pk",
@@ -245,27 +246,33 @@ class Vibronic:
                 self.zmatrix_string, options_dict, cavity_dict
             )
             if self.only_singlets:
-                self.fast_build_pcqed_pf_hamiltonian(
-                    qed_ci_inst.singlet_count,
-                    self.number_of_photons + 1,
-                    self.omega,
-                    self.lambda_vector,
-                    qed_ci_inst.CISingletEigs,
-                    qed_ci_inst.singlet_dipole_array,
-                )
+                _N_el = qed_ci_inst.singlet_count
+                _energies = np.copy(qed_ci_inst.CISingletEigs)
+                _dipoles = np.copy(qed_ci_inst.singlet_dipole_array)
                 self.qed_dipole_moments = np.copy(qed_ci_inst.singlet_dipole_array)
             else:
+                _N_el = self.number_of_electronic_states
+                _energies = np.copy(qed_ci_inst.CIeigs)
+                _dipoles = np.copy(qed_ci_inst.dipole_array)
+                self.qed_dipole_moments = np.copy(qed_ci_inst.dipole_array)
+
+            if self.qed_type == "pcqed":
+                # this call should work for both singlet-only and singlet + triplet
                 self.fast_build_pcqed_pf_hamiltonian(
-                    self.number_of_electronic_states,
+                    _N_el,
                     self.number_of_photons + 1,
                     self.omega,
                     self.lambda_vector,
-                    qed_ci_inst.CIeigs,
-                    qed_ci_inst.dipole_array,
+                    _energies,
+                    _dipoles
                 )
-                self.qed_dipole_moments = np.copy(qed_ci_inst.dipole_array)
-            self.qed_energies = np.copy(self.PCQED_pf_eigs)
-            return self.PCQED_pf_eigs[self.target_root]
+                self.qed_energies = np.copy(self.PCQED_pf_eigs)
+                return self.PCQED_pf_eigs[self.target_root]
+            
+            elif self.qed_type == "qed_pt":
+                self.compute_qed_pt_energy(_N_el, self.omega, self.lambda_vector, _energies, _dipoles, state_index = 0, order=2)
+
+    
 
     def optimize_geometry_full_nr(self):
         print(
@@ -618,6 +625,71 @@ class Vibronic:
         eigs, vecs = np.linalg.eigh(self.PCQED_H_PF)
         self.PCQED_pf_eigs = np.copy(eigs)
         self.PCQED_pf_vecs = np.copy(vecs)
+
+    def compute_qed_pt_energy(self, n_el, omega, lambda_vector, E_array, mu_array, state_index = 0, order=2):
+        # defaults to second order for the ground state
+        self.build_d_array(
+            n_el, lambda_vector, mu_array, coherent_state=False
+        )
+
+        if order==2:
+            # compute first order energy correction
+            self.compute_first_order_energy_correction(n_el, state_index = 0)
+            
+            # compute second order energy correction
+            self.compute_second_order_energy_correction(n_el, omega, E_array, state_index = 0)
+
+            return E_array[0] + self.first_order_energy_correction + self.second_order_energy_correction
+    
+
+
+    def compute_first_order_energy_correction(self,n_el, state_index = 0):
+
+        # defaults to the ground state
+        _N = state_index
+        
+        E_n_1 = 0
+        for g in range(n_el):
+            E_n_1 += self.d_array[_N, g] * self.d_array[g, _N]
+        
+        self.first_order_energy_correction = 0.5 * E_n_1
+
+    
+    def compute_second_order_energy_correction(self, n_el, omega, E_array, state_index = 0):
+
+        if state_index != 0:
+            print(" We can't handle PT2 for excited states yet!")
+            exit()
+
+        # defaults to ground electronic state
+        mu_n = state_index
+
+        # defaults to zero photon s
+        m_n = 0
+
+        blc_term_1 = 0
+        dse_term = 0
+
+        # blc first term - note there is no restriction on the electronic index in this sum
+        for mu_m in range(n_el):
+            # ml = mn+1
+            blc_term_1 += omega / 2 * (self.d_array[mu_m, mu_n] * np.sqrt(m_n + 1)) ** 2 / (E_array[mu_n] - E_array[mu_m] - omega)
+
+
+        # dse term
+        for mu_m in range(n_el):
+            if mu_m != mu_n:
+                dse_inner = 0
+                for g in range(n_el):
+                    dse_inner += self.d_array[mu_m, g] * self.d_array[g, mu_n]
+                    
+                dse_term += 1/4 * dse_inner ** 2 / (E_array[mu_n] - E_array[mu_m])
+
+        self.second_order_energy_correction = blc_term_1 + dse_term
+
+        
+
+
 
     def build_d_array(
         self,
