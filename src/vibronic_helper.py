@@ -336,9 +336,16 @@ class Vibronic:
             json_dict["molecule"]["bond_length"].append(r_array[i])
             json_dict["return_result"]["bond_length"].append(r_array[i])
             json_dict["return_result"]["energy"].append(list(self.qed_energies))
-            json_dict[""]
+            ### NEED TO STORE DIPOLES HERE! json_dict[""]
 
         np.save(filename, pes_array)
+
+        ### Uncomment to write json!
+        #json_object = json.dumps(json_dict, indent=4)
+        #with open(json_file_name, "w") as outfile:
+        #    outfile.write(json_object)
+
+
 
     def optimize_geometry(self):
         print(f" Going to perform a geometry optimization using {self.qed_type}")
