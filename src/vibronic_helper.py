@@ -170,7 +170,8 @@ class Vibronic:
         # going to return energy and gradient
         return f[2], self.f_x
 
-    def compute_qed_energy(self):
+    def compute_qed_energy(self, properties=False):
+        # added optional properties flag so that the QED-CI can compute dipole moments
         # make sure geometry is up to date!
         self.zmatrix_string = self.molecule_template.replace("**R**", str(self.r[0]))
         # if qed-ci is specified, prepare dictionaries for qed-ci
@@ -193,7 +194,7 @@ class Vibronic:
                 "number_of_photons": self.number_of_photons,
                 "nact_orbs": 0,
                 "nact_els": 0,
-                "compute_properties": False,
+                "compute_properties": properties,
                 "check_rdms": False,
             }
             if self.ci_level == "cas":
@@ -206,9 +207,11 @@ class Vibronic:
             )
             if self.only_singlets:
                 self.qed_energies = np.copy(qed_ci_inst.CISingletEigs)
+                self.qed_dipole_moments = np.copy(qed_ci_inst.singlet_dipole_array)
                 return qed_ci_inst.CISingletEigs[self.target_root]
             else:
                 self.qed_energies = np.copy(qed_ci_inst.CIeigs)
+                self.qed_dipole_moments = np.copy(qed_ci_inst.dipole_array)
                 return qed_ci_inst.CIeigs[self.target_root]
 
         elif self.qed_type == "pcqed":
@@ -250,6 +253,7 @@ class Vibronic:
                     qed_ci_inst.CISingletEigs,
                     qed_ci_inst.singlet_dipole_array,
                 )
+                self.qed_dipole_moments = np.copy(qed_ci_inst.singlet_dipole_array)
             else:
                 self.fast_build_pcqed_pf_hamiltonian(
                     self.number_of_electronic_states,
@@ -259,6 +263,7 @@ class Vibronic:
                     qed_ci_inst.CIeigs,
                     qed_ci_inst.dipole_array,
                 )
+                self.qed_dipole_moments = np.copy(qed_ci_inst.dipole_array)
             self.qed_energies = np.copy(self.PCQED_pf_eigs)
             return self.PCQED_pf_eigs[self.target_root]
 
@@ -297,11 +302,41 @@ class Vibronic:
         r_array = np.linspace(r_min, r_max, N_points)
         pes_array = np.zeros((N_points, self.number_of_electronic_states + 1))
 
+        json_file_name = filename + ".json"
+        json_dict =   {
+            "molecule"  : {
+                "geometry_template" : self.molecule_template,
+                "bond_length" : []
+            },
+            "model" : {
+                "method" : self.qed_type,
+                "orbital_basis" : self.orbital_basis,
+                "number_of_photon_states" : self.number_of_photons,
+                "number_of_electronic_states" : self.number_of_electronic_states,
+                "lambda" : list(self.lambda_vector),
+                "omega" : self.omega,
+            },
+            "return_result" : {
+                "bond_length" : [],
+                "energy" : [],
+                "dipole_moment" : [],
+            },
+        }
+
+        # perform the scan
         for i in range(N_points):
             self.r[0] = r_array[i]
-            self.compute_qed_energy()
+            self.compute_qed_energy(properties=True)
+
+            # store to numpy array for .npy dump
             pes_array[i, 0] = r_array[i]
             pes_array[i, 1:] = np.copy(self.qed_energies)
+
+            # store to json_dict for json write
+            json_dict["molecule"]["bond_length"].append(r_array[i])
+            json_dict["return_result"]["bond_length"].append(r_array[i])
+            json_dict["return_result"]["energy"].append(list(self.qed_energies))
+            json_dict[""]
 
         np.save(filename, pes_array)
 
