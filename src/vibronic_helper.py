@@ -4,7 +4,7 @@ from scipy.optimize import minimize
 from scipy.constants import h, hbar, c, u
 from scipy.special import factorial
 from scipy.special import genlaguerre, gamma
-
+import json
 
 class Vibronic:
     """A class for performing geometry optimization and vibrational analysis with QED methods"""
