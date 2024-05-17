@@ -312,7 +312,7 @@ class Vibronic:
     ):
         r_array = np.linspace(r_min, r_max, N_points)
         # this will typically be larger than it needs to be if we are only selecting singlets
-        pes_write_array = np.zeros(self.number_of_electronic_states+1, N_points)
+        pes_write_array = np.zeros((self.number_of_electronic_states+1, N_points))
         dipole_write_array = np.zeros((self.number_of_electronic_states, self.number_of_electronic_states, 3, N_points))
 
         json_file_name = filename + ".json"
