@@ -662,8 +662,12 @@ class Vibronic:
         E_n_1 = 0
         for g in range(n_el):
             E_n_1 += self.d_array[_N, g] * self.d_array[g, _N]
+
+        # einsum
+        E_n_1_es = np.einsum("i,i->", self.d_array[_N,:], self.d_array[:,_N], optimize=True)
         
         self.first_order_energy_correction = 0.5 * E_n_1
+        assert np.isclose(E_n_1_es, E_n_1)
 
     
     def compute_second_order_energy_correction(self, n_el, omega, E_array, state_index = 0):
@@ -674,6 +678,14 @@ class Vibronic:
 
         # defaults to ground electronic state
         mu_n = state_index
+
+        # prepare inverse E_mu_n - E_mu_m array
+        E_mn = np.zeros_like(E_array)
+        E_mn_min_omega = np.zeros_like(E_array)
+        # again assumes ground-state
+        E_mn[1:] = 1 / (E_array[0] - E_array[1:])
+        E_mn_min_omega = 1 / (E_array[0] - E_array[1:] - omega)
+
 
         # defaults to zero photon s
         m_n = 0
