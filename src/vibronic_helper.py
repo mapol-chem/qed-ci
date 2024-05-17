@@ -312,10 +312,12 @@ class Vibronic:
     ):
         r_array = np.linspace(r_min, r_max, N_points)
         # this will typically be larger than it needs to be if we are only selecting singlets
+        pes_write_array = np.zeros(self.number_of_electronic_states+1, N_points)
         dipole_write_array = np.zeros((self.number_of_electronic_states, self.number_of_electronic_states, 3, N_points))
 
         json_file_name = filename + ".json"
-        npy_file_name = filename + ".npy"
+        mu_npy_file_name = filename + "_dipoles.npy"
+        en_npy_file_name = filename + "_pes.npy"
 
         json_dict =   {
             "molecule"  : {
@@ -344,13 +346,16 @@ class Vibronic:
             _mu_dim = self.qed_dipole_dim
             # store dipoles to numpy array for .npy dump
             dipole_write_array[:_mu_dim,:_mu_dim,:,i] = np.copy(self.qed_dipole_moments)
+            pes_write_array[0,i] = r_array[i]
+            pes_write_array[1:_mu_dim+1, i] = np.copy(self.qed_energies)
 
             # store to json_dict for json write
             json_dict["molecule"]["bond_length"].append(r_array[i])
             json_dict["return_result"]["bond_length"].append(r_array[i])
             json_dict["return_result"]["energy"].append(list(self.qed_energies))
 
-        np.save(npy_file_name, dipole_write_array)
+        np.save(mu_npy_file_name, dipole_write_array)
+        np.save(en_npy_file_name, pes_write_array)
 
         return json_dict
         ### Uncomment to write json!
