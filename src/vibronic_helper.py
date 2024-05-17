@@ -352,10 +352,11 @@ class Vibronic:
 
         np.save(npy_file_name, dipole_write_array)
 
+        return json_dict
         ### Uncomment to write json!
-        json_object = json.dumps(json_dict, indent=4)
-        with open(json_file_name, "w") as outfile:
-            outfile.write(json_object)
+        #json_object = json.dumps(json_dict, indent=4)
+        #with open(json_file_name, "w") as outfile:
+        #    outfile.write(json_object)
 
 
 
