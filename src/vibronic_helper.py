@@ -208,10 +208,12 @@ class Vibronic:
             if self.only_singlets:
                 self.qed_energies = np.copy(qed_ci_inst.CISingletEigs)
                 self.qed_dipole_moments = np.copy(qed_ci_inst.singlet_dipole_array)
+                self.qed_dipole_dim = qed_ci_inst.singlet_count
                 return qed_ci_inst.CISingletEigs[self.target_root]
             else:
                 self.qed_energies = np.copy(qed_ci_inst.CIeigs)
                 self.qed_dipole_moments = np.copy(qed_ci_inst.dipole_array)
+                self.qed_dipole_dim = len(qed_ci_inst.CIeigs)
                 return qed_ci_inst.CIeigs[self.target_root]
             
         elif self.qed_type == "qed-pt" or self.qed_type == "pcqed":
@@ -250,11 +252,13 @@ class Vibronic:
                 _energies = np.copy(qed_ci_inst.CISingletEigs)
                 _dipoles = np.copy(qed_ci_inst.singlet_dipole_array)
                 self.qed_dipole_moments = np.copy(qed_ci_inst.singlet_dipole_array)
+                self.qed_dipole_dim = qed_ci_inst.singlet_count
             else:
                 _N_el = self.number_of_electronic_states
                 _energies = np.copy(qed_ci_inst.CIeigs)
                 _dipoles = np.copy(qed_ci_inst.dipole_array)
                 self.qed_dipole_moments = np.copy(qed_ci_inst.dipole_array)
+                self.qed_dipole_dim = len(_energies)
 
             if self.qed_type == "pcqed":
                 # this call should work for both singlet-only and singlet + triplet
@@ -307,6 +311,7 @@ class Vibronic:
         self, r_min=0.5, r_max=2.5, N_points=50, filename="test.npy"
     ):
         r_array = np.linspace(r_min, r_max, N_points)
+        # this will typically be larger than it needs to be if we are only selecting singlets
         dipole_write_array = np.zeros((self.number_of_electronic_states, self.number_of_electronic_states, 3, N_points))
 
         json_file_name = filename + ".json"
@@ -334,9 +339,9 @@ class Vibronic:
         for i in range(N_points):
             self.r[0] = r_array[i]
             self.compute_qed_energy(properties=True)
-
+            _mu_dim = self.qed_dipole_dim
             # store dipoles to numpy array for .npy dump
-            dipole_write_array[:,:,:,i] = np.copy(self.qed_dipole_moments)
+            dipole_write_array[:_mu_dim,:_mu_dim,:,i] = np.copy(self.qed_dipole_moments)
 
             # store to json_dict for json write
             json_dict["molecule"]["bond_length"].append(r_array[i])
