@@ -347,7 +347,7 @@ class Vibronic:
             # store dipoles to numpy array for .npy dump
             dipole_write_array[:_mu_dim,:_mu_dim,:,i] = np.copy(self.qed_dipole_moments)
             pes_write_array[0,i] = r_array[i]
-            pes_write_array[1:_mu_dim+1, i] = np.copy(self.qed_energies)
+            pes_write_array[1:, i] = np.copy(self.qed_energies)
 
             # store to json_dict for json write
             json_dict["molecule"]["bond_length"].append(r_array[i])
