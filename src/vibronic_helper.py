@@ -308,13 +308,15 @@ class Vibronic:
         self.r_eq_SI = self.r[0] * 1e-10
 
     def compute_potential_scan(
-        self, r_min=0.5, r_max=2.5, N_points=50, filename="test.npy"
+        self, r_min=0.5, r_max=2.5, N_points=50, filename="test"
     ):
         r_array = np.linspace(r_min, r_max, N_points)
         # this will typically be larger than it needs to be if we are only selecting singlets
         dipole_write_array = np.zeros((self.number_of_electronic_states, self.number_of_electronic_states, 3, N_points))
 
         json_file_name = filename + ".json"
+        npy_file_name = filename + ".npy"
+
         json_dict =   {
             "molecule"  : {
                 "geometry_template" : self.molecule_template,
@@ -323,8 +325,8 @@ class Vibronic:
             "model" : {
                 "method" : self.qed_type,
                 "orbital_basis" : self.orbital_basis,
-                "number_of_photon_states" : self.number_of_photons,
-                "number_of_electronic_states" : self.number_of_electronic_states,
+                "number_of_photon_states" : str(self.number_of_photons),
+                "number_of_electronic_states" : str(self.number_of_electronic_states),
                 "lambda" : list(self.lambda_vector),
                 "omega" : self.omega,
             },
@@ -348,7 +350,7 @@ class Vibronic:
             json_dict["return_result"]["bond_length"].append(r_array[i])
             json_dict["return_result"]["energy"].append(list(self.qed_energies))
 
-        np.save(filename, dipole_write_array)
+        np.save(npy_file_name, dipole_write_array)
 
         ### Uncomment to write json!
         json_object = json.dumps(json_dict, indent=4)
