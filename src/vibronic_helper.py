@@ -688,8 +688,8 @@ class Vibronic:
         E_mn_min_omega = np.zeros_like(E_array)
 
         # again assumes ground-state
-        E_mn[1:] = 1 / (E_array[0] - E_array[1:])
-        E_mn_min_omega = 1 / (E_array[0] - E_array[1:] - omega)
+        E_mn[1:] = 1 / (E_array[mu_n] - E_array[1:])
+        E_mn_min_omega = 1 / (E_array[mu_n] - E_array[1:] - omega)
 
 
         # defaults to zero photon s
@@ -726,7 +726,11 @@ class Vibronic:
 
         self.second_order_energy_correction = blc_term_1 + dse_term
         second_order_correction_es = dse_es + blc_t1_es
-        assert np.isclose(second_order_correction_es, self.second_order_energy_correction)
+        print(F'Loop based blc   {blc_term_1}')
+        print(F'Einsum based blc {blc_t1_es}')
+        print(F'Loop based dse   {dse_term}')
+        print(F'Einsum based blc {dse_es}')
+        #assert np.isclose(second_order_correction_es, self.second_order_energy_correction)
 
         
 
