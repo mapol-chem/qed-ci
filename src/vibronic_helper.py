@@ -682,6 +682,7 @@ class Vibronic:
         # prepare inverse E_mu_n - E_mu_m array
         E_mn = np.zeros_like(E_array)
         E_mn_min_omega = np.zeros_like(E_array)
+
         # again assumes ground-state
         E_mn[1:] = 1 / (E_array[0] - E_array[1:])
         E_mn_min_omega = 1 / (E_array[0] - E_array[1:] - omega)
@@ -698,6 +699,17 @@ class Vibronic:
             # ml = mn+1
             blc_term_1 += omega / 2 * (self.d_array[mu_m, mu_n] * np.sqrt(m_n + 1)) ** 2 / (E_array[mu_n] - E_array[mu_m] - omega)
 
+        # sum numerator and denominator of blc term 1 separately
+        blc_t1_num_es = np.einsum("i->", self.d_array[:,mu_n] * np.sqrt(m_n + 1), optimize=True)
+        blc_t1_den_es = np.einsum("i->", E_mn_min_omega, optimize=True)
+
+        blc_t1_es = omega / 2 * blc_t1_num_es ** 2 / blc_t1_den_es
+
+        dse_num_es = np.einsum("mg,g->", self.d_array, self.d_array[:,mu_n])
+        dse_den_es = np.einsum("i->", E_mn)
+
+        dse_es = 1 / 4 * dse_num_es ** 2 / dse_den_es
+
 
         # dse term
         for mu_m in range(n_el):
@@ -709,6 +721,8 @@ class Vibronic:
                 dse_term += 1/4 * dse_inner ** 2 / (E_array[mu_n] - E_array[mu_m])
 
         self.second_order_energy_correction = blc_term_1 + dse_term
+        second_order_correction_es = dse_es + blc_t1_es
+        assert np.isclose(second_order_correction_es, self.second_order_energy_correction)
 
         
 
