@@ -649,6 +649,8 @@ class Vibronic:
         self.build_d_array(
             n_el, lambda_vector, mu_array, coherent_state=False
         )
+        print("Printing D array")
+        print(self.d_array[:4,:4])
 
         if order==2:
             # compute first order energy correction
