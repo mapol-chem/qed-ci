@@ -275,11 +275,11 @@ class Vibronic:
             
             elif self.qed_type == "qed-pt":
                 print(" GOING TO COMPUTE PERTURBATIVE CORRECTIONS")
-                self.compute_qed_pt_energy(_N_el, self.omega, self.lambda_vector, _energies, _dipoles, state_index = 0, order=2)
+                E_0_so = self.compute_qed_pt_energy(_N_el, self.omega, self.lambda_vector, _energies, _dipoles, state_index = 0, order=2)
                 print(F' ZEROTH ORDER ENERGY IS {_energies[0]}')
                 print(F' FIRST ORDER CORRECTION IS {self.first_order_energy_correction}')
                 print(F' SECOND ORDER CORRECTION IS {self.second_order_energy_correction}')
-                E_0_so = _energies[0] + self.first_order_energy_correction + self.second_order_energy_correction
+                #E_0_so = _energies[0] + self.first_order_energy_correction + self.second_order_energy_correction
                 print(F' ENERGY TO SECOND ORDER IS {E_0_so}')
 
 
