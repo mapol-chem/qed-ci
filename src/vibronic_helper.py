@@ -657,7 +657,6 @@ class Vibronic:
             return E_array[0] + self.first_order_energy_correction + self.second_order_energy_correction
     
 
-
     def compute_first_order_energy_correction(self,n_el, state_index = 0):
 
         # defaults to the ground state
@@ -694,25 +693,28 @@ class Vibronic:
 
         # defaults to zero photon s
         m_n = 0
-
-        blc_term_1 = 0
+        blc_term_1 = 0 
+        #blc_term_1_num = 0
+        #blc_term_1_den = 0
         dse_term = 0
 
         # blc first term - note there is no restriction on the electronic index in this sum
         for mu_m in range(n_el):
             # ml = mn+1
             blc_term_1 += omega / 2 * (self.d_array[mu_m, mu_n] * np.sqrt(m_n + 1)) ** 2 / (E_array[mu_n] - E_array[mu_m] - omega)
+            #blc_term_1_num += (self.d_array[mu_m, mu_n] * np.sqrt(m_n + 1)) ** 2 
+            #blc_term_1_den += 1 / (E_array[mu_n] - E_array[mu_m] - omega)
 
         # sum numerator and denominator of blc term 1 separately
         blc_t1_num_es = np.einsum("i->", self.d_array[:,mu_n] * np.sqrt(m_n + 1), optimize=True)
         blc_t1_den_es = np.einsum("i->", E_mn_min_omega, optimize=True)
 
-        blc_t1_es = omega / 2 * blc_t1_num_es ** 2 / blc_t1_den_es
+        blc_t1_es = omega / 2 * blc_t1_num_es ** 2 * blc_t1_den_es
 
         dse_num_es = np.einsum("mg,g->", self.d_array, self.d_array[:,mu_n])
         dse_den_es = np.einsum("i->", E_mn)
 
-        dse_es = 1 / 4 * dse_num_es ** 2 / dse_den_es
+        dse_es = 1 / 4 * dse_num_es ** 2 * dse_den_es
 
 
         # dse term
