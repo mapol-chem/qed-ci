@@ -650,7 +650,7 @@ class Vibronic:
             n_el, lambda_vector, mu_array, coherent_state=False
         )
         print("Printing Mu Array")
-        print(mu_array[:4,:4])
+        print(mu_array[:4,:4,:])
 
         print("Printing D array")
         print(self.d_array[:4,:4])
