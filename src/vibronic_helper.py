@@ -207,16 +207,19 @@ class Vibronic:
             )
             if self.only_singlets:
                 self.qed_energies = np.copy(qed_ci_inst.CISingletEigs)
-                self.qed_dipole_moments = np.copy(qed_ci_inst.singlet_dipole_array)
-                self.qed_dipole_dim = qed_ci_inst.singlet_count
+                if properties:
+                    self.qed_dipole_moments = np.copy(qed_ci_inst.singlet_dipole_array)
+                    self.qed_dipole_dim = qed_ci_inst.singlet_count
                 return qed_ci_inst.CISingletEigs[self.target_root]
             else:
                 self.qed_energies = np.copy(qed_ci_inst.CIeigs)
-                self.qed_dipole_moments = np.copy(qed_ci_inst.dipole_array)
-                self.qed_dipole_dim = len(qed_ci_inst.CIeigs)
+                if properties:
+                    self.qed_dipole_moments = np.copy(qed_ci_inst.dipole_array)
+                    self.qed_dipole_dim = len(qed_ci_inst.CIeigs)
                 return qed_ci_inst.CIeigs[self.target_root]
             
         elif self.qed_type == "qed-pt" or self.qed_type == "pcqed":
+            properties = True
 
             options_dict = {
                 "basis": self.orbital_basis,
@@ -259,6 +262,18 @@ class Vibronic:
                 _dipoles = np.copy(qed_ci_inst.dipole_array)
                 self.qed_dipole_moments = np.copy(qed_ci_inst.dipole_array)
                 self.qed_dipole_dim = len(_energies)
+
+            print(F' JUST RAN Instantiated PFHamiltonianGenerator')
+            print(F' CHECKING DIPOLES')
+            print(F' DIPOLES [:4,:4] IN .dipole_array')
+            print(qed_ci_inst.dipole_array[:4,:4,:] )
+            print(F' DIPOLES [:4,:4] IN .singlet_dipole_array')
+            print(qed_ci_inst.singlet_dipole_array[:4,:4,:] )
+            print(F' DIPOLES [:4,:4] IN _dipoles')
+            print(_dipoles[:4,:4,:])
+            print(F' DIPOLES [:4,:4] IN self.qed_dipole_moments')
+            print(self.qed_dipole_moments[:4,:4,:])
+
 
             if self.qed_type == "pcqed":
                 # this call should work for both singlet-only and singlet + triplet
