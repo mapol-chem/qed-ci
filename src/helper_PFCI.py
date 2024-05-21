@@ -1473,6 +1473,9 @@ class PFHamiltonianGenerator:
                             self.electronic_dipole_array[i, j, 0] = dipole_x
                             self.electronic_dipole_array[i, j, 1] = dipole_y
                             self.electronic_dipole_array[i, j, 2] = dipole_z
+                            self.electronic_dipole_array[j, i, 0] = dipole_x
+                            self.electronic_dipole_array[j, i, 1] = dipole_y
+                            self.electronic_dipole_array[j, i, 2] = dipole_z
 
                     # combine nuclear and electronic parts for the total dipole array
                     self.dipole_array = (
