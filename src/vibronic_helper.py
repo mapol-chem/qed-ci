@@ -5,6 +5,7 @@ from scipy.constants import h, hbar, c, u
 from scipy.special import factorial
 from scipy.special import genlaguerre, gamma
 import json
+import time
 
 class Vibronic:
     """A class for performing geometry optimization and vibrational analysis with QED methods"""
@@ -674,15 +675,50 @@ class Vibronic:
 
         if order==2:
             # compute first order energy correction
+            start = time.time()
             self.compute_first_order_energy_correction(n_el, state_index = 0)
+            end = time.time()
+            # get time for einsum first order energy correction
+            pt1_es = end-start
+
+            # compute first order energy correction using loops
+            start = time.time()
+            self.compute_first_order_energy_correction_loop(n_el, state_index=0)
+            end = time.time()
+            pt1_loop = end-start
             
             # compute second order energy correction
+            start = time.time()
             self.compute_second_order_energy_correction(n_el, omega, E_array, state_index = 0)
+            end = time.time()
+            pt2_es = end-start
+
+            # compute second order energy correction with loops
+            start = time.time()
+            self.compute_second_order_energy_correction_loop(n_el, omega, E_array, state_index = 0)
+            end = time.time()
+            pt2_loop = end-start
+
+            print(F' Time to compute 1st order correction using EinSum is {pt1_es}')
+            print(F' Time to compute 1st order correction using Loops  is {pt1_loop}')
+
+            print(F' Time to compute 2nd order correction using EinSum is {pt2_es}')
+            print(F' Time to compute 2nd order correction using Loops  is {pt2_loop}')
+
+            assert np.islclose(self.first_order_energy_correction, self.first_order_energy_correction_loop)
+            assert np.isclose(self.second_order_energy_correction, self.second_order_energy_correction_loop)
+
+            print(F' Two approaches for PT1 and PT2 agree!')
+            print(F' PT1 Correction is {self.first_order_energy_correction}')
+            print(F' PT2 Correction is {self.second_order_energy_correction}')
+
+
+
 
             return E_array[0] + self.first_order_energy_correction + self.second_order_energy_correction
     
 
-    def compute_first_order_energy_correction(self,n_el, state_index = 0):
+    def compute_first_order_energy_correction_loop(self,n_el, state_index = 0):
 
         # defaults to the ground state
         _N = state_index
@@ -690,15 +726,10 @@ class Vibronic:
         E_n_1 = 0
         for g in range(n_el):
             E_n_1 += self.d_array[_N, g] * self.d_array[g, _N]
-
-        # einsum
-        E_n_1_es = np.einsum("i,i->", self.d_array[_N,:], self.d_array[:,_N], optimize=True)
         
-        self.first_order_energy_correction = 0.5 * E_n_1
-        assert np.isclose(E_n_1_es, E_n_1)
+        self.first_order_energy_correction_loop = 0.5 * E_n_1
 
-    
-    def compute_second_order_energy_correction(self, n_el, omega, E_array, state_index = 0):
+    def compute_second_order_energy_correction_loop(self, n_el, omega, E_array, state_index = 0):
 
         if state_index != 0:
             print(" We can't handle PT2 for excited states yet!")
@@ -727,25 +758,6 @@ class Vibronic:
         for mu_m in range(n_el):
             # ml = mn+1
             blc_term_1 += omega / 2 * (self.d_array[mu_m, mu_n] * np.sqrt(m_n + 1)) ** 2 / (E_array[mu_n] - E_array[mu_m] - omega)
-            blc_term_1_num += (self.d_array[mu_m, mu_n] * np.sqrt(m_n + 1)) # ** 2 
-            blc_term_1_den += 1 / (E_array[mu_n] - E_array[mu_m] - omega)
-
-        # sum numerator and denominator of blc term 1 separately
-        blc_t1_num_es = np.einsum("i->", self.d_array[:,mu_n] * np.sqrt(m_n + 1), optimize=True)
-        blc_t1_den_es = np.einsum("i->", E_mn_min_omega, optimize=True)
-
-        print(F'Loop-based BLC Unsquared Numerator: {blc_term_1_num}')
-        print(F'EinS-based BLC Unsquared Numerator: {blc_t1_num_es}')
-        print(F'Loop-based BLC Unsquared Denominat: {blc_term_1_den}')
-        print(F'EinS-based BLC Unsquared Denominat: {blc_t1_den_es}')
-
-        blc_t1_es = omega / 2 * blc_t1_num_es ** 2 * blc_t1_den_es
-
-        dse_num_es = np.einsum("ij,i->", self.d_array, self.d_array[:,mu_n], optimize=True) - np.einsum("i,i->", self.d_array[mu_n,:], self.d_array[:,mu_n], optimize=True)
-        dse_den_es = np.einsum("i->", E_mn)
-
-        dse_es = 1 / 4 * dse_num_es ** 2 * dse_den_es
-
 
         # dse term
         for mu_m in range(n_el):
@@ -756,14 +768,56 @@ class Vibronic:
                     
                 dse_term += 1/4 * dse_inner ** 2 / (E_array[mu_n] - E_array[mu_m])
 
-        self.second_order_energy_correction = blc_term_1 + dse_term
-        second_order_correction_es = dse_es + blc_t1_es
-        print(F'Loop based blc   {blc_term_1}')
-        print(F'Einsum based blc {blc_t1_es}')
-        print(F'Loop based dse   {dse_term}')
-        print(F'Einsum based blc {dse_es}')
-        #assert np.isclose(second_order_correction_es, self.second_order_energy_correction)
+        self.second_order_energy_correction_loop = blc_term_1 + dse_term
 
+
+    def compute_first_order_energy_correction(self,n_el, state_index = 0):
+        # defaults to the ground state
+        _N = state_index
+       
+        # einsum
+        E_n_1_es = np.einsum("i,i->", self.d_array[_N,:], self.d_array[:,_N], optimize=True)
+        
+        self.first_order_energy_correction = 0.5 * E_n_1_es
+
+
+    
+    def compute_second_order_energy_correction(self, n_el, omega, E_array, state_index = 0):
+
+        if state_index != 0:
+            print(" We can't handle PT2 for excited states yet!")
+            exit()
+
+        # defaults to ground electronic state
+        mu_n = state_index
+
+        # prepare inverse E_mu_n - E_mu_m array
+        E_mn = np.zeros_like(E_array)
+        E_mn_min_omega = np.zeros_like(E_array)
+
+        # again assumes ground-state
+        E_mn[1:] = 1 / (E_array[mu_n] - E_array[1:])
+        E_mn_min_omega = 1 / (E_array[mu_n] - E_array - omega)
+
+        # take element-by-element square of d_matrix for the sum
+        _blc_tmp = omega / 2 * self.d_array[:,mu_n] * self.d_array[:,mu_n] * E_mn_min_omega * np.sqrt(m_n + 1)
+
+        # sum numerator and denominator of blc term 1 separately
+        _blc_es = np.einsum("i->", _blc_tmp, optimize=True)
+        
+        # first perform contraction over gamma for all values of mu_M
+        _dse_tmp = np.einsum("ij,j->i", self.d_array, self.d_array[:,mu_n], optimize=True)
+
+        # exclude the mu_M = mu_N term
+        _dse_tmp[mu_n] = 0
+        
+        # now compute the square of the summed terms in the numerator and the difference of terms in denominator
+        _dse_tmp2 = _dse_tmp * _dse_tmp * E_mn
+        
+        _dse_es = 1 / 4 * np.einsum("i->", _dse_tmp2, optimize=True)
+      
+
+        self.second_order_energy_correction = _blc_es + _dse_es 
         
 
 
