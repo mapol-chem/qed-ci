@@ -713,30 +713,33 @@ class Vibronic:
 
         # again assumes ground-state
         E_mn[1:] = 1 / (E_array[mu_n] - E_array[1:])
-        E_mn_min_omega = 1 / (E_array[mu_n] - E_array[1:] - omega)
+        E_mn_min_omega = 1 / (E_array[mu_n] - E_array - omega)
 
 
         # defaults to zero photon s
         m_n = 0
         blc_term_1 = 0 
-        #blc_term_1_num = 0
-        #blc_term_1_den = 0
+        blc_term_1_num = 0
+        blc_term_1_den = 0
         dse_term = 0
 
         # blc first term - note there is no restriction on the electronic index in this sum
         for mu_m in range(n_el):
             # ml = mn+1
             blc_term_1 += omega / 2 * (self.d_array[mu_m, mu_n] * np.sqrt(m_n + 1)) ** 2 / (E_array[mu_n] - E_array[mu_m] - omega)
-            #blc_term_1_num += (self.d_array[mu_m, mu_n] * np.sqrt(m_n + 1)) ** 2 
-            #blc_term_1_den += 1 / (E_array[mu_n] - E_array[mu_m] - omega)
+            blc_term_1_num += (self.d_array[mu_m, mu_n] * np.sqrt(m_n + 1)) # ** 2 
+            blc_term_1_den += 1 / (E_array[mu_n] - E_array[mu_m] - omega)
 
         # sum numerator and denominator of blc term 1 separately
         blc_t1_num_es = np.einsum("i->", self.d_array[:,mu_n] * np.sqrt(m_n + 1), optimize=True)
         blc_t1_den_es = np.einsum("i->", E_mn_min_omega, optimize=True)
 
+        print(F'Loop-based BLC Unsquared Numerator: {blc_term_1_num}')
+        print(F'Loop-based BLC Unsquared Numerator: {blc_term_1_num}')
+
         blc_t1_es = omega / 2 * blc_t1_num_es ** 2 * blc_t1_den_es
 
-        dse_num_es = np.einsum("mg,g->", self.d_array, self.d_array[:,mu_n])
+        dse_num_es = np.einsum("ij,i->", self.d_array, self.d_array[:,mu_n], optimize=True) - np.einsum("i,i->", self.d_array[mu_n,:], self.d_array[:,mu_n], optimize=True)
         dse_den_es = np.einsum("i->", E_mn)
 
         dse_es = 1 / 4 * dse_num_es ** 2 * dse_den_es
