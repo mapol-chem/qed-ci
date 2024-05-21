@@ -736,7 +736,7 @@ class Vibronic:
 
         print(F'Loop-based BLC Unsquared Numerator: {blc_term_1_num}')
         print(F'EinS-based BLC Unsquared Numerator: {blc_t1_num_es}')
-        print(F'Loop-based BLC Unsquared Denominat: {blc_term_1_num}')
+        print(F'Loop-based BLC Unsquared Denominat: {blc_term_1_den}')
         print(F'EinS-based BLC Unsquared Denominat: {blc_t1_den_es}')
 
         blc_t1_es = omega / 2 * blc_t1_num_es ** 2 * blc_t1_den_es
