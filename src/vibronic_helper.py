@@ -790,6 +790,7 @@ class Vibronic:
 
         # defaults to ground electronic state
         mu_n = state_index
+        m_n = 0
 
         # prepare inverse E_mu_n - E_mu_m array
         E_mn = np.zeros_like(E_array)
