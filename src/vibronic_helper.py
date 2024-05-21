@@ -705,12 +705,16 @@ class Vibronic:
             print(F' Time to compute 2nd order correction using EinSum is {pt2_es}')
             print(F' Time to compute 2nd order correction using Loops  is {pt2_loop}')
 
-            assert np.islclose(self.first_order_energy_correction, self.first_order_energy_correction_loop)
-            assert np.isclose(self.second_order_energy_correction, self.second_order_energy_correction_loop)
+            #assert np.isclose(self.first_order_energy_correction, self.first_order_energy_correction_loop)
+            #assert np.isclose(self.second_order_energy_correction, self.second_order_energy_correction_loop)
 
-            print(F' Two approaches for PT1 and PT2 agree!')
+            
             print(F' PT1 Correction is {self.first_order_energy_correction}')
             print(F' PT2 Correction is {self.second_order_energy_correction}')
+
+            assert np.isclose(self.first_order_energy_correction, self.first_order_energy_correction_loop)
+            assert np.isclose(self.second_order_energy_correction, self.second_order_energy_correction_loop)
+            print(F' Two approaches for PT1 and PT2 agree!')
 
 
 
