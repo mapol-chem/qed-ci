@@ -220,6 +220,7 @@ class Vibronic:
             
         elif self.qed_type == "qed-pt" or self.qed_type == "pcqed":
             properties = True
+            davidson_thresh = 1e-9
 
             options_dict = {
                 "basis": self.orbital_basis,
@@ -238,6 +239,7 @@ class Vibronic:
                 "number_of_photons": 0,
                 "nact_orbs": 0,
                 "nact_els": 0,
+                "davidson_threshold" : davidson_thresh,
                 "compute_properties": True,
                 "check_rdms": False,
             }
