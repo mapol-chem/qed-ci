@@ -266,17 +266,6 @@ class Vibronic:
                 self.qed_dipole_moments = np.copy(qed_ci_inst.dipole_array)
                 self.qed_dipole_dim = len(_energies)
 
-            print(F' JUST RAN Instantiated PFHamiltonianGenerator')
-            print(F' CHECKING DIPOLES')
-            print(F' DIPOLES [:4,:4] IN .dipole_array')
-            print(qed_ci_inst.dipole_array[:4,:4,:] )
-            print(F' DIPOLES [:4,:4] IN .singlet_dipole_array')
-            print(qed_ci_inst.singlet_dipole_array[:4,:4,:] )
-            print(F' DIPOLES [:4,:4] IN _dipoles')
-            print(_dipoles[:4,:4,:])
-            print(F' DIPOLES [:4,:4] IN self.qed_dipole_moments')
-            print(self.qed_dipole_moments[:4,:4,:])
-
 
             if self.qed_type == "pcqed":
                 # this call should work for both singlet-only and singlet + triplet
@@ -667,11 +656,6 @@ class Vibronic:
         self.build_d_array(
             n_el, lambda_vector, mu_array, coherent_state=False
         )
-        print("Printing Mu Array")
-        print(mu_array[:4,:4,:])
-
-        print("Printing D array")
-        print(self.d_array[:4,:4])
 
         if order==2:
             # compute first order energy correction
