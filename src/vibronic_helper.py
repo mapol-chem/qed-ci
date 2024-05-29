@@ -325,7 +325,7 @@ class Vibronic:
         self, r_min=0.5, r_max=2.5, N_points=50, filename="test"
     ):
         r_array = np.linspace(r_min, r_max, N_points)
-        if self.qed_type == "qedci":
+        if self.qed_type == "qed-ci":
             # this will typically be larger than it needs to be if we are only selecting singlets
             pes_write_array = np.zeros((self.number_of_electronic_states+1, N_points))
             dipole_write_array = np.zeros((self.number_of_electronic_states, self.number_of_electronic_states, 3, N_points))
@@ -364,7 +364,7 @@ class Vibronic:
             self.compute_qed_energy(properties=True)
             _mu_dim = self.qed_dipole_dim
             # store dipoles to numpy array for .npy dump
-            if self.qed_type == "qedci":
+            if self.qed_type == "qed-ci":
                 dipole_write_array[:_mu_dim,:_mu_dim,:,i] = np.copy(self.qed_dipole_moments)
             pes_write_array[0,i] = r_array[i]
             pes_write_array[1:, i] = np.copy(self.qed_energies)
@@ -374,7 +374,7 @@ class Vibronic:
             json_dict["return_result"]["bond_length"].append(r_array[i])
             json_dict["return_result"]["energy"].append(list(self.qed_energies))
 
-        if self.qed_type == "qedci":
+        if self.qed_type == "qed-ci":
             np.save(mu_npy_file_name, dipole_write_array)
         np.save(en_npy_file_name, pes_write_array)
 
