@@ -814,7 +814,37 @@ class Vibronic:
       
 
         self.second_order_energy_correction = _blc_es + _dse_es 
+
+    def compute_third_order_ddd(self, n_el, E_array, state_index=0):
+        """
+        Helper function that compute the third order correction 
+        <N|dd|P><P|dd|Q><Q|dd|N>/[(EN - EP) * (EN-EQ)]
+        that contains only DSE terms that arise when m_N = m_P = m_Q = 0
+        """
+        _N = state_index
+
+        # calculate some intermediates
         
+        # contract over g for the <N|dd|P> and <Q|dd|N> terms, which 
+        # yield the same vector
+        A = np.einsum("g, gp -> p", d[_N,:], d, optimize=True)
+
+        # contract over g for the <P|DD|Q> term, which yields a matrix
+        B = np.einsum("pg, gp -> pq", d, d, optimize=True)
+
+        # get the energy difference for the denominator
+        delta_E = E_array[_N] - E_array
+
+        # Form A / delta_E terms and store in A_tilde
+        A_tilde = np.zeros_like(A)
+        A_tilde[1:] = A[1:] / delta_E[1:]
+
+        # now perform the sums in two steps:
+        # Step 1 is the contraction of B[pq] * A_tilde[q]
+        _t1 = np.einsum("pq,q->p", B, A_tilde)
+        # Step 2 is the contraction of A_tilde[p] * _t1[p]
+        self.third_order_ddd = np.einsum("p,p->", A_tilde, _t1)
+ 
 
 
 
