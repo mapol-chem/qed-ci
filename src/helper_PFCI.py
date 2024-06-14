@@ -1441,7 +1441,15 @@ class PFHamiltonianGenerator:
                             "%4.1d" % (photon_p),
                             "photon",
                         )
-
+                print("mapping between index of alpha/beta strings and orbital list")        
+                print("index    orbital list")        
+                for Ia0 in range(self.num_alpha):
+                    a0 = c_index_to_string(Ia0, self.n_act_a, self.n_act_orb, Y)
+                    alphalist = Determinant.obtBits2ObtIndexList(a0)
+                    inactive_list = list(x for x in range(self.n_in_a))
+                    alphalist2 = [x + self.n_in_a for x in alphalist]
+                    alphalist2[0:0] = inactive_list
+                    print(Ia0, "  ", alphalist2)
                 if self.compute_properties:
                     print(" GOING TO COMPUTE 1-E PROPERTIES!")
                     self.n_occupied = self.n_act_orb + self.n_in_a
