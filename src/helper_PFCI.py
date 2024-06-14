@@ -116,6 +116,8 @@ cfunctions.build_one_rdm.argtypes = [
     ctypes.c_int32,
     ctypes.c_int32,
 ]
+
+
 cfunctions.build_two_rdm.argtypes = [
     np.ctypeslib.ndpointer(ctypes.c_double, ndim=2, flags="C_CONTIGUOUS"),
     np.ctypeslib.ndpointer(ctypes.c_double, ndim=1, flags="C_CONTIGUOUS"),
@@ -127,7 +129,8 @@ cfunctions.build_two_rdm.argtypes = [
     ctypes.c_int32,
     ctypes.c_int32,
 ]
-cfunctions.build_symmetrized_active_rdm.argtypes = [
+
+cfunctions.build_active_rdm.argtypes = [
     np.ctypeslib.ndpointer(ctypes.c_double, ndim=2, flags="C_CONTIGUOUS"),
     np.ctypeslib.ndpointer(ctypes.c_double, ndim=1, flags="C_CONTIGUOUS"),
     np.ctypeslib.ndpointer(ctypes.c_double, ndim=1, flags="C_CONTIGUOUS"),
@@ -137,6 +140,7 @@ cfunctions.build_symmetrized_active_rdm.argtypes = [
     ctypes.c_int32,
     ctypes.c_int32,
     ctypes.c_int32,
+    ctypes.c_double,
 ]
 cfunctions.build_photon_electron_one_rdm.argtypes = [
     np.ctypeslib.ndpointer(ctypes.c_double, ndim=2, flags="C_CONTIGUOUS"),
@@ -158,7 +162,74 @@ cfunctions.build_active_photon_electron_one_rdm.argtypes = [
     ctypes.c_int32,
     ctypes.c_int32,
     ctypes.c_int32,
+    ctypes.c_double,
 ]
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+#####cfunctions.build_two_rdm.argtypes = [
+#####    np.ctypeslib.ndpointer(ctypes.c_double, ndim=2, flags="C_CONTIGUOUS"),
+#####    np.ctypeslib.ndpointer(ctypes.c_double, ndim=1, flags="C_CONTIGUOUS"),
+#####    np.ctypeslib.ndpointer(ctypes.c_int32, ndim=1, flags="C_CONTIGUOUS"),
+#####    ctypes.c_int32,
+#####    ctypes.c_int32,
+#####    ctypes.c_int32,
+#####    ctypes.c_int32,
+#####    ctypes.c_int32,
+#####    ctypes.c_int32,
+#####]
+#####cfunctions.build_symmetrized_active_rdm.argtypes = [
+#####    np.ctypeslib.ndpointer(ctypes.c_double, ndim=2, flags="C_CONTIGUOUS"),
+#####    np.ctypeslib.ndpointer(ctypes.c_double, ndim=1, flags="C_CONTIGUOUS"),
+#####    np.ctypeslib.ndpointer(ctypes.c_double, ndim=1, flags="C_CONTIGUOUS"),
+#####    np.ctypeslib.ndpointer(ctypes.c_int32, ndim=1, flags="C_CONTIGUOUS"),
+#####    ctypes.c_int32,
+#####    ctypes.c_int32,
+#####    ctypes.c_int32,
+#####    ctypes.c_int32,
+#####    ctypes.c_int32,
+#####]
+#####cfunctions.build_photon_electron_one_rdm.argtypes = [
+#####    np.ctypeslib.ndpointer(ctypes.c_double, ndim=2, flags="C_CONTIGUOUS"),
+#####    np.ctypeslib.ndpointer(ctypes.c_double, ndim=1, flags="C_CONTIGUOUS"),
+#####    np.ctypeslib.ndpointer(ctypes.c_int32, ndim=1, flags="C_CONTIGUOUS"),
+#####    ctypes.c_int32,
+#####    ctypes.c_int32,
+#####    ctypes.c_int32,
+#####    ctypes.c_int32,
+#####    ctypes.c_int32,
+#####    ctypes.c_int32,
+#####]
+#####cfunctions.build_active_photon_electron_one_rdm.argtypes = [
+#####    np.ctypeslib.ndpointer(ctypes.c_double, ndim=2, flags="C_CONTIGUOUS"),
+#####    np.ctypeslib.ndpointer(ctypes.c_double, ndim=1, flags="C_CONTIGUOUS"),
+#####    np.ctypeslib.ndpointer(ctypes.c_int32, ndim=1, flags="C_CONTIGUOUS"),
+#####    ctypes.c_int32,
+#####    ctypes.c_int32,
+#####    ctypes.c_int32,
+#####    ctypes.c_int32,
+#####    ctypes.c_int32,
+#####]
 
 cfunctions.build_sigma_s_square.argtypes = [
     np.ctypeslib.ndpointer(ctypes.c_double, ndim=2, flags="C_CONTIGUOUS"),
@@ -337,14 +408,12 @@ def c_get_roots(
         constdouble,
     )
 
-
 def c_build_one_rdm(
     eigvec, D, table, N_ac, n_o_ac, n_o_in, num_photon, state_p1, state_p2
 ):
     cfunctions.build_one_rdm(
         eigvec, D, table, N_ac, n_o_ac, n_o_in, num_photon, state_p1, state_p2
     )
-
 
 def c_build_two_rdm(
     eigvec, D, table, N_ac, n_o_ac, n_o_in, num_photon, state_p1, state_p2
@@ -353,15 +422,12 @@ def c_build_two_rdm(
         eigvec, D, table, N_ac, n_o_ac, n_o_in, num_photon, state_p1, state_p2
     )
 
-
-def c_build_symmetrized_active_rdm(
-    eigvec, D_tu, D_tuvw, table, N_ac, n_o_ac, num_photon, state_p1, state_p2
+def c_build_active_rdm(
+    eigvec, D_tu, D_tuvw, table, N_ac, n_o_ac, num_photon, state_p1, state_p2, weight
 ):
-    cfunctions.build_symmetrized_active_rdm(
-        eigvec, D_tu, D_tuvw, table, N_ac, n_o_ac, num_photon, state_p1, state_p2
+    cfunctions.build_active_rdm(
+        eigvec, D_tu, D_tuvw, table, N_ac, n_o_ac, num_photon, state_p1, state_p2, weight
     )
-
-
 def c_build_photon_electron_one_rdm(
     eigvec, Dpe, table, N_ac, n_o_ac, n_o_in, num_photon, state_p1, state_p2
 ):
@@ -369,12 +435,11 @@ def c_build_photon_electron_one_rdm(
         eigvec, Dpe, table, N_ac, n_o_ac, n_o_in, num_photon, state_p1, state_p2
     )
 
-
 def c_build_active_photon_electron_one_rdm(
-    eigvec, Dpe_tu, table, N_ac, n_o_ac, num_photon, state_p1, state_p2
+    eigvec, Dpe_tu, table, N_ac, n_o_ac, num_photon, state_p1, state_p2, weight
 ):
     cfunctions.build_active_photon_electron_one_rdm(
-        eigvec, Dpe_tu, table, N_ac, n_o_ac, num_photon, state_p1, state_p2
+        eigvec, Dpe_tu, table, N_ac, n_o_ac, num_photon, state_p1, state_p2, weight
     )
 
 
@@ -1726,7 +1791,7 @@ class PFHamiltonianGenerator:
                                     eigenvecs2[:, m : (m + 1)].flatten(),
                                 )
                             )
-                        c_build_symmetrized_active_rdm(
+                        c_build_active_rdm(
                             eigenvecs,
                             self.D_tu,
                             self.D_tuvw,
@@ -1736,6 +1801,7 @@ class PFHamiltonianGenerator:
                             np1,
                             i,
                             i,
+                            1.0
                         )
                         c_build_active_photon_electron_one_rdm(
                             eigenvecs,
@@ -1746,6 +1812,7 @@ class PFHamiltonianGenerator:
                             np1,
                             i,
                             i,
+                            1.0
                         )
                         active_one_e_energy = np.dot(
                             active_fock_core.flatten(), self.D_tu
