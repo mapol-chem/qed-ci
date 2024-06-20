@@ -1,9 +1,10 @@
 import psi4
+import sys
 from helper_PFCI import PFHamiltonianGenerator
 from helper_cqed_rhf import cqed_rhf
 import numpy as np
 import pytest
-import sys
+
 
 np.set_printoptions(threshold=sys.maxsize)
 
