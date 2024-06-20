@@ -34,6 +34,7 @@ def test_lih_fci_sto3g_rdm_builds_no_cavity():
         'number_of_photons' : 0,
         'full_diagonalization' : False,
         'photon_number_basis' : True,
+        'compute_properties' : True,
         'canonical_mos' : True,
         'rdm_root' : 0, #<== store rdms for the ground-state
         'coherent_state_basis' : False
