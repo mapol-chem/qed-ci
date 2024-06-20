@@ -26,22 +26,10 @@ cavity_dict = {
         'rdm_root' : 0,
         'photon_number_basis' : True,
         'canonical_mos' : True,
-        'coherent_state_basis' : False
+        'coherent_state_basis' : False, 
+        'compute_properties' : True,
+        'check_rdms' : True,
 }
-
-
-
-#cavity_dict = {
-#        'omega_value' : 0.12086,
-#        'lambda_vector' : np.array([0, 0, 0.05]),
-#        'ci_level' : 'fci',
-#        'davidson_roots' : 2,
-#        'number_of_photons' : 10,
-#        'photon_number_basis' : True,
-#        'canonical_mos' : True,
-#        'coherent_state_basis' : False
-#}
-
 
 
 test_pf = PFHamiltonianGenerator(
@@ -50,19 +38,14 @@ test_pf = PFHamiltonianGenerator(
         cavity_dict
 )
 
-print(test_pf.two_electron_rdm[:20])
+print(" Printing 1-RDM")
+print(test_pf.one_electron_rdm)
+print(" Printing 2-RDM")
+print(test_pf.two_electron_rdm)
 
-# save rdms to npy files 
-#d1_string = file_string + "_d1"
-#d2_string = file_string + "_d2"
-
-
-#np.save(d1_string, test_pf.one_rdm)
-#np.save(d2_string, test_pf.two_rdm)
-
-
-
-#print(test_pf.total_energy_from_rdms)
-#print(test_pf.CIeigs[0])
+print(" Total Energy from Trace( 2K 2D) for RDM from root ", cavity_dict["rdm_root"])
+print(test_pf.total_energy_from_rdms)
+print(" Corresponding CI Energy Eigenvalues ")
+print(test_pf.CIeigs[0])
 
 
