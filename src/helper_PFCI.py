@@ -1899,6 +1899,87 @@ class PFHamiltonianGenerator:
             t_dav_end = time.time()
             print(f" Completed Davidson iterations in {t_dav_end - t_H_build} seconds")
 
+            if self.print_flag == True:
+                print(f'  # Printing MO Coeffients')
+                for i in range(self.nmo):
+                    for j in range(self.nmo):
+                        _C_el = self.C[i,j]
+                        print(f'  {_C_el:30.20e} \t {i+1} {j+1}')
+
+                print(f'  # Printing 1 electron RDM')
+                _print_1erdm = np.reshape(self.one_electron_rdm, (self.nmo, self.nmo))
+                for i in range(self.nmo):
+                    for j in range(self.nmo):
+                        _1e_el = _print_1erdm[i, j]
+                        print(f'  {_1e_el:30.20e} \t {i+1} {j+1}')
+
+                print(f'  # Printing 1 electron 1 photon RDM')
+                _print_1e1prdm = np.reshape(self.one_electron_one_photon_rdm, (self.nmo, self.nmo))
+                for i in range(self.nmo):
+                    for j in range(self.nmo):
+                        _1e1p_el = _print_1e1prdm[i, j]
+                        print(f'  {_1e1p_el:30.20e} \t {i+1} {j+1}')
+
+                print(f'  # Printing 2 electron RDM')
+                _print_2rdm = np.reshape(self.two_electron_rdm, (self.nmo, self.nmo, self.nmo, self.nmo))
+                for i in range(self.nmo):
+                    for j in range(0,i+1):
+                        for k in range(self.nmo):
+                            for l in range(0,k+1):
+                                _trdm = _print_2rdm[i,j,k,l]
+                                if np.abs(_trdm)>0.0:
+                                    print(f'  {_trdm:30.20e} \t {i+1} {j+1} {k+1} {l+1}')
+
+                            
+                print(f' # Printing electron repulsion integrals in spatial MO basis')
+                for i in range(self.nmo):
+                    for j in range(0,i+1):
+                        for k in range(self.nmo):
+                            for l in range(0,k+1):
+                                teint = self.eri_dump[i,j,k,l]
+                                if np.abs(teint)>0.0:
+                                    print(f'  {teint:30.20e} \t {i+1} {j+1} {k+1} {l+1}')
+
+                print(f' # Printing T + V integrals in spatial MO basis')
+                for i in range(self.nmo):
+                    for j in range(self.nmo):
+                        oeint = self.T_p_V_mo[i,j]
+                        print(f'  {oeint:30.20e} \t {i+1} {j+1} {0} {0}')
+
+                print(f' # Printing -1/2 \lambda \lambda q integrals in spatial MO basis')
+                for i in range(self.nmo):
+                    for j in range(self.nmo):
+                        oeint = self.q_mo[i,j]
+                        print(f'  {oeint:30.20e} \t {i+1} {j+1} {0} {0}')
+
+                print(f' # Printing \lambda mu integrals in spatial MO basis')
+                for i in range(self.nmo):
+                    for j in range(self.nmo):
+                        oeint = self.d_cmo[i,j]
+                        print(f'  {oeint:30.20e} \t {i+1} {j+1} {0} {0}')
+
+                print(f' # Printing nuclear repulsion energy')
+                print(f'  {self.Enuc:30.20e} \t {0} {0} {0} {0}')
+
+                print(f' # Printing photon energy')
+                print(f'  {self.omega:30.20e} \t {0} {0} {0} {0}')
+                
+                print(f' # Printing lambda vector')
+                print(f'  {self.lambda_vector[0]:16.10e}, {self.lambda_vector[1]:16.10e}, {self.lambda_vector[2]:16.10e} \t {0} {0} {0} {0}')
+                
+                print(f' # Printing RHF Electronic Dipole Moment')
+                print(f'  {self.electronic_dipole_moment[0]:16.10e}, {self.electronic_dipole_moment[1]:16.10e}, {self.electronic_dipole_moment[2]:16.10e} \t {0} {0} {0} {0}')
+
+                print(f' # Printing Nuclear Dipole Moment')
+                print(f'  {self.nuclear_dipole_moment[0]:16.10e}, {self.nuclear_dipole_moment[1]:16.10e}, {self.nuclear_dipole_moment[2]:16.10e} \t {0} {0} {0} {0}')
+
+                print(f' # Printing RHF Energy')
+                print(f'  {self.rhf_reference_energy:30.20e} \t {0} {0} {0} {0}')
+
+                print(f' # Printing FCI Ground-state Energy')
+                print(f'  {self.CIeigs[0]:30.20e} \t {0} {0} {0} {0}')
+
+
     def parseCavityOptions(self, cavity_dictionary):
         """
         Parse the cavity dictionary for important parameters for the QED-CI calculation
