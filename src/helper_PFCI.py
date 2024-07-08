@@ -1966,15 +1966,6 @@ class PFHamiltonianGenerator:
                 
                 print(f' # Printing lambda vector')
                 print(f'  {self.lambda_vector[0]:16.10e}, {self.lambda_vector[1]:16.10e}, {self.lambda_vector[2]:16.10e} \t {0} {0} {0} {0}')
-                
-                print(f' # Printing RHF Electronic Dipole Moment')
-                print(f'  {self.electronic_dipole_moment[0]:16.10e}, {self.electronic_dipole_moment[1]:16.10e}, {self.electronic_dipole_moment[2]:16.10e} \t {0} {0} {0} {0}')
-
-                print(f' # Printing Nuclear Dipole Moment')
-                print(f'  {self.nuclear_dipole_moment[0]:16.10e}, {self.nuclear_dipole_moment[1]:16.10e}, {self.nuclear_dipole_moment[2]:16.10e} \t {0} {0} {0} {0}')
-
-                print(f' # Printing RHF Energy')
-                print(f'  {self.rhf_reference_energy:30.20e} \t {0} {0} {0} {0}')
 
                 print(f' # Printing FCI Ground-state Energy')
                 print(f'  {self.CIeigs[0]:30.20e} \t {0} {0} {0} {0}')
