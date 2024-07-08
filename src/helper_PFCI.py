@@ -2228,6 +2228,8 @@ class PFHamiltonianGenerator:
         # build H_spin
         # spatial part of 1-e integrals
         _H_spin = np.einsum("uj,vi,uv", self.C, self.C, self.H_1e_ao)
+        
+        self.T_p_V_mo = np.einsum("uj,vi,uv", self.C, self.C, (self.T_ao + self.V_ao))
         self.H_spatial = _H_spin
         self.H_spatial2 = np.ascontiguousarray(_H_spin)
         if self.full_diagonalization or self.test_mode or self.ci_level == "cis":
