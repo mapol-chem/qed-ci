@@ -2793,6 +2793,7 @@ class PFHamiltonianGenerator:
             self.eri_so = np.asarray(mints.mo_spin_eri(self.Ca, self.Ca))
 
         self.twoeint1 = np.asarray(mints.mo_eri(self.Ca, self.Ca, self.Ca, self.Ca))
+        self.eri_dump = np.copy(self.twoeint1)
         t_eri_end = time.time()
         print(f" Completed ERI Build in {t_eri_end - t_1H_end} seconds ")
 
