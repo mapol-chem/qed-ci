@@ -1994,6 +1994,11 @@ class PFHamiltonianGenerator:
         else:
             self.compute_properties = False
 
+        if "print_dump" in cavity_dictionary:
+            self.print_flag = cavity_dictionary["print_dump"]
+        else:
+            self.print_flag = False
+
         if "omega_value" in cavity_dictionary:
             self.omega = cavity_dictionary["omega_value"]
         else:
