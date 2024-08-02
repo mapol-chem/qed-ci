@@ -29,5 +29,5 @@ Install numba:
 Install intel oneapi
 
 Compile the code with intel compiler:
-- icx -fPIC -Wall -Wextra -qopenmp -c ci_solver.c  
-- icx -shared -o cfunctions.so ci_solver.o 
+- icx -fPIC -Wall -Wextra -qopenmp -c ci_solver.c orbital.c 
+- icx -shared -o cfunctions.so ci_solver.o orbital.o
