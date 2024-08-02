@@ -22,7 +22,10 @@ The generation of determinant lists has been broken up into two methods based on
   - [ ] Unit tests for things like the trace of the 1RDMs and the 1e energy should be added sooner than later
 
 
-## Compile c shared library
-Intel oneapi is required for the use of LAPACKE library
+## To run the code:
+Install numba:
+- pip install numba
+Install intel oneapi
+Compile the code with intel compiler:
 - icx -fPIC -Wall -Wextra -qopenmp -c ci_solver.c  
 - icx -shared -o cfunctions.so ci_solver.o 

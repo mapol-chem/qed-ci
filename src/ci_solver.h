@@ -12,16 +12,17 @@ void get_graph(size_t N, size_t n_o, int* Y);
 int* string_to_obtlist(size_t string, int nmo, int* length);
 size_t index_to_string(int index, int N, int n_o, int* Y);    
 void get_string(double* h1e, double* h2e, double* H_diag, int* b_array, int* table, int* table_creation, 
-		int* table_annihilation, int N_p, int num_alpha, int nmo, int N, int n_o, int n_in_a, double omega, double Enuc, double dc);  
+		int* table_annihilation, int N_p, int num_alpha, int nmo, int N, int n_o, int n_in_a, double E_core, double omega, double Enuc, double dc);  
 void single_replacement_list(int num_alpha, int N_ac, int n_o_ac, int* Y, int* table);
 void build_H_diag(double* h1e, double* h2e, double* H_diag, int N_p, int num_alpha, int nmo, int n_act_a,int n_act_orb,int n_in_a, double omega, double Enuc, double dc, int* Y); 
+void build_H_diag_cas(double* h1e, double* h2e, double* H_diag, int N_p, int num_alpha, int nmo, int n_act_a,int n_act_orb,int n_in_a, double E_core, double omega, double Enuc, double dc, int* Y); 
 void sigma3(double* h2e, double* c_vectors, double* c1_vectors, int* table, int* table_creation, int* table_annihilation, 
 		 int N_ac, int n_o_ac, int n_o_in, int nmo, int photon_p, int state_p, int num_photon); 
 
 
 void sigma12(double* h1e, double* h2e, double* c_vectors, double* c1_vectors, int num_alpha, int num_links, int* table, int nmo, int n_o_ac, int n_o_in,
 	       	int photon_p, int state_p, int num_photon);  
-void sigma_dipole(double* h1e, double* c_vectors,double* c1_vectors,int num_alpha,int num_links, int* table, int nmo, int n_o_in,
+void sigma_dipole(double* h1e, double* c_vectors,double* c1_vectors,int num_alpha,int num_links, int* table, int n_o_ac, int n_o_in,
 		 double someconstant, int photon_p1, int photon_p2, int state_p, int num_photon);
 void constant_terms_contraction(double* c_vectors,double* c1_vectors,int num_alpha, double someconstant, int photon_p1, int photon_p2, int state_p, int num_photon);
 void build_sigma(double* h1e, double* h2e, double* d_cmo, double* c_vectors, double *c1_vectors, 
@@ -34,16 +35,16 @@ void build_S_diag(double* S_diag, int num_alpha, int nmo, int N_ac,int n_o_ac,in
 void gram_schmidt_orthogonalization(double* Q, int rows, int cols);
 void gram_schmidt_add(double* Q, int rows, int cols, int rows2);
 void davidson(double* h1e, double* h2e, double* d_cmo, double* Hdiag, double* eigenvals, double* eigenvecs, int* table, 
-		int* table_creation, int* table_annihilation, int *constint, double *constdouble, callback_ build_sigma);
+		int* table_creation, int* table_annihilation, int *constint, double *constdouble, bool casscf, callback_ build_sigma);
 
 void build_one_rdm(double* eigvec, double* D, int* table, int N_ac, int n_o_ac, int n_o_in, int num_photon, int state_p1, int state_p2);
 void build_two_rdm(double* eigvec, double* D, int* table, int N_ac, int n_o_ac, int n_o_in, int num_photon, int state_p1, int state_p2);
-void build_symmetrized_active_rdm(double* eigvec, double* D_tu, double* D_tuvw, int* table, int N_ac, int n_o_ac, int num_photon, int state_p1, int state_p2); 
-void build_active_photon_electron_one_rdm(double* eigvec, double* Dpe_tu, int* table, int N_ac, int n_o_ac, int num_photon, int state_p1, int state_p2); 
+void build_active_rdm(double* eigvec, double* D_tu, double* D_tuvw, int* table, int N_ac, int n_o_ac, int num_photon, int state_p1, int state_p2, double weight); 
+void build_active_photon_electron_one_rdm(double* eigvec, double* Dpe_tu, int* table, int N_ac, int n_o_ac, int num_photon, int state_p1, int state_p2, double weight); 
 void build_photon_electron_one_rdm(double* eigvec, double* Dpe, int* table, int N_ac, int n_o_ac, int n_o_in, int num_photon, int state_p1, int state_p2); 
 
 void get_roots(double* h1e, double* h2e, double* d_cmo, double* Hdiag, double* eigenvals, double* eigenvecs, int* table, 
-		int* table_creation, int* table_annihilation, int *constint, double *constdouble);
+		int* table_creation, int* table_annihilation, int *constint, double *constdouble, bool casscf);
 void symmetric_eigenvalue_problem(double* A, int N, double* eig);
 void getMemory2(unsigned long* currRealMem, unsigned long* peakRealMem, unsigned long* currVirtMem, unsigned long* peakVirtMem);
 

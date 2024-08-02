@@ -223,6 +223,7 @@ def cqed_rhf(lambda_vector, molecule_string, psi4_options_dict, canonical_basis=
         "CQED-RHF ENERGY": None,
         "CQED-RHF ONE-ENERGY": None,
         "CQED-RHF C": None,
+        "CQED-RHF FOCK MATRIX": None,
         "CQED-RHF DENSITY MATRIX": None,
         "CQED-RHF EPS": None,
         "CQED-RHF ELECTRONIC DIPOLE MOMENT": None,
@@ -353,6 +354,7 @@ def cqed_rhf(lambda_vector, molecule_string, psi4_options_dict, canonical_basis=
         cqed_rhf_dict["CQED-RHF ENERGY"] = SCF_E
         cqed_rhf_dict["CQED-RHF ONE-ENERGY"] = SCF_1E
         cqed_rhf_dict["CQED-RHF C"] = C
+        cqed_rhf_dict["CQED-RHF FOCK MATRIX"] = F
         cqed_rhf_dict["CQED-RHF DENSITY MATRIX"] = D
         cqed_rhf_dict["CQED-RHF EPS"] = e
         cqed_rhf_dict["CQED-RHF ELECTRONIC DIPOLE MOMENT"] =  mu_exp_el
@@ -361,5 +363,4 @@ def cqed_rhf(lambda_vector, molecule_string, psi4_options_dict, canonical_basis=
         cqed_rhf_dict["COHERENT STATE EXPECTATION VALUE OF d"] = d_exp_el
         cqed_rhf_dict["COHERENT STATE DIPOLE ENERGY"] = d_c_coherent_state
         cqed_rhf_dict["1-E DIPOLE MATRIX MO"] = d_el_mo
-        
         return cqed_rhf_dict
