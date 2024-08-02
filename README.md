@@ -25,7 +25,9 @@ The generation of determinant lists has been broken up into two methods based on
 ## To run the code:
 Install numba:
 - pip install numba
+
 Install intel oneapi
+
 Compile the code with intel compiler:
 - icx -fPIC -Wall -Wextra -qopenmp -c ci_solver.c  
 - icx -shared -o cfunctions.so ci_solver.o 
