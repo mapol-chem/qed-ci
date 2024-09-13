@@ -1,0 +1,1003 @@
+
+Scratch directory: /tmp/
+   => Libint2 <=
+
+    Primary   basis highest AM E, G, H:  5, 4, 3
+    Auxiliary basis highest AM E, G, H:  6, 5, 4
+    Onebody   basis highest AM E, G, H:  6, 5, 4
+    Solid Harmonics ordering:            gaussian
+
+*** tstart() called on CHEM353Q05NALT
+*** at Thu Sep 12 12:10:29 2024
+
+   => Loading Basis Set <=
+
+    Name: CC-PVTZ
+    Role: ORBITAL
+    Keyword: BASIS
+    atoms 1-2 entry H          line    23 file /opt/homebrew/Caskroom/miniforge/base/envs/p4env/share/psi4/basis/cc-pvtz.gbs 
+
+
+         ---------------------------------------------------------
+                                   SCF
+               by Justin Turney, Rob Parrish, Andy Simmonett
+                          and Daniel G. A. Smith
+                              RHF Reference
+                        1 Threads,    500 MiB Core
+         ---------------------------------------------------------
+
+  ==> Geometry <==
+
+    Molecular point group: c1
+    Full point group: D_inf_h
+
+    Geometry (in Angstrom), charge = 0, multiplicity = 1:
+
+       Center              X                  Y                   Z               Mass       
+    ------------   -----------------  -----------------  -----------------  -----------------
+         H            0.000000000000     0.000000000000    -0.371301335400     1.007825032230
+         H            0.000000000000     0.000000000000     0.371301335400     1.007825032230
+
+  Running in c1 symmetry.
+
+  Rotational constants: A = ************  B =     60.66362  C =     60.66362 [cm^-1]
+  Rotational constants: A = ************  B = 1818649.63674  C = 1818649.63674 [MHz]
+  Nuclear repulsion =    0.712598043984843
+
+  Charge       = 0
+  Multiplicity = 1
+  Electrons    = 2
+  Nalpha       = 1
+  Nbeta        = 1
+
+  ==> Algorithm <==
+
+  SCF Algorithm Type is PK.
+  DIIS enabled.
+  MOM disabled.
+  Fractional occupation disabled.
+  Guess Type is SAD.
+  Energy threshold   = 1.00e-10
+  Density threshold  = 1.00e-10
+  Integral threshold = 1.00e-12
+
+  ==> Primary Basis <==
+
+  Basis Set: CC-PVTZ
+    Blend: CC-PVTZ
+    Number of shells: 12
+    Number of basis functions: 28
+    Number of Cartesian functions: 30
+    Spherical Harmonics?: true
+    Max angular momentum: 2
+
+  ==> Integral Setup <==
+
+  Using in-core PK algorithm.
+   Calculation information:
+      Number of atoms:                   2
+      Number of AO shells:              12
+      Number of primitives:             16
+      Number of atomic orbitals:        30
+      Number of basis functions:        28
+
+      Integral cutoff                 1.00e-12
+      Number of threads:                 1
+
+  Performing in-core PK
+  Using 165242 doubles for integral storage.
+  We computed 3081 shell quartets total.
+  Whereas there are 3081 unique shell quartets.
+
+  ==> DiskJK: Disk-Based J/K Matrices <==
+
+    J tasked:                  Yes
+    K tasked:                  Yes
+    wK tasked:                  No
+    Memory [MiB]:              375
+    Schwarz Cutoff:          1E-12
+
+    OpenMP threads:              1
+
+  Minimum eigenvalue in the overlap matrix is 1.6165729866E-03.
+  Reciprocal condition number of the overlap matrix is 3.8355170081E-04.
+    Using symmetric orthogonalization.
+
+  ==> Pre-Iterations <==
+
+  SCF Guess: Superposition of Atomic Densities via on-the-fly atomic UHF (no occupation information).
+
+   -------------------------
+    Irrep   Nso     Nmo    
+   -------------------------
+     A         28      28 
+   -------------------------
+    Total      28      28
+   -------------------------
+
+  ==> Iterations <==
+
+                        Total Energy        Delta E     RMS |[F,P]|
+
+   @RHF iter SAD:    -0.84259130487829   -8.42591e-01   0.00000e+00 
+   @RHF iter   1:    -1.13002946890539   -2.87438e-01   1.69039e-03 ADIIS/DIIS
+   @RHF iter   2:    -1.13281956782663   -2.79010e-03   3.41663e-04 ADIIS/DIIS
+   @RHF iter   3:    -1.13294208049963   -1.22513e-04   2.69760e-05 DIIS
+   @RHF iter   4:    -1.13294258082000   -5.00320e-07   1.15552e-06 DIIS
+   @RHF iter   5:    -1.13294258156916   -7.49155e-10   7.69890e-08 DIIS
+   @RHF iter   6:    -1.13294258157338   -4.21929e-12   6.21057e-09 DIIS
+   @RHF iter   7:    -1.13294258157341   -3.30846e-14   3.71652e-11 DIIS
+  Energy and wave function converged.
+
+
+  ==> Post-Iterations <==
+
+    Orbital Energies [Eh]
+    ---------------------
+
+    Doubly Occupied:                                                      
+
+       1A     -0.593888  
+
+    Virtual:                                                              
+
+       2A      0.166892     3A      0.305243     4A      0.642865  
+       5A      0.692428     6A      0.692428     7A      1.095930  
+       8A      1.119695     9A      1.119695    10A      1.528617  
+      11A      2.337100    12A      2.408253    13A      3.175121  
+      14A      3.175121    15A      3.411223    16A      3.411223  
+      17A      3.674161    18A      3.895016    19A      3.895016  
+      20A      4.082570    21A      4.082570    22A      4.112546  
+      23A      4.112546    24A      4.651236    25A      5.722834  
+      26A      5.722834    27A      5.798614    28A      6.957283  
+
+    Final Occupation by Irrep:
+              A 
+    DOCC [     1 ]
+    NA   [     1 ]
+    NB   [     1 ]
+
+  @RHF Final Energy:    -1.13294258157341
+
+   => Energetics <=
+
+    Nuclear Repulsion Energy =              0.7125980439848427
+    One-Electron Energy =                  -2.5033042823315084
+    Two-Electron Energy =                   0.6577636567732552
+    Total Energy =                         -1.1329425815734104
+
+Computation Completed
+
+
+Properties will be evaluated at   0.000000,   0.000000,   0.000000 [a0]
+
+Properties computed using the SCF density matrix
+
+
+ Multipole Moments:
+
+ ------------------------------------------------------------------------------------
+     Multipole            Electronic (a.u.)      Nuclear  (a.u.)        Total (a.u.)
+ ------------------------------------------------------------------------------------
+
+ L = 1.  Multiply by 2.5417464519 to convert [e a0] to [Debye]
+ Dipole X            :         -0.0000000            0.0000000           -0.0000000
+ Dipole Y            :          0.0000000            0.0000000            0.0000000
+ Dipole Z            :         -0.0000000            0.0000000           -0.0000000
+ Magnitude           :                                                    0.0000000
+
+ ------------------------------------------------------------------------------------
+
+*** tstop() called on CHEM353Q05NALT at Thu Sep 12 12:10:29 2024
+Module time:
+	user time   =       0.08 seconds =       0.00 minutes
+	system time =       0.01 seconds =       0.00 minutes
+	total time  =          0 seconds =       0.00 minutes
+Total time:
+	user time   =       0.97 seconds =       0.02 minutes
+	system time =       0.31 seconds =       0.01 minutes
+	total time  =        311 seconds =       5.18 minutes
+
+Scratch directory: /tmp/
+ MINTS: Wrapper to libmints.
+   by Justin Turney
+
+   Calculation information:
+      Number of threads:                 1
+      Number of atoms:                   2
+      Number of AO shells:              12
+      Number of SO shells:              12
+      Number of primitives:             16
+      Number of atomic orbitals:        30
+      Number of basis functions:        28
+
+      Number of irreps:                  1
+      Integral cutoff                 1.00e-12
+      Number of functions per irrep: [  28 ]
+
+ OEINTS: Overlap, kinetic, potential, dipole, and quadrupole integrals
+         stored in file 35.
+
+      Computing two-electron integrals...done
+      Computed 19125 non-zero two-electron integrals.
+        Stored in file 33.
+
+
+         ---------------------------------------------------------
+                          Configuration Interaction
+                            (a 'D E T C I' module)
+
+                 C. David Sherrill, Daniel G. A. Smith, and
+                              Matt L. Leininger
+         ---------------------------------------------------------
+
+
+   ==> Parameters <==
+
+    EX LEVEL       =        2      H0 BLOCKSIZE  =     1000
+    VAL EX LEVEL   =        0      H0 GUESS SIZE =     1000
+    H0COUPLINGSIZE =        0      H0 COUPLING   =       NO
+    MAXITER        =       24      NUM PRINT     =       20
+    NUM ROOTS      =        3      ICORE         =        1
+    PRINT LVL      =        1      FCI           =      YES
+    R CONV         = 1.00e-04      MIXED         =      YES
+    E CONV         = 1.00e-10      MIXED4        =      YES
+    R4S            =       NO      REPL OTF      =       NO
+    DIAG METHOD    =      SEM      FOLLOW ROOT   =        0
+    PRECONDITIONER = DAVIDSON      UPDATE        = DAVIDSON
+    S              =   0.0000      Ms0           =      YES
+    GUESS VECTOR   =  H0BLOCK      OPENTYPE      =     NONE
+    COLLAPSE SIZE  =        1      HD AVG        = EVANGELISTI
+    MAX NUM VECS   =       75      REF SYM       =     AUTO
+    IOPEN        =       NO
+
+    EX ALLOW       =  1  1 
+    STATE AVERAGE  =  0(1.00) 
+
+   ==> CI Orbital and Space information <==
+
+   ------------------------------------
+               Space    Total     A
+   ------------------------------------
+                 Nso       28    28
+                 Nmo       28    28
+               Ndocc        1     1
+               Nsocc        0     0
+   ------------------------------------
+              CI Spaces
+   ------------------------------------
+        Dropped DOCC        0     0
+              Active       28    28
+        Dropped UOCC        0     0
+   ------------------------------------
+
+   ==> Setting up CI strings <==
+
+    There are 28 alpha and 28 beta strings
+    The CI space requires 784 (7.84E+02) determinants and 1 blocks
+
+   ==> Transforming CI integrals <==
+
+	Presorting SO-basis two-electron integrals.
+	Sorting File: SO Ints (nn|nn) nbuckets = 1
+	Constructing frozen core operators
+	Starting first half-transformation.
+	Sorting half-transformed integrals.
+	First half integral transformation complete.
+	Starting second half-transformation.
+	Two-electron integral transformation complete.
+
+   ==> Starting CI iterations <==
+
+    H0 Block Eigenvalue =  -1.13658995
+
+    Simultaneous Expansion Method (Block Davidson Method)
+    Using 3 initial trial vectors
+
+(sem_iter): H0block_->H0b_diag[1][1] - H0block_->H0b_diag[2][1] = 0.664624 - -0.664624 = 1.329247 > 1.0E-8
+(sem_iter): H0block_->H0b_diag[3][3] - H0block_->H0b_diag[4][3] = 0.704965 - -0.704965 = 1.409930 > 1.0E-8
+     Iter   Root       Total Energy       Delta E      C RMS
+
+   @CI  0:     0     -1.136589945550   -1.8492E+00   3.5491E-01  
+   @CI  0:     1     -0.652546178713   -1.3651E+00   2.4122E-01  
+   @CI  0:     2     -0.514356936008   -1.2270E+00   2.5557E-01  
+
+   @CI  1:     0     -1.171222017448   -3.4632E-02   7.2442E-02  
+   @CI  1:     1     -0.675491555188   -2.2945E-02   5.4767E-02  
+   @CI  1:     2     -0.531446301054   -1.7089E-02   4.8128E-02  
+
+   @CI  2:     0     -1.172312834187   -1.0908E-03   9.7184E-03  
+   @CI  2:     1     -0.676554221031   -1.0627E-03   1.1262E-02  
+   @CI  2:     2     -0.532232249088   -7.8595E-04   1.0458E-02  
+
+   @CI  3:     0     -1.172336127714   -2.3294E-05   1.4286E-03  
+   @CI  3:     1     -0.676604007205   -4.9786E-05   2.3713E-03  
+   @CI  3:     2     -0.532283067530   -5.0818E-05   3.2929E-03  
+
+   @CI  4:     0     -1.172336678753   -5.5104E-07   1.7344E-04  
+   @CI  4:     1     -0.676605726950   -1.7197E-06   3.1984E-04  
+   @CI  4:     2     -0.532288364213   -5.2967E-06   7.8553E-04  
+
+   @CI  5:     0     -1.172336686441   -7.6878E-09   1.5348E-05  
+   @CI  5:     1     -0.676605768032   -4.1083E-08   6.9706E-05  
+   @CI  5:     2     -0.532288577356   -2.1314E-07   9.8661E-05  
+
+   @CI  6:     0     -1.172336686494   -5.3013E-11   1.3656E-06 c
+   @CI  6:     1     -0.676605769798   -1.7651E-09   1.2892E-05  
+   @CI  6:     2     -0.532288580155   -2.7995E-09   1.0962E-05  
+
+   @CI  7:     0     -1.172336686494   -1.3545E-14   1.3133E-06 c
+   @CI  7:     1     -0.676605769856   -5.8619E-11   1.9342E-06 c
+   @CI  7:     2     -0.532288580192   -3.6655E-11   1.5820E-06 c
+
+
+   ==> Energetics <==
+
+    SCF energy =           -1.132942581573410
+    Total CI energy =      -1.172336686493833
+
+   ==> FCI root 0 information <==
+
+    FCI Root 0 energy =    -1.172336686493833
+
+   The 20 most important determinants:
+
+    *   1   -0.990975  (    0,    0)  1AX 
+    *   2    0.055947  (    3,    3)  4AX 
+    *   3    0.044436  (    1,    3)  2AA 4AB 
+    *   4    0.044436  (    3,    1)  2AB 4AA 
+    *   5    0.041860  (    5,    5)  6AX 
+    *   6    0.041860  (    4,    4)  5AX 
+    *   7    0.039689  (    1,    1)  2AX 
+    *   8    0.038221  (    2,    2)  3AX 
+    *   9    0.021207  (    3,   10)  4AA 11AB 
+    *  10    0.021207  (   10,    3)  4AB 11AA 
+    *  11    0.016679  (    2,   11)  3AA 12AB 
+    *  12    0.016679  (   11,    2)  3AB 12AA 
+    *  13    0.015879  (   11,   11)  12AX 
+    *  14   -0.014814  (    2,    6)  3AA 7AB 
+    *  15   -0.014814  (    6,    2)  3AB 7AA 
+    *  16    0.014386  (   10,   10)  11AX 
+    *  17    0.013272  (    1,   10)  2AA 11AB 
+    *  18    0.013272  (   10,    1)  2AB 11AA 
+    *  19    0.013103  (    6,    6)  7AX 
+    *  20    0.010086  (   15,   15)  16AX 
+
+
+   ==> FCI root 1 information <==
+
+    FCI Root 1 energy =    -0.676605769856144
+
+   The 20 most important determinants:
+
+    *   1   -0.692247  (    1,    0)  1AB 2AA 
+    *   2   -0.692247  (    0,    1)  1AA 2AB 
+    *   3   -0.115069  (    1,    2)  2AA 3AB 
+    *   4   -0.115069  (    2,    1)  2AB 3AA 
+    *   5    0.057077  (    1,    6)  2AA 7AB 
+    *   6    0.057077  (    6,    1)  2AB 7AA 
+    *   7   -0.036264  (    3,    0)  1AB 4AA 
+    *   8   -0.036264  (    0,    3)  1AA 4AB 
+    *   9   -0.028216  (    1,   11)  2AA 12AB 
+    *  10   -0.028216  (   11,    1)  2AB 12AA 
+    *  11    0.022058  (    5,    7)  6AA 8AB 
+    *  12    0.022058  (    7,    5)  6AB 8AA 
+    *  13    0.022058  (    4,    8)  5AA 9AB 
+    *  14    0.022058  (    8,    4)  5AB 9AA 
+    *  15    0.021776  (    3,    6)  4AA 7AB 
+    *  16    0.021776  (    6,    3)  4AB 7AA 
+    *  17    0.014550  (    0,   10)  1AA 11AB 
+    *  18    0.014550  (   10,    0)  1AB 11AA 
+    *  19   -0.011322  (    1,   16)  2AA 17AB 
+    *  20   -0.011322  (   16,    1)  2AB 17AA 
+
+
+   ==> FCI root 2 information <==
+
+    FCI Root 2 energy =    -0.532288580191774
+
+   The 20 most important determinants:
+
+    *   1   -0.690505  (    0,    2)  1AA 3AB 
+    *   2   -0.690505  (    2,    0)  1AB 3AA 
+    *   3   -0.193251  (    2,    2)  3AX 
+    *   4    0.053775  (    3,    3)  4AX 
+    *   5   -0.031873  (    1,    1)  2AX 
+    *   6    0.023982  (    3,   10)  4AA 11AB 
+    *   7    0.023982  (   10,    3)  4AB 11AA 
+    *   8   -0.020930  (    2,   11)  3AA 12AB 
+    *   9   -0.020930  (   11,    2)  3AB 12AA 
+    *  10    0.019309  (    2,    6)  3AA 7AB 
+    *  11    0.019309  (    6,    2)  3AB 7AA 
+    *  12    0.014712  (   10,   10)  11AX 
+    *  13    0.014039  (   11,   11)  12AX 
+    *  14    0.013311  (    1,    3)  2AA 4AB 
+    *  15    0.013311  (    3,    1)  2AB 4AA 
+    *  16    0.011114  (    1,   10)  2AA 11AB 
+    *  17    0.011114  (   10,    1)  2AB 11AA 
+    *  18    0.010083  (   15,   15)  16AX 
+    *  19    0.010083  (   14,   14)  15AX 
+    *  20   -0.008763  (    5,   14)  6AA 15AB 
+
+		 "A good bug is a dead bug" 
+
+			 - Starship Troopers
+
+		 "I didn't write FORTRAN.  That's the problem."
+
+			 - Edward Valeev
+
+
+Properties will be evaluated at   0.000000,   0.000000,   0.000000 [a0]
+
+Properties computed using the FCI density matrix
+
+
+ Multipole Moments:
+
+ ------------------------------------------------------------------------------------
+     Multipole            Electronic (a.u.)      Nuclear  (a.u.)        Total (a.u.)
+ ------------------------------------------------------------------------------------
+
+ L = 1.  Multiply by 2.5417464519 to convert [e a0] to [Debye]
+ Dipole X            :         -0.0000000            0.0000000           -0.0000000
+ Dipole Y            :         -0.0000000            0.0000000           -0.0000000
+ Dipole Z            :          0.0000000            0.0000000            0.0000000
+ Magnitude           :                                                    0.0000000
+
+ ------------------------------------------------------------------------------------
+   => Libint2 <=
+
+    Primary   basis highest AM E, G, H:  5, 4, 3
+    Auxiliary basis highest AM E, G, H:  6, 5, 4
+    Onebody   basis highest AM E, G, H:  6, 5, 4
+    Solid Harmonics ordering:            gaussian
+
+*** tstart() called on CHEM353Q05NALT
+*** at Thu Sep 12 12:10:29 2024
+
+   => Loading Basis Set <=
+
+    Name: CC-PVTZ
+    Role: ORBITAL
+    Keyword: BASIS
+    atoms 1-2 entry H          line    23 file /opt/homebrew/Caskroom/miniforge/base/envs/p4env/share/psi4/basis/cc-pvtz.gbs 
+
+
+         ---------------------------------------------------------
+                                   SCF
+               by Justin Turney, Rob Parrish, Andy Simmonett
+                          and Daniel G. A. Smith
+                              RHF Reference
+                        1 Threads,    500 MiB Core
+         ---------------------------------------------------------
+
+  ==> Geometry <==
+
+    Molecular point group: c1
+    Full point group: D_inf_h
+
+    Geometry (in Angstrom), charge = 0, multiplicity = 1:
+
+       Center              X                  Y                   Z               Mass       
+    ------------   -----------------  -----------------  -----------------  -----------------
+         H            0.000000000000     0.000000000000    -0.371301335400     1.007825032230
+         H            0.000000000000     0.000000000000     0.371301335400     1.007825032230
+
+  Running in c1 symmetry.
+
+  Rotational constants: A = ************  B =     60.66362  C =     60.66362 [cm^-1]
+  Rotational constants: A = ************  B = 1818649.63674  C = 1818649.63674 [MHz]
+  Nuclear repulsion =    0.712598043984843
+
+  Charge       = 0
+  Multiplicity = 1
+  Electrons    = 2
+  Nalpha       = 1
+  Nbeta        = 1
+
+  ==> Algorithm <==
+
+  SCF Algorithm Type is PK.
+  DIIS enabled.
+  MOM disabled.
+  Fractional occupation disabled.
+  Guess Type is SAD.
+  Energy threshold   = 1.00e-10
+  Density threshold  = 1.00e-10
+  Integral threshold = 1.00e-12
+
+  ==> Primary Basis <==
+
+  Basis Set: CC-PVTZ
+    Blend: CC-PVTZ
+    Number of shells: 12
+    Number of basis functions: 28
+    Number of Cartesian functions: 30
+    Spherical Harmonics?: true
+    Max angular momentum: 2
+
+  ==> Integral Setup <==
+
+  Using in-core PK algorithm.
+   Calculation information:
+      Number of atoms:                   2
+      Number of AO shells:              12
+      Number of primitives:             16
+      Number of atomic orbitals:        30
+      Number of basis functions:        28
+
+      Integral cutoff                 1.00e-12
+      Number of threads:                 1
+
+  Performing in-core PK
+  Using 165242 doubles for integral storage.
+  We computed 3081 shell quartets total.
+  Whereas there are 3081 unique shell quartets.
+
+  ==> DiskJK: Disk-Based J/K Matrices <==
+
+    J tasked:                  Yes
+    K tasked:                  Yes
+    wK tasked:                  No
+    Memory [MiB]:              375
+    Schwarz Cutoff:          1E-12
+
+    OpenMP threads:              1
+
+  Minimum eigenvalue in the overlap matrix is 1.6165729866E-03.
+  Reciprocal condition number of the overlap matrix is 3.8355170081E-04.
+    Using symmetric orthogonalization.
+
+  ==> Pre-Iterations <==
+
+  SCF Guess: Superposition of Atomic Densities via on-the-fly atomic UHF (no occupation information).
+
+   -------------------------
+    Irrep   Nso     Nmo    
+   -------------------------
+     A         28      28 
+   -------------------------
+    Total      28      28
+   -------------------------
+
+  ==> Iterations <==
+
+                        Total Energy        Delta E     RMS |[F,P]|
+
+   @RHF iter SAD:    -0.84259130487829   -8.42591e-01   0.00000e+00 
+   @RHF iter   1:    -1.13002946890539   -2.87438e-01   1.69039e-03 ADIIS/DIIS
+   @RHF iter   2:    -1.13281956782663   -2.79010e-03   3.41663e-04 ADIIS/DIIS
+   @RHF iter   3:    -1.13294208049963   -1.22513e-04   2.69760e-05 DIIS
+   @RHF iter   4:    -1.13294258082000   -5.00320e-07   1.15552e-06 DIIS
+   @RHF iter   5:    -1.13294258156916   -7.49155e-10   7.69890e-08 DIIS
+   @RHF iter   6:    -1.13294258157338   -4.21929e-12   6.21057e-09 DIIS
+   @RHF iter   7:    -1.13294258157341   -3.30846e-14   3.71652e-11 DIIS
+  Energy and wave function converged.
+
+
+  ==> Post-Iterations <==
+
+    Orbital Energies [Eh]
+    ---------------------
+
+    Doubly Occupied:                                                      
+
+       1A     -0.593888  
+
+    Virtual:                                                              
+
+       2A      0.166892     3A      0.305243     4A      0.642865  
+       5A      0.692428     6A      0.692428     7A      1.095930  
+       8A      1.119695     9A      1.119695    10A      1.528617  
+      11A      2.337100    12A      2.408253    13A      3.175121  
+      14A      3.175121    15A      3.411223    16A      3.411223  
+      17A      3.674161    18A      3.895016    19A      3.895016  
+      20A      4.082570    21A      4.082570    22A      4.112546  
+      23A      4.112546    24A      4.651236    25A      5.722834  
+      26A      5.722834    27A      5.798614    28A      6.957283  
+
+    Final Occupation by Irrep:
+              A 
+    DOCC [     1 ]
+    NA   [     1 ]
+    NB   [     1 ]
+
+  @RHF Final Energy:    -1.13294258157341
+
+   => Energetics <=
+
+    Nuclear Repulsion Energy =              0.7125980439848427
+    One-Electron Energy =                  -2.5033042823315084
+    Two-Electron Energy =                   0.6577636567732552
+    Total Energy =                         -1.1329425815734104
+
+Computation Completed
+
+
+Properties will be evaluated at   0.000000,   0.000000,   0.000000 [a0]
+
+Properties computed using the SCF density matrix
+
+
+ Multipole Moments:
+
+ ------------------------------------------------------------------------------------
+     Multipole            Electronic (a.u.)      Nuclear  (a.u.)        Total (a.u.)
+ ------------------------------------------------------------------------------------
+
+ L = 1.  Multiply by 2.5417464519 to convert [e a0] to [Debye]
+ Dipole X            :         -0.0000000            0.0000000           -0.0000000
+ Dipole Y            :          0.0000000            0.0000000            0.0000000
+ Dipole Z            :         -0.0000000            0.0000000           -0.0000000
+ Magnitude           :                                                    0.0000000
+
+ ------------------------------------------------------------------------------------
+
+*** tstop() called on CHEM353Q05NALT at Thu Sep 12 12:10:29 2024
+Module time:
+	user time   =       0.06 seconds =       0.00 minutes
+	system time =       0.01 seconds =       0.00 minutes
+	total time  =          0 seconds =       0.00 minutes
+Total time:
+	user time   =       1.10 seconds =       0.02 minutes
+	system time =       0.34 seconds =       0.01 minutes
+	total time  =        311 seconds =       5.18 minutes
+ MINTS: Wrapper to libmints.
+   by Justin Turney
+
+   Calculation information:
+      Number of threads:                 1
+      Number of atoms:                   2
+      Number of AO shells:              12
+      Number of SO shells:              12
+      Number of primitives:             16
+      Number of atomic orbitals:        30
+      Number of basis functions:        28
+
+      Number of irreps:                  1
+      Integral cutoff                 1.00e-12
+      Number of functions per irrep: [  28 ]
+
+ OEINTS: Overlap, kinetic, potential, dipole, and quadrupole integrals
+         stored in file 35.
+
+      Computing two-electron integrals...done
+      Computed 19125 non-zero two-electron integrals.
+        Stored in file 33.
+
+
+         ---------------------------------------------------------
+                          Configuration Interaction
+                            (a 'D E T C I' module)
+
+                 C. David Sherrill, Daniel G. A. Smith, and
+                              Matt L. Leininger
+         ---------------------------------------------------------
+
+
+   ==> Parameters <==
+
+    EX LEVEL       =        2      H0 BLOCKSIZE  =     1000
+    VAL EX LEVEL   =        0      H0 GUESS SIZE =     1000
+    H0COUPLINGSIZE =        0      H0 COUPLING   =       NO
+    MAXITER        =       24      NUM PRINT     =       20
+    NUM ROOTS      =        3      ICORE         =        1
+    PRINT LVL      =        1      FCI           =      YES
+    R CONV         = 1.00e-04      MIXED         =      YES
+    E CONV         = 1.00e-10      MIXED4        =      YES
+    R4S            =       NO      REPL OTF      =       NO
+    DIAG METHOD    =      SEM      FOLLOW ROOT   =        0
+    PRECONDITIONER = DAVIDSON      UPDATE        = DAVIDSON
+    S              =   0.0000      Ms0           =      YES
+    GUESS VECTOR   =  H0BLOCK      OPENTYPE      =     NONE
+    COLLAPSE SIZE  =        1      HD AVG        = EVANGELISTI
+    MAX NUM VECS   =       75      REF SYM       =     AUTO
+    IOPEN        =       NO
+
+    EX ALLOW       =  1  1 
+    STATE AVERAGE  =  0(1.00) 
+
+   ==> CI Orbital and Space information <==
+
+   ------------------------------------
+               Space    Total     A
+   ------------------------------------
+                 Nso       28    28
+                 Nmo       28    28
+               Ndocc        1     1
+               Nsocc        0     0
+   ------------------------------------
+              CI Spaces
+   ------------------------------------
+        Dropped DOCC        0     0
+              Active       28    28
+        Dropped UOCC        0     0
+   ------------------------------------
+
+   ==> Setting up CI strings <==
+
+    There are 28 alpha and 28 beta strings
+    The CI space requires 784 (7.84E+02) determinants and 1 blocks
+
+   ==> Transforming CI integrals <==
+
+	Presorting SO-basis two-electron integrals.
+	Sorting File: SO Ints (nn|nn) nbuckets = 1
+	Constructing frozen core operators
+	Starting first half-transformation.
+	Sorting half-transformed integrals.
+	First half integral transformation complete.
+	Starting second half-transformation.
+	Two-electron integral transformation complete.
+
+   ==> Starting CI iterations <==
+
+    H0 Block Eigenvalue =  -1.13658995
+
+    Simultaneous Expansion Method (Block Davidson Method)
+    Using 3 initial trial vectors
+
+(sem_iter): H0block_->H0b_diag[1][1] - H0block_->H0b_diag[2][1] = 0.664624 - -0.664624 = 1.329247 > 1.0E-8
+(sem_iter): H0block_->H0b_diag[3][3] - H0block_->H0b_diag[4][3] = 0.704965 - -0.704965 = 1.409930 > 1.0E-8
+     Iter   Root       Total Energy       Delta E      C RMS
+
+   @CI  0:     0     -1.136589945550   -1.8492E+00   3.5491E-01  
+   @CI  0:     1     -0.652546178713   -1.3651E+00   2.4122E-01  
+   @CI  0:     2     -0.514356936008   -1.2270E+00   2.5557E-01  
+
+   @CI  1:     0     -1.171222017448   -3.4632E-02   7.2442E-02  
+   @CI  1:     1     -0.675491555188   -2.2945E-02   5.4767E-02  
+   @CI  1:     2     -0.531446301054   -1.7089E-02   4.8128E-02  
+
+   @CI  2:     0     -1.172312834187   -1.0908E-03   9.7184E-03  
+   @CI  2:     1     -0.676554221031   -1.0627E-03   1.1262E-02  
+   @CI  2:     2     -0.532232249088   -7.8595E-04   1.0458E-02  
+
+   @CI  3:     0     -1.172336127714   -2.3294E-05   1.4286E-03  
+   @CI  3:     1     -0.676604007205   -4.9786E-05   2.3713E-03  
+   @CI  3:     2     -0.532283067530   -5.0818E-05   3.2929E-03  
+
+   @CI  4:     0     -1.172336678753   -5.5104E-07   1.7344E-04  
+   @CI  4:     1     -0.676605726950   -1.7197E-06   3.1984E-04  
+   @CI  4:     2     -0.532288364213   -5.2967E-06   7.8553E-04  
+
+   @CI  5:     0     -1.172336686441   -7.6878E-09   1.5348E-05  
+   @CI  5:     1     -0.676605768032   -4.1083E-08   6.9706E-05  
+   @CI  5:     2     -0.532288577356   -2.1314E-07   9.8661E-05  
+
+   @CI  6:     0     -1.172336686494   -5.3013E-11   1.3656E-06 c
+   @CI  6:     1     -0.676605769798   -1.7651E-09   1.2892E-05  
+   @CI  6:     2     -0.532288580155   -2.7995E-09   1.0962E-05  
+
+   @CI  7:     0     -1.172336686494   -1.3545E-14   1.3133E-06 c
+   @CI  7:     1     -0.676605769856   -5.8619E-11   1.9342E-06 c
+   @CI  7:     2     -0.532288580192   -3.6655E-11   1.5820E-06 c
+
+
+   ==> Energetics <==
+
+    SCF energy =           -1.132942581573410
+    Total CI energy =      -1.172336686493833
+
+   ==> FCI root 0 information <==
+
+    FCI Root 0 energy =    -1.172336686493833
+
+   The 20 most important determinants:
+
+    *   1   -0.990975  (    0,    0)  1AX 
+    *   2    0.055947  (    3,    3)  4AX 
+    *   3    0.044436  (    1,    3)  2AA 4AB 
+    *   4    0.044436  (    3,    1)  2AB 4AA 
+    *   5    0.041860  (    5,    5)  6AX 
+    *   6    0.041860  (    4,    4)  5AX 
+    *   7    0.039689  (    1,    1)  2AX 
+    *   8    0.038221  (    2,    2)  3AX 
+    *   9    0.021207  (    3,   10)  4AA 11AB 
+    *  10    0.021207  (   10,    3)  4AB 11AA 
+    *  11    0.016679  (    2,   11)  3AA 12AB 
+    *  12    0.016679  (   11,    2)  3AB 12AA 
+    *  13    0.015879  (   11,   11)  12AX 
+    *  14   -0.014814  (    2,    6)  3AA 7AB 
+    *  15   -0.014814  (    6,    2)  3AB 7AA 
+    *  16    0.014386  (   10,   10)  11AX 
+    *  17    0.013272  (    1,   10)  2AA 11AB 
+    *  18    0.013272  (   10,    1)  2AB 11AA 
+    *  19    0.013103  (    6,    6)  7AX 
+    *  20    0.010086  (   15,   15)  16AX 
+
+
+   ==> FCI root 1 information <==
+
+    FCI Root 1 energy =    -0.676605769856144
+
+   The 20 most important determinants:
+
+    *   1   -0.692247  (    1,    0)  1AB 2AA 
+    *   2   -0.692247  (    0,    1)  1AA 2AB 
+    *   3   -0.115069  (    1,    2)  2AA 3AB 
+    *   4   -0.115069  (    2,    1)  2AB 3AA 
+    *   5    0.057077  (    1,    6)  2AA 7AB 
+    *   6    0.057077  (    6,    1)  2AB 7AA 
+    *   7   -0.036264  (    3,    0)  1AB 4AA 
+    *   8   -0.036264  (    0,    3)  1AA 4AB 
+    *   9   -0.028216  (    1,   11)  2AA 12AB 
+    *  10   -0.028216  (   11,    1)  2AB 12AA 
+    *  11    0.022058  (    5,    7)  6AA 8AB 
+    *  12    0.022058  (    7,    5)  6AB 8AA 
+    *  13    0.022058  (    4,    8)  5AA 9AB 
+    *  14    0.022058  (    8,    4)  5AB 9AA 
+    *  15    0.021776  (    3,    6)  4AA 7AB 
+    *  16    0.021776  (    6,    3)  4AB 7AA 
+    *  17    0.014550  (    0,   10)  1AA 11AB 
+    *  18    0.014550  (   10,    0)  1AB 11AA 
+    *  19   -0.011322  (    1,   16)  2AA 17AB 
+    *  20   -0.011322  (   16,    1)  2AB 17AA 
+
+
+   ==> FCI root 2 information <==
+
+    FCI Root 2 energy =    -0.532288580191774
+
+   The 20 most important determinants:
+
+    *   1   -0.690505  (    0,    2)  1AA 3AB 
+    *   2   -0.690505  (    2,    0)  1AB 3AA 
+    *   3   -0.193251  (    2,    2)  3AX 
+    *   4    0.053775  (    3,    3)  4AX 
+    *   5   -0.031873  (    1,    1)  2AX 
+    *   6    0.023982  (    3,   10)  4AA 11AB 
+    *   7    0.023982  (   10,    3)  4AB 11AA 
+    *   8   -0.020930  (    2,   11)  3AA 12AB 
+    *   9   -0.020930  (   11,    2)  3AB 12AA 
+    *  10    0.019309  (    2,    6)  3AA 7AB 
+    *  11    0.019309  (    6,    2)  3AB 7AA 
+    *  12    0.014712  (   10,   10)  11AX 
+    *  13    0.014039  (   11,   11)  12AX 
+    *  14    0.013311  (    1,    3)  2AA 4AB 
+    *  15    0.013311  (    3,    1)  2AB 4AA 
+    *  16    0.011114  (    1,   10)  2AA 11AB 
+    *  17    0.011114  (   10,    1)  2AB 11AA 
+    *  18    0.010083  (   15,   15)  16AX 
+    *  19    0.010083  (   14,   14)  15AX 
+    *  20   -0.008763  (    5,   14)  6AA 15AB 
+
+		 "A good bug is a dead bug" 
+
+			 - Starship Troopers
+
+		 "I didn't write FORTRAN.  That's the problem."
+
+			 - Edward Valeev
+
+
+Properties will be evaluated at   0.000000,   0.000000,   0.000000 [a0]
+
+Properties computed using the FCI density matrix
+
+
+ Multipole Moments:
+
+ ------------------------------------------------------------------------------------
+     Multipole            Electronic (a.u.)      Nuclear  (a.u.)        Total (a.u.)
+ ------------------------------------------------------------------------------------
+
+ L = 1.  Multiply by 2.5417464519 to convert [e a0] to [Debye]
+ Dipole X            :         -0.0000000            0.0000000           -0.0000000
+ Dipole Y            :         -0.0000000            0.0000000           -0.0000000
+ Dipole Z            :          0.0000000            0.0000000            0.0000000
+ Magnitude           :                                                    0.0000000
+
+ ------------------------------------------------------------------------------------
+
+
+Properties will be evaluated at   0.000000,   0.000000,   0.000000 [a0]
+
+Properties computed using the CI density matrix
+
+
+ Multipole Moments:
+
+ ------------------------------------------------------------------------------------
+     Multipole            Electronic (a.u.)      Nuclear  (a.u.)        Total (a.u.)
+ ------------------------------------------------------------------------------------
+
+ L = 1.  Multiply by 2.5417464519 to convert [e a0] to [Debye]
+ Dipole X            :         -0.0000000            0.0000000           -0.0000000
+ Dipole Y            :         -0.0000000            0.0000000           -0.0000000
+ Dipole Z            :          0.0000000            0.0000000            0.0000000
+ Magnitude           :                                                    0.0000000
+
+ ------------------------------------------------------------------------------------
+
+   ===> CI properties for all CI roots <=== 
+
+
+Properties computed using the CI ROOT 0 density matrix
+
+
+ Multipole Moments:
+
+ ------------------------------------------------------------------------------------
+     Multipole            Electronic (a.u.)      Nuclear  (a.u.)        Total (a.u.)
+ ------------------------------------------------------------------------------------
+
+ L = 1.  Multiply by 2.5417464519 to convert [e a0] to [Debye]
+ Dipole X            :         -0.0000000            0.0000000           -0.0000000
+ Dipole Y            :         -0.0000000            0.0000000           -0.0000000
+ Dipole Z            :          0.0000000            0.0000000            0.0000000
+ Magnitude           :                                                    0.0000000
+
+ ------------------------------------------------------------------------------------
+
+Properties computed using the CI ROOT 1 density matrix
+
+
+ Multipole Moments:
+
+ ------------------------------------------------------------------------------------
+     Multipole            Electronic (a.u.)      Nuclear  (a.u.)        Total (a.u.)
+ ------------------------------------------------------------------------------------
+
+ L = 1.  Multiply by 2.5417464519 to convert [e a0] to [Debye]
+ Dipole X            :          0.0000000            0.0000000            0.0000000
+ Dipole Y            :         -0.0000000            0.0000000           -0.0000000
+ Dipole Z            :         -0.0000000            0.0000000           -0.0000000
+ Magnitude           :                                                    0.0000000
+
+ ------------------------------------------------------------------------------------
+
+Properties computed using the CI ROOT 2 density matrix
+
+
+ Multipole Moments:
+
+ ------------------------------------------------------------------------------------
+     Multipole            Electronic (a.u.)      Nuclear  (a.u.)        Total (a.u.)
+ ------------------------------------------------------------------------------------
+
+ L = 1.  Multiply by 2.5417464519 to convert [e a0] to [Debye]
+ Dipole X            :         -0.0000000            0.0000000           -0.0000000
+ Dipole Y            :         -0.0000000            0.0000000           -0.0000000
+ Dipole Z            :         -0.0000000            0.0000000           -0.0000000
+ Magnitude           :                                                    0.0000000
+
+ ------------------------------------------------------------------------------------
+
+   ===> CI properties for all CI transition density matrices <=== 
+
+
+Properties computed using the CI ROOT 0 -> ROOT 1 density matrix
+
+
+Transition Multipole Moments:
+
+ ------------------------------------------------------------------------------------
+     Multipole            Electronic (a.u.)      Nuclear  (a.u.)        Total (a.u.)
+ ------------------------------------------------------------------------------------
+
+ L = 1.  Multiply by 2.5417464519 to convert [e a0] to [Debye]
+ Dipole X            :          0.0000000            0.0000000            0.0000000
+ Dipole Y            :         -0.0000000            0.0000000           -0.0000000
+ Dipole Z            :          1.2103949            0.0000000            1.2103949
+ Magnitude           :                                                    1.2103949
+
+ ------------------------------------------------------------------------------------
+
+Properties computed using the CI ROOT 0 -> ROOT 2 density matrix
+
+
+Transition Multipole Moments:
+
+ ------------------------------------------------------------------------------------
+     Multipole            Electronic (a.u.)      Nuclear  (a.u.)        Total (a.u.)
+ ------------------------------------------------------------------------------------
+
+ L = 1.  Multiply by 2.5417464519 to convert [e a0] to [Debye]
+ Dipole X            :          0.0000000            0.0000000            0.0000000
+ Dipole Y            :          0.0000000            0.0000000            0.0000000
+ Dipole Z            :         -0.0000000            0.0000000           -0.0000000
+ Magnitude           :                                                    0.0000000
+
+ ------------------------------------------------------------------------------------
