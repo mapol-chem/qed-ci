@@ -12,10 +12,12 @@ void get_graph(size_t N, size_t n_o, int* Y);
 int* string_to_obtlist(size_t string, int nmo, int* length);
 size_t index_to_string(int index, int N, int n_o, int* Y);    
 void get_string(double* h1e, double* h2e, double* H_diag, int* b_array, int* table, int* table_creation, 
-		int* table_annihilation, int N_p, int num_alpha, int nmo, int N, int n_o, int n_in_a, double E_core, double omega, double Enuc, double dc);  
+		int* table_annihilation, int N_p, int num_alpha, int nmo, int N, int n_o, int n_in_a, double E_core, double omega, double Enuc, double dc, double target_spin);  
 void single_replacement_list(int num_alpha, int N_ac, int n_o_ac, int* Y, int* table);
 void build_H_diag(double* h1e, double* h2e, double* H_diag, int N_p, int num_alpha, int nmo, int n_act_a,int n_act_orb,int n_in_a, double omega, double Enuc, double dc, int* Y); 
 void build_H_diag_cas(double* h1e, double* h2e, double* H_diag, int N_p, int num_alpha, int nmo, int n_act_a,int n_act_orb,int n_in_a, double E_core, double omega, double Enuc, double dc, int* Y); 
+void build_H_diag_cas_spin(double* h1e, double* h2e, double* H_diag, int N_p, int num_alpha, int nmo, int n_act_a,int n_act_orb,
+		int n_in_a, double E_core, double omega, double Enuc, double dc, int* Y, double target_spin); 
 void sigma3(double* h2e, double* c_vectors, double* c1_vectors, int* table, int* table_creation, int* table_annihilation, 
 		 int N_ac, int n_o_ac, int n_o_in, int nmo, int photon_p, int state_p, int num_photon); 
 
@@ -31,9 +33,24 @@ void build_sigma(double* h1e, double* h2e, double* d_cmo, double* c_vectors, dou
 
 void build_b_array(int* table, int* b_matrix, int num_alpha, int num_links, int nmo);
 
+double check_total_spin(double* c_vector, double* Sdiag, int* table, int* b_array, int num_links0, int n_o_ac, int num_alpha, int N_p);
+void first_order_spin_projection(double* s_vector, double* Sdiag, double* Sdiag_projection, int* table, int* b_array, int num_links0, int n_o_ac, int num_alpha,
+        int N_p, double target_spin); 
+
 void build_S_diag(double* S_diag, int num_alpha, int nmo, int N_ac,int n_o_ac,int n_o_in, double shift);
+void build_sigma_s_square_diagonal(double* c_vectors, double* c1_vectors, double* S_diag, int num_alpha, int photon_p1, int state_p1,
+                int photon_p2, int state_p2, int num_photon, double scale); 
+void build_sigma_s_square_diagonal(double* c_vectors, double* c1_vectors, double* S_diag, int num_alpha, int photon_p1, int state_p1,
+    int photon_p2, int state_p2, int num_photon, double scale);
+void build_sigma_s_square(double* c_vectors, double *c1_vectors, double* S_diag, int* b_array, 
+		int* table1, int num_links, int n_o_ac, int num_alpha, int num_state, int N_p, double scale); 
+void build_sigma_s_fourth_power(double* c_vectors, double *c1_vectors, double* S_diag, int* b_array, 
+		int* table1, int num_links, int n_o_ac, int num_alpha, int num_state, int N_p, double scale);
+
 void gram_schmidt_orthogonalization(double* Q, int rows, int cols);
 void gram_schmidt_add(double* Q, int rows, int cols, int rows2);
+void davidson_spin(double* h1e, double* h2e, double* d_cmo, double* Hdiag, double* Sdiag, double* Sdiag_projection, double* eigenvals, double* eigenvecs, int* table, 
+		int* table_creation, int* table_annihilation, int* b_array, int *constint, double *constdouble, int* index_Hdiag, bool casscf, double target_spin, callback_ build_sigma);
 void davidson(double* h1e, double* h2e, double* d_cmo, double* Hdiag, double* eigenvals, double* eigenvecs, int* table, 
 		int* table_creation, int* table_annihilation, int *constint, double *constdouble, bool casscf, callback_ build_sigma);
 
@@ -43,8 +60,8 @@ void build_active_rdm(double* eigvec, double* D_tu, double* D_tuvw, int* table, 
 void build_active_photon_electron_one_rdm(double* eigvec, double* Dpe_tu, int* table, int N_ac, int n_o_ac, int num_photon, int state_p1, int state_p2, double weight); 
 void build_photon_electron_one_rdm(double* eigvec, double* Dpe, int* table, int N_ac, int n_o_ac, int n_o_in, int num_photon, int state_p1, int state_p2); 
 
-void get_roots(double* h1e, double* h2e, double* d_cmo, double* Hdiag, double* eigenvals, double* eigenvecs, int* table, 
-		int* table_creation, int* table_annihilation, int *constint, double *constdouble, bool casscf);
+void get_roots(double* h1e, double* h2e, double* d_cmo, double* Hdiag, double* Sdiag, double* Sdiag_projection, double* eigenvals, double* eigenvecs, int* table, 
+		int* table_creation, int* table_annihilation, int* b_array, int *constint, double *constdouble, int* index_Hdiag, bool casscf, double target_spin);
 void symmetric_eigenvalue_problem(double* A, int N, double* eig);
 void getMemory2(unsigned long* currRealMem, unsigned long* peakRealMem, unsigned long* currVirtMem, unsigned long* peakVirtMem);
 

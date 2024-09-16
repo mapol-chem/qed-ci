@@ -251,10 +251,10 @@ return string;
 int phase_single_excitation(size_t p, size_t q, size_t string) {
        size_t mask;
        if (p>q) {
-           mask=(1UL<<p)-(1UL<<(q+1));
+           mask=(1<<p)-(1<<(q+1));
        }
        else {
-           mask=(1UL<<q)-(1UL<<(p+1));
+           mask=(1<<q)-(1<<(p+1));
        }
        if (__builtin_popcount(mask & string) %2) {
            return -1;
@@ -283,9 +283,9 @@ void single_creation_list2(int N_ac, int n_o_ac, int n_o_in, int* Y,int* table_c
         int sign[n_o_ac-N_ac+1];
         int count_vir = 0;
         for (int i = 0; i < n_o_ac; i++) {
-            if ((string &(1UL<<i)) == 0) {
+            if ((string &(1<<i)) == 0) {
                 vir[count_vir] = i;
-                size_t mask = (1UL<<i)-1;
+                size_t mask = (1<<i)-1;
 		if (((__builtin_popcount(mask & string)) + n_o_in)  %2) {
 		    sign[count_vir] = -1;
 		}
@@ -297,7 +297,7 @@ void single_creation_list2(int N_ac, int n_o_ac, int n_o_in, int* Y,int* table_c
         }
         
         for (int a = 0; a < n_o_ac-N_ac+1; a++) {
-            size_t string1 = string | (1UL<<vir[a]);
+            size_t string1 = string | (1<<vir[a]);
             table_creation[count*3+0] = string_to_index(string1,N_ac,n_o_ac,Y);
             table_creation[count*3+1] = sign[a];
             table_creation[count*3+2] = vir[a];
@@ -325,7 +325,7 @@ void single_annihilation_list2(int N_ac, int n_o_ac, int n_o_in, int* Y, int* ta
         int occ[N_ac];
         int count_occ = 0;
         for (int i = 0; i < n_o_ac; i++) {
-            if (string &(1UL<<i)) {
+            if (string &(1<<i)) {
                 occ[count_occ] = i;
      	        count_occ++;
             }
@@ -333,7 +333,7 @@ void single_annihilation_list2(int N_ac, int n_o_ac, int n_o_in, int* Y, int* ta
 	//printf("\n");
         
         for (int i = 0; i < N_ac; i++) {
-            size_t string1 = string ^ (1UL<<occ[i]);
+            size_t string1 = string ^ (1<<occ[i]);
 	    int sign;
 	    if ((i+n_o_in)%2) {
 	        sign = -1;
@@ -361,7 +361,7 @@ void single_replacement_list(int num_alpha, int N_ac, int n_o_ac, int* Y,int* ta
            int count_occ = 0;
            int count_vir = 0;
            for (int i = 0; i < n_o_ac; i++) {
-               if (string &(1UL<<i)) {
+               if (string &(1<<i)) {
                    occ[count_occ] = i;
 	           count_occ++;
 	       }
@@ -380,7 +380,7 @@ void single_replacement_list(int num_alpha, int N_ac, int n_o_ac, int* Y,int* ta
 	   }
            for (int i = 0; i < N_ac; i++) {
                for (int a = 0; a < n_o_ac-N_ac; a++) {
-                   uint64_t string1 = (string^(1UL<<occ[i])) | (1UL<<vir[a]);
+                   uint64_t string1 = (string^(1<<occ[i])) | (1<<vir[a]);
                    table[count*4+0] = string_to_index(string1,N_ac,n_o_ac,Y);
                    table[count*4+1] = phase_single_excitation(vir[a],occ[i],string);
                    table[count*4+2] = vir[a];
@@ -482,8 +482,7 @@ void build_H_diag(double* h1e, double* h2e, double* H_diag, int N_p, int num_alp
 void build_H_diag_cas(double* h1e, double* h2e, double* H_diag, int N_p, int num_alpha,int nmo, int n_act_a,int n_act_orb,int n_in_a, double E_core, double omega, double Enuc, double dc, int* Y) {
     size_t num_dets = num_alpha * num_alpha;
     int np1 = N_p + 1;
-    int n_occupied = n_act_orb + n_in_a;
-    //#pragma omp parallel for num_threads(16)
+    #pragma omp parallel for num_threads(16)
     for (size_t index_photon_det = 0; index_photon_det < np1*num_dets; index_photon_det++) {
         size_t Idet = index_photon_det%num_dets;	
         int m = (index_photon_det-Idet)/num_dets;	
@@ -546,20 +545,19 @@ void build_H_diag_cas(double* h1e, double* h2e, double* H_diag, int N_p, int num
             int n_ia = occupation_list_spin[a*3+1]; 
             int n_ib = occupation_list_spin[a*3+2];
             int n_i = n_ia+ n_ib; 
-            int ii = i * n_occupied + i;
-            c += n_i * h1e[i*n_occupied+i];
+            int ii = i * nmo + i;
+            c += n_i * h1e[i*nmo+i];
             for (int b = 0; b < (dim_d+2*dim_s); b++) {
                 int j = occupation_list_spin[b*3+0];
                 int n_ja = occupation_list_spin[b*3+1]; 
                 int n_jb = occupation_list_spin[b*3+2];
                 int n_j = n_ja + n_jb; 
-                int jj = j * n_occupied + j;
-                c += 0.5 * n_i * n_j * h2e[ii*n_occupied*n_occupied+jj];
-                int ij = i * n_occupied + j;
-                c -= 0.5 * (n_ia * n_ja + n_ib * n_jb) * h2e[ij*n_occupied*n_occupied+ij];
+                int jj = j * nmo + j;
+                c += 0.5 * n_i * n_j * h2e[ii*nmo*nmo+jj];
+                int ij = i * nmo + j;
+                c -= 0.5 * (n_ia * n_ja + n_ib * n_jb) * h2e[ij*nmo*nmo+ij];
     	    }
     	}
-	//printf("%20.12lf %20.12lf  %20.12lf \n", pp, qq, pp + qq + E_core);
         H_diag[Idet+start] = c + m * omega + Enuc + dc + E_core;
     	free(double_active);
     	free(single_occupation_a);
@@ -568,124 +566,9 @@ void build_H_diag_cas(double* h1e, double* h2e, double* H_diag, int N_p, int num
     }
 
 }
-void build_H_diag_cas_spin(double* h1e, double* h2e, double* H_diag, int N_p, int num_alpha,int nmo, int n_act_a,int n_act_orb,int n_in_a, double E_core, double omega, double Enuc, 
-		double dc, int* Y, double target_spin) {
-    size_t num_dets = num_alpha * num_alpha;
-    int np1 = N_p + 1;
-    int n_occupied = n_act_orb + n_in_a;
-    #pragma omp parallel for num_threads(16)
-    for (size_t index_photon_det = 0; index_photon_det < np1*num_dets; index_photon_det++) {
-    	//printf("%d\n", index_photon_det);
-        size_t Idet = index_photon_det%num_dets;	
-        int m = (index_photon_det-Idet)/num_dets;	
-        int start =  m * num_dets; 
-    
-        int index_b = Idet%num_alpha;
-        int index_a = (Idet-index_b)/num_alpha;
-        size_t string_a = index_to_string(index_a,n_act_a,n_act_orb,Y);
-        size_t string_b = index_to_string(index_b,n_act_a,n_act_orb,Y);
-    	size_t ab = string_a & string_b;
-    	int length;
-    	int* double_active = string_to_obtlist(ab, nmo, &length);
-    	int dim_d = length;
-    	int double_occupation[dim_d];
-        for (int i = 0; i < dim_d; i++) {
-            //if (i < n_in_a) {
-    	    //   double_occupation[i] = i;	    
-    	    //}
-            //else {
-    	    //   double_occupation[i] = double_active[i-n_in_a] + n_in_a;	
-    	    //}
-    	       double_occupation[i] = double_active[i] + n_in_a;	
-    	}
-        
-        size_t e = string_a^string_b;
-        size_t ea = e&string_a;
-        size_t eb = e&string_b;
-        int dim_s;
-    	int* single_occupation_a = string_to_obtlist(ea, nmo, &dim_s);
-    	int* single_occupation_b = string_to_obtlist(eb, nmo, &dim_s);
-            for (int i = 0; i < dim_s; i++) {
-    	    single_occupation_a[i] += n_in_a;	
-    	    single_occupation_b[i] += n_in_a;	
-    	}
-            
-            int* occupation_list_spin = (int*) malloc((dim_d+2*dim_s)*3*sizeof(int));
-            memset(occupation_list_spin, 0, (dim_d+2*dim_s)*3*sizeof(int));
-            for (int i = 0; i < dim_d; i++) {
-                occupation_list_spin[i*3+0] = double_occupation[i];
-                occupation_list_spin[i*3+1] = 1; 
-                occupation_list_spin[i*3+2] = 1; 
-    	}
-            for (int i = 0; i < dim_s; i++) {
-                occupation_list_spin[(i+dim_d)*3+0] = single_occupation_a[i];
-                occupation_list_spin[(i+dim_d)*3+1] = 1; 
-                occupation_list_spin[(i+dim_d+dim_s)*3+0] = single_occupation_b[i];
-                occupation_list_spin[(i+dim_d+dim_s)*3+2] = 1; 
-    	}
-    	//for (int i = 0; i < dim_d + 2*dim_s; i++) {
-    	//    for (int j = 0; j < 3; j++) {
-    	//        printf("%4d", occupation_list_spin[i*3+j]);
-    	//    }
-    	//        printf("\n");
-     	//    
-    	//}
-        //fflush(stdout);
-    	//printf("\n");
-    	//printf("\n");
-    	//printf("\n");
- 	double F = 0.0;
-        if (dim_s != 0) {	
-	    F = (4.0*target_spin * target_spin -2.0*dim_s) / (2.0*dim_s) / (2.0*dim_s-1.0);
-        }
-	//printf("%20.12lf\n", F);
-        double c = 0.0;
-        for (int a = 0; a < (dim_d+2*dim_s); a++) {
-            int i = occupation_list_spin[a*3+0];
-            int n_ia = occupation_list_spin[a*3+1]; 
-            int n_ib = occupation_list_spin[a*3+2];
-            int n_i = n_ia+ n_ib;
-	    int N_i = n_i * (2 - n_i);
-            int ii = i * n_occupied + i;
-            c += n_i * h1e[ii];
-	    if (target_spin >= 0.0) {
-	        c -= 0.25 * N_i * h2e[ii*n_occupied*n_occupied+ii];
-	    }
-            for (int b = 0; b < (dim_d+2*dim_s); b++) {
-                int j = occupation_list_spin[b*3+0];
-                int n_ja = occupation_list_spin[b*3+1]; 
-                int n_jb = occupation_list_spin[b*3+2];
-                int n_j = n_ja + n_jb; 
-		int N_j = n_j * (2 - n_j);
-		int jj = j * n_occupied + j;
-		int ij = i * n_occupied + j;
-		//printf("%4d %4d %4d %4d \n", n_i, N_i, n_j, N_j);
-                c += 0.5 * n_i * n_j * h2e[ii*n_occupied*n_occupied+jj];
-	        if (target_spin < 0.0) {
-                    c -= 0.5 * (n_ia * n_ja + n_ib * n_jb) * h2e[ij*n_occupied*n_occupied+ij];
-	        }
-	        if (target_spin >= 0.0) {
-                    c -= 0.25 * n_i * n_j * h2e[ij*n_occupied*n_occupied+ij];
-                    if (i !=j) {
-	                c -= 0.25 * F * N_i * N_j * h2e[ij*n_occupied*n_occupied+ij];
-	            }
-	        }
-    	    }
-    	}
-	//printf("%20.12lf %20.12lf %20.12lf %20.12lf\n",pp,qq,c, pp + qq + E_core);
-        H_diag[Idet+start] = c + m * omega + Enuc + dc + E_core;
-    	//printf("%4d%20.12lf\n",2*dim_s, H_diag[Idet+start]);
 
-	free(double_active);
-    	free(single_occupation_a);
-    	free(single_occupation_b);
-    	free(occupation_list_spin);
-    }
-    
-    fflush(stdout);
-}
 void get_string(double* h1e, double* h2e, double* H_diag, int* b_array, int* table, int* table_creation, int* table_annihilation, int N_p, int num_alpha, int nmo, int N, 
-		int n_o, int n_in_a, double E_core, double omega,double Enuc, double dc, double target_spin) {
+		int n_o, int n_in_a, double omega,double Enuc, double dc) {
     int rows = N*(n_o-N+1);
     int cols = 3;
     
@@ -701,8 +584,7 @@ void get_string(double* h1e, double* h2e, double* H_diag, int* b_array, int* tab
     cols = 4;
     double itime, ftime, exec_time;
     itime = omp_get_wtime();
-    //build_H_diag(h1e, h2e, H_diag, N_p, num_alpha, nmo, N, n_o, n_in_a, omega, Enuc, dc,Y);   
-    build_H_diag_cas_spin(h1e, h2e, H_diag, N_p, num_alpha, nmo, N, n_o, n_in_a, E_core, omega, Enuc, dc,Y, target_spin);   
+    build_H_diag(h1e, h2e, H_diag, N_p, num_alpha, nmo, N, n_o, n_in_a, omega, Enuc, dc,Y);   
     ftime = omp_get_wtime();
     time_taken = ((double)t)/CLOCKS_PER_SEC;
     exec_time = ftime - itime;
@@ -745,20 +627,20 @@ void build_sigma(double* h1e, double* h2e, double* d_cmo, double* c_vectors, dou
 	    if (N_p == 0) continue;
             if ((0 < m) && (m < N_p)) {
                 someconstant = -sqrt(m * omega/2);
-                sigma_dipole(d_cmo, c_vectors, c1_vectors, num_alpha, num_links, table, n_o_ac, n_o_in, someconstant, m-1, m, n, np1);  
+                sigma_dipole(d_cmo, c_vectors, c1_vectors, num_alpha, num_links, table, nmo, n_o_in, someconstant, m-1, m, n, np1);  
                 constant_terms_contraction(c_vectors, c1_vectors, num_alpha, -d_exp * someconstant, m-1, m, n, np1);    
                 someconstant = -sqrt((m+1) * omega/2);
-                sigma_dipole(d_cmo, c_vectors, c1_vectors, num_alpha, num_links, table, n_o_ac, n_o_in, someconstant, m+1, m, n, np1);  
+                sigma_dipole(d_cmo, c_vectors, c1_vectors, num_alpha, num_links, table, nmo, n_o_in, someconstant, m+1, m, n, np1);  
                 constant_terms_contraction(c_vectors, c1_vectors, num_alpha, -d_exp * someconstant, m+1, m, n, np1);    
             }
             else if (m == N_p) {
                 someconstant = -sqrt(m * omega/2);
-                sigma_dipole(d_cmo, c_vectors, c1_vectors, num_alpha, num_links, table, n_o_ac, n_o_in, someconstant, m-1, m, n, np1);  
+                sigma_dipole(d_cmo, c_vectors, c1_vectors, num_alpha, num_links, table, nmo, n_o_in, someconstant, m-1, m, n, np1);  
                 constant_terms_contraction(c_vectors, c1_vectors, num_alpha, -d_exp * someconstant, m-1, m, n, np1);   
             }
             else {
                 someconstant = -sqrt((m+1) * omega/2);
-                sigma_dipole(d_cmo, c_vectors, c1_vectors, num_alpha, num_links, table, n_o_ac, n_o_in, someconstant, m+1, m, n, np1);  
+                sigma_dipole(d_cmo, c_vectors, c1_vectors, num_alpha, num_links, table, nmo, n_o_in, someconstant, m+1, m, n, np1);  
                 constant_terms_contraction(c_vectors, c1_vectors, num_alpha, -d_exp * someconstant, m+1, m, n, np1);   
             }
         }
@@ -776,7 +658,7 @@ void sigma3(double* h2e, double* c_vectors, double* c1_vectors, int* table,  int
     int num_links = N_ac * (n_o_ac-N_ac) + N_ac;
     int num_links1 = n_o_ac-N_ac+1;
     int num_links2 = N_ac;
-    int n_occupied = n_o_ac + n_o_in;
+
     double* D = (double*) malloc(num_alpha1 * n_o_ac * num_alpha*sizeof(double));
     memset(D, 0, num_alpha1 * n_o_ac * num_alpha * sizeof(double));
     for (int index_ka = 0; index_ka < num_alpha1; index_ka++) {
@@ -805,9 +687,9 @@ void sigma3(double* h2e, double* c_vectors, double* c1_vectors, int* table,  int
             int sign = table[(stride + excitation)*4+1];
             int k = table[(stride + excitation)*4+2]; 
             int l = table[(stride + excitation)*4+3]; 
-            int kl = (k+n_o_in) * n_occupied + (l+n_o_in);
-            cblas_dgemm(CblasRowMajor, CblasNoTrans, CblasNoTrans, n_o_ac, num_alpha1, n_o_ac, sign, h2e+kl*n_occupied*n_occupied+n_o_in*n_occupied+n_o_in, 
-               	  n_occupied, D+index_jb*n_o_ac*num_alpha1, num_alpha1, 1.0, 
+            int kl = (k+n_o_in) * nmo + (l+n_o_in);
+            cblas_dgemm(CblasRowMajor, CblasNoTrans, CblasNoTrans, n_o_ac, num_alpha1, n_o_ac, sign, h2e+kl*nmo*nmo+n_o_in*nmo+n_o_in, 
+               	  nmo, D+index_jb*n_o_ac*num_alpha1, num_alpha1, 1.0, 
             	  T+index_ib*n_o_ac*num_alpha1, num_alpha1);
    
             //for (int index_ka = 0; index_ka < num_alpha1; index_ka++) {
@@ -911,7 +793,6 @@ void sigma12(double* h1e, double* h2e, double* c_vectors, double* c1_vectors, in
     double* F = (double*) malloc(num_alpha*sizeof(double));
 
     double* s_resize = (double*) malloc(num_alpha*sizeof(double));
-    int n_occupied = n_o_ac + n_o_in;
 
     for (int index_ib = 0; index_ib < num_alpha; index_ib++) {
         memset(F, 0, num_alpha*sizeof(double));
@@ -922,15 +803,15 @@ void sigma12(double* h1e, double* h2e, double* c_vectors, double* c1_vectors, in
             int k = table[(stride1 + excitation1)*4+2]; 
             int l = table[(stride1 + excitation1)*4+3]; 
             F[index_kb] += sign1 * h1e[k*n_o_ac+l];
-            int kl = (k + n_o_in) * n_occupied + (l + n_o_in);
+            int kl = (k + n_o_in) * nmo + (l + n_o_in);
             int stride2 = index_kb * num_links;
             for (int excitation2 = 0; excitation2 < num_links; excitation2++) {
                 int index_jb = table[(stride2 + excitation2)*4+0];
                 int sign2 = table[(stride2 + excitation2)*4+1];
                 int i = table[(stride2 + excitation2)*4+2]; 
                 int j = table[(stride2 + excitation2)*4+3]; 
-                int ij = (i + n_o_in) * n_occupied + (j + n_o_in);
-                F[index_jb] += 0.5 * sign1 * sign2 * h2e[ij*n_occupied*n_occupied+kl];
+                int ij = (i + n_o_in) * nmo + (j + n_o_in);
+                F[index_jb] += 0.5 * sign1 * sign2 * h2e[ij*nmo*nmo+kl];
             }
         }
 
@@ -976,15 +857,15 @@ void sigma12(double* h1e, double* h2e, double* c_vectors, double* c1_vectors, in
             int l = table[(stride1 + excitation1)*4+3]; 
             F[index_ka] += sign1 * h1e[k*n_o_ac+l];
             //print(index_kb,sign1,k,l)
-            int kl = (k + n_o_in) * n_occupied + (l + n_o_in);
+            int kl = (k + n_o_in) * nmo + (l + n_o_in);
             int stride2 = index_ka * num_links;
             for (int excitation2 = 0; excitation2 < num_links; excitation2++) {
                 int index_ja = table[(stride2 + excitation2)*4+0];
                 int sign2 = table[(stride2 + excitation2)*4+1];
                 int i = table[(stride2 + excitation2)*4+2]; 
                 int j = table[(stride2 + excitation2)*4+3]; 
-                int ij = (i + n_o_in) * n_occupied + (j + n_o_in);
-                F[index_ja] += 0.5 * sign1 * sign2 * h2e[ij*n_occupied*n_occupied+kl];
+                int ij = (i + n_o_in) * nmo + (j + n_o_in);
+                F[index_ja] += 0.5 * sign1 * sign2 * h2e[ij*nmo*nmo+kl];
             }
         }
         cblas_dgemm(CblasRowMajor, CblasNoTrans, CblasNoTrans, num_alpha,1,num_alpha, 1.0, c_resize, num_alpha, F, 1, 1.0,
@@ -1006,10 +887,9 @@ void sigma12(double* h1e, double* h2e, double* c_vectors, double* c1_vectors, in
     free(s_resize);
     
 }
-void sigma_dipole(double* h1e, double* c_vectors,double* c1_vectors,int num_alpha,int num_links, int* table, int n_o_ac, int n_o_in, double someconstant, int photon_p1, int photon_p2, int state_p, int num_photon) {
+void sigma_dipole(double* h1e, double* c_vectors,double* c1_vectors,int num_alpha,int num_links, int* table, int nmo, int n_o_in, double someconstant, int photon_p1, int photon_p2, int state_p, int num_photon) {
 
      size_t num_dets = num_alpha * num_alpha;
-     int n_occupied = n_o_ac + n_o_in;
      double* F = (double*) malloc(num_alpha*sizeof(double));
 
      double* s_resize = (double*) malloc(num_alpha*sizeof(double));
@@ -1022,7 +902,7 @@ void sigma_dipole(double* h1e, double* c_vectors,double* c1_vectors,int num_alph
              int sign1 = table[(stride1 + excitation1)*4+1];
              int k = table[(stride1 + excitation1)*4+2]; 
              int l = table[(stride1 + excitation1)*4+3];
-	     int kl = (k + n_o_in) * n_occupied + l + n_o_in; 
+	     int kl = (k + n_o_in) * nmo + l + n_o_in; 
              F[index_kb] += sign1 * h1e[kl];
 	 }
 
@@ -1066,7 +946,7 @@ void sigma_dipole(double* h1e, double* c_vectors,double* c1_vectors,int num_alph
              int sign1 = table[(stride1 + excitation1)*4+1];
              int k = table[(stride1 + excitation1)*4+2]; 
              int l = table[(stride1 + excitation1)*4+3]; 
-	     int kl = (k + n_o_in) * n_occupied + l + n_o_in; 
+	     int kl = (k + n_o_in) * nmo + l + n_o_in; 
              F[index_ka] += sign1 * h1e[kl];
 	 }
          cblas_dgemm(CblasRowMajor, CblasNoTrans, CblasNoTrans, num_alpha,1,num_alpha, someconstant, c_resize, num_alpha, F, 1, 1.0,
@@ -1146,471 +1026,24 @@ void symmetric_eigenvalue_problem(double* A, int N, double* eig) {
 
     free(evrp);
 }
-void get_roots(double* h1e, double* h2e, double* d_cmo, double* Hdiag, double* Sdiag, double* Sdiag_projection, double* eigenvals, double* eigenvecs, int* table, int* table_creation,
-	       	int* table_annihilation, int* b_array, int *constint, double *constdouble, int* index_Hdiag, bool casscf, double target_spin) {
+void get_roots(double* h1e, double* h2e, double* d_cmo, double* Hdiag, double* eigenvals, double* eigenvecs, int* table, int* table_creation,
+	       	int* table_annihilation, int *constint, double *constdouble) {
   
     callback_ test_fn = &build_sigma;
     double itime, ftime, exec_time;
     itime = omp_get_wtime();
 
-    if (target_spin >= 0.0) {
-        davidson_spin(h1e, h2e, d_cmo, Hdiag, Sdiag, Sdiag_projection, eigenvals, eigenvecs, table, 
-	    table_creation, table_annihilation, b_array, constint, constdouble, index_Hdiag, casscf, target_spin, test_fn);
 
-    }
-    else {
-        davidson(h1e, h2e, d_cmo, Hdiag, eigenvals, eigenvecs, table, 
-	    table_creation, table_annihilation, constint, constdouble, casscf, test_fn);
-    }
+    davidson(h1e, h2e, d_cmo, Hdiag, eigenvals, eigenvecs, table, 
+		    table_creation, table_annihilation, constint, constdouble, test_fn);
     ftime = omp_get_wtime();
     exec_time = ftime - itime;
     printf("Complete Davidson in %f seconds\n", exec_time);
-    fflush(stdout);
 
 }
-double check_total_spin(double* c_vector, double* Sdiag, int* table, int* b_array, int num_links0, int n_o_ac, int num_alpha, int N_p) {
-    size_t H_dim = (N_p + 1) * num_alpha * num_alpha;
-    double norm = cblas_ddot(H_dim, c_vector, 1, c_vector, 1);
-    double* s_vector = (double*) malloc(1*H_dim*sizeof(double));
-    memset(s_vector, 0, 1*H_dim*sizeof(double));
-    //for (int j = 0; j < H_dim ; j++) {
-    //            printf("%20.12lf\n", c_vector[j]);	    
-    //}
-    for (int i = 0; i < H_dim; i++) {
-	s_vector[i] = c_vector[i]/sqrt(norm);    
-    }
-    double* newS = (double*) malloc(1*H_dim*sizeof(double));
-    memset(newS, 0, 1*H_dim*sizeof(double));
-    build_sigma_s_square(s_vector, newS, Sdiag, b_array, table, num_links0, n_o_ac, num_alpha, 1, N_p, 1.0);
-    double total_spin = cblas_ddot(H_dim, s_vector, 1, newS, 1);
-    free(newS); 
-    free(s_vector); 
-    return total_spin;
-}
-
-void first_order_spin_projection(double* s_vector, double* Sdiag, double* Sdiag_projection, int* table, int* b_array, int num_links0, int n_o_ac, int num_alpha,
-	int N_p, double target_spin) {
-        size_t H_dim = (N_p + 1) * num_alpha * num_alpha;
-	double total_spin = check_total_spin(s_vector, Sdiag, table, b_array, num_links0, n_o_ac, num_alpha, N_p);
-        int iteration = 0;
-        double* x_vector = (double*) malloc(1*H_dim*sizeof(double));
-        printf("initial residual total spin %20.12lf\n", total_spin);
-        while (iteration < 20) {
-            if ((fabs(fabs(total_spin) - target_spin*(target_spin+1))) < 1e-10){
-                break;
-	    }
-	    memset(x_vector, 0, 1*H_dim*sizeof(double));
-            build_sigma_s_square(s_vector, x_vector, Sdiag_projection, b_array, table, num_links0, n_o_ac, num_alpha, 1, N_p, 1.0);
-            double dot_xx = cblas_ddot(H_dim, x_vector, 1, x_vector, 1);
-            double dot_sx = cblas_ddot(H_dim, s_vector, 1, x_vector, 1);
-	    //double norm = sqrt(dot_xx);
-            double coeff = dot_sx/dot_xx;
-            for (int i = 0; i < H_dim; i++) {
-                s_vector[i] -= coeff * x_vector[i];
-	    }
-	    total_spin = check_total_spin(s_vector, Sdiag, table, b_array, num_links0, n_o_ac, num_alpha, N_p);
-            iteration += 1;
-            
-	}
-        printf("residual total spin after correction %20.12lf\n", total_spin);
-	free(x_vector);
-}
-
-
-void davidson_spin(double* h1e, double* h2e, double* d_cmo, double* Hdiag, double* Sdiag, double* Sdiag_projection, double* eigenvals, double* eigenvecs, int* table, 
-		int* table_creation, int* table_annihilation, int* b_array, int *constint, double *constdouble, int* index_Hdiag, 
-		bool casscf, double target_spin, callback_ build_sigma) {
-    //unpack constant
-
-    int N_ac = constint[0]; 
-    int n_o_ac = constint[1]; 
-    int n_o_in = constint[2]; 
-    int nmo = constint[3];    
-    int N_p = constint[4];   
-    int indim = constint[5];         
-    int maxdim = constint[6];
-    int nroots = constint[7];
-    int maxiter = constint[8];
-    
-    double Enuc = constdouble[0]; 
-    double dc = constdouble[1]; 
-    double omega = constdouble[2]; 
-    double d_exp = constdouble[3];
-    double threshold = constdouble[4];
-    double E_core = constdouble[5];
-    bool break_degeneracy = false;         
-    int num_alpha = binomialCoeff(n_o_ac, N_ac);
-    size_t H_dim = (N_p + 1) * num_alpha * num_alpha;
-    printf("target_spin %20.12lf\n",target_spin); 
-    printf(" indim%d", indim); 
-    if (casscf == true) {
-        //maxiter = 3;
-        indim = nroots;
-    }
-    else {
-    //getting all configurations in the spin coupling set
-        while((Hdiag[index_Hdiag[indim]] - Hdiag[index_Hdiag[indim-1]] < 1e-10) && (indim < H_dim)) {
-            indim += 1;
-        }
-    }
-    printf(" maxiter%d", maxiter); 
-    
-
-    int num_links0 = N_ac*(n_o_ac-N_ac)+N_ac;
-    //for (int i = 0; i < H_dim; i++) {
-    //    //printf("%4d\n", index_Hdiag[i]);    
-    //    printf("%4d %20.12lf\n", index_Hdiag[i], Hdiag[index_Hdiag[i]]);    
-    //}
-    
-    int L = indim;
-    //printf(" indim%d H_dim %d\n", indim, H_dim); 
-    double* Hdiag2 = (double*)malloc(H_dim*sizeof(double));
-    cblas_dcopy(H_dim,Hdiag,1,Hdiag2,1);
-    double* Q = (double*) malloc(maxdim*H_dim*sizeof(double));
-    memset(Q, 0, maxdim*H_dim*sizeof(double));
-    double* S = (double*) malloc(maxdim*H_dim*sizeof(double));
-
-    double* w = (double*) malloc(nroots*H_dim*sizeof(double));
-    int* unconverged_idx = (int*) malloc(nroots*sizeof(int));
-    bool* convergence_check = (bool*) malloc(nroots*sizeof(bool));
-    double* theta = (double*) malloc(maxdim*sizeof(double));
-    memset(theta, 0, maxdim*sizeof(double));
-        
-    double minimum = 0.0;
-    int min_pos;
-    if (casscf == false) {
-        //use unit vectors as guess
-        for (int i = 0; i < indim; i++) {
-            minimum = Hdiag2[0];
-            min_pos = 0;
-            for (int j = 1; j < H_dim; j++){
-                if (Hdiag2[j] < minimum) {
-                    minimum = Hdiag2[j];
-                    min_pos = j;
-                }
-            }
-            Q[i * H_dim + min_pos] = 1.0;
-            Hdiag2[min_pos] = BIGNUM;
-           // lambda_oldp[i] = minimum;
-        }
-
-        memset(S, 0, maxdim*H_dim*sizeof(double));
-        
-	double itime, ftime, exec_time;
-        itime = omp_get_wtime();
-
-        build_sigma(h1e, h2e, d_cmo, Q, S, table, table_creation, table_annihilation, 
-                        N_ac, n_o_ac, n_o_in, nmo, L, N_p, Enuc, dc, omega, d_exp, E_core, break_degeneracy); 
-
-        ftime = omp_get_wtime();
-        exec_time = ftime - itime;
-        printf("build sigma took %f seconds to execute \n", exec_time);
-        double* G = (double*) malloc(L*L*sizeof(double));
-        memset(G, 0, L*L*sizeof(double));
-        double* newS = (double*) malloc(L*H_dim*sizeof(double));
-        memset(newS, 0, L*H_dim*sizeof(double));
-        double* Gs = (double*) malloc(L*L*sizeof(double));
-        memset(Gs, 0, L*L*sizeof(double));
-
-
-  
-    //for (int a = 0; a < maxdim; a++) {
-    //    for (int b = 0; b < H_dim; b++) {
-    //    	printf("%d %d %20.12lf\n",a,b, S[a*H_dim +b]);
-    //    }
-    //    	printf("\n");
-
-    //}
-        cblas_dgemm(CblasRowMajor, CblasNoTrans, CblasTrans, L, L, H_dim, 1.0, S, H_dim, Q, H_dim, 0.0, G, L);
- 
-        
-        build_sigma_s_square(Q, newS, Sdiag, b_array, table, num_links0, n_o_ac, num_alpha, L, N_p, 1.0);
-        cblas_dgemm(CblasRowMajor, CblasNoTrans, CblasTrans, L, L, H_dim, 1.0, newS, H_dim, Q, H_dim, 0.0, Gs, L);
-	
-	symmetric_eigenvalue_problem(Gs, L, theta);
-        //for (int i = 0; i < L; i++) {
-        //    printf("%20.12lf\n", theta[i]);
-	//}
-        //for (int i = 0; i < L; i++) {
-        //    for (int j = 0; j < L; j++) {
-	//	printf("%20.12lf\n", Gs[i * L + j]);    
-	//    }
-	//	printf("\n");    
-	//}	
-        int* spin_idx = (int*) malloc(L*sizeof(int));
-        memset(spin_idx, 0, L*sizeof(int));
-	int count = 0;
-        for (int i = 0; i < L; i++) {
-	    if (fabs(theta[i] - target_spin * (target_spin +1)) < 1e-9) {
-	       spin_idx[count] = i;
-	       count += 1;
-            }
-            //if (count == nroots) {
-	    //   break;	    
-	    //}	    
-	}
-        if (count < nroots) {
-           printf("need bigger initial dim to get enough roots");
-           exit(1);
-	}
-	indim = count;
-        double* Svec = (double*) malloc(indim *L*sizeof(double));
-        memset(Svec, 0, indim *L*sizeof(double));
-        for (int i = 0; i < indim ; i++) {
-            //printf("%4d\n", spin_idx[i]);
-            for (int j = 0; j < L; j++) {
-	        Svec[i * L + j] = Gs[j * L + spin_idx[i]];
-		//printf("%20.12lf", Svec[i * L + j]);
-	    }
-		//printf("\n");
-	}
-
-        double* Hspin = (double*) malloc(indim *indim *sizeof(double));
-        memset(Hspin, 0, indim *indim *sizeof(double));
-        double* sigma_spin = (double*) malloc(L*indim *sizeof(double));
-        memset(sigma_spin, 0, L*indim *sizeof(double));
-        cblas_dgemm(CblasRowMajor, CblasNoTrans, CblasTrans, L, indim , L, 1.0, G, L, Svec, L, 0.0, sigma_spin, indim );
-        cblas_dgemm(CblasRowMajor, CblasNoTrans, CblasNoTrans, indim , indim , L, 1.0, Svec, L, sigma_spin, indim , 0.0, Hspin, indim );
-
-        memset(theta, 0, maxdim*sizeof(double));
-	symmetric_eigenvalue_problem(Hspin, indim , theta);
-        memset(sigma_spin, 0, L*indim *sizeof(double));
-        cblas_dgemm(CblasRowMajor, CblasNoTrans, CblasNoTrans, indim , L, indim , 1.0, Hspin, indim , Svec, L, 0.0, sigma_spin, L);
-        memset(newS, 0, L*H_dim*sizeof(double));
-        cblas_dgemm(CblasRowMajor, CblasNoTrans, CblasNoTrans, indim , H_dim, L, 1.0, sigma_spin, L, Q, H_dim, 0.0, newS, H_dim);
-	//for (int i = 0; i < indim ; i++) {
-	//    printf("%d\n",i);
-        //    for (int j = 0; j < H_dim ; j++) {
-        //        printf("%20.12lf\n", newS[i*H_dim+j]);	    
-        //    }
-	//    printf("\n");
-        //}
-	
-        memset(Q, 0, maxdim*H_dim*sizeof(double));
-        for (int i = 0; i < indim ; i++) {
-	    //double total_spin = check_total_spin(newS +i*H_dim, Sdiag, table, b_array, num_links0, n_o_ac, num_alpha, N_p);
-            //printf("%20.12lf\n", total_spin);	    
-            //printf("%20.12lf\n", theta[i]);	    
-            for (int j = 0; j < H_dim ; j++) {
-		Q[i * H_dim + j] = newS[i * H_dim + j];    
-            }
-	    //printf("\n");
-        }
-        //for (int i = 0; i < indim ; i++) {
-        //    for (int j = 0; j < indim ; j++) {
-        //        double dotval = cblas_ddot(H_dim, Q+i*H_dim, 1, Q+j*H_dim, 1);
-	//	printf("%20.12lf\n",dotval);
-	//    }
-	//    printf("\n");
-	//}
-	L = indim;
-        free(G);
-        free(Gs);
-        free(newS);
-        free(spin_idx);
-        free(Svec);
-        free(Hspin);
-        free(sigma_spin);
-
-
-
-
-
-
-    }
-    else {
-	//use input eigenvecs as trial vectors    
-        for (int i = 0; i < indim; i++) {
-            for (int j = 0; j < H_dim; j++){
-		Q[i * H_dim + j] = eigenvecs[i * H_dim + j];    
-	    }
-	}
-    }
-    free(Hdiag2);
-    int Lmax = maxdim;
-    //int rows = num_alpha * (N_ac * (n_o_ac - N_ac) + N_ac + n_o_in);
-    //int num_links = rows/num_alpha;
-    //maxiter = 5; 
-    for (int a = 0; a < maxiter; a++) {
-        printf("\n"); 
-                
-        printf("ITERATION%4d subspace size%4d\n", a+1, L);
-        memset(S, 0, maxdim*H_dim*sizeof(double));
-        
-	double itime, ftime, exec_time;
-        itime = omp_get_wtime();
-
-        build_sigma(h1e, h2e, d_cmo, Q, S, table, table_creation, table_annihilation, 
-                        N_ac, n_o_ac, n_o_in, nmo, L, N_p, Enuc, dc, omega, d_exp, E_core, break_degeneracy); 
-        //apply  spin penalty 
-        build_sigma_s_square(Q, S, Sdiag, b_array, table, num_links0, n_o_ac, num_alpha, L, N_p, 0.25);
-        //build_sigma_s_fourth_power(Q, S, Sdiag_projection, b_array, table, num_links0, n_o_ac, num_alpha, L, N_p, 0.1);
-        ftime = omp_get_wtime();
-        exec_time = ftime - itime;
-        printf("build sigma took %f seconds to execute \n", exec_time);
-        double* G = (double*) malloc(L*L*sizeof(double));
-        memset(G, 0, L*L*sizeof(double));
-
-  
-    //for (int a = 0; a < maxdim; a++) {
-    //    for (int b = 0; b < H_dim; b++) {
-    //    	printf("%d %d %20.12lf\n",a,b, S[a*H_dim +b]);
-    //    }
-    //    	printf("\n");
-
-    //}
-        cblas_dgemm(CblasRowMajor, CblasNoTrans, CblasTrans, L, L, H_dim, 1.0, S, H_dim, Q, H_dim, 0.0, G, L);
-        symmetric_eigenvalue_problem(G, L, theta);
-        
-        memset(w, 0, nroots*H_dim*sizeof(double));
-     
-	
-        cblas_dgemm(CblasRowMajor, CblasTrans, CblasNoTrans, nroots, H_dim, L, 1.0, G, L, S, H_dim, 0.0, w, H_dim);
-        for (int i = 0; i < nroots; i++) {
-            cblas_dgemv(CblasRowMajor, CblasTrans, L, H_dim, -theta[i], Q, H_dim, G+i, L, 1.0, w + i * H_dim, 1);
-	}
-        memset(unconverged_idx, 0, nroots*sizeof(int));
-        memset(convergence_check, 0, nroots*sizeof(bool));
-        unsigned long currRealMem, peakRealMem, currVirtMem, peakVirtMem;
-        getMemory2(&currRealMem, &peakRealMem, &currVirtMem, &peakVirtMem);
-
-
-        
-
-        printf("  ROOT      RESIDUAL NORM        EIGENVALUE      CONVERGENCE\n");
-	int unconv = 0;
-        for (int i = 0; i < nroots; i++) {
-            double dotval = cblas_ddot(H_dim, w+i*H_dim, 1, w+i*H_dim, 1);
-            double residual_norm = sqrt(dotval);
-            if (residual_norm < threshold) {
-                convergence_check[i] = true;
-	    }
-	    else {
-                unconverged_idx[unconv] = i;
-                convergence_check[i] = false;
-                unconv += 1;
-	    }
-
-            printf("%4d %20.12lf %20.12lf      %s\n",i, residual_norm, theta[i], convergence_check[i]?"true":"false");
-        }
-        
-    	fflush(stdout);
-	if (unconv == 0) {
-            cblas_dgemm(CblasRowMajor, CblasTrans, CblasNoTrans, nroots, H_dim, L, 1.0, G, L, Q, H_dim, 0.0, eigenvecs, H_dim);
-            cblas_dcopy(nroots, theta, 1, eigenvals, 1);
-            double dum = 0.0;
-	    for (int i = 0; i < nroots; i++) {
-                for (size_t j = 0; j < H_dim; j++) {
-	 	    dum += w[i * H_dim +j] * w[i * H_dim +j];	
-		}
-	    }
-	    constdouble[4] = sqrt(dum);	
-	    printf("converged\n");
-    	    fflush(stdout);
-	    break;
-	}
-	if ((a==maxiter-1) && (unconv > 0)) {
-	    printf("Maximum iteration reaches. Please increase maxiter!\n");
-            cblas_dgemm(CblasRowMajor, CblasTrans, CblasNoTrans, nroots, H_dim, L, 1.0, G, L, Q, H_dim, 0.0, eigenvecs, H_dim);
-	    cblas_dcopy(nroots, theta, 1, eigenvals, 1);
-            double dum = 0.0;
-	    for (int i = 0; i < nroots; i++) {
-                for (size_t j = 0; j < H_dim; j++) {
-	 	    dum += w[i * H_dim +j] * w[i * H_dim +j];	
-		}
-	    }
-	    constdouble[4] = sqrt(dum);	
-	    break;
-	}
-	if (unconv > 0) {
-	    printf("unconverged roots\n");
-            for (int i = 0; i < unconv; i++) {
-	    	printf("%4d", unconverged_idx[i]);
-	    }
-	    printf("\n");
-	}
-
-        //for (int i = 0; i < nroots; i++) {
-	//    first_order_spin_projection(w+i*H_dim, Sdiag, Sdiag_projection, table, b_array, num_links0, n_o_ac, num_alpha,
-        //       N_p, target_spin);
-	//}
-
-
-
-        //precondition
-	double* w2 = (double*) malloc(unconv*H_dim*sizeof(double));
-        memset(w2, 0, unconv*H_dim*sizeof(double));
-
-	for (int i = 0; i < unconv; i++) {
-            for (int j = 0; j < H_dim; j++) {
-                //for (int k = 0; k < L; k++) {
-                    double dum = theta[unconverged_idx[i]] - Hdiag[j];
-		    //if (i ==2) {
-		    ////printf("%20.12lf %20.12lf %20.12lf\n", dum, theta[unconverged_idx[i]], Hdiag[j]);
-		    //printf("%20.16lf %20.16lf %20.16lf\n", dum, w[unconverged_idx[i] * H_dim + j], w[unconverged_idx[i] * H_dim + j]/dum);
-		    //}
-                    if (fabs(dum) >1e-14) {
-                    //if (fabs(dum) >1e-16) {
-		        w2[i * H_dim + j] = w[unconverged_idx[i] * H_dim + j]/dum;
-		    }
-		    else {
-			w2[i * H_dim + j] = 0.0;
-		    }
-                //}
-            }
-	    //printf("\n");
-        }
-	
-		
-        if (Lmax-L < unconv) {
-           printf("maximum subspace reaches, restart!\n");		
-           memset(w, 0, nroots*H_dim*sizeof(double));
-           cblas_dgemm(CblasRowMajor, CblasTrans, CblasNoTrans, nroots, H_dim, L, 1.0, G, L, Q, H_dim, 0.0, w, H_dim);
-           memset(Q, 0, maxdim*H_dim*sizeof(double));
-
-           for (int i = 0; i < nroots; i++) {
-               cblas_dcopy(H_dim, w+i*H_dim, 1, Q+i*H_dim, 1);
-	   }
-
-           for (int i = 0; i < unconv; i++) {
-               cblas_dcopy(H_dim, w2+i*H_dim, 1, Q+(i+nroots)*H_dim, 1);
-	   }
-           gram_schmidt_orthogonalization(Q, nroots+unconv, H_dim);
-	   L = nroots + unconv; 
-	}
-	else {
-           for (int i = 0; i < unconv; i++) {
-               cblas_dcopy(H_dim, w2+i*H_dim, 1, Q+(i+L)*H_dim, 1);
-	   }
-           gram_schmidt_add(Q, L, H_dim, unconv);
-           L += unconv;	   
-	}
-
-
-
-
-        free(G);
-        free(w2);
-        printf("\n"); 
-    }
-    free(Q);
-    free(S);
-    free(theta);
-    free(w);
-    free(unconverged_idx);
-    free(convergence_check);
-    
-
-
-}
-
-
-
-
-
 
 void davidson(double* h1e, double* h2e, double* d_cmo, double* Hdiag, double* eigenvals, double* eigenvecs, int* table, 
-		int* table_creation, int* table_annihilation, int *constint, double *constdouble, bool casscf, callback_ build_sigma) {
+		int* table_creation, int* table_annihilation, int *constint, double *constdouble, callback_ build_sigma) {
     //unpack constant
 
     int N_ac = constint[0]; 
@@ -1629,12 +1062,6 @@ void davidson(double* h1e, double* h2e, double* d_cmo, double* Hdiag, double* ei
     double d_exp = constdouble[3];
     double threshold = constdouble[4];
     double E_core = constdouble[5];
-    //printf("fafaaavd %s",casscf?"true":"false"); 
-    if (casscf == true) {
-        //maxiter = 3;
-	indim = nroots;
-    }
-    //printf(" maxiter%d", maxiter); 
 
     int num_alpha = binomialCoeff(n_o_ac, N_ac);
     size_t H_dim = (N_p + 1) * num_alpha * num_alpha;
@@ -1653,29 +1080,19 @@ void davidson(double* h1e, double* h2e, double* d_cmo, double* Hdiag, double* ei
         
     double minimum = 0.0;
     int min_pos;
-    if (casscf == false) {
-        //use unit vectors as guess
-        for (int i = 0; i < indim; i++) {
-            minimum = Hdiag2[0];
-            min_pos = 0;
-            for (int j = 1; j < H_dim; j++){
-                if (Hdiag2[j] < minimum) {
-                    minimum = Hdiag2[j];
-                    min_pos = j;
-                }
+    //use unit vectors as guess
+    for (int i = 0; i < indim; i++) {
+        minimum = Hdiag2[0];
+        min_pos = 0;
+        for (int j = 1; j < H_dim; j++){
+            if (Hdiag2[j] < minimum) {
+                minimum = Hdiag2[j];
+                min_pos = j;
             }
-            Q[i * H_dim + min_pos] = 1.0;
-            Hdiag2[min_pos] = BIGNUM;
-           // lambda_oldp[i] = minimum;
         }
-    }
-    else {
-	//use input eigenvecs as trial vectors    
-        for (int i = 0; i < indim; i++) {
-            for (int j = 0; j < H_dim; j++){
-		Q[i * H_dim + j] = eigenvecs[i * H_dim + j];    
-	    }
-	}
+        Q[i * H_dim + min_pos] = 1.0;
+        Hdiag2[min_pos] = BIGNUM;
+       // lambda_oldp[i] = minimum;
     }
     free(Hdiag2);
     int L = indim;
@@ -1747,28 +1164,13 @@ void davidson(double* h1e, double* h2e, double* d_cmo, double* Hdiag, double* ei
 	if (unconv == 0) {
             cblas_dgemm(CblasRowMajor, CblasTrans, CblasNoTrans, nroots, H_dim, L, 1.0, G, L, Q, H_dim, 0.0, eigenvecs, H_dim);
             cblas_dcopy(nroots, theta, 1, eigenvals, 1);
-            double dum = 0.0;
-	    for (int i = 0; i < nroots; i++) {
-                for (size_t j = 0; j < H_dim; j++) {
-	 	    dum += w[i * H_dim +j] * w[i * H_dim +j];	
-		}
-	    }
-	    constdouble[4] = sqrt(dum);	
 	    printf("converged\n");
-    	    fflush(stdout);
 	    break;
 	}
 	if ((a==maxiter-1) && (unconv > 0)) {
 	    printf("Maximum iteration reaches. Please increase maxiter!\n");
             cblas_dgemm(CblasRowMajor, CblasTrans, CblasNoTrans, nroots, H_dim, L, 1.0, G, L, Q, H_dim, 0.0, eigenvecs, H_dim);
 	    cblas_dcopy(nroots, theta, 1, eigenvals, 1);
-            double dum = 0.0;
-	    for (int i = 0; i < nroots; i++) {
-                for (size_t j = 0; j < H_dim; j++) {
-	 	    dum += w[i * H_dim +j] * w[i * H_dim +j];	
-		}
-	    }
-	    constdouble[4] = sqrt(dum);	
 	    break;
 	}
 	if (unconv > 0) {
@@ -1784,14 +1186,15 @@ void davidson(double* h1e, double* h2e, double* d_cmo, double* Hdiag, double* ei
 
 	for (int i = 0; i < unconv; i++) {
             for (int j = 0; j < H_dim; j++) {
-                double dum = theta[unconverged_idx[i]] - Hdiag[j];
-                
-                if (fabs(dum) >1e-16) {
-		    w2[i * H_dim + j] = w[unconverged_idx[i] * H_dim + j]/dum;
-		}
-		else {
-		    w2[i * H_dim + j] = 0.0;
-		}
+                for (int k = 0; k < L; k++) {
+                    double dum = theta[unconverged_idx[i]] - Hdiag[j];
+                    if (fabs(dum) >1e-16) {
+		        w2[i * H_dim + j] = w[unconverged_idx[i] * H_dim + j]/dum;
+		    }
+		    else {
+			w2[i * H_dim + j] = 0.0;
+		    }
+                }
             }
         }
 	
@@ -2763,7 +2166,6 @@ void build_sigma_s_square_off_diagonal(double* c_vectors, double* c1_vectors, in
         }
     }
 }
-
 void build_sigma_s_square_diagonal(double* c_vectors, double* c1_vectors, double* S_diag, int num_alpha, int photon_p1, int state_p1,
     int photon_p2, int state_p2, int num_photon, double scale) {
     size_t num_dets = num_alpha * num_alpha;
@@ -2771,10 +2173,9 @@ void build_sigma_s_square_diagonal(double* c_vectors, double* c1_vectors, double
         c1_vectors[(state_p2 * num_photon + photon_p2) * num_dets + index_I] += scale * S_diag[index_I] * c_vectors[(state_p1 * num_photon + photon_p1) * num_dets + index_I];
     }
 }
-
 void build_sigma_s_square(double* c_vectors, double *c1_vectors, double* S_diag, int* b_array, int* table1, int num_links, int n_o_ac, int num_alpha, int num_state, int N_p, double scale) {
     int np1 = N_p + 1;
-    #pragma omp parallel for num_threads(12) collapse(2)
+    //#pragma omp parallel for num_threads(12) collapse(2)
     for (int n = 0; n < num_state; n++) {
         for (int m = 0; m < np1; m++) {
             build_sigma_s_square_off_diagonal(c_vectors, c1_vectors, b_array, table1, num_alpha, num_links, n_o_ac, m, n, m, n, np1, scale);		
@@ -2782,29 +2183,6 @@ void build_sigma_s_square(double* c_vectors, double *c1_vectors, double* S_diag,
 	}
     }
 }
-
-void build_sigma_s_fourth_power(double* c_vectors, double *c1_vectors, double* S_diag, int* b_array, int* table1, int num_links, int n_o_ac, int num_alpha, int num_state, int N_p, double scale) {
-    int np1 = N_p + 1;
-    size_t num_dets = num_alpha * num_alpha;
-    double* sigma_s_square = (double*) malloc(num_dets*sizeof(double));
-
-
-    //printf("total dim %d", num_alpha*num_alpha*num_state*np1);
-    //#pragma omp parallel for num_threads(12) collapse(2)
-    for (int n = 0; n < num_state; n++) {
-        for (int m = 0; m < np1; m++) {
-            memset(sigma_s_square, 0, num_dets*sizeof(double));
-            build_sigma_s_square_off_diagonal(c_vectors, sigma_s_square, b_array, table1, num_alpha, num_links, n_o_ac, m, n, 0, 0, np1, scale);
-            build_sigma_s_square_diagonal(c_vectors, sigma_s_square, S_diag, num_alpha, m, n, 0, 0, np1, scale);
-
-            build_sigma_s_square_off_diagonal(sigma_s_square, c1_vectors, b_array, table1, num_alpha, num_links, n_o_ac, 0, 0, m, n, np1, 1.0);
-            build_sigma_s_square_diagonal(sigma_s_square, c1_vectors, S_diag, num_alpha, 0, 0, m, n, np1, 1.0);
-
-        }
-    }
-    free(sigma_s_square);
-}
-
 void gram_schmidt_orthogonalization(double* Q, int rows, int cols) {
     double dotval, normval;
     int k, i, rI;

@@ -77,6 +77,7 @@ cfunctions.get_string.argtypes = [
     ctypes.c_double,
     ctypes.c_double,
     ctypes.c_double,
+    ctypes.c_double,
 ]
 
 cfunctions.build_sigma.argtypes = [
@@ -108,13 +109,18 @@ cfunctions.get_roots.argtypes = [
     np.ctypeslib.ndpointer(ctypes.c_double, ndim=2, flags="C_CONTIGUOUS"),
     np.ctypeslib.ndpointer(ctypes.c_double, ndim=1, flags="C_CONTIGUOUS"),
     np.ctypeslib.ndpointer(ctypes.c_double, ndim=1, flags="C_CONTIGUOUS"),
+    np.ctypeslib.ndpointer(ctypes.c_double, ndim=1, flags="C_CONTIGUOUS"),
+    np.ctypeslib.ndpointer(ctypes.c_double, ndim=1, flags="C_CONTIGUOUS"),
     np.ctypeslib.ndpointer(ctypes.c_double, ndim=2, flags="C_CONTIGUOUS"),
     np.ctypeslib.ndpointer(ctypes.c_int32, ndim=1, flags="C_CONTIGUOUS"),
     np.ctypeslib.ndpointer(ctypes.c_int32, ndim=1, flags="C_CONTIGUOUS"),
     np.ctypeslib.ndpointer(ctypes.c_int32, ndim=1, flags="C_CONTIGUOUS"),
     np.ctypeslib.ndpointer(ctypes.c_int32, ndim=1, flags="C_CONTIGUOUS"),
+    np.ctypeslib.ndpointer(ctypes.c_int32, ndim=1, flags="C_CONTIGUOUS"),
     np.ctypeslib.ndpointer(ctypes.c_double, ndim=1, flags="C_CONTIGUOUS"),
+    np.ctypeslib.ndpointer(ctypes.c_int32, ndim=1, flags="C_CONTIGUOUS"),
     ctypes.c_bool,
+    ctypes.c_double,
 ]
 
 cfunctions.build_one_rdm.argtypes = [
@@ -215,6 +221,23 @@ cfunctions.build_H_diag_cas.argtypes = [
     ctypes.c_double,
     np.ctypeslib.ndpointer(ctypes.c_int32, ndim=1, flags="C_CONTIGUOUS"),
 ]
+cfunctions.build_H_diag_cas_spin.argtypes = [
+    np.ctypeslib.ndpointer(ctypes.c_double, ndim=2, flags="C_CONTIGUOUS"),
+    np.ctypeslib.ndpointer(ctypes.c_double, ndim=2, flags="C_CONTIGUOUS"),
+    np.ctypeslib.ndpointer(ctypes.c_double, ndim=1, flags="C_CONTIGUOUS"),
+    ctypes.c_int32,
+    ctypes.c_int32,
+    ctypes.c_int32,
+    ctypes.c_int32,
+    ctypes.c_int32,
+    ctypes.c_int32,
+    ctypes.c_double,
+    ctypes.c_double,
+    ctypes.c_double,
+    ctypes.c_double,
+    np.ctypeslib.ndpointer(ctypes.c_int32, ndim=1, flags="C_CONTIGUOUS"),
+    ctypes.c_double,
+]
 
 cfunctions.gram_schmidt_orthogonalization.argtypes = [
         np.ctypeslib.ndpointer(ctypes.c_double, ndim=2, flags='C_CONTIGUOUS'),
@@ -267,6 +290,11 @@ def c_H_diag_cas(h1e, h2e, H_diag, N_p, num_alpha, nmo, n_act_a, n_act_orb, n_in
     cfunctions.build_H_diag_cas(h1e, h2e, H_diag, N_p, num_alpha, nmo, n_act_a, n_act_orb, n_in_a, E_core, omega, Enuc, dc, Y)
 
 
+def c_H_diag_cas_spin(h1e, h2e, H_diag, N_p, num_alpha, nmo, n_act_a, n_act_orb, n_in_a, E_core, omega, Enuc, dc, Y, target_spin):
+    cfunctions.build_H_diag_cas_spin(h1e, h2e, H_diag, N_p, num_alpha, nmo, n_act_a, n_act_orb, n_in_a, E_core, omega, Enuc, dc, Y, target_spin)
+
+
+
 def c_string(
     h1e,
     h2e,
@@ -285,6 +313,7 @@ def c_string(
     omega,
     Enuc,
     dc,
+    target_spin
 ):
     cfunctions.get_string(
         h1e,
@@ -304,6 +333,7 @@ def c_string(
         omega,
         Enuc,
         dc,
+        target_spin
     )
 
 
@@ -399,28 +429,38 @@ def c_get_roots(
     h2e,
     d_cmo,
     Hdiag,
+    Sdiag,
+    Sdiag_projection,
     eigenvals,
     eigenvecs,
     table,
     table_creation,
     table_annihilation,
+    b_array,
     constint,
     constdouble,
+    index_Hdiag,
     casscf,
+    target_spin,
 ):
     cfunctions.get_roots(
         h1e,
         h2e,
         d_cmo,
         Hdiag,
+        Sdiag,
+        Sdiag_projection,
         eigenvals,
         eigenvecs,
         table,
         table_creation,
         table_annihilation,
+        b_array,
         constint,
         constdouble,
+        index_Hdiag,
         casscf,
+        target_spin,
     )
 
 
@@ -1154,6 +1194,29 @@ class PFHamiltonianGenerator:
                 #        self.d_c, 
                 #        self.Y)
                 #print(self.H_diag3)
+                
+                #self.target_spin = 0.0
+                self.H_diag3 = np.zeros(H_dim)
+                c_H_diag_cas_spin(
+                        self.occupied_fock_core, 
+                        self.occupied_J3, 
+                        self.H_diag3, 
+                        self.N_p, 
+                        self.num_alpha, 
+                        self.nmo, 
+                        self.n_act_a, 
+                        self.n_act_orb, 
+                        self.n_in_a, 
+                        self.E_core, 
+                        self.omega, 
+                        self.Enuc, 
+                        self.d_c, 
+                        self.Y,
+                        self.target_spin)
+                #print(self.H_diag3, flush = True)
+                self.index_Hdiag = np.asarray(self.H_diag3.argsort(),dtype = np.int32)
+                #np.savetxt("H_diag.out", self.H_diag3)
+                #print(np.sort(self.H_diag3))
                 c_string(
                     self.occupied_fock_core,
                     self.occupied_J3,
@@ -1172,7 +1235,10 @@ class PFHamiltonianGenerator:
                     self.omega,
                     self.Enuc,
                     self.d_c,
+                    self.target_spin
                 )
+                #print(self.H_diag, flush = True)
+                #print(self.H_diag - self.H_diag3, flush = True)
                 self.S_diag = np.zeros(H_dim)
                 shift = 0.0
                 c_s_diag(
@@ -1184,6 +1250,9 @@ class PFHamiltonianGenerator:
                     self.n_in_a,
                     shift,
                 )
+                self.S_diag_projection = np.zeros(H_dim)
+                shift = self.target_spin * (self.target_spin + 1)
+                c_s_diag(self.S_diag_projection, self.num_alpha, self.nmo, self.n_act_a, self.n_act_orb, self.n_in_a, shift)
                 num_alpha1 = math.comb(self.n_act_orb, self.n_act_a - 1)
                 print(
                     "mem_D+T",
@@ -1281,6 +1350,34 @@ class PFHamiltonianGenerator:
                 self.b_array = np.zeros(
                     self.num_alpha * self.n_act_orb * self.n_act_orb * 2, dtype=np.int32
                 )
+                self.Y = np.zeros(
+                    self.n_act_a * (self.n_act_orb - self.n_act_a + 1) * 3, dtype=np.int32
+                )
+                c_graph(self.n_act_a, self.n_act_orb, self.Y)
+
+
+                #self.target_spin = 0.0
+                self.H_diag3 = np.zeros(H_dim)
+                c_H_diag_cas_spin(
+                        self.occupied_fock_core, 
+                        self.occupied_J3, 
+                        self.H_diag3, 
+                        self.N_p, 
+                        self.num_alpha, 
+                        self.nmo, 
+                        self.n_act_a, 
+                        self.n_act_orb, 
+                        self.n_in_a, 
+                        self.E_core, 
+                        self.omega, 
+                        self.Enuc, 
+                        self.d_c, 
+                        self.Y,
+                        self.target_spin)
+                #print(self.H_diag3, flush = True)
+                self.index_Hdiag = np.asarray(self.H_diag3.argsort(),dtype = np.int32)
+                #np.savetxt("H_diag.out", self.H_diag3)
+                print(np.sort(self.H_diag3))
                 c_string(
                     self.occupied_fock_core,
                     self.occupied_J3,
@@ -1299,7 +1396,9 @@ class PFHamiltonianGenerator:
                     self.omega,
                     self.Enuc,
                     self.d_c,
+                    self.target_spin
                 )
+
 
                 self.S_diag = np.zeros(H_dim)
                 shift = 0.0
@@ -1312,7 +1411,9 @@ class PFHamiltonianGenerator:
                     self.n_in_a,
                     shift,
                 )
-
+                self.S_diag_projection = np.zeros(H_dim)
+                shift = self.target_spin * (self.target_spin + 1)
+                c_s_diag(self.S_diag_projection, self.num_alpha, self.nmo, self.n_act_a, self.n_act_orb, self.n_in_a, shift) 
                 num_alpha1 = math.comb(self.n_act_orb, self.n_act_a - 1)
                 print(
                     "mem_D+T",
@@ -1434,15 +1535,24 @@ class PFHamiltonianGenerator:
                     self.occupied_J3,
                     self.occupied_d_cmo,
                     self.H_diag,
+                    self.S_diag,
+                    self.S_diag_projection,
                     eigenvals,
                     eigenvecs,
                     self.table,
                     self.table_creation,
                     self.table_annihilation,
+                    self.b_array,
                     self.constint,
                     self.constdouble,
-                    False
+                    self.index_Hdiag,
+                    False,
+                    self.target_spin,
                 )
+                
+
+
+
 
                 self.CIeigs = eigenvals
                 self.CIvecs = eigenvecs
@@ -2706,8 +2816,7 @@ class PFHamiltonianGenerator:
                             gkl2 -= 0.5 * np.einsum("kjjl->kl", active_twoeint) 
                             
                             occupied_J = occupied_J.reshape(self.n_occupied * self.n_occupied, self.n_occupied * self.n_occupied)
-
-                            c_H_diag_cas(
+                            c_H_diag_cas_spin(
                                     occupied_fock_core, 
                                     occupied_J, 
                                     self.H_diag3, 
@@ -2721,7 +2830,8 @@ class PFHamiltonianGenerator:
                                     self.omega, 
                                     self.Enuc, 
                                     self.d_c, 
-                                    self.Y)
+                                    self.Y,
+                                    self.target_spin)
                             d_diag = 2.0 * np.einsum("ii->", self.d_cmo[:self.n_in_a,:self.n_in_a])
                             self.constdouble[3] = self.d_exp - d_diag
                             self.constdouble[4] = 1e-5 
@@ -2736,14 +2846,19 @@ class PFHamiltonianGenerator:
                                 occupied_J,
                                 occupied_d_cmo,
                                 self.H_diag3,
+                                self.S_diag,
+                                self.S_diag_projection,
                                 eigenvals,
                                 eigenvecs,
                                 self.table,
                                 self.table_creation,
                                 self.table_annihilation,
+                                self.b_array,
                                 self.constint,
                                 self.constdouble,
-                                True 
+                                self.index_Hdiag,
+                                True,
+                                self.target_spin,
                             )
                             avg_energy = 0.0 
                             for i in range(self.davidson_roots):
@@ -3003,38 +3118,6 @@ class PFHamiltonianGenerator:
 
 
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
             elif self.ci_level == "cis":
                 dres = self.Davidson(
                     self.H_PF,
@@ -3199,6 +3282,22 @@ class PFHamiltonianGenerator:
         else:
             self.n_act_orb = 0
             self.n_act_el = 0
+
+        if self.ci_level == "cas" or self.ci_level == "fci":
+            if "spin_adaptation" in cavity_dictionary:
+                self.spin_adaptation = cavity_dictionary["spin_adaptation"]
+                if self.spin_adaptation == "singlet":
+                    self.target_spin = 0.0
+                if self.spin_adaptation == "triplet":
+                    self.target_spin = 1.0
+                if self.spin_adaptation == "quintet":
+                    self.target_spin = 2.0
+            else:
+                self.spin_adaptation = "no"
+                self.target_spin = -1.0
+                #print(self.target_spin)
+
+
 
     def parseArrays(self, cqed_rhf_dict):
         # grab quantities from cqed_rhf_dict that apply to both number state and coherent state bases
@@ -6156,7 +6255,7 @@ class PFHamiltonianGenerator:
                 self.U1 = np.einsum("pq,qs->ps", self.U1, self.U_delta) 
                 self.occupied_J3 = self.occupied_J.reshape(self.n_occupied * self.n_occupied, self.n_occupied * self.n_occupied)
                 self.H_diag3 = np.zeros(H_dim)
-                c_H_diag_cas(
+                c_H_diag_cas_spin(
                         self.occupied_fock_core, 
                         self.occupied_J3, 
                         self.H_diag3, 
@@ -6170,7 +6269,8 @@ class PFHamiltonianGenerator:
                         self.omega, 
                         self.Enuc, 
                         self.d_c, 
-                        self.Y)
+                        self.Y,
+                        self.target_spin)
                 #self.J[:,:,:self.n_occupied, :self.n_occupied] = occupied_J[:,:,:,:]
                 #self.K[:,:,:self.n_occupied, :self.n_occupied] = occupied_K[:,:,:,:]
                 #self.H_spatial2[:self.n_occupied, :self.n_occupied] = occupied_h1[:,:]
@@ -6198,14 +6298,19 @@ class PFHamiltonianGenerator:
                     self.occupied_J3,
                     self.occupied_d_cmo,
                     self.H_diag3,
+                    self.S_diag,
+                    self.S_diag_projection,
                     eigenvals,
                     eigenvecs,
                     self.table,
                     self.table_creation,
                     self.table_annihilation,
+                    self.b_array,
                     self.constint,
                     self.constdouble,
-                    True 
+                    self.index_Hdiag,
+                    True,
+                    self.target_spin,
                 )
                 avg_energy = 0.0
                 for i in range(self.davidson_roots):
@@ -6401,7 +6506,7 @@ class PFHamiltonianGenerator:
                 self.U1 = np.einsum("pq,qs->ps", self.U1, self.U_delta) 
                 self.occupied_J3 = self.occupied_J.reshape(self.n_occupied * self.n_occupied, self.n_occupied * self.n_occupied)
                 self.H_diag3 = np.zeros(H_dim)
-                c_H_diag_cas(
+                c_H_diag_cas_spin(
                         self.occupied_fock_core, 
                         self.occupied_J3, 
                         self.H_diag3, 
@@ -6415,7 +6520,8 @@ class PFHamiltonianGenerator:
                         self.omega, 
                         self.Enuc, 
                         self.d_c, 
-                        self.Y)
+                        self.Y,
+                        self.target_spin)
                 #self.J[:,:,:self.n_occupied, :self.n_occupied] = occupied_J[:,:,:,:]
                 #self.K[:,:,:self.n_occupied, :self.n_occupied] = occupied_K[:,:,:,:]
                 #self.H_spatial2[:self.n_occupied, :self.n_occupied] = occupied_h1[:,:]
@@ -6443,14 +6549,19 @@ class PFHamiltonianGenerator:
                     self.occupied_J3,
                     self.occupied_d_cmo,
                     self.H_diag3,
+                    self.S_diag,
+                    self.S_diag_projection,
                     eigenvals,
                     eigenvecs,
                     self.table,
                     self.table_creation,
                     self.table_annihilation,
+                    self.b_array,
                     self.constint,
                     self.constdouble,
-                    True 
+                    self.index_Hdiag,
+                    True,
+                    self.target_spin,
                 )
 
                 current_residual = self.constdouble[4]
@@ -7525,7 +7636,7 @@ class PFHamiltonianGenerator:
             )
             occupied_J = occupied_J.reshape(self.n_occupied * self.n_occupied, self.n_occupied * self.n_occupied)
 
-            c_H_diag_cas(
+            c_H_diag_cas_spin(
                     occupied_fock_core, 
                     occupied_J, 
                     self.H_diag3, 
@@ -7539,7 +7650,8 @@ class PFHamiltonianGenerator:
                     self.omega, 
                     self.Enuc, 
                     self.d_c, 
-                    self.Y)
+                    self.Y,
+                    self.target_spin)
             d_diag = 2.0 * np.einsum("ii->", d_cmo[:self.n_in_a,:self.n_in_a])
             self.constdouble[3] = self.d_exp - d_diag
             self.constdouble[4] = 1e-9 
@@ -7553,14 +7665,19 @@ class PFHamiltonianGenerator:
                 occupied_J,
                 occupied_d_cmo,
                 self.H_diag3,
+                self.S_diag,
+                self.S_diag_projection,
                 eigenvals,
                 eigenvecs,
                 self.table,
                 self.table_creation,
                 self.table_annihilation,
+                self.b_array,
                 self.constint,
                 self.constdouble,
-                True 
+                self.index_Hdiag,
+                True,
+                self.target_spin,
             )
             #print("current residual", self.constdouble[4])
             current_residual = self.constdouble[4]
@@ -7964,7 +8081,7 @@ class PFHamiltonianGenerator:
             )
             occupied_J = occupied_J.reshape(self.n_occupied * self.n_occupied, self.n_occupied * self.n_occupied)
 
-            c_H_diag_cas(
+            c_H_diag_cas_spin(
                     occupied_fock_core, 
                     occupied_J, 
                     self.H_diag3, 
@@ -7978,7 +8095,8 @@ class PFHamiltonianGenerator:
                     self.omega, 
                     self.Enuc, 
                     self.d_c, 
-                    self.Y)
+                    self.Y,
+                    self.target_spin)
             d_diag = 2.0 * np.einsum("ii->", d_cmo[:self.n_in_a,:self.n_in_a])
             self.constdouble[3] = self.d_exp - d_diag
             self.constdouble[4] = 1e-9 
@@ -7992,14 +8110,19 @@ class PFHamiltonianGenerator:
                 occupied_J,
                 occupied_d_cmo,
                 self.H_diag3,
+                self.S_diag,
+                self.S_diag_projection,
                 eigenvals,
                 eigenvecs,
                 self.table,
                 self.table_creation,
                 self.table_annihilation,
+                self.b_array,
                 self.constint,
                 self.constdouble,
-                True 
+                self.index_Hdiag,
+                True,
+                self.target_spin,
             )
             print("current residual", self.constdouble[4])
             current_residual = self.constdouble[4]
@@ -8486,7 +8609,7 @@ class PFHamiltonianGenerator:
             )
             occupied_J = occupied_J.reshape(self.n_occupied * self.n_occupied, self.n_occupied * self.n_occupied)
 
-            c_H_diag_cas(
+            c_H_diag_cas_spin(
                     occupied_fock_core, 
                     occupied_J, 
                     self.H_diag3, 
@@ -8500,7 +8623,8 @@ class PFHamiltonianGenerator:
                     self.omega, 
                     self.Enuc, 
                     self.d_c, 
-                    self.Y)
+                    self.Y,
+                    self.target_spin)
             d_diag = 2.0 * np.einsum("ii->", d_cmo[:self.n_in_a,:self.n_in_a])
             self.constdouble[3] = self.d_exp - d_diag
             self.constdouble[4] = 1e-9 
@@ -8514,14 +8638,19 @@ class PFHamiltonianGenerator:
                 occupied_J,
                 occupied_d_cmo,
                 self.H_diag3,
+                self.S_diag,
+                self.S_diag_projection,
                 eigenvals,
                 eigenvecs,
                 self.table,
                 self.table_creation,
                 self.table_annihilation,
+                self.b_array,
                 self.constint,
                 self.constdouble,
-                True 
+                self.index_Hdiag,
+                True,
+                self.target_spin,
             )
             print("current residual", self.constdouble[4])
             current_residual = self.constdouble[4]
@@ -8599,6 +8728,7 @@ class PFHamiltonianGenerator:
             #self.build_intermediates2(eigenvecs, A2, G2, True)
             print("LETS CHECK ENERGY AT THE BEGINING OF EACH MICROITERATION")
             print(old_energy, current_energy)
+            print("initial convergence threshold", convergence_threshold)
             if (np.abs(current_energy - old_energy) < 0.01 * convergence_threshold) and microiteration >=2:
             #if (np.abs(current_energy - old_energy) < 1e-15) and microiteration >=2:
                 print("microiteration converged (small energy change)")
@@ -8695,16 +8825,16 @@ class PFHamiltonianGenerator:
                 print("gradient norm", gradient_norm, flush = True)
                 print("convergence_threshold", convergence_threshold, flush = True)    
                 
-                if (gradient_norm < max(0.1 * convergence_threshold, 1e-7)):
+                #if (gradient_norm < max(0.1 * convergence_threshold, 1e-8)):
                 #if (gradient_norm < max(0.1 * convergence_threshold, 1e-6) and microiteration > 0):
                 #if (gradient_norm < 1e-5 and microiteration > 0):
-                #if (gradient_norm < 0.1 * convergence_threshold and microiteration > 0):
+                if (gradient_norm < 0.1 * convergence_threshold and microiteration > 0):
                     convergence = 1
                     #print("Microiteration converged (small gradient norm)")
                     break
-                #if (gradient_norm < 1e-7):
-                #    convergence = 1
-                #    break
+                if (gradient_norm < 1e-7):
+                    convergence = 1
+                    break
 
 
                 #########gradient_tilde = np.zeros((rot_dim, self.n_occupied))
@@ -8932,7 +9062,8 @@ class PFHamiltonianGenerator:
                 end   = timer()
                 print("build unitary matrix and recheck energy took", end - start)
            
-
+                if microiteration == 0 and orbital_optimization_step == 0: 
+                   convergence_threshold = min(0.01 * gradient_norm, np.power(gradient_norm,2))
                 if energy_change < 0.0:
                      #restart = False
                      #predicted_energy1 = self.microiteration_predicted_energy(reduced_gradient, reduced_hessian, step)
@@ -8940,8 +9071,8 @@ class PFHamiltonianGenerator:
                      #print("microinteration predicted energy", predicted_energy1, predicted_energy2, flush = True)
                      self.U2 = np.einsum("pq,qs->ps", self.U2, self.U_delta)
                      if microiteration == 0 and orbital_optimization_step == 0: 
-                         #convergence_threshold = min(0.01 * gradient_norm, np.power(gradient_norm,2))
-                         convergence_threshold = 0.01 * gradient_norm
+                     #    convergence_threshold = min(0.01 * gradient_norm, np.power(gradient_norm,2))
+                         #convergence_threshold = 0.01 * gradient_norm
                          if step_norm > 0.1: 
                              N_microiterations = 5
                              N_orbital_optimization_steps = 4
@@ -9100,7 +9231,7 @@ class PFHamiltonianGenerator:
             #)
             occupied_J = occupied_J.reshape(self.n_occupied * self.n_occupied, self.n_occupied * self.n_occupied)
 
-            c_H_diag_cas(
+            c_H_diag_cas_spin(
                     occupied_fock_core, 
                     occupied_J, 
                     self.H_diag3, 
@@ -9114,7 +9245,8 @@ class PFHamiltonianGenerator:
                     self.omega, 
                     self.Enuc, 
                     self.d_c, 
-                    self.Y)
+                    self.Y,
+                    self.target_spin)
             d_diag = 2.0 * np.einsum("ii->", d_cmo[:self.n_in_a,:self.n_in_a])
             self.constdouble[3] = self.d_exp - d_diag
             self.constdouble[4] = 1e-9 
@@ -9129,14 +9261,19 @@ class PFHamiltonianGenerator:
                 occupied_J,
                 occupied_d_cmo,
                 self.H_diag3,
+                self.S_diag,
+                self.S_diag_projection,
                 eigenvals,
                 eigenvecs,
                 self.table,
                 self.table_creation,
                 self.table_annihilation,
+                self.b_array,
                 self.constint,
                 self.constdouble,
-                True 
+                self.index_Hdiag,
+                True,
+                self.target_spin,
             )
             end   = timer() 
             print("CI step took", end - start)
@@ -9156,7 +9293,8 @@ class PFHamiltonianGenerator:
             end   = timer() 
             print("building RDM took", end - start)
 
-
+            print("current gradient_norm and residual", gradient_norm, current_residual)
+            print("current convergence_threshold", convergence_threshold)
             total_norm = np.sqrt(np.power(gradient_norm,2) + np.power(current_residual,2)) 
             if total_norm < convergence_threshold: 
                 print("total norm", total_norm, flush = True)
@@ -9808,7 +9946,27 @@ class PFHamiltonianGenerator:
             self.build_orbital_hessian_guess(U, sym_A_tilde, reduced_gradient, G, guess_hessian, guess_gradient, dim1, idx)
             #end1   = timer() 
             #print("building orbital guess2 took", end1 - start1, flush = True)
+            
+            ##try to build orbital guess from sigma vector but it is much slower
+            ####start1 = timer() 
+            ####guess_gradient2 = np.zeros(dim1)
+            ####hq = np.zeros((dim1, self.index_map_size))
+            ####QQ = np.zeros((dim1, self.index_map_size))
+            ####for i in range(dim1):
+            ####    index1 = idx[i]
+            ####    r = self.index_map[index1][0] 
+            ####    k = self.index_map[index1][1]
+            ####    guess_gradient2[i] = reduced_gradient[index1]
+            ####    QQ[i][index1] = 1.0
 
+            ####self.orbital_sigma(U, A_tilde, G1, QQ, hq, dim1, 0)
+            ####guess_hessian2 = np.dot(hq,QQ.T)
+            ####print(np.allclose(guess_hessian, guess_hessian2, rtol=1e-14,atol=1e-14))
+            ####print(np.allclose(guess_gradient, guess_gradient2, rtol=1e-14,atol=1e-14))
+            ####end1   = timer() 
+            ####print("building orbital guess3 took", end1 - start1, flush = True)
+            ####print("\n")
+            ####print("\n")
 
             #start1 = timer() 
             #mu, w = np.linalg.eigh(guess_hessian)
