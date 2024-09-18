@@ -2,7 +2,7 @@
 Scratch directory: /tmp/
 
 *** tstart() called on Jessicas-iMac.local
-*** at Wed Sep 18 12:38:58 2024
+*** at Wed Sep 18 12:49:10 2024
 
    => Loading Basis Set <=
 
@@ -189,14 +189,14 @@ Properties computed using the SCF density matrix
      X:     0.0000      Y:     0.0000      Z:    -0.0000     Total:     0.0000
 
 
-*** tstop() called on Jessicas-iMac.local at Wed Sep 18 12:38:58 2024
+*** tstop() called on Jessicas-iMac.local at Wed Sep 18 12:49:10 2024
 Module time:
-	user time   =       0.21 seconds =       0.00 minutes
-	system time =       0.02 seconds =       0.00 minutes
+	user time   =       0.20 seconds =       0.00 minutes
+	system time =       0.01 seconds =       0.00 minutes
 	total time  =          0 seconds =       0.00 minutes
 Total time:
-	user time   =       0.21 seconds =       0.00 minutes
-	system time =       0.02 seconds =       0.00 minutes
+	user time   =       0.20 seconds =       0.00 minutes
+	system time =       0.01 seconds =       0.00 minutes
 	total time  =          0 seconds =       0.00 minutes
 
 Scratch directory: /tmp/
@@ -253,7 +253,7 @@ Scratch directory: /tmp/
     IOPEN        =       NO
 
     EX ALLOW       =  1  1  1  1 
-    STATE AVERAGE  =  0(0.33)  1(0.33)  2(0.33) 
+    STATE AVERAGE  =  0(1.00) 
 
    ==> CI Orbital and Space information <==
 
@@ -326,188 +326,188 @@ Scratch directory: /tmp/
 (sem_iter): H0block_->H0b_diag[13][16] - H0block_->H0b_diag[14][16] = 0.164549 - -0.053341 = 0.217890 > 1.0E-8
 (sem_iter): H0block_->H0b_diag[13][17] - H0block_->H0b_diag[14][17] = -0.852168 - 0.276241 = -1.128409 > 1.0E-8
 (sem_iter): H0block_->H0b_diag[13][18] - H0block_->H0b_diag[14][18] = -0.308366 - -0.951268 = 0.642902 > 1.0E-8
-   @MCSCF  1:     -1.932951117871    3.3293e-01  1.23e-02  3.75e-13    4    1  Initial CI
-   @MCSCF  2:     -1.938577000556   -5.6259e-03  2.26e-03  3.14e-07    2    1  TS
-   @MCSCF  3:     -1.938846426328   -2.6943e-04  4.74e-04  4.54e-07    2    1  TS
-   @MCSCF  4:     -1.938866057123   -1.9631e-05  1.20e-04  7.48e-10    6    1  TS, DIIS
-   @MCSCF  5:     -1.938868437403   -2.3803e-06  4.25e-05  1.60e-09    2    1  TS, DIIS
-   @MCSCF  6:     -1.938868918020   -4.8062e-07  1.56e-05  2.56e-13   11    1  TS, DIIS
-   @MCSCF  7:     -1.938868942229   -2.4209e-08  5.23e-06  1.63e-09    2    1  TS, DIIS
+   @MCSCF  1:     -2.268789663348   -2.9045e-03  1.12e-03  1.31e-13    4    1  Initial CI
+      Warning! Maxstep = 0.90, scaling to 0.50
+   @MCSCF  2:     -2.290535515815   -2.1746e-02  4.59e-03  1.18e-07    5    1  TS
+   @MCSCF  3:     -2.301449488180   -1.0914e-02  3.01e-03  2.16e-07    2    1  TS
+   @MCSCF  4:     -2.302660581812   -1.2111e-03  1.03e-03  2.37e-09    2    1  TS, DIIS
+   @MCSCF  5:     -2.302855707536   -1.9513e-04  3.93e-04  6.73e-09    2    1  TS, DIIS
+   @MCSCF  6:     -2.302898538332   -4.2831e-05  7.74e-05  2.26e-10    2    1  TS, DIIS
+   @MCSCF  7:     -2.302898749141   -2.1081e-07  2.57e-05  1.48e-10    2    1  TS, DIIS
+   @MCSCF  8:     -2.302898818378   -6.9236e-08  5.07e-06  1.73e-11    2    1  TS, DIIS
 
           @MCSCF has converged!
 
-   @MCSCF Final Energy:   -1.938868942228893
+   @MCSCF Final Energy:   -2.302898818377784
 
    Computing CI Semicanonical Orbitals
 
    ==> Energetics <==
 
     SCF energy =           -2.265885162935477
-    Total MCSCF energy =   -1.938868942228893
+    Total MCSCF energy =   -2.302898818377784
 
    ==> MCSCF root 0 information <==
 
-    MCSCF Root 0 energy =    -2.263924527006536
+    MCSCF Root 0 energy =    -2.302898818377789
 
    Active Space Natural occupation numbers:
 
-         A   1.997010         A   1.997010         A   0.002990
-         A   0.002990
+         A   1.975813         A   1.975813         A   0.024187
+         A   0.024187
 
    The 20 most important determinants:
 
-    *   1   -0.998505  (    0,    0)  1AX 2AX 
-    *   2    0.031060  (    2,    2)  2AX 3AX 
-    *   3    0.031060  (    3,    3)  1AX 4AX 
-    *   4    0.009758  (    3,    4)  1AA 2AB 4AX 
-    *   5    0.009758  (    4,    3)  1AB 2AA 4AX 
-    *   6   -0.009758  (    1,    2)  1AA 2AB 3AX 
-    *   7   -0.009758  (    2,    1)  1AB 2AA 3AX 
-    *   8   -0.009101  (    1,    3)  1AX 3AA 4AB 
-    *   9   -0.009101  (    3,    1)  1AX 3AB 4AA 
-    *  10    0.009101  (    2,    4)  2AX 3AA 4AB 
-    *  11    0.009101  (    4,    2)  2AX 3AB 4AA 
-    *  12    0.007573  (    1,    1)  1AX 3AX 
-    *  13    0.007573  (    4,    4)  2AX 4AX 
-    *  14   -0.007562  (    1,    4)  1AA 2AB 3AA 4AB 
-    *  15   -0.007562  (    4,    1)  1AB 2AA 3AB 4AA 
-    *  16   -0.007562  (    3,    2)  1AA 2AB 3AB 4AA 
-    *  17   -0.007562  (    2,    3)  1AB 2AA 3AA 4AB 
-    *  18   -0.001495  (    5,    5)  3AX 4AX 
-    *  19    0.000000  (    0,    4)  1AA 2AX 4AB 
-    *  20    0.000000  (    4,    0)  1AB 2AX 4AA 
+    *   1    0.987907  (    0,    0)  1AX 2AX 
+    *   2   -0.109300  (    2,    2)  2AX 3AX 
+    *   3   -0.109300  (    3,    3)  1AX 4AX 
+    *   4    0.012093  (    5,    5)  3AX 4AX 
+    *   5   -0.000465  (    1,    3)  1AX 3AA 4AB 
+    *   6   -0.000465  (    3,    1)  1AX 3AB 4AA 
+    *   7    0.000465  (    2,    4)  2AX 3AA 4AB 
+    *   8    0.000465  (    4,    2)  2AX 3AB 4AA 
+    *   9    0.000293  (    1,    2)  1AA 2AB 3AX 
+    *  10    0.000293  (    2,    1)  1AB 2AA 3AX 
+    *  11   -0.000293  (    3,    4)  1AA 2AB 4AX 
+    *  12   -0.000293  (    4,    3)  1AB 2AA 4AX 
+    *  13   -0.000003  (    1,    1)  1AX 3AX 
+    *  14   -0.000003  (    4,    4)  2AX 4AX 
+    *  15   -0.000002  (    1,    4)  1AA 2AB 3AA 4AB 
+    *  16   -0.000002  (    4,    1)  1AB 2AA 3AB 4AA 
+    *  17   -0.000002  (    2,    3)  1AB 2AA 3AA 4AB 
+    *  18   -0.000002  (    3,    2)  1AA 2AB 3AB 4AA 
 
 
    ==> MCSCF root 1 information <==
 
-    MCSCF Root 1 energy =    -1.776341149841512
+    MCSCF Root 1 energy =    -1.381993277262635
 
    Active Space Natural occupation numbers:
 
-         A   1.627178         A   1.369832         A   0.630168
-         A   0.372822
+         A   1.975813         A   1.000000         A   1.000000
+         A   0.024187
 
    The 20 most important determinants:
 
-    *   1   -0.451363  (    2,    0)  1AB 2AX 3AA 
-    *   2   -0.451363  (    0,    2)  1AA 2AX 3AB 
-    *   3   -0.321313  (    0,    3)  1AX 2AA 4AB 
-    *   4   -0.321313  (    3,    0)  1AX 2AB 4AA 
-    *   5    0.311170  (    0,    1)  1AX 2AA 3AB 
-    *   6    0.311170  (    1,    0)  1AX 2AB 3AA 
-    *   7   -0.308959  (    0,    4)  1AA 2AX 4AB 
-    *   8   -0.308959  (    4,    0)  1AB 2AX 4AA 
-    *   9   -0.017464  (    5,    3)  1AB 3AA 4AX 
-    *  10   -0.017464  (    3,    5)  1AA 3AB 4AX 
-    *  11   -0.012432  (    2,    5)  2AA 3AX 4AB 
-    *  12   -0.012432  (    5,    2)  2AB 3AX 4AA 
-    *  13   -0.012040  (    4,    5)  2AA 3AB 4AX 
-    *  14   -0.012040  (    5,    4)  2AB 3AA 4AX 
-    *  15    0.011954  (    1,    5)  1AA 3AX 4AB 
-    *  16    0.011954  (    5,    1)  1AB 3AX 4AA 
-    *  17   -0.000000  (    2,    4)  2AX 3AA 4AB 
-    *  18   -0.000000  (    4,    2)  2AX 3AB 4AA 
-    *  19   -0.000000  (    4,    4)  2AX 4AX 
-    *  20    0.000000  (    4,    3)  1AB 2AA 4AX 
+    *   1    0.702809  (    2,    0)  1AB 2AX 3AA 
+    *   2    0.702809  (    0,    2)  1AA 2AX 3AB 
+    *   3    0.077759  (    5,    3)  1AB 3AA 4AX 
+    *   4    0.077759  (    3,    5)  1AA 3AB 4AX 
+    *   5   -0.002988  (    0,    4)  1AA 2AX 4AB 
+    *   6   -0.002988  (    4,    0)  1AB 2AX 4AA 
+    *   7   -0.001882  (    0,    1)  1AX 2AA 3AB 
+    *   8   -0.001882  (    1,    0)  1AX 2AB 3AA 
+    *   9    0.000331  (    5,    1)  1AB 3AX 4AA 
+    *  10    0.000331  (    1,    5)  1AA 3AX 4AB 
+    *  11    0.000208  (    5,    4)  2AB 3AA 4AX 
+    *  12    0.000208  (    4,    5)  2AA 3AB 4AX 
+    *  13   -0.000076  (    3,    0)  1AX 2AB 4AA 
+    *  14   -0.000076  (    0,    3)  1AX 2AA 4AB 
+    *  15   -0.000008  (    5,    2)  2AB 3AX 4AA 
+    *  16   -0.000008  (    2,    5)  2AA 3AX 4AB 
+    *  17    0.000000  (    2,    2)  2AX 3AX 
+    *  18    0.000000  (    0,    0)  1AX 2AX 
+    *  19   -0.000000  (    4,    3)  1AB 2AA 4AX 
+    *  20   -0.000000  (    3,    4)  1AA 2AB 4AX 
 
 
    ==> MCSCF root 2 information <==
 
-    MCSCF Root 2 energy =    -1.776341149840013
+    MCSCF Root 2 energy =    -1.381993277102811
 
    Active Space Natural occupation numbers:
 
-         A   1.627178         A   1.369832         A   0.630168
-         A   0.372822
+         A   1.975813         A   1.000000         A   1.000000
+         A   0.024187
 
    The 20 most important determinants:
 
-    *   1    0.546023  (    3,    0)  1AX 2AB 4AA 
-    *   2    0.546023  (    0,    3)  1AX 2AA 4AB 
-    *   3   -0.444584  (    2,    0)  1AB 2AX 3AA 
-    *   4   -0.444584  (    0,    2)  1AA 2AX 3AB 
-    *   5    0.049126  (    0,    4)  1AA 2AX 4AB 
-    *   6    0.049126  (    4,    0)  1AB 2AX 4AA 
-    *   7   -0.032286  (    0,    1)  1AX 2AA 3AB 
-    *   8   -0.032286  (    1,    0)  1AX 2AB 3AA 
-    *   9    0.021126  (    2,    5)  2AA 3AX 4AB 
-    *  10    0.021126  (    5,    2)  2AB 3AX 4AA 
-    *  11   -0.017202  (    5,    3)  1AB 3AA 4AX 
-    *  12   -0.017202  (    3,    5)  1AA 3AB 4AX 
-    *  13   -0.001901  (    5,    1)  1AB 3AX 4AA 
-    *  14   -0.001901  (    1,    5)  1AA 3AX 4AB 
-    *  15    0.001249  (    4,    5)  2AA 3AB 4AX 
-    *  16    0.001249  (    5,    4)  2AB 3AA 4AX 
-    *  17    0.000000  (    2,    2)  2AX 3AX 
-    *  18   -0.000000  (    4,    4)  2AX 4AX 
-    *  19   -0.000000  (    2,    4)  2AX 3AA 4AB 
-    *  20   -0.000000  (    4,    2)  2AX 3AB 4AA 
+    *   1   -0.702809  (    3,    0)  1AX 2AB 4AA 
+    *   2   -0.702809  (    0,    3)  1AX 2AA 4AB 
+    *   3   -0.077759  (    2,    5)  2AA 3AX 4AB 
+    *   4   -0.077759  (    5,    2)  2AB 3AX 4AA 
+    *   5   -0.002988  (    0,    1)  1AX 2AA 3AB 
+    *   6   -0.002988  (    1,    0)  1AX 2AB 3AA 
+    *   7   -0.001881  (    4,    0)  1AB 2AX 4AA 
+    *   8   -0.001881  (    0,    4)  1AA 2AX 4AB 
+    *   9    0.000331  (    5,    4)  2AB 3AA 4AX 
+    *  10    0.000331  (    4,    5)  2AA 3AB 4AX 
+    *  11    0.000208  (    5,    1)  1AB 3AX 4AA 
+    *  12    0.000208  (    1,    5)  1AA 3AX 4AB 
+    *  13   -0.000092  (    0,    2)  1AA 2AX 3AB 
+    *  14   -0.000092  (    2,    0)  1AB 2AX 3AA 
+    *  15   -0.000010  (    3,    5)  1AA 3AB 4AX 
+    *  16   -0.000010  (    5,    3)  1AB 3AA 4AX 
+    *  17   -0.000000  (    3,    3)  1AX 4AX 
+    *  18    0.000000  (    1,    3)  1AX 3AA 4AB 
+    *  19    0.000000  (    3,    1)  1AX 3AB 4AA 
+    *  20   -0.000000  (    0,    0)  1AX 2AX 
 
 
    ==> MCSCF root 3 information <==
 
-    MCSCF Root 3 energy =    -1.505526844347105
+    MCSCF Root 3 energy =    -1.140315637463521
 
    Active Space Natural occupation numbers:
 
-         A   1.999465         A   1.000535         A   0.999465
-         A   0.000535
+         A   1.000000         A   1.000000         A   1.000000
+         A   1.000000
 
    The 20 most important determinants:
 
-    *   1    0.630865  (    0,    1)  1AX 2AA 3AB 
-    *   2    0.630865  (    1,    0)  1AX 2AB 3AA 
-    *   3    0.222267  (    0,    2)  1AA 2AX 3AB 
-    *   4    0.222267  (    2,    0)  1AB 2AX 3AA 
-    *   5    0.209973  (    3,    0)  1AX 2AB 4AA 
-    *   6    0.209973  (    0,    3)  1AX 2AA 4AB 
-    *   7    0.092298  (    0,    4)  1AA 2AX 4AB 
-    *   8    0.092298  (    4,    0)  1AB 2AX 4AA 
-    *   9    0.000000  (    1,    1)  1AX 3AX 
-    *  10   -0.000000  (    2,    3)  1AB 2AA 3AA 4AB 
-    *  11   -0.000000  (    3,    2)  1AA 2AB 3AB 4AA 
-    *  12   -0.000000  (    1,    4)  1AA 2AB 3AA 4AB 
-    *  13   -0.000000  (    4,    1)  1AB 2AA 3AB 4AA 
-    *  14   -0.000000  (    4,    2)  2AX 3AB 4AA 
-    *  15   -0.000000  (    2,    4)  2AX 3AA 4AB 
-    *  16   -0.000000  (    5,    0)  1AB 2AB 3AA 4AA 
-    *  17   -0.000000  (    0,    5)  1AA 2AA 3AB 4AB 
-    *  18   -0.000000  (    2,    2)  2AX 3AX 
-    *  19   -0.000000  (    1,    2)  1AA 2AB 3AX 
-    *  20   -0.000000  (    2,    1)  1AB 2AA 3AX 
+    *   1    0.666161  (    1,    4)  1AA 2AB 3AA 4AB 
+    *   2    0.666161  (    4,    1)  1AB 2AA 3AB 4AA 
+    *   3   -0.167662  (    2,    3)  1AB 2AA 3AA 4AB 
+    *   4   -0.167662  (    3,    2)  1AA 2AB 3AB 4AA 
+    *   5   -0.167649  (    5,    0)  1AB 2AB 3AA 4AA 
+    *   6   -0.167649  (    0,    5)  1AA 2AA 3AB 4AB 
+    *   7    0.002119  (    1,    2)  1AA 2AB 3AX 
+    *   8    0.002119  (    2,    1)  1AB 2AA 3AX 
+    *   9   -0.002119  (    3,    4)  1AA 2AB 4AX 
+    *  10   -0.002119  (    4,    3)  1AB 2AA 4AX 
+    *  11   -0.001335  (    1,    3)  1AX 3AA 4AB 
+    *  12   -0.001335  (    3,    1)  1AX 3AB 4AA 
+    *  13    0.001335  (    4,    2)  2AX 3AB 4AA 
+    *  14    0.001335  (    2,    4)  2AX 3AA 4AB 
+    *  15    0.000011  (    3,    3)  1AX 4AX 
+    *  16   -0.000011  (    1,    1)  1AX 3AX 
+    *  17    0.000011  (    2,    2)  2AX 3AX 
+    *  18   -0.000011  (    4,    4)  2AX 4AX 
+    *  19   -0.000000  (    0,    1)  1AX 2AA 3AB 
+    *  20   -0.000000  (    1,    0)  1AX 2AB 3AA 
 
 
    ==> MCSCF root 4 information <==
 
-    MCSCF Root 4 energy =    -1.505526844342781
+    MCSCF Root 4 energy =    -1.140315637463503
 
    Active Space Natural occupation numbers:
 
-         A   1.999465         A   1.000535         A   0.999465
-         A   0.000535
+         A   1.000000         A   1.000000         A   1.000000
+         A   1.000000
 
    The 20 most important determinants:
 
-    *   1   -0.627268  (    0,    4)  1AA 2AX 4AB 
-    *   2   -0.627268  (    4,    0)  1AB 2AX 4AA 
-    *   3    0.232222  (    3,    0)  1AX 2AB 4AA 
-    *   4    0.232222  (    0,    3)  1AX 2AA 4AB 
-    *   5    0.220484  (    0,    2)  1AA 2AX 3AB 
-    *   6    0.220484  (    2,    0)  1AB 2AX 3AA 
-    *   7   -0.063201  (    0,    1)  1AX 2AA 3AB 
-    *   8   -0.063201  (    1,    0)  1AX 2AB 3AA 
-    *   9   -0.000000  (    4,    4)  2AX 4AX 
-    *  10   -0.000000  (    3,    4)  1AA 2AB 4AX 
-    *  11   -0.000000  (    4,    3)  1AB 2AA 4AX 
-    *  12    0.000000  (    3,    3)  1AX 4AX 
-    *  13    0.000000  (    3,    2)  1AA 2AB 3AB 4AA 
-    *  14    0.000000  (    2,    3)  1AB 2AA 3AA 4AB 
-    *  15    0.000000  (    1,    4)  1AA 2AB 3AA 4AB 
-    *  16    0.000000  (    4,    1)  1AB 2AA 3AB 4AA 
-    *  17   -0.000000  (    1,    3)  1AX 3AA 4AB 
-    *  18   -0.000000  (    3,    1)  1AX 3AB 4AA 
-    *  19   -0.000000  (    2,    4)  2AX 3AA 4AB 
-    *  20   -0.000000  (    4,    2)  2AX 3AB 4AA 
+    *   1    0.471056  (    5,    0)  1AB 2AB 3AA 4AA 
+    *   2    0.471056  (    0,    5)  1AA 2AA 3AB 4AB 
+    *   3    0.471038  (    2,    3)  1AB 2AA 3AA 4AB 
+    *   4    0.471038  (    3,    2)  1AA 2AB 3AB 4AA 
+    *   5    0.237074  (    1,    4)  1AA 2AB 3AA 4AB 
+    *   6    0.237074  (    4,    1)  1AB 2AA 3AB 4AA 
+    *   7    0.003010  (    1,    2)  1AA 2AB 3AX 
+    *   8    0.003010  (    2,    1)  1AB 2AA 3AX 
+    *   9   -0.003010  (    4,    3)  1AB 2AA 4AX 
+    *  10   -0.003010  (    3,    4)  1AA 2AB 4AX 
+    *  11   -0.001896  (    1,    3)  1AX 3AA 4AB 
+    *  12   -0.001896  (    3,    1)  1AX 3AB 4AA 
+    *  13    0.001896  (    2,    4)  2AX 3AA 4AB 
+    *  14    0.001896  (    4,    2)  2AX 3AB 4AA 
+    *  15   -0.000016  (    1,    1)  1AX 3AX 
+    *  16   -0.000016  (    4,    4)  2AX 4AX 
+    *  17    0.000016  (    3,    3)  1AX 4AX 
+    *  18    0.000016  (    2,    2)  2AX 3AX 
+    *  19   -0.000000  (    0,    1)  1AX 2AA 3AB 
+    *  20   -0.000000  (    1,    0)  1AX 2AB 3AA 
 
 
 
@@ -529,7 +529,7 @@ Properties computed using the CASSCF density matrix
 
 
 *** tstart() called on Jessicas-iMac.local
-*** at Wed Sep 18 12:38:59 2024
+*** at Wed Sep 18 12:49:11 2024
 
    => Loading Basis Set <=
 
@@ -716,13 +716,13 @@ Properties computed using the SCF density matrix
      X:     0.0000      Y:     0.0000      Z:    -0.0000     Total:     0.0000
 
 
-*** tstop() called on Jessicas-iMac.local at Wed Sep 18 12:38:59 2024
+*** tstop() called on Jessicas-iMac.local at Wed Sep 18 12:49:11 2024
 Module time:
 	user time   =       0.20 seconds =       0.00 minutes
-	system time =       0.01 seconds =       0.00 minutes
+	system time =       0.00 seconds =       0.00 minutes
 	total time  =          0 seconds =       0.00 minutes
 Total time:
-	user time   =       0.81 seconds =       0.01 minutes
+	user time   =       0.83 seconds =       0.01 minutes
 	system time =       0.27 seconds =       0.00 minutes
 	total time  =          1 seconds =       0.02 minutes
  MINTS: Wrapper to libmints.
@@ -801,7 +801,7 @@ Total time:
     IOPEN        =       NO
 
     EX ALLOW       =  1  1  1  1 
-    STATE AVERAGE  =  0(0.33)  1(0.33)  2(0.33) 
+    STATE AVERAGE  =  0(1.00) 
 
    ==> CI Orbital and Space information <==
 
@@ -874,188 +874,188 @@ Total time:
 (sem_iter): H0block_->H0b_diag[13][16] - H0block_->H0b_diag[14][16] = 0.164549 - -0.053341 = 0.217890 > 1.0E-8
 (sem_iter): H0block_->H0b_diag[13][17] - H0block_->H0b_diag[14][17] = -0.852168 - 0.276241 = -1.128409 > 1.0E-8
 (sem_iter): H0block_->H0b_diag[13][18] - H0block_->H0b_diag[14][18] = -0.308366 - -0.951268 = 0.642902 > 1.0E-8
-   @MCSCF  1:     -1.932951117871    3.3293e-01  1.23e-02  3.75e-13    4    1  Initial CI
-   @MCSCF  2:     -1.938577000556   -5.6259e-03  2.26e-03  3.14e-07    2    1  TS
-   @MCSCF  3:     -1.938846426328   -2.6943e-04  4.74e-04  4.54e-07    2    1  TS
-   @MCSCF  4:     -1.938866057123   -1.9631e-05  1.20e-04  7.48e-10    6    1  TS, DIIS
-   @MCSCF  5:     -1.938868437403   -2.3803e-06  4.25e-05  1.60e-09    2    1  TS, DIIS
-   @MCSCF  6:     -1.938868918020   -4.8062e-07  1.56e-05  2.56e-13   11    1  TS, DIIS
-   @MCSCF  7:     -1.938868942229   -2.4209e-08  5.23e-06  1.63e-09    2    1  TS, DIIS
+   @MCSCF  1:     -2.268789663348   -2.9045e-03  1.12e-03  1.31e-13    4    1  Initial CI
+      Warning! Maxstep = 0.90, scaling to 0.50
+   @MCSCF  2:     -2.290535515815   -2.1746e-02  4.59e-03  1.18e-07    5    1  TS
+   @MCSCF  3:     -2.301449488180   -1.0914e-02  3.01e-03  2.16e-07    2    1  TS
+   @MCSCF  4:     -2.302660581812   -1.2111e-03  1.03e-03  2.37e-09    2    1  TS, DIIS
+   @MCSCF  5:     -2.302855707536   -1.9513e-04  3.93e-04  6.73e-09    2    1  TS, DIIS
+   @MCSCF  6:     -2.302898538332   -4.2831e-05  7.74e-05  2.26e-10    2    1  TS, DIIS
+   @MCSCF  7:     -2.302898749141   -2.1081e-07  2.57e-05  1.48e-10    2    1  TS, DIIS
+   @MCSCF  8:     -2.302898818378   -6.9236e-08  5.07e-06  1.73e-11    2    1  TS, DIIS
 
           @MCSCF has converged!
 
-   @MCSCF Final Energy:   -1.938868942228893
+   @MCSCF Final Energy:   -2.302898818377784
 
    Computing CI Semicanonical Orbitals
 
    ==> Energetics <==
 
     SCF energy =           -2.265885162935477
-    Total MCSCF energy =   -1.938868942228893
+    Total MCSCF energy =   -2.302898818377784
 
    ==> MCSCF root 0 information <==
 
-    MCSCF Root 0 energy =    -2.263924527006536
+    MCSCF Root 0 energy =    -2.302898818377789
 
    Active Space Natural occupation numbers:
 
-         A   1.997010         A   1.997010         A   0.002990
-         A   0.002990
+         A   1.975813         A   1.975813         A   0.024187
+         A   0.024187
 
    The 20 most important determinants:
 
-    *   1   -0.998505  (    0,    0)  1AX 2AX 
-    *   2    0.031060  (    2,    2)  2AX 3AX 
-    *   3    0.031060  (    3,    3)  1AX 4AX 
-    *   4    0.009758  (    3,    4)  1AA 2AB 4AX 
-    *   5    0.009758  (    4,    3)  1AB 2AA 4AX 
-    *   6   -0.009758  (    1,    2)  1AA 2AB 3AX 
-    *   7   -0.009758  (    2,    1)  1AB 2AA 3AX 
-    *   8   -0.009101  (    1,    3)  1AX 3AA 4AB 
-    *   9   -0.009101  (    3,    1)  1AX 3AB 4AA 
-    *  10    0.009101  (    2,    4)  2AX 3AA 4AB 
-    *  11    0.009101  (    4,    2)  2AX 3AB 4AA 
-    *  12    0.007573  (    1,    1)  1AX 3AX 
-    *  13    0.007573  (    4,    4)  2AX 4AX 
-    *  14   -0.007562  (    1,    4)  1AA 2AB 3AA 4AB 
-    *  15   -0.007562  (    4,    1)  1AB 2AA 3AB 4AA 
-    *  16   -0.007562  (    3,    2)  1AA 2AB 3AB 4AA 
-    *  17   -0.007562  (    2,    3)  1AB 2AA 3AA 4AB 
-    *  18   -0.001495  (    5,    5)  3AX 4AX 
-    *  19    0.000000  (    0,    4)  1AA 2AX 4AB 
-    *  20    0.000000  (    4,    0)  1AB 2AX 4AA 
+    *   1    0.987907  (    0,    0)  1AX 2AX 
+    *   2   -0.109300  (    2,    2)  2AX 3AX 
+    *   3   -0.109300  (    3,    3)  1AX 4AX 
+    *   4    0.012093  (    5,    5)  3AX 4AX 
+    *   5   -0.000465  (    1,    3)  1AX 3AA 4AB 
+    *   6   -0.000465  (    3,    1)  1AX 3AB 4AA 
+    *   7    0.000465  (    2,    4)  2AX 3AA 4AB 
+    *   8    0.000465  (    4,    2)  2AX 3AB 4AA 
+    *   9    0.000293  (    1,    2)  1AA 2AB 3AX 
+    *  10    0.000293  (    2,    1)  1AB 2AA 3AX 
+    *  11   -0.000293  (    3,    4)  1AA 2AB 4AX 
+    *  12   -0.000293  (    4,    3)  1AB 2AA 4AX 
+    *  13   -0.000003  (    1,    1)  1AX 3AX 
+    *  14   -0.000003  (    4,    4)  2AX 4AX 
+    *  15   -0.000002  (    1,    4)  1AA 2AB 3AA 4AB 
+    *  16   -0.000002  (    4,    1)  1AB 2AA 3AB 4AA 
+    *  17   -0.000002  (    2,    3)  1AB 2AA 3AA 4AB 
+    *  18   -0.000002  (    3,    2)  1AA 2AB 3AB 4AA 
 
 
    ==> MCSCF root 1 information <==
 
-    MCSCF Root 1 energy =    -1.776341149841512
+    MCSCF Root 1 energy =    -1.381993277262635
 
    Active Space Natural occupation numbers:
 
-         A   1.627178         A   1.369832         A   0.630168
-         A   0.372822
+         A   1.975813         A   1.000000         A   1.000000
+         A   0.024187
 
    The 20 most important determinants:
 
-    *   1   -0.451363  (    2,    0)  1AB 2AX 3AA 
-    *   2   -0.451363  (    0,    2)  1AA 2AX 3AB 
-    *   3   -0.321313  (    0,    3)  1AX 2AA 4AB 
-    *   4   -0.321313  (    3,    0)  1AX 2AB 4AA 
-    *   5    0.311170  (    0,    1)  1AX 2AA 3AB 
-    *   6    0.311170  (    1,    0)  1AX 2AB 3AA 
-    *   7   -0.308959  (    0,    4)  1AA 2AX 4AB 
-    *   8   -0.308959  (    4,    0)  1AB 2AX 4AA 
-    *   9   -0.017464  (    5,    3)  1AB 3AA 4AX 
-    *  10   -0.017464  (    3,    5)  1AA 3AB 4AX 
-    *  11   -0.012432  (    2,    5)  2AA 3AX 4AB 
-    *  12   -0.012432  (    5,    2)  2AB 3AX 4AA 
-    *  13   -0.012040  (    4,    5)  2AA 3AB 4AX 
-    *  14   -0.012040  (    5,    4)  2AB 3AA 4AX 
-    *  15    0.011954  (    1,    5)  1AA 3AX 4AB 
-    *  16    0.011954  (    5,    1)  1AB 3AX 4AA 
-    *  17   -0.000000  (    2,    4)  2AX 3AA 4AB 
-    *  18   -0.000000  (    4,    2)  2AX 3AB 4AA 
-    *  19   -0.000000  (    4,    4)  2AX 4AX 
-    *  20    0.000000  (    4,    3)  1AB 2AA 4AX 
+    *   1    0.702809  (    2,    0)  1AB 2AX 3AA 
+    *   2    0.702809  (    0,    2)  1AA 2AX 3AB 
+    *   3    0.077759  (    5,    3)  1AB 3AA 4AX 
+    *   4    0.077759  (    3,    5)  1AA 3AB 4AX 
+    *   5   -0.002988  (    0,    4)  1AA 2AX 4AB 
+    *   6   -0.002988  (    4,    0)  1AB 2AX 4AA 
+    *   7   -0.001882  (    0,    1)  1AX 2AA 3AB 
+    *   8   -0.001882  (    1,    0)  1AX 2AB 3AA 
+    *   9    0.000331  (    5,    1)  1AB 3AX 4AA 
+    *  10    0.000331  (    1,    5)  1AA 3AX 4AB 
+    *  11    0.000208  (    5,    4)  2AB 3AA 4AX 
+    *  12    0.000208  (    4,    5)  2AA 3AB 4AX 
+    *  13   -0.000076  (    3,    0)  1AX 2AB 4AA 
+    *  14   -0.000076  (    0,    3)  1AX 2AA 4AB 
+    *  15   -0.000008  (    5,    2)  2AB 3AX 4AA 
+    *  16   -0.000008  (    2,    5)  2AA 3AX 4AB 
+    *  17    0.000000  (    2,    2)  2AX 3AX 
+    *  18    0.000000  (    0,    0)  1AX 2AX 
+    *  19   -0.000000  (    4,    3)  1AB 2AA 4AX 
+    *  20   -0.000000  (    3,    4)  1AA 2AB 4AX 
 
 
    ==> MCSCF root 2 information <==
 
-    MCSCF Root 2 energy =    -1.776341149840013
+    MCSCF Root 2 energy =    -1.381993277102811
 
    Active Space Natural occupation numbers:
 
-         A   1.627178         A   1.369832         A   0.630168
-         A   0.372822
+         A   1.975813         A   1.000000         A   1.000000
+         A   0.024187
 
    The 20 most important determinants:
 
-    *   1    0.546023  (    3,    0)  1AX 2AB 4AA 
-    *   2    0.546023  (    0,    3)  1AX 2AA 4AB 
-    *   3   -0.444584  (    2,    0)  1AB 2AX 3AA 
-    *   4   -0.444584  (    0,    2)  1AA 2AX 3AB 
-    *   5    0.049126  (    0,    4)  1AA 2AX 4AB 
-    *   6    0.049126  (    4,    0)  1AB 2AX 4AA 
-    *   7   -0.032286  (    0,    1)  1AX 2AA 3AB 
-    *   8   -0.032286  (    1,    0)  1AX 2AB 3AA 
-    *   9    0.021126  (    2,    5)  2AA 3AX 4AB 
-    *  10    0.021126  (    5,    2)  2AB 3AX 4AA 
-    *  11   -0.017202  (    5,    3)  1AB 3AA 4AX 
-    *  12   -0.017202  (    3,    5)  1AA 3AB 4AX 
-    *  13   -0.001901  (    5,    1)  1AB 3AX 4AA 
-    *  14   -0.001901  (    1,    5)  1AA 3AX 4AB 
-    *  15    0.001249  (    4,    5)  2AA 3AB 4AX 
-    *  16    0.001249  (    5,    4)  2AB 3AA 4AX 
-    *  17    0.000000  (    2,    2)  2AX 3AX 
-    *  18   -0.000000  (    4,    4)  2AX 4AX 
-    *  19   -0.000000  (    2,    4)  2AX 3AA 4AB 
-    *  20   -0.000000  (    4,    2)  2AX 3AB 4AA 
+    *   1   -0.702809  (    3,    0)  1AX 2AB 4AA 
+    *   2   -0.702809  (    0,    3)  1AX 2AA 4AB 
+    *   3   -0.077759  (    2,    5)  2AA 3AX 4AB 
+    *   4   -0.077759  (    5,    2)  2AB 3AX 4AA 
+    *   5   -0.002988  (    0,    1)  1AX 2AA 3AB 
+    *   6   -0.002988  (    1,    0)  1AX 2AB 3AA 
+    *   7   -0.001881  (    4,    0)  1AB 2AX 4AA 
+    *   8   -0.001881  (    0,    4)  1AA 2AX 4AB 
+    *   9    0.000331  (    5,    4)  2AB 3AA 4AX 
+    *  10    0.000331  (    4,    5)  2AA 3AB 4AX 
+    *  11    0.000208  (    5,    1)  1AB 3AX 4AA 
+    *  12    0.000208  (    1,    5)  1AA 3AX 4AB 
+    *  13   -0.000092  (    0,    2)  1AA 2AX 3AB 
+    *  14   -0.000092  (    2,    0)  1AB 2AX 3AA 
+    *  15   -0.000010  (    3,    5)  1AA 3AB 4AX 
+    *  16   -0.000010  (    5,    3)  1AB 3AA 4AX 
+    *  17   -0.000000  (    3,    3)  1AX 4AX 
+    *  18    0.000000  (    1,    3)  1AX 3AA 4AB 
+    *  19    0.000000  (    3,    1)  1AX 3AB 4AA 
+    *  20   -0.000000  (    0,    0)  1AX 2AX 
 
 
    ==> MCSCF root 3 information <==
 
-    MCSCF Root 3 energy =    -1.505526844347105
+    MCSCF Root 3 energy =    -1.140315637463521
 
    Active Space Natural occupation numbers:
 
-         A   1.999465         A   1.000535         A   0.999465
-         A   0.000535
+         A   1.000000         A   1.000000         A   1.000000
+         A   1.000000
 
    The 20 most important determinants:
 
-    *   1    0.630865  (    0,    1)  1AX 2AA 3AB 
-    *   2    0.630865  (    1,    0)  1AX 2AB 3AA 
-    *   3    0.222267  (    0,    2)  1AA 2AX 3AB 
-    *   4    0.222267  (    2,    0)  1AB 2AX 3AA 
-    *   5    0.209973  (    3,    0)  1AX 2AB 4AA 
-    *   6    0.209973  (    0,    3)  1AX 2AA 4AB 
-    *   7    0.092298  (    0,    4)  1AA 2AX 4AB 
-    *   8    0.092298  (    4,    0)  1AB 2AX 4AA 
-    *   9    0.000000  (    1,    1)  1AX 3AX 
-    *  10   -0.000000  (    2,    3)  1AB 2AA 3AA 4AB 
-    *  11   -0.000000  (    3,    2)  1AA 2AB 3AB 4AA 
-    *  12   -0.000000  (    1,    4)  1AA 2AB 3AA 4AB 
-    *  13   -0.000000  (    4,    1)  1AB 2AA 3AB 4AA 
-    *  14   -0.000000  (    4,    2)  2AX 3AB 4AA 
-    *  15   -0.000000  (    2,    4)  2AX 3AA 4AB 
-    *  16   -0.000000  (    5,    0)  1AB 2AB 3AA 4AA 
-    *  17   -0.000000  (    0,    5)  1AA 2AA 3AB 4AB 
-    *  18   -0.000000  (    2,    2)  2AX 3AX 
-    *  19   -0.000000  (    1,    2)  1AA 2AB 3AX 
-    *  20   -0.000000  (    2,    1)  1AB 2AA 3AX 
+    *   1    0.666161  (    1,    4)  1AA 2AB 3AA 4AB 
+    *   2    0.666161  (    4,    1)  1AB 2AA 3AB 4AA 
+    *   3   -0.167662  (    2,    3)  1AB 2AA 3AA 4AB 
+    *   4   -0.167662  (    3,    2)  1AA 2AB 3AB 4AA 
+    *   5   -0.167649  (    5,    0)  1AB 2AB 3AA 4AA 
+    *   6   -0.167649  (    0,    5)  1AA 2AA 3AB 4AB 
+    *   7    0.002119  (    1,    2)  1AA 2AB 3AX 
+    *   8    0.002119  (    2,    1)  1AB 2AA 3AX 
+    *   9   -0.002119  (    3,    4)  1AA 2AB 4AX 
+    *  10   -0.002119  (    4,    3)  1AB 2AA 4AX 
+    *  11   -0.001335  (    1,    3)  1AX 3AA 4AB 
+    *  12   -0.001335  (    3,    1)  1AX 3AB 4AA 
+    *  13    0.001335  (    4,    2)  2AX 3AB 4AA 
+    *  14    0.001335  (    2,    4)  2AX 3AA 4AB 
+    *  15    0.000011  (    3,    3)  1AX 4AX 
+    *  16   -0.000011  (    1,    1)  1AX 3AX 
+    *  17    0.000011  (    2,    2)  2AX 3AX 
+    *  18   -0.000011  (    4,    4)  2AX 4AX 
+    *  19   -0.000000  (    0,    1)  1AX 2AA 3AB 
+    *  20   -0.000000  (    1,    0)  1AX 2AB 3AA 
 
 
    ==> MCSCF root 4 information <==
 
-    MCSCF Root 4 energy =    -1.505526844342781
+    MCSCF Root 4 energy =    -1.140315637463503
 
    Active Space Natural occupation numbers:
 
-         A   1.999465         A   1.000535         A   0.999465
-         A   0.000535
+         A   1.000000         A   1.000000         A   1.000000
+         A   1.000000
 
    The 20 most important determinants:
 
-    *   1   -0.627268  (    0,    4)  1AA 2AX 4AB 
-    *   2   -0.627268  (    4,    0)  1AB 2AX 4AA 
-    *   3    0.232222  (    3,    0)  1AX 2AB 4AA 
-    *   4    0.232222  (    0,    3)  1AX 2AA 4AB 
-    *   5    0.220484  (    0,    2)  1AA 2AX 3AB 
-    *   6    0.220484  (    2,    0)  1AB 2AX 3AA 
-    *   7   -0.063201  (    0,    1)  1AX 2AA 3AB 
-    *   8   -0.063201  (    1,    0)  1AX 2AB 3AA 
-    *   9   -0.000000  (    4,    4)  2AX 4AX 
-    *  10   -0.000000  (    3,    4)  1AA 2AB 4AX 
-    *  11   -0.000000  (    4,    3)  1AB 2AA 4AX 
-    *  12    0.000000  (    3,    3)  1AX 4AX 
-    *  13    0.000000  (    3,    2)  1AA 2AB 3AB 4AA 
-    *  14    0.000000  (    2,    3)  1AB 2AA 3AA 4AB 
-    *  15    0.000000  (    1,    4)  1AA 2AB 3AA 4AB 
-    *  16    0.000000  (    4,    1)  1AB 2AA 3AB 4AA 
-    *  17   -0.000000  (    1,    3)  1AX 3AA 4AB 
-    *  18   -0.000000  (    3,    1)  1AX 3AB 4AA 
-    *  19   -0.000000  (    2,    4)  2AX 3AA 4AB 
-    *  20   -0.000000  (    4,    2)  2AX 3AB 4AA 
+    *   1    0.471056  (    5,    0)  1AB 2AB 3AA 4AA 
+    *   2    0.471056  (    0,    5)  1AA 2AA 3AB 4AB 
+    *   3    0.471038  (    2,    3)  1AB 2AA 3AA 4AB 
+    *   4    0.471038  (    3,    2)  1AA 2AB 3AB 4AA 
+    *   5    0.237074  (    1,    4)  1AA 2AB 3AA 4AB 
+    *   6    0.237074  (    4,    1)  1AB 2AA 3AB 4AA 
+    *   7    0.003010  (    1,    2)  1AA 2AB 3AX 
+    *   8    0.003010  (    2,    1)  1AB 2AA 3AX 
+    *   9   -0.003010  (    4,    3)  1AB 2AA 4AX 
+    *  10   -0.003010  (    3,    4)  1AA 2AB 4AX 
+    *  11   -0.001896  (    1,    3)  1AX 3AA 4AB 
+    *  12   -0.001896  (    3,    1)  1AX 3AB 4AA 
+    *  13    0.001896  (    2,    4)  2AX 3AA 4AB 
+    *  14    0.001896  (    4,    2)  2AX 3AB 4AA 
+    *  15   -0.000016  (    1,    1)  1AX 3AX 
+    *  16   -0.000016  (    4,    4)  2AX 4AX 
+    *  17    0.000016  (    3,    3)  1AX 4AX 
+    *  18    0.000016  (    2,    2)  2AX 3AX 
+    *  19   -0.000000  (    0,    1)  1AX 2AA 3AB 
+    *  20   -0.000000  (    1,    0)  1AX 2AB 3AA 
 
 
 
@@ -1118,21 +1118,6 @@ Properties computed using the CASSCF ROOT 1 density matrix
      X:     0.0000      Y:     0.0000      Z:    -0.0000
 
   Electronic Dipole Moment: [e a0]
-     X:     0.0000      Y:     0.0000      Z:     0.0000
-
-  Dipole Moment: [e a0]
-     X:     0.0000      Y:     0.0000      Z:     0.0000     Total:     0.0000
-
-  Dipole Moment: [D]
-     X:     0.0000      Y:     0.0000      Z:     0.0000     Total:     0.0000
-
-
-Properties computed using the CASSCF ROOT 2 density matrix
-
-  Nuclear Dipole Moment: [e a0]
-     X:     0.0000      Y:     0.0000      Z:    -0.0000
-
-  Electronic Dipole Moment: [e a0]
      X:    -0.0000      Y:     0.0000      Z:    -0.0000
 
   Dipole Moment: [e a0]
@@ -1142,19 +1127,34 @@ Properties computed using the CASSCF ROOT 2 density matrix
      X:    -0.0000      Y:     0.0000      Z:    -0.0000     Total:     0.0000
 
 
+Properties computed using the CASSCF ROOT 2 density matrix
+
+  Nuclear Dipole Moment: [e a0]
+     X:     0.0000      Y:     0.0000      Z:    -0.0000
+
+  Electronic Dipole Moment: [e a0]
+     X:     0.0000      Y:     0.0000      Z:    -0.0000
+
+  Dipole Moment: [e a0]
+     X:     0.0000      Y:     0.0000      Z:    -0.0000     Total:     0.0000
+
+  Dipole Moment: [D]
+     X:     0.0000      Y:     0.0000      Z:    -0.0000     Total:     0.0000
+
+
 Properties computed using the CASSCF ROOT 3 density matrix
 
   Nuclear Dipole Moment: [e a0]
      X:     0.0000      Y:     0.0000      Z:    -0.0000
 
   Electronic Dipole Moment: [e a0]
-     X:    -0.0000      Y:     0.0000      Z: 45304.9361
+     X:     0.0000      Y:     0.0000      Z:    -0.0000
 
   Dipole Moment: [e a0]
-     X:    -0.0000      Y:     0.0000      Z: 45304.9361     Total: 45304.9361
+     X:     0.0000      Y:     0.0000      Z:    -0.0000     Total:     0.0000
 
   Dipole Moment: [D]
-     X:    -0.0000      Y:     0.0000      Z: 115153.6606     Total: 115153.6606
+     X:     0.0000      Y:     0.0000      Z:    -0.0000     Total:     0.0000
 
 
 Properties computed using the CASSCF ROOT 4 density matrix
@@ -1163,13 +1163,13 @@ Properties computed using the CASSCF ROOT 4 density matrix
      X:     0.0000      Y:     0.0000      Z:    -0.0000
 
   Electronic Dipole Moment: [e a0]
-     X:     0.0000      Y:     0.0000      Z: -45304.9361
+     X:     0.0000      Y:     0.0000      Z:    -0.0000
 
   Dipole Moment: [e a0]
-     X:     0.0000      Y:     0.0000      Z: -45304.9361     Total: 45304.9361
+     X:     0.0000      Y:     0.0000      Z:    -0.0000     Total:     0.0000
 
   Dipole Moment: [D]
-     X:     0.0000      Y:     0.0000      Z: -115153.6606     Total: 115153.6606
+     X:     0.0000      Y:     0.0000      Z:    -0.0000     Total:     0.0000
 
 
    ===> CASSCF properties for all CI transition density matrices <=== 
@@ -1178,19 +1178,19 @@ Properties computed using the CASSCF ROOT 4 density matrix
 Properties computed using the CASSCF ROOT 0 -> ROOT 1 density matrix
 
   Transition Dipole Moment: [e a0]
-     X:     0.0000      Y:     0.0000      Z:     1.6317     Total:     1.6317
+     X:     0.0000      Y:    -0.0000      Z:    -1.1390     Total:     1.1390
 
   Transition Dipole Moment: [D]
-     X:     0.0000      Y:     0.0000      Z:     4.1474     Total:     4.1474
+     X:     0.0000      Y:    -0.0000      Z:    -2.8949     Total:     2.8949
 
 
 Properties computed using the CASSCF ROOT 0 -> ROOT 2 density matrix
 
   Transition Dipole Moment: [e a0]
-     X:     0.0000      Y:    -0.0000      Z:    -0.2142     Total:     0.2142
+     X:    -0.0000      Y:     0.0000      Z:    -1.1387     Total:     1.1387
 
   Transition Dipole Moment: [D]
-     X:     0.0000      Y:    -0.0000      Z:    -0.5445     Total:     0.5445
+     X:    -0.0000      Y:     0.0000      Z:    -2.8942     Total:     2.8942
 
 
 Properties computed using the CASSCF ROOT 0 -> ROOT 3 density matrix
@@ -1205,8 +1205,8 @@ Properties computed using the CASSCF ROOT 0 -> ROOT 3 density matrix
 Properties computed using the CASSCF ROOT 0 -> ROOT 4 density matrix
 
   Transition Dipole Moment: [e a0]
-     X:    -0.0000      Y:    -0.0000      Z:     0.0000     Total:     0.0000
+     X:     0.0000      Y:    -0.0000      Z:    -0.0000     Total:     0.0000
 
   Transition Dipole Moment: [D]
-     X:    -0.0000      Y:    -0.0000      Z:     0.0000     Total:     0.0000
+     X:     0.0000      Y:    -0.0000      Z:    -0.0000     Total:     0.0000
 
