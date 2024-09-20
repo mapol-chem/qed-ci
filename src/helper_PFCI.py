@@ -1910,7 +1910,7 @@ class PFHamiltonianGenerator:
                 ####            np1,
                 ####            i,
                 ####            i,
-                ####            1.0/self.davidson_roots
+                ####            self.weight[i]
                 ####    )
                 ####    c_build_active_photon_electron_one_rdm(eigenvecs,
                 ####            self.Dpe_tu_avg,
@@ -1920,7 +1920,7 @@ class PFHamiltonianGenerator:
                 ####            np1,
                 ####            i,
                 ####            i,
-                ####            1.0/self.davidson_roots
+                ####            self.weight[i]
                 ####    )
                 #####for t in range(self.n_act_orb):
                 #####    for v in range(self.n_act_orb):
@@ -1965,8 +1965,8 @@ class PFHamiltonianGenerator:
                 print("test avarage energy")
                 avg_energy = 0.0
                 for i in range(self.davidson_roots):
-                    avg_energy += eigenvals[i]
-                avg_energy /= self.davidson_roots    
+                    avg_energy += self.weight[i] * eigenvals[i]
+                    #print(self.weight[i], eigenvals[i], self.weight[i] * eigenvals[i])
                 active_one_e_energy = np.dot(active_fock_core.flatten(), self.D_tu_avg)
                 active_two_e_energy = 0.5 * np.dot(active_twoeint.flatten(), self.D_tuvw_avg)
                 active_one_pe_energy = -np.sqrt(self.omega/2) * np.dot(self.d_cmo[self.n_in_a:self.n_occupied,self.n_in_a:self.n_occupied].flatten(), self.Dpe_tu_avg)
@@ -2834,7 +2834,8 @@ class PFHamiltonianGenerator:
                                     self.target_spin)
                             d_diag = 2.0 * np.einsum("ii->", self.d_cmo[:self.n_in_a,:self.n_in_a])
                             self.constdouble[3] = self.d_exp - d_diag
-                            self.constdouble[4] = 1e-5 
+                            #self.constdouble[4] = 1e-5 
+                            self.constdouble[4] = self.davidson_threshold
                             self.constdouble[5] = self.E_core
                             self.constint[8] = self.davidson_maxiter
                             eigenvals = np.zeros((self.davidson_roots))
@@ -2862,8 +2863,7 @@ class PFHamiltonianGenerator:
                             )
                             avg_energy = 0.0 
                             for i in range(self.davidson_roots):
-                                avg_energy += eigenvals[i]
-                            avg_energy /= self.davidson_roots
+                                avg_energy += self.weight[i] * eigenvals[i]
                             print("avg energy", macroiteration, avg_energy)
                             print("average energy at the start of macroiteration", avg_energy) 
                             self.build_state_avarage_rdms(eigenvecs)
@@ -2890,6 +2890,8 @@ class PFHamiltonianGenerator:
                                     eigenvals[i],
                                     "<S^2>=",
                                     total_spin,
+                                    "WEIGHT =",
+                                    self.weight[i],
                                     end="",
                                 )
                                 if np.abs(total_spin) < 1e-5:
@@ -3296,8 +3298,24 @@ class PFHamiltonianGenerator:
                 self.spin_adaptation = "no"
                 self.target_spin = -1.0
                 #print(self.target_spin)
-
-
+           
+        if "casscf_weight" in cavity_dictionary:
+            self.weight = cavity_dictionary["casscf_weight"]
+        else:
+            self.weight = np.full(self.davidson_roots,1.0)  
+        if np.sum(self.weight) <= 1e-14:
+            print("the program requires posive weight for at least one root")
+            exit()
+        if np.size(self.weight) > self.davidson_roots:
+            print("the dimension of the weight array exceeds the number of roots")
+            exit()
+        elif np.size(self.weight) < self.davidson_roots:
+            extra_dim = self.davidson_roots - np.size(self.weight)
+            weight1 = np.full(extra_dim, 0.0)
+            print(weight1)
+            self.weight = np.concatenate((self.weight, weight1))
+        self.weight = self.weight/np.sum(self.weight)
+        print("weight", self.weight)
 
     def parseArrays(self, cqed_rhf_dict):
         # grab quantities from cqed_rhf_dict that apply to both number state and coherent state bases
@@ -5231,7 +5249,7 @@ class PFHamiltonianGenerator:
         fock_general -= 0.5 * np.einsum("tu,turs->rs", self.D_tu_avg.reshape((self.n_act_orb,self.n_act_orb)), occupied_K[self.n_in_a:self.n_occupied,self.n_in_a:self.n_occupied,:rot_dim,:rot_dim])
        
         off_diagonal_constant = self.calculate_off_diagonal_photon_constant(eigenvecs)
-        A[:,:self.n_in_a] = 2.0 * (fock_general[:,:self.n_in_a] + occupied_d_cmo[:rot_dim,:self.n_in_a] * off_diagonal_constant/self.davidson_roots)
+        A[:,:self.n_in_a] = 2.0 * (fock_general[:,:self.n_in_a] + occupied_d_cmo[:rot_dim,:self.n_in_a] * off_diagonal_constant)
         
         A[:,self.n_in_a:self.n_occupied] = np.einsum("rt,tu->ru", occupied_fock_core[:rot_dim,self.n_in_a:self.n_occupied],
                 self.D_tu_avg.reshape((self.n_act_orb,self.n_act_orb)))
@@ -5251,7 +5269,7 @@ class PFHamiltonianGenerator:
             #for r in range(self.nmo):
             #    for i in range(self.n_in_a):
             #        self.A2[r][i] = 2.0 * self.fock_general[r][i]
-            #        self.A2[r][i] += 2.0 * off_diagonal_constant/self.davidson_roots * self.d_cmo[r][i]
+            #        self.A2[r][i] += 2.0 * off_diagonal_constant * self.d_cmo[r][i]
 
             #for r in range(self.nmo):
             #    for u in range(self.n_act_orb):
@@ -5276,7 +5294,7 @@ class PFHamiltonianGenerator:
         G[:self.n_in_a,:self.n_in_a,:,:] = 2.0 * np.einsum("rs,ij->ijrs", fock_general[:rot_dim,:rot_dim],
            np.eye(self.n_in_a))
         G[:self.n_in_a,:self.n_in_a,:,:] += 2.0 * L[:self.n_in_a,:,:,:]
-        G[:self.n_in_a,:self.n_in_a,:,:] += 2.0 * off_diagonal_constant/self.davidson_roots * np.einsum("rs,ij->ijrs", occupied_d_cmo[:rot_dim,:rot_dim],
+        G[:self.n_in_a,:self.n_in_a,:,:] += 2.0 * off_diagonal_constant * np.einsum("rs,ij->ijrs", occupied_d_cmo[:rot_dim,:rot_dim],
            np.eye(self.n_in_a))
 
         G[self.n_in_a:self.n_occupied,:self.n_in_a,:,:] = np.einsum("tv,vjrs->tjrs", self.D_tu_avg.reshape((self.n_act_orb,self.n_act_orb)),
@@ -5381,7 +5399,7 @@ class PFHamiltonianGenerator:
         ###print("rqq", np.allclose(self.fock_general,self.fock_general2, rtol=1e-14,atol=1e-14))
         #start = timer()
         off_diagonal_constant = self.calculate_off_diagonal_photon_constant(eigenvecs)
-        A[:,:self.n_in_a] = 2.0 * (self.fock_general[:,:self.n_in_a] + self.d_cmo[:rot_dim,:self.n_in_a] * off_diagonal_constant/self.davidson_roots)
+        A[:,:self.n_in_a] = 2.0 * (self.fock_general[:,:self.n_in_a] + self.d_cmo[:rot_dim,:self.n_in_a] * off_diagonal_constant)
         
         #off_diagonal_constant2 = 0.0
         #np1 = self.N_p + 1
@@ -5423,7 +5441,7 @@ class PFHamiltonianGenerator:
             #for r in range(self.nmo):
             #    for i in range(self.n_in_a):
             #        self.A2[r][i] = 2.0 * self.fock_general[r][i]
-            #        self.A2[r][i] += 2.0 * off_diagonal_constant/self.davidson_roots * self.d_cmo[r][i]
+            #        self.A2[r][i] += 2.0 * off_diagonal_constant * self.d_cmo[r][i]
 
             #for r in range(self.nmo):
             #    for u in range(self.n_act_orb):
@@ -5442,11 +5460,11 @@ class PFHamiltonianGenerator:
         #G[:self.n_in_a,:self.n_in_a,:,:] = 2.0 * np.einsum("rs,ij->ijrs", self.fock_general[:rot_dim,:rot_dim],
         #  np.eye(self.n_in_a))
         #G[:self.n_in_a,:self.n_in_a,:,:] += 2.0 * self.L[:self.n_in_a,:,:,:]
-        #G[:self.n_in_a,:self.n_in_a,:,:] += 2.0 * off_diagonal_constant/self.davidson_roots * np.einsum("rs,ij->ijrs", self.d_cmo[:rot_dim,:rot_dim],
+        #G[:self.n_in_a,:self.n_in_a,:,:] += 2.0 * off_diagonal_constant * np.einsum("rs,ij->ijrs", self.d_cmo[:rot_dim,:rot_dim],
         #   np.eye(self.n_in_a))
         #start = timer()
         #start1 = timer()
-        temp2 = self.fock_general[:rot_dim,:rot_dim] + off_diagonal_constant/self.davidson_roots * self.d_cmo[:rot_dim,:rot_dim]
+        temp2 = self.fock_general[:rot_dim,:rot_dim] + off_diagonal_constant * self.d_cmo[:rot_dim,:rot_dim]
         #end1   = timer()
         #print("build intermediate step 7_0", end1 - start1)
         #start1 = timer()
@@ -5517,7 +5535,7 @@ class PFHamiltonianGenerator:
         #            for j in range(self.n_in_a):
         #                self.G2[i][j][r][s] = 2.0 * (i==j) * self.fock_general[r][s]
         #                self.G2[i][j][r][s] += 2.0 * self.L[i][j][r][s]
-        #                self.G2[i][j][r][s] += 2.0 * off_diagonal_constant/self.davidson_roots * (i==j) * self.d_cmo[r][s]
+        #                self.G2[i][j][r][s] += 2.0 * off_diagonal_constant * (i==j) * self.d_cmo[r][s]
         #for r in range(rot_dim):
         #    for s in range(rot_dim):
         #        for t in range(self.n_act_orb):
@@ -5589,7 +5607,7 @@ class PFHamiltonianGenerator:
         
         off_diagonal_constant = self.calculate_off_diagonal_photon_constant(eigenvecs)
         
-        #A[:,:self.n_in_a] = 2.0 * (self.fock_general[:,:self.n_in_a] + self.d_cmo[:rot_dim,:self.n_in_a] * off_diagonal_constant/self.davidson_roots)
+        #A[:,:self.n_in_a] = 2.0 * (self.fock_general[:,:self.n_in_a] + self.d_cmo[:rot_dim,:self.n_in_a] * off_diagonal_constant)
         A[:,:self.n_in_a] = 2.0 * (self.fock_general[:,:self.n_in_a] )
         
         
@@ -5611,7 +5629,7 @@ class PFHamiltonianGenerator:
         G[:self.n_in_a,:self.n_in_a,:,:] = 2.0 * np.einsum("rs,ij->ijrs", self.fock_general[:rot_dim,:rot_dim],
           np.eye(self.n_in_a))
         #G[:self.n_in_a,:self.n_in_a,:,:] += 2.0 * self.L[:self.n_in_a,:,:,:]
-        #G[:self.n_in_a,:self.n_in_a,:,:] += 2.0 * off_diagonal_constant/self.davidson_roots * np.einsum("rs,ij->ijrs", self.d_cmo[:rot_dim,:rot_dim],
+        #G[:self.n_in_a,:self.n_in_a,:,:] += 2.0 * off_diagonal_constant * np.einsum("rs,ij->ijrs", self.d_cmo[:rot_dim,:rot_dim],
         #   np.eye(self.n_in_a))
 
         G[self.n_in_a:self.n_occupied,:self.n_in_a,:,:] = np.einsum("tv,vjrs->tjrs", self.D_tu_avg.reshape((self.n_act_orb,self.n_act_orb)),
@@ -5647,20 +5665,22 @@ class PFHamiltonianGenerator:
         d_diag = 2.0 * np.einsum("ii->", occupied_d_cmo[:self.n_in_a,:self.n_in_a])
         np1 = self.N_p + 1
         for i in range(self.davidson_roots):
+            #print("weight", self.weight[i])
             eigenvecs2 = eigenvecs[i].reshape((np1, self.num_det))
             eigenvecs2 = eigenvecs2.transpose(1,0)
             for m in range(np1):
                 if (self.N_p ==0): continue
                 if (m > 0 and m < self.N_p):
-                    off_diagonal_constant_energy += np.sqrt(m * self.omega/2) * (self.d_exp - d_diag) * np.dot(eigenvecs2[:,m:(m+1)].flatten(),eigenvecs2[:,(m-1):m].flatten())
-                    off_diagonal_constant_energy += np.sqrt((m+1) * self.omega/2) * (self.d_exp - d_diag) * np.dot(eigenvecs2[:,m:(m+1)].flatten(),eigenvecs2[:,(m+1):(m+2)].flatten())
+                    off_diagonal_constant_energy += self.weight[i] * np.sqrt(m * self.omega/2) * (self.d_exp - d_diag) * np.dot(eigenvecs2[:,m:(m+1)].flatten(),eigenvecs2[:,(m-1):m].flatten())
+                    off_diagonal_constant_energy += self.weight[i] * np.sqrt((m+1) * self.omega/2) * (self.d_exp - d_diag) * np.dot(eigenvecs2[:,m:(m+1)].flatten(),eigenvecs2[:,(m+1):(m+2)].flatten())
                 elif (m == self.N_p):
-                    off_diagonal_constant_energy += np.sqrt(m * self.omega/2) * (self.d_exp - d_diag) * np.dot(eigenvecs2[:,m:(m+1)].flatten(),eigenvecs2[:,(m-1):m].flatten())
+                    off_diagonal_constant_energy += self.weight[i] * np.sqrt(m * self.omega/2) * (self.d_exp - d_diag) * np.dot(eigenvecs2[:,m:(m+1)].flatten(),eigenvecs2[:,(m-1):m].flatten())
                 else:
-                    off_diagonal_constant_energy += np.sqrt((m+1) * self.omega/2) * (self.d_exp - d_diag) * np.dot(eigenvecs2[:,m:(m+1)].flatten(),eigenvecs2[:,(m+1):(m+2)].flatten())
-                photon_energy  += m * self.omega * np.dot(eigenvecs2[:,m:(m+1)].flatten(),eigenvecs2[:,m:(m+1)].flatten())
+                    off_diagonal_constant_energy += self.weight[i] * np.sqrt((m+1) * self.omega/2) * (self.d_exp - d_diag) * np.dot(eigenvecs2[:,m:(m+1)].flatten(),eigenvecs2[:,(m+1):(m+2)].flatten())
+                photon_energy  += self.weight[i] * m * self.omega * np.dot(eigenvecs2[:,m:(m+1)].flatten(),eigenvecs2[:,m:(m+1)].flatten())
 
-        ci_dependent_energy = (off_diagonal_constant_energy + photon_energy) / self.davidson_roots
+        #ci_dependent_energy = (off_diagonal_constant_energy + photon_energy) / self.davidson_roots
+        ci_dependent_energy = (off_diagonal_constant_energy + photon_energy) 
         return ci_dependent_energy 
 
 
@@ -5668,17 +5688,18 @@ class PFHamiltonianGenerator:
         off_diagonal_constant = 0.0
         np1 = self.N_p + 1
         for i in range(self.davidson_roots):
+            print("weight", self.weight[i])
             eigenvecs2 = eigenvecs[i].reshape((np1, self.num_det))
             eigenvecs2 = eigenvecs2.transpose(1,0)
             for m in range(np1):
                 if (self.N_p ==0): continue
                 if (m > 0 and m < self.N_p):
-                    off_diagonal_constant += -np.sqrt(m * self.omega/2) * np.dot(eigenvecs2[:,m:(m+1)].flatten(),eigenvecs2[:,(m-1):m].flatten())
-                    off_diagonal_constant += -np.sqrt((m+1) * self.omega/2) * np.dot(eigenvecs2[:,m:(m+1)].flatten(),eigenvecs2[:,(m+1):(m+2)].flatten())
+                    off_diagonal_constant += -self.weight[i] * np.sqrt(m * self.omega/2) * np.dot(eigenvecs2[:,m:(m+1)].flatten(),eigenvecs2[:,(m-1):m].flatten())
+                    off_diagonal_constant += -self.weight[i] * np.sqrt((m+1) * self.omega/2) * np.dot(eigenvecs2[:,m:(m+1)].flatten(),eigenvecs2[:,(m+1):(m+2)].flatten())
                 elif (m == self.N_p):
-                    off_diagonal_constant += -np.sqrt(m * self.omega/2) * np.dot(eigenvecs2[:,m:(m+1)].flatten(),eigenvecs2[:,(m-1):m].flatten())
+                    off_diagonal_constant += -self.weight[i] * np.sqrt(m * self.omega/2) * np.dot(eigenvecs2[:,m:(m+1)].flatten(),eigenvecs2[:,(m-1):m].flatten())
                 else:
-                    off_diagonal_constant += -np.sqrt((m+1) * self.omega/2) * np.dot(eigenvecs2[:,m:(m+1)].flatten(),eigenvecs2[:,(m+1):(m+2)].flatten())
+                    off_diagonal_constant += -self.weight[i] * np.sqrt((m+1) * self.omega/2) * np.dot(eigenvecs2[:,m:(m+1)].flatten(),eigenvecs2[:,(m+1):(m+2)].flatten())
 
         return off_diagonal_constant
 
@@ -6314,8 +6335,7 @@ class PFHamiltonianGenerator:
                 )
                 avg_energy = 0.0
                 for i in range(self.davidson_roots):
-                    avg_energy += eigenvals[i]
-                avg_energy /= self.davidson_roots
+                    avg_energy += self.weight[i] * eigenvals[i]
                 self.avg_energy = avg_energy
                 predicted_energy = self.internal_optimization_predicted_energy(gradient_tilde_ai,hessian_tilde_ai, step)
                 print("internal optimization iteration",microiteration + 1, exact_energy, predicted_energy, current_energy, avg_energy, exact_energy/predicted_energy, flush = True)
@@ -6568,8 +6588,7 @@ class PFHamiltonianGenerator:
                 print("current CI residual", current_residual)
                 avg_energy = 0.0
                 for i in range(self.davidson_roots):
-                    avg_energy += eigenvals[i]
-                avg_energy /= self.davidson_roots
+                    avg_energy += self.weight[i] * eigenvals[i]
                 self.avg_energy = avg_energy
                 predicted_energy = self.internal_optimization_predicted_energy(gradient_tilde_ai,hessian_tilde_ai, step)
                 print("internal optimization iteration",microiteration + 1, exact_energy, predicted_energy, current_energy, avg_energy, exact_energy/predicted_energy, flush = True)
@@ -6731,7 +6750,7 @@ class PFHamiltonianGenerator:
                     np1,
                     i,
                     i,
-                    1.0/self.davidson_roots
+                    self.weight[i]
             )
             c_build_active_photon_electron_one_rdm(eigenvecs,
                     self.Dpe_tu_avg,
@@ -6741,7 +6760,7 @@ class PFHamiltonianGenerator:
                     np1,
                     i,
                     i,
-                    1.0/self.davidson_roots
+                    self.weight[i]
             )
         
 
@@ -7683,8 +7702,7 @@ class PFHamiltonianGenerator:
             current_residual = self.constdouble[4]
             avg_energy = 0.0
             for i in range(self.davidson_roots):
-                avg_energy += eigenvals[i]
-            avg_energy /= self.davidson_roots
+                avg_energy += self.weight[i] * eigenvals[i]
             #print("iteration",microiteration + 1, avg_energy, flush = True)
             current_energy = avg_energy
             self.build_state_avarage_rdms(eigenvecs)
@@ -8128,8 +8146,7 @@ class PFHamiltonianGenerator:
             current_residual = self.constdouble[4]
             avg_energy = 0.0
             for i in range(self.davidson_roots):
-                avg_energy += eigenvals[i]
-            avg_energy /= self.davidson_roots
+                avg_energy += self.weight[i] * eigenvals[i]
             print("iteration",microiteration + 1, avg_energy, flush = True)
             current_energy = avg_energy
             self.build_state_avarage_rdms(eigenvecs)
@@ -8656,8 +8673,7 @@ class PFHamiltonianGenerator:
             current_residual = self.constdouble[4]
             avg_energy = 0.0
             for i in range(self.davidson_roots):
-                avg_energy += eigenvals[i]
-            avg_energy /= self.davidson_roots
+                avg_energy += self.weight[i] * eigenvals[i]
             print("iteration",microiteration + 1, avg_energy, flush = True)
             current_energy = avg_energy
             self.build_state_avarage_rdms(eigenvecs)
@@ -9283,8 +9299,7 @@ class PFHamiltonianGenerator:
             current_residual = self.constdouble[4]
             avg_energy = 0.0
             for i in range(self.davidson_roots):
-                avg_energy += eigenvals[i]
-            avg_energy /= self.davidson_roots
+                avg_energy += self.weight[i] * eigenvals[i]
             print("microiteration",microiteration + 1, "current average energy", avg_energy, flush = True)
             current_energy = avg_energy
             
