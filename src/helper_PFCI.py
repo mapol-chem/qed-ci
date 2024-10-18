@@ -1377,7 +1377,7 @@ class PFHamiltonianGenerator:
                 #print(self.H_diag3, flush = True)
                 self.index_Hdiag = np.asarray(self.H_diag3.argsort(),dtype = np.int32)
                 #np.savetxt("H_diag.out", self.H_diag3)
-                print(np.sort(self.H_diag3))
+                #print(np.sort(self.H_diag3))
                 c_string(
                     self.occupied_fock_core,
                     self.occupied_J3,
@@ -1553,12 +1553,11 @@ class PFHamiltonianGenerator:
 
 
 
-
                 self.CIeigs = eigenvals
                 self.CIvecs = eigenvecs
 
                 print(
-                    "\nACTIVE PART OF DETERMINANTS THAT HAVE THE MOST IMPORTANT CONTRIBUTIONS"
+                    "\nACTIVE PART OF DETERMINANTS THAT HAVE THE MOST IMPORTANT CONTRIBUTIONS",flush = True
                 )
                 Y = np.zeros(
                     self.n_act_a * (self.n_act_orb - self.n_act_a + 1) * 3,
@@ -1641,7 +1640,7 @@ class PFHamiltonianGenerator:
                             "photon",
                         )
 
-                print(" GOING TO COMPUTE 1-E PROPERTIES!")
+                print(" GOING TO COMPUTE 1-E PROPERTIES!", flush = True)
                 _mu_x_spin = np.einsum("uj,vi,uv", self.C[:,:self.n_occupied], self.C[:,:self.n_occupied], self.mu_x_ao)
                 _mu_y_spin = np.einsum("uj,vi,uv", self.C[:,:self.n_occupied], self.C[:,:self.n_occupied], self.mu_y_ao)
                 _mu_z_spin = np.einsum("uj,vi,uv", self.C[:,:self.n_occupied], self.C[:,:self.n_occupied], self.mu_z_ao)
@@ -1702,7 +1701,7 @@ class PFHamiltonianGenerator:
                             "{:4d}".format(j),
                             "{:20.12f}".format(dipole_x),
                             "{:20.12f}".format(dipole_y),
-                            "{:20.12f}".format(dipole_z),
+                            "{:20.12f}".format(dipole_z), flush = True
                         )
                         if i == j:
                             one_rdm = np.reshape(one_rdm, (self.n_occupied, self.n_occupied))
@@ -1718,7 +1717,7 @@ class PFHamiltonianGenerator:
                 )
                 # print(self.nat_obt_number)
                 ###check total energy
-                print("check total energy using full rdms")
+                print("check total energy using full rdms", flush = True)
                 twoeint2 = self.twoeint.reshape((self.nmo, self.nmo, self.nmo, self.nmo))
                 twoeint2 = twoeint2[:self.n_occupied,:self.n_occupied,:self.n_occupied,:self.n_occupied]
                 for i in range(self.davidson_roots):
@@ -1801,7 +1800,7 @@ class PFHamiltonianGenerator:
                         "{:4d}".format(i),
                         "{:20.12f}".format(eigenvals[i]),
                         "{:20.12f}".format(sum_energy),
-                        "{:20.12f}".format(eigenvals[i] - sum_energy)
+                        "{:20.12f}".format(eigenvals[i] - sum_energy, flush = True)
                     )
                 
                 print("check total energy using active rdms")
@@ -2789,7 +2788,7 @@ class PFHamiltonianGenerator:
                     old_avg_energy = avg_energy
                     new_avg_energy = 0
                     convergence = 0
-                    while (macroiteration < 200):
+                    while (macroiteration < 20000):
                         if np.abs(new_avg_energy - old_avg_energy) < 1e-9:
                             convergence = 1
                         if macroiteration >0:
@@ -3352,7 +3351,7 @@ class PFHamiltonianGenerator:
         # collect rhf wfn object as dictionary
         wfn_dict = psi4.core.Wavefunction.to_file(wfn)
 
-        #print(self.C)
+        ##print(self.C)
         #U = ortho_group.rvs(wfn.nmo())
         #new_C = np.einsum("pq,qr->pr", self.C, U)
 
@@ -6949,8 +6948,8 @@ class PFHamiltonianGenerator:
     #@nb.njit("""void(float64[:,::1], float64[:,::1], int64[:,::1], float64[:,::1], float64[:,:,:,::1], float64[:,::1], float64[:,::1],
     #        int64, int64, int64, int64, int64)""", fastmath = True, parallel = True) 
     #def build_sigma_reduced6(U, A_tilde, index_map, G1, G, R_reduced, sigma_reduced, num_states, pointer, nmo, index_map_size, n_occupied):
-    @nb.njit("""void(float64[:,::1], float64[:,::1], int64[:,::1], float64[:,::1], float64[:,::1], float64[:,::1],
-            int64, int64, int64, int64, int64)""", fastmath = True, parallel = True) 
+    @nb.jit("""void(float64[:,::1], float64[:,::1], int64[:,::1], float64[:,::1], float64[:,::1], float64[:,::1],
+            int64, int64, int64, int64, int64)""", nopython = True, cache = True, fastmath = True, parallel = True) 
     def build_sigma_reduced4(U, A_tilde, index_map, G, R_reduced, sigma_reduced, num_states, pointer, nmo, index_map_size, n_occupied):
       
         assert U.shape == (nmo, nmo)
@@ -8696,7 +8695,7 @@ class PFHamiltonianGenerator:
     def microiteration_optimization4(self, U, eigenvecs, c_get_roots, convergence_threshold):
         #print("E_core", self.E_core)
         self.U2 = copy.deepcopy(U)
-        trust_radius = 0.4
+        trust_radius = 0.4   
         rot_dim = self.nmo
         np1 = self.N_p + 1
         H_dim = self.num_alpha * self.num_alpha * np1
@@ -8724,7 +8723,7 @@ class PFHamiltonianGenerator:
         current_energy = 0.0
         old_energy = 0.0
         N_orbital_optimization_steps = 1
-        N_microiterations = 20
+        N_microiterations = 20 
         microiteration = 0
         while(microiteration < N_microiterations):
             print("\n")
@@ -8732,7 +8731,7 @@ class PFHamiltonianGenerator:
             print("MICROITERATION", microiteration+1,flush = True)
 
         #while(microiteration < 2):
-            trust_radius = 0.4
+            trust_radius = 0.4  
             A[:,:] = 0.0
             G[:,:,:,:] = 0.0
             start = timer()
@@ -9089,12 +9088,14 @@ class PFHamiltonianGenerator:
                      if microiteration == 0 and orbital_optimization_step == 0: 
                      #    convergence_threshold = min(0.01 * gradient_norm, np.power(gradient_norm,2))
                          #convergence_threshold = 0.01 * gradient_norm
+                         ###10/10/2024 comment out this part to use standard trust region method 
                          if step_norm > 0.1: 
                              N_microiterations = 5
                              N_orbital_optimization_steps = 4
                          elif step_norm <= 0.1 and step_norm > 0.01:
                              N_microiterations = 7 
                              N_orbital_optimization_steps = 3
+                         ###end comment
                          print("number of microiteration", N_microiterations, flush = True)    
                          print("number of optimization steps", N_orbital_optimization_steps, flush = True)    
                      orbital_optimization_step += 1   
@@ -9267,7 +9268,7 @@ class PFHamiltonianGenerator:
             self.constdouble[3] = self.d_exp - d_diag
             self.constdouble[4] = 1e-9 
             self.constdouble[5] = self.E_core2
-            self.constint[8] = 2 
+            self.constint[8] = 3 
             eigenvals = np.zeros((self.davidson_roots))
             #eigenvecs = np.zeros((self.davidson_roots, H_dim))
             #eigenvecs[:,:] = 0.0
@@ -10989,8 +10990,8 @@ class PFHamiltonianGenerator:
         return self.build_sigma_reduced5(U, A_tilde, index_map, G, R_reduced, num_states, pointer, nmo, index_map_size, n_occupied, eigval)
     
     @staticmethod    
-    @nb.njit("""float64[::1](float64[:,::1], float64[:,::1], int64[:,::1], float64[:,::1], float64[:,::1], 
-            int64, int64, int64, int64, int64, float64)""", fastmath = True, parallel = True) 
+    @nb.jit("""float64[::1](float64[:,::1], float64[:,::1], int64[:,::1], float64[:,::1], float64[:,::1], 
+            int64, int64, int64, int64, int64, float64)""", nopython=True, cache = True, fastmath = True, parallel = True) 
     def build_sigma_reduced5(U, A_tilde, index_map, G, R_reduced, num_states, pointer, nmo, index_map_size, n_occupied, eigval):
         assert U.shape == (nmo, nmo)
         assert A_tilde.shape == (nmo, nmo)

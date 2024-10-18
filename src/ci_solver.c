@@ -124,7 +124,9 @@ void string_to_binary(size_t string, size_t n_o) {
    
     //for (int i = 0; i < n_o; i++) {
     //        printf("%d",a[i]);
+    //    	   fflush(stdout);
     //}
+    //        printf("\n");
 }
 
 int* string_to_obtlist(size_t string, int nmo, int* length) {
@@ -152,11 +154,20 @@ int string_to_index(size_t string, size_t N, size_t n_o, int* Y) {
      int a[n_o];
      memset(a, 0, sizeof a);
      int c=0;
+     //while(string > 0) {
+     //    size_t i = string%2;
+     //    a[c++]=i; 		 
+     //    string = (string-i)/2;  		     
+     //}
+     //int b[n_o];
+     //memset(b, 0, sizeof b);
+     //c=0;
      while(string > 0) {
-	 size_t i = string%2;
-         a[c++]=i; 		 
-         string = (string-i)/2;  		     
+         a[c++]= string & 1; 		 
+         string >>= 1UL;  		     
      }
+     
+     
      int count = 0;
      int index = 0;
      int rows = N*(n_o-N+1);
@@ -172,11 +183,11 @@ int string_to_index(size_t string, size_t N, size_t n_o, int* Y) {
 		 }
 	     }
              count +=1;
-	 }	 
+	 }	
      } 
+      
      return index;
 } 
-
 
 size_t index_to_string(int index, int N, int n_o, int* Y) {
     int index_sum=0;
@@ -240,7 +251,9 @@ size_t index_to_string(int index, int N, int n_o, int* Y) {
     size_t string = 0;
     for (int i = 0; i < n_o; i++) {
         if (arr[i] == 1) {
-            string += pow(2,i);
+            //string += pow(2,i);
+	    string |= (size_t)1 << i;
+
         }
     }
 
@@ -256,7 +269,7 @@ int phase_single_excitation(size_t p, size_t q, size_t string) {
        else {
            mask=(1UL<<q)-(1UL<<(p+1));
        }
-       if (__builtin_popcount(mask & string) %2) {
+       if (__builtin_popcountll(mask & string) %2) {
            return -1;
        }
        else {
@@ -286,7 +299,7 @@ void single_creation_list2(int N_ac, int n_o_ac, int n_o_in, int* Y,int* table_c
             if ((string &(1UL<<i)) == 0) {
                 vir[count_vir] = i;
                 size_t mask = (1UL<<i)-1;
-		if (((__builtin_popcount(mask & string)) + n_o_in)  %2) {
+		if (((__builtin_popcountll(mask & string)) + n_o_in)  %2) {
 		    sign[count_vir] = -1;
 		}
 		else {
@@ -356,6 +369,7 @@ void single_replacement_list(int num_alpha, int N_ac, int n_o_ac, int* Y,int* ta
        int count=0;        
        for (int index = 0; index < num_alpha; index++){
            size_t string = index_to_string(index,N_ac,n_o_ac,Y);
+	   //string_to_binary(string, n_o_ac);
            int occ[N_ac];
            int vir[n_o_ac-N_ac];
            int count_occ = 0;
@@ -375,7 +389,7 @@ void single_replacement_list(int num_alpha, int N_ac, int n_o_ac, int* Y,int* ta
                table[count*4+0] = index;
                table[count*4+1] = 1; 
                table[count*4+2] = occ[i]; 
-               table[count*4+3] = occ[i]; 
+               table[count*4+3] = occ[i];
                count += 1;
 	   }
            for (int i = 0; i < N_ac; i++) {
@@ -483,7 +497,7 @@ void build_H_diag_cas(double* h1e, double* h2e, double* H_diag, int N_p, int num
     size_t num_dets = num_alpha * num_alpha;
     int np1 = N_p + 1;
     int n_occupied = n_act_orb + n_in_a;
-    //#pragma omp parallel for num_threads(16)
+    #pragma omp parallel for num_threads(16)
     for (size_t index_photon_det = 0; index_photon_det < np1*num_dets; index_photon_det++) {
         size_t Idet = index_photon_det%num_dets;	
         int m = (index_photon_det-Idet)/num_dets;	
@@ -1263,7 +1277,7 @@ void davidson_spin(double* h1e, double* h2e, double* d_cmo, double* Hdiag, doubl
     //}
     
     int L = indim;
-    //printf(" indim%d H_dim %d\n", indim, H_dim); 
+    printf(" indim%d H_dim %zu\n", indim, H_dim); 
     double* Hdiag2 = (double*)malloc(H_dim*sizeof(double));
     cblas_dcopy(H_dim,Hdiag,1,Hdiag2,1);
     double* Q = (double*) malloc(maxdim*H_dim*sizeof(double));
