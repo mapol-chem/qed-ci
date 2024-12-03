@@ -482,7 +482,7 @@ def c_build_active_rdm(
     eigvec, D_tu, D_tuvw, table, N_ac, n_o_ac, num_photon, state_p1, state_p2, weight
 ):
     cfunctions.build_active_rdm(
-        eigvec, D_tu, D_tuvw, table, N_ac, n_o_ac, num_photon, state_p1, state_p2, weight
+        eigvec, D_tu, D_tuvw,  table, N_ac, n_o_ac, num_photon, state_p1, state_p2, weight
     )
 def c_build_photon_electron_one_rdm(
     eigvec, Dpe, table, N_ac, n_o_ac, n_o_in, num_photon, state_p1, state_p2
@@ -1761,6 +1761,23 @@ class PFHamiltonianGenerator:
                         i,
                         i
                     )
+                    #for t in range(self.n_occupied):
+                    #    for u in range(self.n_occupied):
+                    #        tu = t * self.n_occupied + u
+                    #        for v in range(self.n_occupied):
+                    #            for w in range(self.n_occupied):
+                    #                vw = v * self.n_occupied + w
+                    #                print(two_rdm[tu * self.n_occupied * self.n_occupied + vw],  
+                    #                   two_rdm2[tu * self.n_occupied * self.n_occupied + vw],  
+                    #                   two_rdm[tu * self.n_occupied * self.n_occupied + vw]-  
+                    #                   two_rdm2[tu * self.n_occupied * self.n_occupied + vw], t,u,v,w,
+                    #                   (t * self.n_occupied + u)*self.n_occupied*self.n_occupied + v*self.n_occupied + w
+                    #                   )
+
+
+
+
+
                     Dpe = np.zeros((self.n_occupied * self.n_occupied))
                     c_build_photon_electron_one_rdm(eigenvecs,
                             Dpe,
@@ -1789,7 +1806,29 @@ class PFHamiltonianGenerator:
                     two_e_energy = 0.5 * np.dot(twoeint2.flatten(), two_rdm)
                     one_pe_energy = -np.sqrt(self.omega/2) * np.dot(self.d_cmo[:self.n_occupied,:self.n_occupied].flatten(), Dpe)
                     sum_energy = one_e_energy + two_e_energy + self.Enuc + one_pe_energy + off_diagonal_constant_energy + self.d_c + photon_energy
-                    
+                    #print("1e integral")
+                    #for k in range(self.n_occupied): 
+                    #    for l in range(self.n_occupied):
+                    #        print("{:20.16f}".format(self.H_spatial2[k,l]), k, l, flush = True)
+                    #print("1-rdm")   
+                    #for k in range(self.n_occupied): 
+                    #    for l in range(self.n_occupied):
+                    #        print("{:20.16f}".format(one_rdm[k * self.n_occupied + l]), k, l, flush = True)
+                    #print("2e integral")
+                    #for k in range(self.n_occupied): 
+                    #    for l in range(self.n_occupied):
+                    #        for m in range(self.n_occupied):
+                    #            for n in range(self.n_occupied):
+                    #                print("{:20.16f}".format(twoeint2[k,l,m,n]), k, l, m, n, flush = True)
+                    #print("2-rdm")
+                    #for k in range(self.n_occupied): 
+                    #    for l in range(self.n_occupied):
+                    #        for m in range(self.n_occupied):
+                    #            for n in range(self.n_occupied):
+                    #                print("{:20.16f}".format(two_rdm[k * self.n_occupied * self.n_occupied * self.n_occupied + 
+                    #                    l* self.n_occupied * self.n_occupied + m * self.n_occupied +n]), k, l, m, n, flush = True)
+
+
                     # store the RDMs as a self attribute if the current state matches the rdm root
                     if self.rdm_root == i:
                         self.one_electron_rdm = np.copy(one_rdm)
@@ -1804,7 +1843,8 @@ class PFHamiltonianGenerator:
                     )
                 
                 print("check total energy using active rdms")
-                print("{:10s}".format("state"), "{:20s}".format("total energies"), "{:20s}".format("eigenvalues"), "error")
+                print("{:10s}".format("state"), "{:20s}".format("active_one"), "{:20s}".format("active_two"), 
+                        "{:20s}".format("eigenvalues"), "{:20s}".format("total energies"), "error")
                 active_twoeint = twoeint2[self.n_in_a:self.n_occupied,self.n_in_a:self.n_occupied,self.n_in_a:self.n_occupied,self.n_in_a:self.n_occupied]
                 active_fock_core = self.fock_core[self.n_in_a:self.n_occupied,self.n_in_a:self.n_occupied]
                 for i in range(self.davidson_roots):
@@ -1895,6 +1935,27 @@ class PFHamiltonianGenerator:
                 #print(np.diag(eig_mat))
                 ################################################################self.build_JK()
                 self.build_state_avarage_rdms(eigenvecs)
+                #print(self.D_tu_avg)
+                #print("qrqr")
+                #print(self.D_tu_avg2)
+                #print("qrqr2")
+                ##print(self.D_tuvw_avg)
+                #print("qrqr3")
+                ##print(self.D_tuvw_avg2)
+                #for t in range(self.n_act_orb):
+                #    for u in range(self.n_act_orb):
+                #        tu = t * self.n_act_orb + u
+                #        ut = u * self.n_act_orb + t
+                #        for v in range(self.n_act_orb):
+                #            for w in range(self.n_act_orb):
+                #                vw = v * self.n_act_orb + w
+                #                print(self.D_tuvw_avg[tu * self.n_act_orb * self.n_act_orb + vw],  
+                #                 self.D_tuvw_avg2[tu * self.n_act_orb * self.n_act_orb + vw],
+                #                 self.D_tuvw_avg[tu * self.n_act_orb * self.n_act_orb + vw]-
+                #                 self.D_tuvw_avg2[tu * self.n_act_orb * self.n_act_orb + vw],t+self.n_in_a,u+self.n_in_a,v+self.n_in_a,w+self.n_in_a,
+                #                 tu * self.n_act_orb * self.n_act_orb + vw,
+                #                 ((t+self.n_in_a) * self.n_occupied + u+self.n_in_a)*self.n_occupied*self.n_occupied + (v+self.n_in_a)*self.n_occupied + w+self.n_in_a)
+
                 #####get state-avaraged rdms
                 ####self.D_tu_avg = np.zeros((self.n_act_orb * self.n_act_orb))
                 ####self.Dpe_tu_avg = np.zeros((self.n_act_orb * self.n_act_orb))
@@ -2301,9 +2362,11 @@ class PFHamiltonianGenerator:
                 #####self.full_one_rdm[:self.n_occupied,:self.n_occupied] = one_rdm.reshape((self.n_occupied, self.n_occupied))
                 #####self.full_two_rdm = np.zeros((self.nmo, self.nmo, self.nmo, self.nmo))
                 #####two_rdm = np.zeros((self.n_occupied * self.n_occupied * self.n_occupied * self.n_occupied))
+                #####two_rdm2 = np.zeros((self.n_occupied * self.n_occupied * self.n_occupied * self.n_occupied))
                 #####c_build_two_rdm(
                 #####    eigenvecs,
                 #####    two_rdm,
+                #####    two_rdm2,
                 #####    self.table,
                 #####    self.n_act_a,
                 #####    self.n_act_orb,
@@ -2390,6 +2453,45 @@ class PFHamiltonianGenerator:
                 #####                    dum += self.twoeint4[r][p][s][t] * self.full_two_rdm[r][q][s][t]
                 #####                    dum -= self.twoeint4[q][r][t][s] * self.full_two_rdm[p][r][t][s]
                 #####        gradient_full[p][q] += dum
+               
+
+
+                #####reduced_hessian = np.zeros((self.index_map_size, self.index_map_size))
+                #####reduced_gradient = np.zeros(self.index_map_size)
+                #####index_count1 = 0 
+                #####for k in range(self.n_occupied):
+                #####    for r in range(k+1,self.nmo):
+                #####        if (k < self.n_in_a and r < self.n_in_a): continue
+                #####        if (self.n_in_a <= k < self.n_occupied and self.n_in_a <= r < self.n_occupied): continue
+                #####        reduced_gradient[index_count1] = gradient_full[r][k]
+                #####        #print(r,k,index_count1)
+                #####        index_count2 = 0 
+                #####        for l in range(self.n_occupied):
+                #####            for s in range(l+1,self.nmo):
+                #####                if (l < self.n_in_a and s < self.n_in_a): continue
+                #####                if (self.n_in_a <= l < self.n_occupied and self.n_in_a <= s < self.n_occupied): continue
+                #####                #if (k >= self.n_occupied and r >= self.n_occupied): continue
+                #####                reduced_hessian[index_count1][index_count2] = hessian_full1[r][k][s][l]
+                #####                index_count2 += 1
+                #####        index_count1 += 1
+                #####omega100, eig_vecs100 = np.linalg.eigh(reduced_hessian)
+                #####np.set_printoptions(precision = 14, suppress = True)  
+                #####print(np.linalg.norm(reduced_gradient))
+                #####print(omega100)
+                #####reduced_hessian2 = np.zeros((self.index_map_size, self.index_map_size))
+                #####reduced_gradient2 = np.zeros(self.index_map_size)
+                #####for p in range(self.index_map_size):
+                #####    r = self.index_map[p][0]  
+                #####    k = self.index_map[p][1]  
+                #####    reduced_gradient2[p] = gradient_full[r][k]
+                #####    for q in range(self.index_map_size):
+                #####        s = self.index_map[q][0]  
+                #####        l = self.index_map[q][1]  
+                #####        reduced_hessian2[p][q] = hessian_full1[r][k][s][l]
+                #####omega200, eig_vecs200 = np.linalg.eigh(reduced_hessian2)
+                #####print(np.linalg.norm(reduced_gradient2))
+                #####print(omega200)
+
 
                 #########hessian_full2 = hessian_full1.reshape(self.nmo * self.nmo,self.nmo * self.nmo)
                 #########omega10, eig_vecs10 = np.linalg.eigh(hessian_full2)
@@ -2778,340 +2880,717 @@ class PFHamiltonianGenerator:
 
 
 
-
                 if self.n_in_a == 0 and self.n_act_orb == self.nmo:
                     pass
                 else:
-                    start = timer()
-                    macroiteration = 0
-                    self.U_total = np.eye(self.nmo)
-                    old_avg_energy = avg_energy
-                    new_avg_energy = 0
-                    convergence = 0
-                    while (macroiteration < 20000):
-                        if np.abs(new_avg_energy - old_avg_energy) < 1e-9:
-                            convergence = 1
-                        if macroiteration >0:
+                    #self.ah_orbital_optimization(eigenvecs, c_get_roots)
+                    self.bfgs_orbital_optimization(eigenvecs, c_get_roots)
+                    ########start = timer()
+                    ########macroiteration = 0
+                    ########self.U_total = np.eye(self.nmo)
+                    ########old_avg_energy = avg_energy
+                    ########new_avg_energy = 0
+                    ########convergence = 0
+                    ########while (macroiteration < 20000):
+                    ########    if np.abs(new_avg_energy - old_avg_energy) < 1e-9:
+                    ########        convergence = 1
+                    ########    if macroiteration >0:
 
-                            #print("U total")
-                            #self.printA(self.U_total)
-                            print("old energy",old_avg_energy, "new energy", new_avg_energy, flush = True)
-                            occupied_J = np.zeros((self.n_occupied, self.n_occupied, self.n_occupied, self.n_occupied))
-                            occupied_J[self.n_in_a: self.n_occupied,self.n_in_a: self.n_occupied,
-                                    self.n_in_a: self.n_occupied,self.n_in_a: self.n_occupied] = copy.deepcopy(self.J[self.n_in_a: self.n_occupied,
-                                        self.n_in_a: self.n_occupied,self.n_in_a: self.n_occupied,self.n_in_a: self.n_occupied])        
-                            active_twoeint = self.J[self.n_in_a:self.n_occupied, self.n_in_a:self.n_occupied, self.n_in_a:self.n_occupied, self.n_in_a:self.n_occupied] 
-                            self.H_diag3 = np.zeros(H_dim)
-                            fock_core = copy.deepcopy(self.H_spatial2) 
-                            fock_core += 2.0 * np.einsum("jjrs->rs", self.J[:self.n_in_a,:self.n_in_a,:,:]) 
-                            fock_core -= np.einsum("jjrs->rs", self.K[:self.n_in_a,:self.n_in_a,:,:]) 
+                    ########        #print("U total")
+                    ########        #self.printA(self.U_total)
+                    ########        print("old energy",old_avg_energy, "new energy", new_avg_energy, flush = True)
+                    ########        occupied_J = np.zeros((self.n_occupied, self.n_occupied, self.n_occupied, self.n_occupied))
+                    ########        occupied_J[self.n_in_a: self.n_occupied,self.n_in_a: self.n_occupied,
+                    ########                self.n_in_a: self.n_occupied,self.n_in_a: self.n_occupied] = copy.deepcopy(self.J[self.n_in_a: self.n_occupied,
+                    ########                    self.n_in_a: self.n_occupied,self.n_in_a: self.n_occupied,self.n_in_a: self.n_occupied])        
+                    ########        active_twoeint = self.J[self.n_in_a:self.n_occupied, self.n_in_a:self.n_occupied, self.n_in_a:self.n_occupied, self.n_in_a:self.n_occupied] 
+                    ########        self.H_diag3 = np.zeros(H_dim)
+                    ########        fock_core = copy.deepcopy(self.H_spatial2) 
+                    ########        fock_core += 2.0 * np.einsum("jjrs->rs", self.J[:self.n_in_a,:self.n_in_a,:,:]) 
+                    ########        fock_core -= np.einsum("jjrs->rs", self.K[:self.n_in_a,:self.n_in_a,:,:]) 
 
-                            active_fock_core = copy.deepcopy(fock_core[self.n_in_a:self.n_occupied,self.n_in_a:self.n_occupied]) 
-                            occupied_fock_core = np.zeros((self.n_occupied, self.n_occupied))
-                            occupied_fock_core[self.n_in_a: self.n_occupied,self.n_in_a: self.n_occupied] = copy.deepcopy(active_fock_core) 
-                            occupied_d_cmo = np.zeros((self.n_occupied, self.n_occupied))
-                            occupied_d_cmo = copy.deepcopy(self.d_cmo[: self.n_occupied,: self.n_occupied]) 
-                            gkl2 = copy.deepcopy(active_fock_core) 
-                            gkl2 -= 0.5 * np.einsum("kjjl->kl", active_twoeint) 
-                            
-                            occupied_J = occupied_J.reshape(self.n_occupied * self.n_occupied, self.n_occupied * self.n_occupied)
-                            c_H_diag_cas_spin(
-                                    occupied_fock_core, 
-                                    occupied_J, 
-                                    self.H_diag3, 
-                                    self.N_p, 
-                                    self.num_alpha, 
-                                    self.nmo, 
-                                    self.n_act_a, 
-                                    self.n_act_orb, 
-                                    self.n_in_a, 
-                                    self.E_core, 
-                                    self.omega, 
-                                    self.Enuc, 
-                                    self.d_c, 
-                                    self.Y,
-                                    self.target_spin)
-                            d_diag = 2.0 * np.einsum("ii->", self.d_cmo[:self.n_in_a,:self.n_in_a])
-                            self.constdouble[3] = self.d_exp - d_diag
-                            #self.constdouble[4] = 1e-5 
-                            self.constdouble[4] = self.davidson_threshold
-                            self.constdouble[5] = self.E_core
-                            self.constint[8] = self.davidson_maxiter
-                            eigenvals = np.zeros((self.davidson_roots))
-                            #eigenvecs = np.zeros((self.davidson_roots, H_dim))
-                            #eigenvecs[:,:] = 0.0
-                            #print("heyhey5", eigenvecs)
-                            c_get_roots(
-                                gkl2,
-                                occupied_J,
-                                occupied_d_cmo,
-                                self.H_diag3,
-                                self.S_diag,
-                                self.S_diag_projection,
-                                eigenvals,
-                                eigenvecs,
-                                self.table,
-                                self.table_creation,
-                                self.table_annihilation,
-                                self.b_array,
-                                self.constint,
-                                self.constdouble,
-                                self.index_Hdiag,
-                                True,
-                                self.target_spin,
-                            )
-                            avg_energy = 0.0 
-                            for i in range(self.davidson_roots):
-                                avg_energy += self.weight[i] * eigenvals[i]
-                            print("avg energy", macroiteration, avg_energy)
-                            print("average energy at the start of macroiteration", avg_energy) 
-                            self.build_state_avarage_rdms(eigenvecs)
+                    ########        active_fock_core = copy.deepcopy(fock_core[self.n_in_a:self.n_occupied,self.n_in_a:self.n_occupied]) 
+                    ########        occupied_fock_core = np.zeros((self.n_occupied, self.n_occupied))
+                    ########        occupied_fock_core[self.n_in_a: self.n_occupied,self.n_in_a: self.n_occupied] = copy.deepcopy(active_fock_core) 
+                    ########        occupied_d_cmo = np.zeros((self.n_occupied, self.n_occupied))
+                    ########        occupied_d_cmo = copy.deepcopy(self.d_cmo[: self.n_occupied,: self.n_occupied]) 
+                    ########        gkl2 = copy.deepcopy(active_fock_core) 
+                    ########        gkl2 -= 0.5 * np.einsum("kjjl->kl", active_twoeint) 
+                    ########        
+                    ########        occupied_J = occupied_J.reshape(self.n_occupied * self.n_occupied, self.n_occupied * self.n_occupied)
+                    ########        c_H_diag_cas_spin(
+                    ########                occupied_fock_core, 
+                    ########                occupied_J, 
+                    ########                self.H_diag3, 
+                    ########                self.N_p, 
+                    ########                self.num_alpha, 
+                    ########                self.nmo, 
+                    ########                self.n_act_a, 
+                    ########                self.n_act_orb, 
+                    ########                self.n_in_a, 
+                    ########                self.E_core, 
+                    ########                self.omega, 
+                    ########                self.Enuc, 
+                    ########                self.d_c, 
+                    ########                self.Y,
+                    ########                self.target_spin)
+                    ########        d_diag = 2.0 * np.einsum("ii->", self.d_cmo[:self.n_in_a,:self.n_in_a])
+                    ########        self.constdouble[3] = self.d_exp - d_diag
+                    ########        #self.constdouble[4] = 1e-5 
+                    ########        self.constdouble[4] = self.davidson_threshold
+                    ########        self.constdouble[5] = self.E_core
+                    ########        self.constint[8] = self.davidson_maxiter
+                    ########        eigenvals = np.zeros((self.davidson_roots))
+                    ########        #eigenvecs = np.zeros((self.davidson_roots, H_dim))
+                    ########        #eigenvecs[:,:] = 0.0
+                    ########        #print("heyhey5", eigenvecs)
+                    ########        c_get_roots(
+                    ########            gkl2,
+                    ########            occupied_J,
+                    ########            occupied_d_cmo,
+                    ########            self.H_diag3,
+                    ########            self.S_diag,
+                    ########            self.S_diag_projection,
+                    ########            eigenvals,
+                    ########            eigenvecs,
+                    ########            self.table,
+                    ########            self.table_creation,
+                    ########            self.table_annihilation,
+                    ########            self.b_array,
+                    ########            self.constint,
+                    ########            self.constdouble,
+                    ########            self.index_Hdiag,
+                    ########            True,
+                    ########            self.target_spin,
+                    ########        )
+                    ########        avg_energy = 0.0 
+                    ########        for i in range(self.davidson_roots):
+                    ########            avg_energy += self.weight[i] * eigenvals[i]
+                    ########        print("avg energy", macroiteration, avg_energy)
+                    ########        print("average energy at the start of macroiteration", avg_energy) 
+                    ########        self.build_state_avarage_rdms(eigenvecs)
 
-                        if macroiteration > 0 and convergence == 1:
+                    ########    if macroiteration > 0 and convergence == 1:
 
-                            print(
-                                "\nACTIVE PART OF DETERMINANTS THAT HAVE THE MOST IMPORTANT CONTRIBUTIONS"
-                            )
-                            Y = np.zeros(
-                                self.n_act_a * (self.n_act_orb - self.n_act_a + 1) * 3,
-                                dtype=np.int32,
-                            )
-                            c_graph(self.n_act_a, self.n_act_orb, Y)
-                            np1 = self.N_p + 1
-                            singlet_count = 0
-                            triplet_count = 0
-                            for i in range(eigenvecs.shape[0]):
-                                total_spin = self.check_total_spin(eigenvecs[i : (i + 1), :])
-                                print(
-                                    "STATE",
-                                    i,
-                                    "ENERGY =",
-                                    eigenvals[i],
-                                    "<S^2>=",
-                                    total_spin,
-                                    "WEIGHT =",
-                                    self.weight[i],
-                                    end="",
-                                )
-                                if np.abs(total_spin) < 1e-5:
-                                    singlet_count += 1
-                                    print("\tSINGLET", singlet_count)
-                                elif np.abs(total_spin - 2.0) < 1e-5:
-                                    triplet_count += 1
-                                    print("\tTRIPLET", triplet_count)
-                                elif np.abs(total_spin - 6.0) < 1e-5:
-                                    print("\tQUINTET")
+                    ########        print(
+                    ########            "\nACTIVE PART OF DETERMINANTS THAT HAVE THE MOST IMPORTANT CONTRIBUTIONS"
+                    ########        )
+                    ########        Y = np.zeros(
+                    ########            self.n_act_a * (self.n_act_orb - self.n_act_a + 1) * 3,
+                    ########            dtype=np.int32,
+                    ########        )
+                    ########        c_graph(self.n_act_a, self.n_act_orb, Y)
+                    ########        np1 = self.N_p + 1
+                    ########        singlet_count = 0
+                    ########        triplet_count = 0
+                    ########        for i in range(eigenvecs.shape[0]):
+                    ########            total_spin = self.check_total_spin(eigenvecs[i : (i + 1), :])
+                    ########            print(
+                    ########                "STATE",
+                    ########                i,
+                    ########                "ENERGY =",
+                    ########                eigenvals[i],
+                    ########                "<S^2>=",
+                    ########                total_spin,
+                    ########                "WEIGHT =",
+                    ########                self.weight[i],
+                    ########                end="",
+                    ########            )
+                    ########            if np.abs(total_spin) < 1e-5:
+                    ########                singlet_count += 1
+                    ########                print("\tSINGLET", singlet_count)
+                    ########            elif np.abs(total_spin - 2.0) < 1e-5:
+                    ########                triplet_count += 1
+                    ########                print("\tTRIPLET", triplet_count)
+                    ########            elif np.abs(total_spin - 6.0) < 1e-5:
+                    ########                print("\tQUINTET")
 
-                                # print("state",i, "energy =",theta[i])
-                                print(
-                                    "        amplitude",
-                                    "      position",
-                                    "         most important determinants",
-                                    "             number of photon",
-                                )
-                                index = np.argsort(np.abs(eigenvecs[i, :]))
-                                # print(index)
-                                Idet0 = (
-                                    index[eigenvecs.shape[1] - 1] % self.num_det
-                                )  # determinant index of most significant contribution
-                                photon_p0 = (
-                                    index[eigenvecs.shape[1] - 1] - Idet0
-                                ) // self.num_det  # photon number block of determinant
-                                Ib0 = Idet0 % self.num_alpha
-                                Ia0 = Idet0 // self.num_alpha
-                                a0 = c_index_to_string(Ia0, self.n_act_a, self.n_act_orb, Y)
-                                b0 = c_index_to_string(Ib0, self.n_act_a, self.n_act_orb, Y)
+                    ########            # print("state",i, "energy =",theta[i])
+                    ########            print(
+                    ########                "        amplitude",
+                    ########                "      position",
+                    ########                "         most important determinants",
+                    ########                "             number of photon",
+                    ########            )
+                    ########            index = np.argsort(np.abs(eigenvecs[i, :]))
+                    ########            # print(index)
+                    ########            Idet0 = (
+                    ########                index[eigenvecs.shape[1] - 1] % self.num_det
+                    ########            )  # determinant index of most significant contribution
+                    ########            photon_p0 = (
+                    ########                index[eigenvecs.shape[1] - 1] - Idet0
+                    ########            ) // self.num_det  # photon number block of determinant
+                    ########            Ib0 = Idet0 % self.num_alpha
+                    ########            Ia0 = Idet0 // self.num_alpha
+                    ########            a0 = c_index_to_string(Ia0, self.n_act_a, self.n_act_orb, Y)
+                    ########            b0 = c_index_to_string(Ib0, self.n_act_a, self.n_act_orb, Y)
 
-                                alphalist = Determinant.obtBits2ObtIndexList(a0)
-                                betalist = Determinant.obtBits2ObtIndexList(b0)
-                                for j in range(min(H_dim, 10)):
-                                    Idet = index[eigenvecs.shape[1] - j - 1] % self.num_det
-                                    photon_p = (
-                                        index[eigenvecs.shape[1] - j - 1] - Idet
-                                    ) // self.num_det
-                                    Ib = Idet % self.num_alpha
-                                    Ia = Idet // self.num_alpha
-                                    a = c_index_to_string(Ia, self.n_act_a, self.n_act_orb, Y)
-                                    b = c_index_to_string(Ib, self.n_act_a, self.n_act_orb, Y)
+                    ########            alphalist = Determinant.obtBits2ObtIndexList(a0)
+                    ########            betalist = Determinant.obtBits2ObtIndexList(b0)
+                    ########            for j in range(min(H_dim, 10)):
+                    ########                Idet = index[eigenvecs.shape[1] - j - 1] % self.num_det
+                    ########                photon_p = (
+                    ########                    index[eigenvecs.shape[1] - j - 1] - Idet
+                    ########                ) // self.num_det
+                    ########                Ib = Idet % self.num_alpha
+                    ########                Ia = Idet // self.num_alpha
+                    ########                a = c_index_to_string(Ia, self.n_act_a, self.n_act_orb, Y)
+                    ########                b = c_index_to_string(Ib, self.n_act_a, self.n_act_orb, Y)
 
-                                    alphalist = Determinant.obtBits2ObtIndexList(a)
-                                    betalist = Determinant.obtBits2ObtIndexList(b)
+                    ########                alphalist = Determinant.obtBits2ObtIndexList(a)
+                    ########                betalist = Determinant.obtBits2ObtIndexList(b)
 
-                                    inactive_list = list(x for x in range(self.n_in_a))
-                                    alphalist2 = [x + self.n_in_a for x in alphalist]
-                                    # alphalist2[0:0] = inactive_list
-                                    betalist2 = [x + self.n_in_a for x in betalist]
-                                    # betalist2[0:0] = inactive_list
+                    ########                inactive_list = list(x for x in range(self.n_in_a))
+                    ########                alphalist2 = [x + self.n_in_a for x in alphalist]
+                    ########                # alphalist2[0:0] = inactive_list
+                    ########                betalist2 = [x + self.n_in_a for x in betalist]
+                    ########                # betalist2[0:0] = inactive_list
 
-                                    print(
-                                        "%20.12lf"
-                                        % (eigenvecs[i][index[eigenvecs.shape[1] - j - 1]]),
-                                        "%9.3d" % (index[eigenvecs.shape[1] - j - 1]),
-                                        "alpha",
-                                        alphalist2,
-                                        "   beta",
-                                        betalist2,
-                                        "%4.1d" % (photon_p),
-                                        "photon",
-                                    )
+                    ########                print(
+                    ########                    "%20.12lf"
+                    ########                    % (eigenvecs[i][index[eigenvecs.shape[1] - j - 1]]),
+                    ########                    "%9.3d" % (index[eigenvecs.shape[1] - j - 1]),
+                    ########                    "alpha",
+                    ########                    alphalist2,
+                    ########                    "   beta",
+                    ########                    betalist2,
+                    ########                    "%4.1d" % (photon_p),
+                    ########                    "photon",
+                    ########                )
 
 
-                            print("OPTIMIZATION CONVERGED", flush = True)
-                            print("avg energy final", macroiteration, avg_energy)
-                            if self.save_orbital == True:
-                                new_C = np.einsum("pq,qr->pr", self.C, self.U_total)
-                                #print(new_C)
-                                np.savetxt("orbital.out", new_C)
-                            
-                            break
-                        old_avg_energy = avg_energy
-                        self.avg_energy = avg_energy
-                        if macroiteration >0 and self.n_in_a > 0:
-                            start1 = timer()
-                            self.internal_optimization2(avg_energy, eigenvecs) 
-                            end1 = timer()
-                            print("internal optimization took", end1 - start1) 
+                    ########        print("OPTIMIZATION CONVERGED", flush = True)
+                    ########        print("avg energy final", macroiteration, avg_energy)
+                    ########        if self.save_orbital == True:
+                    ########            new_C = np.einsum("pq,qr->pr", self.C, self.U_total)
+                    ########            #print(new_C)
+                    ########            np.savetxt("orbital.out", new_C)
+                    ########        
+                    ########        break
+                    ########    old_avg_energy = avg_energy
+                    ########    self.avg_energy = avg_energy
+                    ########    #if macroiteration >0 and self.n_in_a > 0:
+                    ########    #    start1 = timer()
+                    ########    #    self.internal_optimization2(avg_energy, eigenvecs) 
+                    ########    #    end1 = timer()
+                    ########    #    print("internal optimization took", end1 - start1) 
  
-                        ###print("LETS TEST THE TWO WAYS TO CALCULATE SECOND ORDER ENERGY AGAIN")
-                        ###A = np.zeros((rot_dim, rot_dim))
-                        ###G = np.zeros((self.n_occupied, self.n_occupied, rot_dim, rot_dim))
-                        ###print("initial e_core", self.E_core)
-                        ###self.build_intermediates(eigenvecs, A, G, True)
-                        ###A2 = np.zeros((rot_dim, rot_dim))
-                        ###G2 = np.zeros((self.n_occupied, self.n_occupied, rot_dim, rot_dim))
-                        ###self.build_intermediates2(eigenvecs, A2, G2, True)
-                        ###print("test second order energy and ci updated integrals")
-                        ###exact_t_energy = self.microiteration_exact_energy(self.U_delta, A, G)
-                        ###print("exact_energy from second order expansion", exact_t_energy + avg_energy)
-                        ###active_twoeint = np.zeros((self.n_act_orb, self.n_act_orb, self.n_act_orb, self.n_act_orb))
-                        ###active_fock_core = np.zeros((self.n_act_orb, self.n_act_orb))
-                        ###d_cmo = np.zeros((self.nmo, self.nmo))
-                        ###self.microiteration_ci_integrals_transform(self.U_delta, eigenvecs, d_cmo, active_fock_core, active_twoeint)
-                        ###active_one_e_energy = np.dot(active_fock_core.flatten(), self.D_tu_avg)
-                        ###active_two_e_energy = 0.5 * np.dot(active_twoeint.flatten(), self.D_tuvw_avg)
-                        ###active_one_pe_energy = -np.sqrt(self.omega/2) * np.dot(d_cmo[self.n_in_a:self.n_occupied,self.n_in_a:self.n_occupied].flatten(), self.Dpe_tu_avg)
-                        ###ci_dependent_energy = self.calculate_ci_dependent_energy(eigenvecs, d_cmo)
-                        ###sum_energy = (active_one_e_energy + active_two_e_energy + active_one_pe_energy + self.E_core +
-                        ###        self.Enuc + self.d_c + ci_dependent_energy)
-                        ###print("gfhgy",
-                        ###    "{:20.12f}".format(sum_energy),
-                        ###    "{:20.12f}".format(active_one_e_energy),
-                        ###    "{:20.12f}".format(active_two_e_energy),
-                        ###    "{:20.12f}".format(self.E_core),
-                        ###    "{:20.12f}".format(active_one_pe_energy),
-                        ###    "{:20.12f}".format(self.Enuc),
-                        ###)
+                    ########    ###print("LETS TEST THE TWO WAYS TO CALCULATE SECOND ORDER ENERGY AGAIN")
+                    ########    ###A = np.zeros((rot_dim, rot_dim))
+                    ########    ###G = np.zeros((self.n_occupied, self.n_occupied, rot_dim, rot_dim))
+                    ########    ###print("initial e_core", self.E_core)
+                    ########    ###self.build_intermediates(eigenvecs, A, G, True)
+                    ########    ###A2 = np.zeros((rot_dim, rot_dim))
+                    ########    ###G2 = np.zeros((self.n_occupied, self.n_occupied, rot_dim, rot_dim))
+                    ########    ###self.build_intermediates2(eigenvecs, A2, G2, True)
+                    ########    ###print("test second order energy and ci updated integrals")
+                    ########    ###exact_t_energy = self.microiteration_exact_energy(self.U_delta, A, G)
+                    ########    ###print("exact_energy from second order expansion", exact_t_energy + avg_energy)
+                    ########    ###active_twoeint = np.zeros((self.n_act_orb, self.n_act_orb, self.n_act_orb, self.n_act_orb))
+                    ########    ###active_fock_core = np.zeros((self.n_act_orb, self.n_act_orb))
+                    ########    ###d_cmo = np.zeros((self.nmo, self.nmo))
+                    ########    ###self.microiteration_ci_integrals_transform(self.U_delta, eigenvecs, d_cmo, active_fock_core, active_twoeint)
+                    ########    ###active_one_e_energy = np.dot(active_fock_core.flatten(), self.D_tu_avg)
+                    ########    ###active_two_e_energy = 0.5 * np.dot(active_twoeint.flatten(), self.D_tuvw_avg)
+                    ########    ###active_one_pe_energy = -np.sqrt(self.omega/2) * np.dot(d_cmo[self.n_in_a:self.n_occupied,self.n_in_a:self.n_occupied].flatten(), self.Dpe_tu_avg)
+                    ########    ###ci_dependent_energy = self.calculate_ci_dependent_energy(eigenvecs, d_cmo)
+                    ########    ###sum_energy = (active_one_e_energy + active_two_e_energy + active_one_pe_energy + self.E_core +
+                    ########    ###        self.Enuc + self.d_c + ci_dependent_energy)
+                    ########    ###print("gfhgy",
+                    ########    ###    "{:20.12f}".format(sum_energy),
+                    ########    ###    "{:20.12f}".format(active_one_e_energy),
+                    ########    ###    "{:20.12f}".format(active_two_e_energy),
+                    ########    ###    "{:20.12f}".format(self.E_core),
+                    ########    ###    "{:20.12f}".format(active_one_pe_energy),
+                    ########    ###    "{:20.12f}".format(self.Enuc),
+                    ########    ###)
 
 
-                        np.set_printoptions(precision=14)
-                        if macroiteration == 0:
-                            convergence_threshold = 1e-3
-                        else:
-                            convergence_threshold = 1e-4
-                        print("avg energy", macroiteration, self.avg_energy)
-                        U0 = np.eye(self.nmo)
-                        #print("heyhey3",eigenvecs)
-                        start1 = timer()
-                        self.microiteration_optimization4(U0,eigenvecs, c_get_roots, convergence_threshold)
-                        end1   = timer()
-                        print("microiteration took", end1 - start1)
-                        #print("heyhey",eigenvecs)
-                        #print("u2",self.U2)
-                        print("full transformation test")
-                        
-                        R = 0.5 * (self.U2 - self.U2.T)
-                        Rai = np.zeros((self.n_act_orb, self.n_in_a))
-                        Rai[:,:] = R[self.n_in_a:self.n_occupied,:self.n_in_a]
-                        print ("norm of internal step", np.linalg.norm(Rai), flush = True)
-                        if (np.linalg.norm(Rai) > 1e-4):
-                            #print("u2 before", self.U2,flush = True)
-                            print("RESTART MICROITERATION TO CORRECT INTERNAL ROTATION")
-                            Rvi = np.zeros((self.n_virtual,self.n_in_a))
-                            Rva = np.zeros((self.n_virtual,self.n_act_orb))
-                            self.build_unitary_matrix(Rai, Rvi, Rva)
-                            self.K = np.ascontiguousarray(self.K)
-                            start1 = timer()
-                            c_full_transformation_internal_optimization(self.U_delta, self.J, self.K, self.H_spatial2, self.d_cmo, self.J, self.K, self.H_spatial2, self.d_cmo, 
-                                                       self.index_map_ab, self.index_map_kl, self.nmo, self.n_occupied) 
-                            end1   = timer()
-                            print("full internal transformation took", end1 - start1)
-                            #self.full_transformation_internal_optimization(self.U_delta, self.H_spatial2, self.d_cmo, self.J, self.K)
-                            self.U_total = np.einsum("pq,qs->ps", self.U_total, self.U_delta)
-                            Rai[:,:] = 0.0
-                            Rvi[:,:] = R[self.n_occupied:,:self.n_in_a]
-                            Rva[:,:] = R[self.n_occupied:,self.n_in_a:self.n_occupied]
-                            self.build_unitary_matrix(Rai, Rvi, Rva)
-                            start1 = timer()
-                            self.microiteration_optimization4(self.U_delta,eigenvecs, c_get_roots, convergence_threshold)
-                            end1   = timer()
-                            print("microiteration took", end1 - start1)
-                            Rkl = 0.5 * (self.U2[:self.n_occupied,:self.n_occupied] - self.U2.T[:self.n_occupied,:self.n_occupied])
-                            Rai = np.zeros((self.n_act_orb, self.n_in_a))
-                            Rai[:,:] = Rkl[self.n_in_a:self.n_occupied,:self.n_in_a]
-                        print ("norm of internal step after", np.linalg.norm(Rai), flush = True)
-                        #print("u2 after", self.U2,flush = True)
-                        
-                        temp8 = np.zeros((self.nmo, self.nmo))
-                        temp8 = np.einsum("pq,qs->ps", self.H_spatial2, self.U2)
-                        self.H_spatial2[:,:] = np.einsum("ps,pr->rs", temp8, self.U2)
-                        temp8 = np.einsum("pq,qs->ps", self.d_cmo, self.U2)
-                        self.d_cmo[:,:] = np.einsum("ps,pr->rs", temp8, self.U2)
+                    ########    np.set_printoptions(precision=14)
+                    ########    if macroiteration == 0:
+                    ########        convergence_threshold = 1e-3
+                    ########    else:
+                    ########        convergence_threshold = 1e-4
+                    ########    print("avg energy", macroiteration, self.avg_energy)
+                    ########    U0 = np.eye(self.nmo)
+                    ########    #print("heyhey3",eigenvecs)
+                    ########    start1 = timer()
+                    ########    #self.microiteration_optimization4(U0,eigenvecs, c_get_roots, convergence_threshold)
+                    ########    self.ah_orbital_optimization(U0,eigenvecs, c_get_roots, convergence_threshold)
+                    ########    end1   = timer()
+                    ########    print("microiteration took", end1 - start1)
+                    ########    #print("heyhey",eigenvecs)
+                    ########    #print("u2",self.U2)
+                    ########    print("full transformation test")
+                    ########    
+                    ########    R = 0.5 * (self.U2 - self.U2.T)
+                    ########    Rai = np.zeros((self.n_act_orb, self.n_in_a))
+                    ########    Rai[:,:] = R[self.n_in_a:self.n_occupied,:self.n_in_a]
+                    ########    #print ("norm of internal step", np.linalg.norm(Rai), flush = True)
+                    ########    #if (np.linalg.norm(Rai) > 1e-4):
+                    ########    #    #print("u2 before", self.U2,flush = True)
+                    ########    #    print("RESTART MICROITERATION TO CORRECT INTERNAL ROTATION")
+                    ########    #    Rvi = np.zeros((self.n_virtual,self.n_in_a))
+                    ########    #    Rva = np.zeros((self.n_virtual,self.n_act_orb))
+                    ########    #    self.build_unitary_matrix(Rai, Rvi, Rva)
+                    ########    #    self.K = np.ascontiguousarray(self.K)
+                    ########    #    start1 = timer()
+                    ########    #    c_full_transformation_internal_optimization(self.U_delta, self.J, self.K, self.H_spatial2, self.d_cmo, self.J, self.K, self.H_spatial2, self.d_cmo, 
+                    ########    #                               self.index_map_ab, self.index_map_kl, self.nmo, self.n_occupied) 
+                    ########    #    end1   = timer()
+                    ########    #    print("full internal transformation took", end1 - start1)
+                    ########    #    #self.full_transformation_internal_optimization(self.U_delta, self.H_spatial2, self.d_cmo, self.J, self.K)
+                    ########    #    self.U_total = np.einsum("pq,qs->ps", self.U_total, self.U_delta)
+                    ########    #    Rai[:,:] = 0.0
+                    ########    #    Rvi[:,:] = R[self.n_occupied:,:self.n_in_a]
+                    ########    #    Rva[:,:] = R[self.n_occupied:,self.n_in_a:self.n_occupied]
+                    ########    #    self.build_unitary_matrix(Rai, Rvi, Rva)
+                    ########    #    start1 = timer()
+                    ########    #    self.microiteration_optimization4(self.U_delta,eigenvecs, c_get_roots, convergence_threshold)
+                    ########    #    end1   = timer()
+                    ########    #    print("microiteration took", end1 - start1)
+                    ########    #    Rkl = 0.5 * (self.U2[:self.n_occupied,:self.n_occupied] - self.U2.T[:self.n_occupied,:self.n_occupied])
+                    ########    #    Rai = np.zeros((self.n_act_orb, self.n_in_a))
+                    ########    #    Rai[:,:] = Rkl[self.n_in_a:self.n_occupied,:self.n_in_a]
+                    ########    #print ("norm of internal step after", np.linalg.norm(Rai), flush = True)
+                    ########    ##print("u2 after", self.U2,flush = True)
+                    ########    
+                    ########    temp8 = np.zeros((self.nmo, self.nmo))
+                    ########    temp8 = np.einsum("pq,qs->ps", self.H_spatial2, self.U2)
+                    ########    self.H_spatial2[:,:] = np.einsum("ps,pr->rs", temp8, self.U2)
+                    ########    temp8 = np.einsum("pq,qs->ps", self.d_cmo, self.U2)
+                    ########    self.d_cmo[:,:] = np.einsum("ps,pr->rs", temp8, self.U2)
 
-                        self.U_total = np.einsum("pq,qs->ps", self.U_total, self.U2)
+                    ########    self.U_total = np.einsum("pq,qs->ps", self.U_total, self.U2)
    
-                        #print(self.U_total)
-                        ##JJ = np.zeros((self.n_occupied, self.n_occupied, self.nmo, self.nmo))
-                        ##KK = np.zeros((self.n_occupied, self.n_occupied, self.nmo, self.nmo))
-                        ##self.full_transformation_macroiteration(self.U_total, JJ, KK)
-                        start1 = timer()
-                        self.K = np.ascontiguousarray(self.K)
-                        c_full_transformation_macroiteration(self.U_total, self.twoeint, self.J, self.K, self.index_map_pq, self.index_map_kl, self.nmo, self.n_occupied) 
-                        #self.full_transformation_macroiteration(self.U_total, self.J, self.K)
-                        end1 = timer()
-                        print("full JK transformation took", end1-start1)
-                        ##print("tvhj", np.allclose(self.K3,self.K, rtol=1e-14,atol=1e-14))
-                        ##print("oins", np.allclose(self.J3,self.J, rtol=1e-14,atol=1e-14))
-                        ##print("tc5k", np.allclose(self.h3,self.H_spatial2, rtol=1e-14,atol=1e-14))
-                        ##print("p0ba", np.allclose(self.d_cmo3,self.d_cmo, rtol=1e-14,atol=1e-14))
-                        active_twoeint = self.J[self.n_in_a:self.n_occupied, self.n_in_a:self.n_occupied, self.n_in_a:self.n_occupied, self.n_in_a:self.n_occupied] 
-                        self.fock_core = copy.deepcopy(self.H_spatial2) 
-                        self.fock_core += 2.0 * np.einsum("jjrs->rs", self.J[:self.n_in_a,:self.n_in_a,:,:]) 
-                        self.fock_core -= np.einsum("jjrs->rs", self.K[:self.n_in_a,:self.n_in_a,:,:]) 
-                        
-                        self.E_core = 0.0  
-                        self.E_core += np.einsum("jj->", self.H_spatial2[:self.n_in_a,:self.n_in_a]) 
-                        self.E_core += np.einsum("jj->", self.fock_core[:self.n_in_a,:self.n_in_a]) 
+                    ########    #print(self.U_total)
+                    ########    new_C = np.einsum("pq,qr->pr", self.C, self.U_total)
+                    ########    print(new_C)
+                    ########    np.savetxt("orbital.out", new_C)
+                    ########        
+
+                    ########    ##JJ = np.zeros((self.n_occupied, self.n_occupied, self.nmo, self.nmo))
+                    ########    ##KK = np.zeros((self.n_occupied, self.n_occupied, self.nmo, self.nmo))
+                    ########    ##self.full_transformation_macroiteration(self.U_total, JJ, KK)
+                    ########    start1 = timer()
+                    ########    self.K = np.ascontiguousarray(self.K)
+                    ########    c_full_transformation_macroiteration(self.U_total, self.twoeint, self.J, self.K, self.index_map_pq, self.index_map_kl, self.nmo, self.n_occupied) 
+                    ########    #self.full_transformation_macroiteration(self.U_total, self.J, self.K)
+                    ########    end1 = timer()
+                    ########    print("full JK transformation took", end1-start1)
+                    ########    ##print("tvhj", np.allclose(self.K3,self.K, rtol=1e-14,atol=1e-14))
+                    ########    ##print("oins", np.allclose(self.J3,self.J, rtol=1e-14,atol=1e-14))
+                    ########    ##print("tc5k", np.allclose(self.h3,self.H_spatial2, rtol=1e-14,atol=1e-14))
+                    ########    ##print("p0ba", np.allclose(self.d_cmo3,self.d_cmo, rtol=1e-14,atol=1e-14))
+                    ########    active_twoeint = self.J[self.n_in_a:self.n_occupied, self.n_in_a:self.n_occupied, self.n_in_a:self.n_occupied, self.n_in_a:self.n_occupied] 
+                    ########    self.fock_core = copy.deepcopy(self.H_spatial2) 
+                    ########    self.fock_core += 2.0 * np.einsum("jjrs->rs", self.J[:self.n_in_a,:self.n_in_a,:,:]) 
+                    ########    self.fock_core -= np.einsum("jjrs->rs", self.K[:self.n_in_a,:self.n_in_a,:,:]) 
+                    ########    
+                    ########    self.E_core = 0.0  
+                    ########    self.E_core += np.einsum("jj->", self.H_spatial2[:self.n_in_a,:self.n_in_a]) 
+                    ########    self.E_core += np.einsum("jj->", self.fock_core[:self.n_in_a,:self.n_in_a]) 
 
 
-                        #print(eigenvecs)
-                        active_fock_core = np.zeros((self.n_act_orb, self.n_act_orb))
-                        active_fock_core[:,:] = self.fock_core[self.n_in_a:self.n_occupied, self.n_in_a:self.n_occupied]
-                        active_one_e_energy = np.dot(active_fock_core.flatten(), self.D_tu_avg)
-                        active_two_e_energy = 0.5 * np.dot(active_twoeint.flatten(), self.D_tuvw_avg)
-                        active_one_pe_energy = -np.sqrt(self.omega/2) * np.dot(self.d_cmo[self.n_in_a:self.n_occupied,self.n_in_a:self.n_occupied].flatten(), self.Dpe_tu_avg)
-                        ci_dependent_energy = self.calculate_ci_dependent_energy(eigenvecs, self.d_cmo)
-                        sum_energy = (active_one_e_energy + active_two_e_energy + active_one_pe_energy + self.E_core +
-                                self.Enuc + self.d_c + ci_dependent_energy)
-                        print("gfhgy end macroiteration",
-                            "{:20.12f}".format(sum_energy),
-                            "{:20.12f}".format(active_one_e_energy),
-                            "{:20.12f}".format(active_two_e_energy),
-                            "{:20.12f}".format(self.E_core),
-                            "{:20.12f}".format(active_one_pe_energy),
-                            "{:20.12f}".format(self.Enuc),
-                        )
-                        print("end one macroiteration")
-                        avg_energy = sum_energy
-                        self.occupied_K = copy.deepcopy(self.K[:,:,:self.n_occupied,:self.n_occupied])
-                        self.occupied_J = copy.deepcopy(self.J[:,:,:self.n_occupied,:self.n_occupied])
-                        self.occupied_h1 = copy.deepcopy(self.H_spatial2[:self.n_occupied,:self.n_occupied])
-                        self.occupied_d_cmo = copy.deepcopy(self.d_cmo[:self.n_occupied,:self.n_occupied])
-                        self.occupied_fock_core = copy.deepcopy(self.fock_core[:self.n_occupied, :self.n_occupied]) 
-                        new_avg_energy = avg_energy
+                    ########    #print(eigenvecs)
+                    ########    active_fock_core = np.zeros((self.n_act_orb, self.n_act_orb))
+                    ########    active_fock_core[:,:] = self.fock_core[self.n_in_a:self.n_occupied, self.n_in_a:self.n_occupied]
+                    ########    active_one_e_energy = np.dot(active_fock_core.flatten(), self.D_tu_avg)
+                    ########    active_two_e_energy = 0.5 * np.dot(active_twoeint.flatten(), self.D_tuvw_avg)
+                    ########    active_one_pe_energy = -np.sqrt(self.omega/2) * np.dot(self.d_cmo[self.n_in_a:self.n_occupied,self.n_in_a:self.n_occupied].flatten(), self.Dpe_tu_avg)
+                    ########    ci_dependent_energy = self.calculate_ci_dependent_energy(eigenvecs, self.d_cmo)
+                    ########    sum_energy = (active_one_e_energy + active_two_e_energy + active_one_pe_energy + self.E_core +
+                    ########            self.Enuc + self.d_c + ci_dependent_energy)
+                    ########    print("gfhgy end macroiteration",
+                    ########        "{:20.12f}".format(sum_energy),
+                    ########        "{:20.12f}".format(active_one_e_energy),
+                    ########        "{:20.12f}".format(active_two_e_energy),
+                    ########        "{:20.12f}".format(self.E_core),
+                    ########        "{:20.12f}".format(active_one_pe_energy),
+                    ########        "{:20.12f}".format(self.Enuc),
+                    ########    )
+                    ########    print("end one macroiteration")
+                    ########    avg_energy = sum_energy
+                    ########    self.occupied_K = copy.deepcopy(self.K[:,:,:self.n_occupied,:self.n_occupied])
+                    ########    self.occupied_J = copy.deepcopy(self.J[:,:,:self.n_occupied,:self.n_occupied])
+                    ########    self.occupied_h1 = copy.deepcopy(self.H_spatial2[:self.n_occupied,:self.n_occupied])
+                    ########    self.occupied_d_cmo = copy.deepcopy(self.d_cmo[:self.n_occupied,:self.n_occupied])
+                    ########    self.occupied_fock_core = copy.deepcopy(self.fock_core[:self.n_occupied, :self.n_occupied]) 
+                    ########    new_avg_energy = avg_energy
 
-                        macroiteration += 1
-                    end = timer()
-                    print("optimization took", end - start)
+                    ########    macroiteration += 1
+                    ########end = timer()
+                    ########print("optimization took", end - start)
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+                #back up wmk algorithm
+                #if self.n_in_a == 0 and self.n_act_orb == self.nmo:
+                #    pass
+                #else:
+                #    start = timer()
+                #    macroiteration = 0
+                #    self.U_total = np.eye(self.nmo)
+                #    old_avg_energy = avg_energy
+                #    new_avg_energy = 0
+                #    convergence = 0
+                #    while (macroiteration < 20000):
+                #        if np.abs(new_avg_energy - old_avg_energy) < 1e-9:
+                #            convergence = 1
+                #        if macroiteration >0:
+
+                #            #print("U total")
+                #            #self.printA(self.U_total)
+                #            print("old energy",old_avg_energy, "new energy", new_avg_energy, flush = True)
+                #            occupied_J = np.zeros((self.n_occupied, self.n_occupied, self.n_occupied, self.n_occupied))
+                #            occupied_J[self.n_in_a: self.n_occupied,self.n_in_a: self.n_occupied,
+                #                    self.n_in_a: self.n_occupied,self.n_in_a: self.n_occupied] = copy.deepcopy(self.J[self.n_in_a: self.n_occupied,
+                #                        self.n_in_a: self.n_occupied,self.n_in_a: self.n_occupied,self.n_in_a: self.n_occupied])        
+                #            active_twoeint = self.J[self.n_in_a:self.n_occupied, self.n_in_a:self.n_occupied, self.n_in_a:self.n_occupied, self.n_in_a:self.n_occupied] 
+                #            self.H_diag3 = np.zeros(H_dim)
+                #            fock_core = copy.deepcopy(self.H_spatial2) 
+                #            fock_core += 2.0 * np.einsum("jjrs->rs", self.J[:self.n_in_a,:self.n_in_a,:,:]) 
+                #            fock_core -= np.einsum("jjrs->rs", self.K[:self.n_in_a,:self.n_in_a,:,:]) 
+
+                #            active_fock_core = copy.deepcopy(fock_core[self.n_in_a:self.n_occupied,self.n_in_a:self.n_occupied]) 
+                #            occupied_fock_core = np.zeros((self.n_occupied, self.n_occupied))
+                #            occupied_fock_core[self.n_in_a: self.n_occupied,self.n_in_a: self.n_occupied] = copy.deepcopy(active_fock_core) 
+                #            occupied_d_cmo = np.zeros((self.n_occupied, self.n_occupied))
+                #            occupied_d_cmo = copy.deepcopy(self.d_cmo[: self.n_occupied,: self.n_occupied]) 
+                #            gkl2 = copy.deepcopy(active_fock_core) 
+                #            gkl2 -= 0.5 * np.einsum("kjjl->kl", active_twoeint) 
+                #            
+                #            occupied_J = occupied_J.reshape(self.n_occupied * self.n_occupied, self.n_occupied * self.n_occupied)
+                #            c_H_diag_cas_spin(
+                #                    occupied_fock_core, 
+                #                    occupied_J, 
+                #                    self.H_diag3, 
+                #                    self.N_p, 
+                #                    self.num_alpha, 
+                #                    self.nmo, 
+                #                    self.n_act_a, 
+                #                    self.n_act_orb, 
+                #                    self.n_in_a, 
+                #                    self.E_core, 
+                #                    self.omega, 
+                #                    self.Enuc, 
+                #                    self.d_c, 
+                #                    self.Y,
+                #                    self.target_spin)
+                #            d_diag = 2.0 * np.einsum("ii->", self.d_cmo[:self.n_in_a,:self.n_in_a])
+                #            self.constdouble[3] = self.d_exp - d_diag
+                #            #self.constdouble[4] = 1e-5 
+                #            self.constdouble[4] = self.davidson_threshold
+                #            self.constdouble[5] = self.E_core
+                #            self.constint[8] = self.davidson_maxiter
+                #            eigenvals = np.zeros((self.davidson_roots))
+                #            #eigenvecs = np.zeros((self.davidson_roots, H_dim))
+                #            #eigenvecs[:,:] = 0.0
+                #            #print("heyhey5", eigenvecs)
+                #            c_get_roots(
+                #                gkl2,
+                #                occupied_J,
+                #                occupied_d_cmo,
+                #                self.H_diag3,
+                #                self.S_diag,
+                #                self.S_diag_projection,
+                #                eigenvals,
+                #                eigenvecs,
+                #                self.table,
+                #                self.table_creation,
+                #                self.table_annihilation,
+                #                self.b_array,
+                #                self.constint,
+                #                self.constdouble,
+                #                self.index_Hdiag,
+                #                True,
+                #                self.target_spin,
+                #            )
+                #            avg_energy = 0.0 
+                #            for i in range(self.davidson_roots):
+                #                avg_energy += self.weight[i] * eigenvals[i]
+                #            print("avg energy", macroiteration, avg_energy)
+                #            print("average energy at the start of macroiteration", avg_energy) 
+                #            self.build_state_avarage_rdms(eigenvecs)
+
+                #        if macroiteration > 0 and convergence == 1:
+
+                #            print(
+                #                "\nACTIVE PART OF DETERMINANTS THAT HAVE THE MOST IMPORTANT CONTRIBUTIONS"
+                #            )
+                #            Y = np.zeros(
+                #                self.n_act_a * (self.n_act_orb - self.n_act_a + 1) * 3,
+                #                dtype=np.int32,
+                #            )
+                #            c_graph(self.n_act_a, self.n_act_orb, Y)
+                #            np1 = self.N_p + 1
+                #            singlet_count = 0
+                #            triplet_count = 0
+                #            for i in range(eigenvecs.shape[0]):
+                #                total_spin = self.check_total_spin(eigenvecs[i : (i + 1), :])
+                #                print(
+                #                    "STATE",
+                #                    i,
+                #                    "ENERGY =",
+                #                    eigenvals[i],
+                #                    "<S^2>=",
+                #                    total_spin,
+                #                    "WEIGHT =",
+                #                    self.weight[i],
+                #                    end="",
+                #                )
+                #                if np.abs(total_spin) < 1e-5:
+                #                    singlet_count += 1
+                #                    print("\tSINGLET", singlet_count)
+                #                elif np.abs(total_spin - 2.0) < 1e-5:
+                #                    triplet_count += 1
+                #                    print("\tTRIPLET", triplet_count)
+                #                elif np.abs(total_spin - 6.0) < 1e-5:
+                #                    print("\tQUINTET")
+
+                #                # print("state",i, "energy =",theta[i])
+                #                print(
+                #                    "        amplitude",
+                #                    "      position",
+                #                    "         most important determinants",
+                #                    "             number of photon",
+                #                )
+                #                index = np.argsort(np.abs(eigenvecs[i, :]))
+                #                # print(index)
+                #                Idet0 = (
+                #                    index[eigenvecs.shape[1] - 1] % self.num_det
+                #                )  # determinant index of most significant contribution
+                #                photon_p0 = (
+                #                    index[eigenvecs.shape[1] - 1] - Idet0
+                #                ) // self.num_det  # photon number block of determinant
+                #                Ib0 = Idet0 % self.num_alpha
+                #                Ia0 = Idet0 // self.num_alpha
+                #                a0 = c_index_to_string(Ia0, self.n_act_a, self.n_act_orb, Y)
+                #                b0 = c_index_to_string(Ib0, self.n_act_a, self.n_act_orb, Y)
+
+                #                alphalist = Determinant.obtBits2ObtIndexList(a0)
+                #                betalist = Determinant.obtBits2ObtIndexList(b0)
+                #                for j in range(min(H_dim, 10)):
+                #                    Idet = index[eigenvecs.shape[1] - j - 1] % self.num_det
+                #                    photon_p = (
+                #                        index[eigenvecs.shape[1] - j - 1] - Idet
+                #                    ) // self.num_det
+                #                    Ib = Idet % self.num_alpha
+                #                    Ia = Idet // self.num_alpha
+                #                    a = c_index_to_string(Ia, self.n_act_a, self.n_act_orb, Y)
+                #                    b = c_index_to_string(Ib, self.n_act_a, self.n_act_orb, Y)
+
+                #                    alphalist = Determinant.obtBits2ObtIndexList(a)
+                #                    betalist = Determinant.obtBits2ObtIndexList(b)
+
+                #                    inactive_list = list(x for x in range(self.n_in_a))
+                #                    alphalist2 = [x + self.n_in_a for x in alphalist]
+                #                    # alphalist2[0:0] = inactive_list
+                #                    betalist2 = [x + self.n_in_a for x in betalist]
+                #                    # betalist2[0:0] = inactive_list
+
+                #                    print(
+                #                        "%20.12lf"
+                #                        % (eigenvecs[i][index[eigenvecs.shape[1] - j - 1]]),
+                #                        "%9.3d" % (index[eigenvecs.shape[1] - j - 1]),
+                #                        "alpha",
+                #                        alphalist2,
+                #                        "   beta",
+                #                        betalist2,
+                #                        "%4.1d" % (photon_p),
+                #                        "photon",
+                #                    )
+
+
+                #            print("OPTIMIZATION CONVERGED", flush = True)
+                #            print("avg energy final", macroiteration, avg_energy)
+                #            if self.save_orbital == True:
+                #                new_C = np.einsum("pq,qr->pr", self.C, self.U_total)
+                #                #print(new_C)
+                #                np.savetxt("orbital.out", new_C)
+                #            
+                #            break
+                #        old_avg_energy = avg_energy
+                #        self.avg_energy = avg_energy
+                #        if macroiteration >0 and self.n_in_a > 0:
+                #            start1 = timer()
+                #            self.internal_optimization2(avg_energy, eigenvecs) 
+                #            end1 = timer()
+                #            print("internal optimization took", end1 - start1) 
+ 
+                #        ###print("LETS TEST THE TWO WAYS TO CALCULATE SECOND ORDER ENERGY AGAIN")
+                #        ###A = np.zeros((rot_dim, rot_dim))
+                #        ###G = np.zeros((self.n_occupied, self.n_occupied, rot_dim, rot_dim))
+                #        ###print("initial e_core", self.E_core)
+                #        ###self.build_intermediates(eigenvecs, A, G, True)
+                #        ###A2 = np.zeros((rot_dim, rot_dim))
+                #        ###G2 = np.zeros((self.n_occupied, self.n_occupied, rot_dim, rot_dim))
+                #        ###self.build_intermediates2(eigenvecs, A2, G2, True)
+                #        ###print("test second order energy and ci updated integrals")
+                #        ###exact_t_energy = self.microiteration_exact_energy(self.U_delta, A, G)
+                #        ###print("exact_energy from second order expansion", exact_t_energy + avg_energy)
+                #        ###active_twoeint = np.zeros((self.n_act_orb, self.n_act_orb, self.n_act_orb, self.n_act_orb))
+                #        ###active_fock_core = np.zeros((self.n_act_orb, self.n_act_orb))
+                #        ###d_cmo = np.zeros((self.nmo, self.nmo))
+                #        ###self.microiteration_ci_integrals_transform(self.U_delta, eigenvecs, d_cmo, active_fock_core, active_twoeint)
+                #        ###active_one_e_energy = np.dot(active_fock_core.flatten(), self.D_tu_avg)
+                #        ###active_two_e_energy = 0.5 * np.dot(active_twoeint.flatten(), self.D_tuvw_avg)
+                #        ###active_one_pe_energy = -np.sqrt(self.omega/2) * np.dot(d_cmo[self.n_in_a:self.n_occupied,self.n_in_a:self.n_occupied].flatten(), self.Dpe_tu_avg)
+                #        ###ci_dependent_energy = self.calculate_ci_dependent_energy(eigenvecs, d_cmo)
+                #        ###sum_energy = (active_one_e_energy + active_two_e_energy + active_one_pe_energy + self.E_core +
+                #        ###        self.Enuc + self.d_c + ci_dependent_energy)
+                #        ###print("gfhgy",
+                #        ###    "{:20.12f}".format(sum_energy),
+                #        ###    "{:20.12f}".format(active_one_e_energy),
+                #        ###    "{:20.12f}".format(active_two_e_energy),
+                #        ###    "{:20.12f}".format(self.E_core),
+                #        ###    "{:20.12f}".format(active_one_pe_energy),
+                #        ###    "{:20.12f}".format(self.Enuc),
+                #        ###)
+
+
+                #        np.set_printoptions(precision=14)
+                #        if macroiteration == 0:
+                #            convergence_threshold = 1e-3
+                #        else:
+                #            convergence_threshold = 1e-4
+                #        print("avg energy", macroiteration, self.avg_energy)
+                #        U0 = np.eye(self.nmo)
+                #        #print("heyhey3",eigenvecs)
+                #        start1 = timer()
+                #        self.microiteration_optimization4(U0,eigenvecs, c_get_roots, convergence_threshold)
+                #        end1   = timer()
+                #        print("microiteration took", end1 - start1)
+                #        #print("heyhey",eigenvecs)
+                #        #print("u2",self.U2)
+                #        print("full transformation test")
+                #        
+                #        R = 0.5 * (self.U2 - self.U2.T)
+                #        Rai = np.zeros((self.n_act_orb, self.n_in_a))
+                #        Rai[:,:] = R[self.n_in_a:self.n_occupied,:self.n_in_a]
+                #        print ("norm of internal step", np.linalg.norm(Rai), flush = True)
+                #        if (np.linalg.norm(Rai) > 1e-4):
+                #            #print("u2 before", self.U2,flush = True)
+                #            print("RESTART MICROITERATION TO CORRECT INTERNAL ROTATION")
+                #            Rvi = np.zeros((self.n_virtual,self.n_in_a))
+                #            Rva = np.zeros((self.n_virtual,self.n_act_orb))
+                #            self.build_unitary_matrix(Rai, Rvi, Rva)
+                #            self.K = np.ascontiguousarray(self.K)
+                #            start1 = timer()
+                #            c_full_transformation_internal_optimization(self.U_delta, self.J, self.K, self.H_spatial2, self.d_cmo, self.J, self.K, self.H_spatial2, self.d_cmo, 
+                #                                       self.index_map_ab, self.index_map_kl, self.nmo, self.n_occupied) 
+                #            end1   = timer()
+                #            print("full internal transformation took", end1 - start1)
+                #            #self.full_transformation_internal_optimization(self.U_delta, self.H_spatial2, self.d_cmo, self.J, self.K)
+                #            self.U_total = np.einsum("pq,qs->ps", self.U_total, self.U_delta)
+                #            Rai[:,:] = 0.0
+                #            Rvi[:,:] = R[self.n_occupied:,:self.n_in_a]
+                #            Rva[:,:] = R[self.n_occupied:,self.n_in_a:self.n_occupied]
+                #            self.build_unitary_matrix(Rai, Rvi, Rva)
+                #            start1 = timer()
+                #            self.microiteration_optimization4(self.U_delta,eigenvecs, c_get_roots, convergence_threshold)
+                #            end1   = timer()
+                #            print("microiteration took", end1 - start1)
+                #            Rkl = 0.5 * (self.U2[:self.n_occupied,:self.n_occupied] - self.U2.T[:self.n_occupied,:self.n_occupied])
+                #            Rai = np.zeros((self.n_act_orb, self.n_in_a))
+                #            Rai[:,:] = Rkl[self.n_in_a:self.n_occupied,:self.n_in_a]
+                #        print ("norm of internal step after", np.linalg.norm(Rai), flush = True)
+                #        #print("u2 after", self.U2,flush = True)
+                #        
+                #        temp8 = np.zeros((self.nmo, self.nmo))
+                #        temp8 = np.einsum("pq,qs->ps", self.H_spatial2, self.U2)
+                #        self.H_spatial2[:,:] = np.einsum("ps,pr->rs", temp8, self.U2)
+                #        temp8 = np.einsum("pq,qs->ps", self.d_cmo, self.U2)
+                #        self.d_cmo[:,:] = np.einsum("ps,pr->rs", temp8, self.U2)
+
+                #        self.U_total = np.einsum("pq,qs->ps", self.U_total, self.U2)
+   
+                #        #print(self.U_total)
+                #            
+
+                #        ##JJ = np.zeros((self.n_occupied, self.n_occupied, self.nmo, self.nmo))
+                #        ##KK = np.zeros((self.n_occupied, self.n_occupied, self.nmo, self.nmo))
+                #        ##self.full_transformation_macroiteration(self.U_total, JJ, KK)
+                #        start1 = timer()
+                #        self.K = np.ascontiguousarray(self.K)
+                #        c_full_transformation_macroiteration(self.U_total, self.twoeint, self.J, self.K, self.index_map_pq, self.index_map_kl, self.nmo, self.n_occupied) 
+                #        #self.full_transformation_macroiteration(self.U_total, self.J, self.K)
+                #        end1 = timer()
+                #        print("full JK transformation took", end1-start1)
+                #        ##print("tvhj", np.allclose(self.K3,self.K, rtol=1e-14,atol=1e-14))
+                #        ##print("oins", np.allclose(self.J3,self.J, rtol=1e-14,atol=1e-14))
+                #        ##print("tc5k", np.allclose(self.h3,self.H_spatial2, rtol=1e-14,atol=1e-14))
+                #        ##print("p0ba", np.allclose(self.d_cmo3,self.d_cmo, rtol=1e-14,atol=1e-14))
+                #        active_twoeint = self.J[self.n_in_a:self.n_occupied, self.n_in_a:self.n_occupied, self.n_in_a:self.n_occupied, self.n_in_a:self.n_occupied] 
+                #        self.fock_core = copy.deepcopy(self.H_spatial2) 
+                #        self.fock_core += 2.0 * np.einsum("jjrs->rs", self.J[:self.n_in_a,:self.n_in_a,:,:]) 
+                #        self.fock_core -= np.einsum("jjrs->rs", self.K[:self.n_in_a,:self.n_in_a,:,:]) 
+                #        
+                #        self.E_core = 0.0  
+                #        self.E_core += np.einsum("jj->", self.H_spatial2[:self.n_in_a,:self.n_in_a]) 
+                #        self.E_core += np.einsum("jj->", self.fock_core[:self.n_in_a,:self.n_in_a]) 
+
+
+                #        #print(eigenvecs)
+                #        active_fock_core = np.zeros((self.n_act_orb, self.n_act_orb))
+                #        active_fock_core[:,:] = self.fock_core[self.n_in_a:self.n_occupied, self.n_in_a:self.n_occupied]
+                #        active_one_e_energy = np.dot(active_fock_core.flatten(), self.D_tu_avg)
+                #        active_two_e_energy = 0.5 * np.dot(active_twoeint.flatten(), self.D_tuvw_avg)
+                #        active_one_pe_energy = -np.sqrt(self.omega/2) * np.dot(self.d_cmo[self.n_in_a:self.n_occupied,self.n_in_a:self.n_occupied].flatten(), self.Dpe_tu_avg)
+                #        ci_dependent_energy = self.calculate_ci_dependent_energy(eigenvecs, self.d_cmo)
+                #        sum_energy = (active_one_e_energy + active_two_e_energy + active_one_pe_energy + self.E_core +
+                #                self.Enuc + self.d_c + ci_dependent_energy)
+                #        print("gfhgy end macroiteration",
+                #            "{:20.12f}".format(sum_energy),
+                #            "{:20.12f}".format(active_one_e_energy),
+                #            "{:20.12f}".format(active_two_e_energy),
+                #            "{:20.12f}".format(self.E_core),
+                #            "{:20.12f}".format(active_one_pe_energy),
+                #            "{:20.12f}".format(self.Enuc),
+                #        )
+                #        print("end one macroiteration")
+                #        avg_energy = sum_energy
+                #        self.occupied_K = copy.deepcopy(self.K[:,:,:self.n_occupied,:self.n_occupied])
+                #        self.occupied_J = copy.deepcopy(self.J[:,:,:self.n_occupied,:self.n_occupied])
+                #        self.occupied_h1 = copy.deepcopy(self.H_spatial2[:self.n_occupied,:self.n_occupied])
+                #        self.occupied_d_cmo = copy.deepcopy(self.d_cmo[:self.n_occupied,:self.n_occupied])
+                #        self.occupied_fock_core = copy.deepcopy(self.fock_core[:self.n_occupied, :self.n_occupied]) 
+                #        new_avg_energy = avg_energy
+
+                #        macroiteration += 1
+                #    end = timer()
+                #    print("optimization took", end - start)
 
 
 
@@ -3350,7 +3829,6 @@ class PFHamiltonianGenerator:
 
         # collect rhf wfn object as dictionary
         wfn_dict = psi4.core.Wavefunction.to_file(wfn)
-
         ##print(self.C)
         #U = ortho_group.rvs(wfn.nmo())
         #new_C = np.einsum("pq,qr->pr", self.C, U)
@@ -3410,7 +3888,7 @@ class PFHamiltonianGenerator:
         self.nvirt = self.nmo - self.ndocc
 
         self.docc_list = [i for i in range(self.ndocc)]
-
+        
         return wfn
 
     def build1MuSO(self):
@@ -5687,7 +6165,7 @@ class PFHamiltonianGenerator:
         off_diagonal_constant = 0.0
         np1 = self.N_p + 1
         for i in range(self.davidson_roots):
-            print("weight", self.weight[i])
+            #print("weight", self.weight[i])
             eigenvecs2 = eigenvecs[i].reshape((np1, self.num_det))
             eigenvecs2 = eigenvecs2.transpose(1,0)
             for m in range(np1):
@@ -6763,7 +7241,7 @@ class PFHamiltonianGenerator:
             )
         
 
-        #symmetrize 2-rdm
+        ###symmetrize 2-rdm
         for t in range(self.n_act_orb):
             for u in range(t,self.n_act_orb):
                 tu = t * self.n_act_orb + u
@@ -6774,6 +7252,14 @@ class PFHamiltonianGenerator:
                     #dum2 = self.D_tu_avg[tu] + self.D_tu_avg[tu] 
                     self.D_tuvw_avg[tu * self.n_act_orb * self.n_act_orb + vw] = dum/2.0
                     self.D_tuvw_avg[ut * self.n_act_orb * self.n_act_orb + vw] = dum/2.0
+                    
+
+                    #dum = (self.D_tuvw_avg2[tu * self.n_act_orb * self.n_act_orb + vw] + 
+                    # self.D_tuvw_avg2[ut * self.n_act_orb * self.n_act_orb + vw])
+                    ##dum2 = self.D_tu_avg[tu] + self.D_tu_avg[tu] 
+                    #self.D_tuvw_avg2[tu * self.n_act_orb * self.n_act_orb + vw] = dum/2.0
+                    #self.D_tuvw_avg2[ut * self.n_act_orb * self.n_act_orb + vw] = dum/2.0
+
                     #self.D_tu_avg[tu] = dum2/2.0
                     #self.D_tu_avg[ut] = dum2/2.0
     def build_sigma_reduced(self, U, A, G, step):            
@@ -7342,6 +7828,229 @@ class PFHamiltonianGenerator:
         #E10 = 2.0 * np.einsum("ri,ri->", T[:,:self.n_in_a], B3)
         #print("rmmngghg", E0, E0+E10)
         return E
+
+    def rdm_exact_energy(self, J, K, h1, d_cmo, eigenvecs):
+
+        active_twoeint = J[self.n_in_a:self.n_occupied, self.n_in_a:self.n_occupied, self.n_in_a:self.n_occupied, self.n_in_a:self.n_occupied] 
+        fock_core = copy.deepcopy(h1) 
+        fock_core += 2.0 * np.einsum("jjrs->rs", J[:self.n_in_a,:self.n_in_a,:,:]) 
+        fock_core -= np.einsum("jjrs->rs", K[:self.n_in_a,:self.n_in_a,:,:]) 
+        
+        E_core = 0.0  
+        E_core += np.einsum("jj->", h1[:self.n_in_a,:self.n_in_a]) 
+        E_core += np.einsum("jj->", fock_core[:self.n_in_a,:self.n_in_a]) 
+
+
+        #print(eigenvecs)
+        active_fock_core = np.zeros((self.n_act_orb, self.n_act_orb))
+        active_fock_core[:,:] = fock_core[self.n_in_a:self.n_occupied, self.n_in_a:self.n_occupied]
+        active_one_e_energy = np.dot(active_fock_core.flatten(), self.D_tu_avg)
+        active_two_e_energy = 0.5 * np.dot(active_twoeint.flatten(), self.D_tuvw_avg)
+        active_one_pe_energy = -np.sqrt(self.omega/2) * np.dot(d_cmo[self.n_in_a:self.n_occupied,self.n_in_a:self.n_occupied].flatten(), self.Dpe_tu_avg)
+        ci_dependent_energy = self.calculate_ci_dependent_energy(eigenvecs, d_cmo)
+        sum_energy = (active_one_e_energy + active_two_e_energy + active_one_pe_energy + E_core +
+                self.Enuc + self.d_c + ci_dependent_energy)
+        print("sum energy",
+            "{:20.12f}".format(sum_energy),
+            "{:20.12f}".format(active_one_e_energy),
+            "{:20.12f}".format(active_two_e_energy),
+            "{:20.12f}".format(E_core),
+            "{:20.12f}".format(active_one_pe_energy),
+            "{:20.12f}".format(self.Enuc),
+        )
+        return sum_energy
+   
+
+    def energy_function(self, step):
+        Rai = np.zeros((self.n_act_orb, self.n_in_a))
+        Rvi = np.zeros((self.n_virtual,self.n_in_a))
+        Rva = np.zeros((self.n_virtual,self.n_act_orb))
+        for i in range(self.index_map_size):
+            s = self.index_map[i][0] 
+            l = self.index_map[i][1]
+            if s >= self.n_in_a and s < self.n_occupied and l < self.n_in_a:
+                Rai[s-self.n_in_a][l] = step[i]
+            elif s >= self.n_occupied and l < self.n_in_a:
+                Rvi[s-self.n_occupied][l] = step[i]
+            else:
+                Rva[s-self.n_occupied][l-self.n_in_a] = step[i]
+
+        self.build_unitary_matrix(Rai, Rvi, Rva)
+        U_temp = self.U_delta 
+        J_temp = np.zeros((self.n_occupied, self.n_occupied, self.nmo, self.nmo))
+        K_temp = np.zeros((self.n_occupied, self.n_occupied, self.nmo, self.nmo))
+
+        K_temp = np.ascontiguousarray(K_temp)
+        c_full_transformation_macroiteration(U_temp, self.twoeint, J_temp, K_temp, self.index_map_pq, self.index_map_kl, self.nmo, self.n_occupied) 
+        #self.full_transformation_macroiteration(self.U_total, self.J, self.K)
+
+        temp8 = np.zeros((self.nmo, self.nmo))
+        temp8 = np.einsum("pq,qs->ps", self.H1, U_temp)
+        h1_temp = np.einsum("ps,pr->rs", temp8, U_temp)
+        temp8 = np.einsum("pq,qs->ps", self.d_cmo1, U_temp)
+        d_cmo_temp = np.einsum("ps,pr->rs", temp8, U_temp)
+
+
+        sum_energy = self.rdm_exact_energy(J_temp, K_temp, h1_temp, d_cmo_temp, self.eigenvecs)
+
+        
+        return sum_energy
+   
+    def energy_grad(self, step):
+     
+        Rai = np.zeros((self.n_act_orb, self.n_in_a))
+        Rvi = np.zeros((self.n_virtual,self.n_in_a))
+        Rva = np.zeros((self.n_virtual,self.n_act_orb))
+        for i in range(self.index_map_size):
+            s = self.index_map[i][0] 
+            l = self.index_map[i][1]
+            if s >= self.n_in_a and s < self.n_occupied and l < self.n_in_a:
+                Rai[s-self.n_in_a][l] = step[i]
+            elif s >= self.n_occupied and l < self.n_in_a:
+                Rvi[s-self.n_occupied][l] = step[i]
+            else:
+                Rva[s-self.n_occupied][l-self.n_in_a] = step[i]
+
+        self.build_unitary_matrix(Rai, Rvi, Rva)
+        U_temp = self.U_delta 
+        J_temp = np.zeros((self.n_occupied, self.n_occupied, self.nmo, self.nmo))
+        K_temp = np.zeros((self.n_occupied, self.n_occupied, self.nmo, self.nmo))
+
+        K_temp = np.ascontiguousarray(K_temp)
+        c_full_transformation_macroiteration(U_temp, self.twoeint, J_temp, K_temp, self.index_map_pq, self.index_map_kl, self.nmo, self.n_occupied) 
+        #self.full_transformation_macroiteration(self.U_total, self.J, self.K)
+
+        temp8 = np.zeros((self.nmo, self.nmo))
+        temp8 = np.einsum("pq,qs->ps", self.H1, U_temp)
+        h1_temp = np.einsum("ps,pr->rs", temp8, U_temp)
+        temp8 = np.einsum("pq,qs->ps", self.d_cmo1, U_temp)
+        d_cmo_temp = np.einsum("ps,pr->rs", temp8, U_temp)
+        
+        rot_dim = self.nmo       
+        A = np.zeros((rot_dim, rot_dim))
+        fock_core = copy.deepcopy(h1_temp) 
+        fock_core += 2.0 * np.einsum("jjrs->rs", J_temp[:self.n_in_a,:self.n_in_a,:,:], optimize = "optimal") 
+        fock_core -= np.einsum("jjrs->rs", K_temp[:self.n_in_a,:self.n_in_a,:,:], optimize = "optimal") 
+        D_tu_avg = self.D_tu_avg.reshape((self.n_act_orb,self.n_act_orb)) 
+        Dpe_tu_avg = self.Dpe_tu_avg.reshape((self.n_act_orb,self.n_act_orb))
+        D_tuvw_avg = self.D_tuvw_avg.reshape((self.n_act_orb,self.n_act_orb,self.n_act_orb,self.n_act_orb))
+        E_core = 0.0  
+        E_core += np.einsum("jj->", h1_temp[:self.n_in_a,:self.n_in_a]) 
+        E_core += np.einsum("jj->", fock_core[:self.n_in_a,:self.n_in_a]) 
+        
+        active_fock_core = copy.deepcopy(fock_core[self.n_in_a:self.n_occupied,self.n_in_a:self.n_occupied]) 
+        active_twoeint = copy.deepcopy(J_temp[self.n_in_a:self.n_occupied,self.n_in_a:self.n_occupied,self.n_in_a:self.n_occupied,self.n_in_a:self.n_occupied])
+        L = np.zeros((self.n_occupied, self.n_in_a, rot_dim, rot_dim))
+        fock_general = np.zeros((rot_dim, rot_dim))
+        #print (np.shape(self.L))
+        #start = timer()
+        L = 4.0 * K_temp[:,:self.n_in_a,:rot_dim,:rot_dim] - K_temp.transpose(0,1,3,2)[:,:self.n_in_a,:rot_dim,:rot_dim] - J_temp[:,:self.n_in_a,:rot_dim,:rot_dim]
+        #end   = timer()
+        #print("build intermediate step 2", end - start)
+        ###self.L2 = np.zeros((self.n_occupied, self.n_in_a, self.nmo, self.nmo))
+        ###for k in range(self.n_occupied):
+        ###    for j in range(self.n_in_a):
+        ###        for r in range(self.nmo):
+        ###            for s in range(self.nmo):
+        ###                self.L2[k][j][r][s] = (4.0 * self.K[k][j][r][s] -
+        ###                    self.K[k][j][s][r] - self.J[k][j][r][s])
+        ###print((self.L==self.L2).all())
+        
+        #self.fock_general += self.fock_core[:rot_dim,:rot_dim] + np.einsum("tu,turs->rs", self.D_tu_avg.reshape((self.n_act_orb,self.n_act_orb)), 
+        #        self.J[self.n_in_a:self.n_occupied,self.n_in_a:self.n_occupied,:rot_dim,:rot_dim], optimize = "optimal")
+        #self.fock_general -= 0.5 * np.einsum("tu,turs->rs", self.D_tu_avg.reshape((self.n_act_orb,self.n_act_orb)), 
+        #        self.K[self.n_in_a:self.n_occupied,self.n_in_a:self.n_occupied,:rot_dim,:rot_dim], optimize = "optimal")
+        temp1 = J_temp[self.n_in_a:self.n_occupied,self.n_in_a:self.n_occupied,:rot_dim,:rot_dim] -0.5 * K_temp[self.n_in_a:self.n_occupied,self.n_in_a:self.n_occupied,:rot_dim,:rot_dim]
+        #start = timer()
+        fock_general += fock_core[:rot_dim,:rot_dim] + np.einsum("tu,turs->rs", D_tu_avg, 
+                temp1, optimize = "optimal")
+        #end   = timer()
+        #print("build intermediate step 3", end - start)
+        ###self.fock_general2 = np.zeros((self.nmo, self.nmo))
+        ###for r in range(self.nmo):
+        ###    for s in range(self.nmo):
+        ###        self.fock_general2[r][s] = self.fock_core[r][s]
+        ###        for t in range(self.n_act_orb):
+        ###            for u in range(self.n_act_orb):
+        ###                self.fock_general2[r][s] += self.D_tu_avg[t*self.n_act_orb +u] * self.J[t+self.n_in_a][u+self.n_in_a][r][s]
+        ###                self.fock_general2[r][s] -= 0.5 * self.D_tu_avg[t*self.n_act_orb +u] * self.K[t+self.n_in_a][u+self.n_in_a][r][s]
+        ###print("rqq", np.allclose(self.fock_general,self.fock_general2, rtol=1e-14,atol=1e-14))
+        #start = timer()
+        off_diagonal_constant = self.calculate_off_diagonal_photon_constant(self.eigenvecs)
+        A[:,:self.n_in_a] = 2.0 * (fock_general[:,:self.n_in_a] + d_cmo_temp[:rot_dim,:self.n_in_a] * off_diagonal_constant)
+        
+        #off_diagonal_constant2 = 0.0
+        #np1 = self.N_p + 1
+        #for i in range(self.davidson_roots):
+        #    eigenvecs2 = eigenvecs[i].reshape((np1, self.num_det))
+        #    eigenvecs2 = eigenvecs2.transpose(1,0)
+        #    for m in range(np1):
+        #        for I in range(self.num_det):
+        #            if (self.N_p ==0): continue
+        #            if (m > 0 and m < self.N_p):
+        #                off_diagonal_constant2+= -np.sqrt(m * self.omega/2) * eigenvecs[i][m*self.num_det+I] * eigenvecs[i][(m-1)*self.num_det+I]
+        #                off_diagonal_constant2 += -np.sqrt((m+1) * self.omega/2) * eigenvecs[i][m*self.num_det+I] * eigenvecs[i][(m+1)*self.num_det+I]
+        #            elif (m == self.N_p):
+        #                off_diagonal_constant2 += -np.sqrt(m * self.omega/2) * eigenvecs[i][m*self.num_det+I] * eigenvecs[i][(m-1)*self.num_det+I]
+        #            else:
+        #                off_diagonal_constant2 += -np.sqrt((m+1) * self.omega/2) * eigenvecs[i][m*self.num_det+I] * eigenvecs[i][(m+1)*self.num_det+I]
+        #print("rtty", off_diagonal_constant2, off_diagonal_constant)
+        
+        A[:,self.n_in_a:self.n_occupied] = np.einsum("rt,tu->ru", fock_core[:rot_dim,self.n_in_a:self.n_occupied],
+                D_tu_avg, optimize = "optimal")
+        #end   = timer()
+        #print("build intermediate step 4", end - start)
+        #print(np.shape(self.active_twoeint))
+        #start = timer()
+        A[:,self.n_in_a:self.n_occupied] += np.einsum("vwrt,tuvw->ru", J_temp[self.n_in_a:self.n_occupied,self.n_in_a:self.n_occupied,:rot_dim,self.n_in_a:self.n_occupied], 
+           D_tuvw_avg, optimize = "optimal")
+        #end   = timer()
+        #print("build intermediate step 5", end - start)
+        #start = timer()
+        A[:,self.n_in_a:self.n_occupied] += -np.sqrt(self.omega/2) * np.einsum("rt,tu->ru", d_cmo_temp[:rot_dim,self.n_in_a:self.n_occupied],
+                Dpe_tu_avg, optimize = "optimal")
+
+
+
+        #B = np.zeros((self.nmo, self.nmo))
+        #T = U - np.eye(self.nmo)
+        #B[:,:self.n_occupied] = A[:,:self.n_occupied] + np.einsum("klrs,sl->rk", G[:,:,:,:], T[:,:self.n_occupied])
+        #A_tilde[:,:self.n_occupied] = np.einsum("rs,sk->rk",U.T, B[:,:self.n_occupied])
+        ##A_tilde[:,:] = np.einsum("rs,sk->rk",U.T, B)
+        #gradient_tilde[:,:] = A_tilde[:,:self.n_occupied] - A_tilde.T[:,:self.n_occupied]
+        
+        gradient_tilde = np.zeros((rot_dim, self.n_occupied))
+        gradient_tilde[:,:] = A[:,:self.n_occupied] - A.T[:,:self.n_occupied]
+        reduced_gradient = np.zeros(self.index_map_size)
+        index_count1 = 0
+        for k in range(self.n_occupied):
+            for r in range(k+1,self.nmo):
+                if (k < self.n_in_a and r < self.n_in_a): continue
+                if (self.n_in_a <= k < self.n_occupied and self.n_in_a <= r < self.n_occupied): continue
+                reduced_gradient[index_count1] = gradient_tilde[r][k]
+                #print(r,k,index_count1)
+                #index_count2 = 0 
+                #for l in range(self.n_occupied):
+                #    for s in range(l+1,self.nmo):
+                #        if (l < self.n_in_a and s < self.n_in_a): continue
+                #        if (self.n_in_a <= l < self.n_occupied and self.n_in_a <= s < self.n_occupied): continue
+                #        #if (k >= self.n_occupied and r >= self.n_occupied): continue
+                #        reduced_hessian[index_count1][index_count2] = hessian_tilde3[r*self.n_occupied+k][s*self.n_occupied+l]
+                #        #print(r,k,s,l,index_count1,index_count2)
+                #        index_count2 += 1
+                index_count1 += 1
+        return reduced_gradient 
+
+
+
+
+
+
+
+
+
+
+
 
     def microiteration_predicted_energy(self, reduced_gradient, reduced_hessian, step):
         print(np.shape(reduced_gradient), np.shape(step))
@@ -8723,7 +9432,7 @@ class PFHamiltonianGenerator:
         current_energy = 0.0
         old_energy = 0.0
         N_orbital_optimization_steps = 1
-        N_microiterations = 20 
+        N_microiterations = 1  
         microiteration = 0
         while(microiteration < N_microiterations):
             print("\n")
@@ -8731,7 +9440,7 @@ class PFHamiltonianGenerator:
             print("MICROITERATION", microiteration+1,flush = True)
 
         #while(microiteration < 2):
-            trust_radius = 0.4  
+            trust_radius = 0.35 
             A[:,:] = 0.0
             G[:,:,:,:] = 0.0
             start = timer()
@@ -9089,12 +9798,12 @@ class PFHamiltonianGenerator:
                      #    convergence_threshold = min(0.01 * gradient_norm, np.power(gradient_norm,2))
                          #convergence_threshold = 0.01 * gradient_norm
                          ###10/10/2024 comment out this part to use standard trust region method 
-                         if step_norm > 0.1: 
-                             N_microiterations = 5
-                             N_orbital_optimization_steps = 4
-                         elif step_norm <= 0.1 and step_norm > 0.01:
-                             N_microiterations = 7 
-                             N_orbital_optimization_steps = 3
+                         #if step_norm > 0.1: 
+                         #    N_microiterations = 5
+                         #    N_orbital_optimization_steps = 4
+                         #elif step_norm <= 0.1 and step_norm > 0.01:
+                         #    N_microiterations = 7 
+                         #    N_orbital_optimization_steps = 3
                          ###end comment
                          print("number of microiteration", N_microiterations, flush = True)    
                          print("number of optimization steps", N_orbital_optimization_steps, flush = True)    
@@ -9156,8 +9865,8 @@ class PFHamiltonianGenerator:
                              index_count1 += 1
                      #print("reduced_gradient",reduced_gradient, flush = True)
             
-
-
+                     mu1, w1 = np.linalg.eigh(reduced_hessian)
+                     
                      active_twoeint[:,:,:,:] = 0.0 
                      active_fock_core[:,:] = 0.0 
                      d_cmo[:,:] = 0.0
@@ -9268,7 +9977,7 @@ class PFHamiltonianGenerator:
             self.constdouble[3] = self.d_exp - d_diag
             self.constdouble[4] = 1e-9 
             self.constdouble[5] = self.E_core2
-            self.constint[8] = 3 
+            self.constint[8] = 0 
             eigenvals = np.zeros((self.davidson_roots))
             #eigenvecs = np.zeros((self.davidson_roots, H_dim))
             #eigenvecs[:,:] = 0.0
@@ -9331,9 +10040,1576 @@ class PFHamiltonianGenerator:
 
 
 
+    def ah_orbital_optimization(self, eigenvecs, c_get_roots):
+        self.H1 = copy.deepcopy(self.H_spatial2)
+        self.d_cmo1 = copy.deepcopy(self.d_cmo)
+        #print("E_core", self.E_core)
+        self.U2 = np.eye(self.nmo)
+        self.U_total = np.eye(self.nmo)
+        U_temp = np.eye(self.nmo)
+        convergence_threshold = 1e-5
+        trust_radius = 0.4   
+        rot_dim = self.nmo
+        np1 = self.N_p + 1
+        H_dim = self.num_alpha * self.num_alpha * np1
+        A = np.zeros((rot_dim, rot_dim))
+        G = np.zeros((self.n_occupied, self.n_occupied, rot_dim, rot_dim))
+        #A2 = np.zeros((rot_dim, rot_dim))
+        #G2 = np.zeros((self.n_occupied, self.n_occupied, rot_dim, rot_dim))
+        #print(eigenvecs)
+        self.reduced_hessian_diagonal = np.zeros(self.index_map_size)
+
+        active_twoeint = np.zeros((self.n_act_orb, self.n_act_orb, self.n_act_orb, self.n_act_orb))
+        active_fock_core = np.zeros((self.n_act_orb, self.n_act_orb))
+        d_cmo = np.zeros((self.nmo, self.nmo))
+
+        gradient_tilde = np.zeros((rot_dim, self.n_occupied))
+        hessian_tilde = np.zeros((self.n_occupied, self.n_occupied, rot_dim, rot_dim))
+        gradient_tilde2 = np.zeros((rot_dim, self.n_occupied))
+        A_tilde2 = np.zeros((rot_dim, rot_dim))
+
+        davidson_step = np.zeros((1, self.index_map_size))
+        guess_vector = np.zeros((1, self.index_map_size+1))
+        #convergence_threshold = 1e-4
+        convergence = 0
+        #while(True):
+        macroiteration_energy_initial = 0.0
+        macroiteration_energy_current = 0.0
+        N_orbital_optimization_steps = 4
+        N_microiterations = 25  
+        microiteration = 0
+        while(microiteration < N_microiterations):
+            print("\n")
+            print("\n")
+            print("MICROITERATION", microiteration+1,flush = True)
+
+        #while(microiteration < 2):
+            trust_radius = 0.35
+            A[:,:] = 0.0
+            G[:,:,:,:] = 0.0
+            start = timer()
+            self.build_intermediates(eigenvecs, A, G, True)
+            end   = timer()
+            print("build intermediates took", end - start)
+            #A2[:,:] = 0.0
+            #G2[:,:,:,:] = 0.0
+            #self.build_intermediates2(eigenvecs, A2, G2, True)
+            #print("LETS CHECK ENERGY AT THE BEGINING OF EACH MICROITERATION")
+            #print(old_energy, current_energy)
+            #print("initial convergence threshold", convergence_threshold)
+            #if (np.abs(current_energy - old_energy) < 0.01 * convergence_threshold) and microiteration >=2:
+            ##if (np.abs(current_energy - old_energy) < 1e-15) and microiteration >=2:
+            #    print("microiteration converged (small energy change)")
+            #    #self.U_total = np.einsum("pq,qs->ps", self.U_total, self.U2)
+            #    break
+
+            start = timer()
+            start1 = timer()
+            macroiteration_energy_initial = macroiteration_energy_current 
+            active_twoeint = self.J[self.n_in_a:self.n_occupied, self.n_in_a:self.n_occupied, self.n_in_a:self.n_occupied, self.n_in_a:self.n_occupied] 
+            fock_core = copy.deepcopy(self.H_spatial2) 
+            fock_core += 2.0 * np.einsum("jjrs->rs", self.J[:self.n_in_a,:self.n_in_a,:,:]) 
+            fock_core -= np.einsum("jjrs->rs", self.K[:self.n_in_a,:self.n_in_a,:,:]) 
+            
+            E_core = 0.0  
+            E_core += np.einsum("jj->", self.H_spatial2[:self.n_in_a,:self.n_in_a]) 
+            E_core += np.einsum("jj->", fock_core[:self.n_in_a,:self.n_in_a]) 
+
+
+            #print(eigenvecs)
+            active_fock_core = np.zeros((self.n_act_orb, self.n_act_orb))
+            active_fock_core[:,:] = fock_core[self.n_in_a:self.n_occupied, self.n_in_a:self.n_occupied]
+            active_one_e_energy = np.dot(active_fock_core.flatten(), self.D_tu_avg)
+            active_two_e_energy = 0.5 * np.dot(active_twoeint.flatten(), self.D_tuvw_avg)
+            active_one_pe_energy = -np.sqrt(self.omega/2) * np.dot(self.d_cmo[self.n_in_a:self.n_occupied,self.n_in_a:self.n_occupied].flatten(), self.Dpe_tu_avg)
+            ci_dependent_energy = self.calculate_ci_dependent_energy(eigenvecs, self.d_cmo)
+            macroiteration_energy_current = (active_one_e_energy + active_two_e_energy + active_one_pe_energy + E_core +
+                    self.Enuc + self.d_c + ci_dependent_energy)
+            print("macroiteration_energy_current",
+                "{:20.12f}".format(macroiteration_energy_current),
+                "{:20.12f}".format(active_one_e_energy),
+                "{:20.12f}".format(active_two_e_energy),
+                "{:20.12f}".format(E_core),
+                "{:20.12f}".format(active_one_pe_energy),
+                "{:20.12f}".format(self.Enuc),
+            )
+
+
+            end   = timer()
+            print("check initial energy took", end - start)
+           
 
 
 
+            self.build_gradient_and_hessian(self.U2, A, G, gradient_tilde, hessian_tilde, True)
+            #print(np.shape(gradient_tilde), flush = True)
+            
+            start = timer() 
+            self.build_gradient(self.U2, A, G, gradient_tilde, A_tilde2, True)
+            G1 = G.transpose(3,1,2,0).reshape(self.nmo*self.n_occupied,self.nmo*self.n_occupied)
+            end   = timer() 
+            #self.build_gradient2(self.U2, A, G, hessian_tilde, gradient_tilde, A_tilde2, True)
+            
+
+            
+            print("build gradient took", end - start)
+            hessian_tilde3 = hessian_tilde.transpose(2,0,3,1)
+            hessian_tilde3 = hessian_tilde3.reshape((self.n_occupied*self.nmo, self.n_occupied*self.nmo))
+
+            #hessian_diagonal3 = np.diagonal(hessian_tilde3).reshape((self.nmo, self.n_occupied))
+            reduced_hessian_diagonal = np.zeros(self.index_map_size)
+            start = timer()    
+            self.build_hessian_diagonal(self.U2, G, A_tilde2)
+            end   = timer() 
+            print("build hessian diagonal took", end - start)
+            reduced_hessian = np.zeros((self.index_map_size, self.index_map_size))
+            reduced_gradient = np.zeros(self.index_map_size)
+            index_count1 = 0 
+            for k in range(self.n_occupied):
+                for r in range(k+1,self.nmo):
+                    if (k < self.n_in_a and r < self.n_in_a): continue
+                    if (self.n_in_a <= k < self.n_occupied and self.n_in_a <= r < self.n_occupied): continue
+                    reduced_gradient[index_count1] = gradient_tilde[r][k]
+                    #print(r,k,index_count1)
+                    index_count2 = 0 
+                    for l in range(self.n_occupied):
+                        for s in range(l+1,self.nmo):
+                            if (l < self.n_in_a and s < self.n_in_a): continue
+                            if (self.n_in_a <= l < self.n_occupied and self.n_in_a <= s < self.n_occupied): continue
+                            #if (k >= self.n_occupied and r >= self.n_occupied): continue
+                            reduced_hessian[index_count1][index_count2] = hessian_tilde3[r*self.n_occupied+k][s*self.n_occupied+l]
+                            #print(r,k,s,l,index_count1,index_count2)
+                            index_count2 += 1
+                    index_count1 += 1
+            #print("reduced_gradient",reduced_gradient, flush = True)
+            np.set_printoptions(precision = 14)
+            mu1, w1 = np.linalg.eigh(reduced_hessian)
+            print("eigenvalue of the reduced hessian", mu1)
+            print("dot product of gradient and first eigenvector of hessian", np.dot(reduced_gradient, w1[:,0]))
+            print("dot product of gradient and second eigenvector of hessian", np.dot(reduced_gradient, w1[:,1]))
+            H_lambda = reduced_hessian - mu1[0] * np.eye(self.index_map_size)
+            step_limit = -np.einsum("pq,q->p", np.linalg.pinv(H_lambda), reduced_gradient)
+            print("norm of critical step", np.linalg.norm(step_limit))
+            print("alpha critical", mu1[0] - np.dot(reduced_gradient, step_limit))
+            gradient_norm = np.linalg.norm(reduced_gradient)
+            print("gradient norm", gradient_norm)
+            print("norm of reduced hessian", np.linalg.norm(reduced_hessian))
+            ##if microiteration ==0:  
+            ##    convergence_threshold = min(0.01 * gradient_norm, np.power(gradient_norm,2))
+            #if gradient_norm < 1e-6:
+            #    print("Microiteration converged (small gradient norm)")
+            #    break
+            print("LETS CHECK ENERGY AT THE BEGINING OF EACH MICROITERATION")
+            print(macroiteration_energy_initial, macroiteration_energy_current)
+            print("initial convergence threshold", convergence_threshold)
+            if (np.abs(macroiteration_energy_current - macroiteration_energy_initial) < 0.0001 * convergence_threshold) and microiteration >=2:
+            #if (np.abs(current_energy - old_energy) < 1e-15) and microiteration >=2:
+                print("microiteration converged (small energy change)")
+                #self.U_total = np.einsum("pq,qs->ps", self.U_total, self.U2)
+                break
+
+
+            orbital_optimization_step = 0 
+            restart = False
+            count = 0
+            current_energy = macroiteration_energy_current 
+            hard_case = 0
+            reduce_step = 0
+            first_component = np.zeros(self.index_map_size)
+            second_component = np.zeros(self.index_map_size)
+            critical_step_norm = 0
+            while(orbital_optimization_step < N_orbital_optimization_steps):
+                print("\n")
+                old_energy = current_energy
+                print("Microiteration", microiteration + 1, "orbital optimization step", orbital_optimization_step + 1, flush=True)
+                print("current energy", current_energy)
+                print("reduced_gradient", reduced_gradient)
+                gradient_norm = np.linalg.norm(reduced_gradient)
+                print("gradient norm", gradient_norm, flush = True)
+                print("convergence_threshold", convergence_threshold, flush = True)    
+                
+                #if (gradient_norm < max(0.1 * convergence_threshold, 1e-8)):
+                #if (gradient_norm < max(0.1 * convergence_threshold, 1e-6) and microiteration > 0):
+                #if (gradient_norm < 1e-5 and microiteration > 0):
+                if (gradient_norm < 0.001 * convergence_threshold and microiteration > 0):
+                    convergence = 1
+                    #print("Microiteration converged (small gradient norm)")
+                    break
+                if (gradient_norm < 1e-7):
+                    convergence = 1
+                    break
+                if microiteration == 2 and orbital_optimization_step == 0:
+                    np.savetxt("gradient.out", reduced_gradient)
+                    np.savetxt("hessian.out", reduced_hessian)
+
+                #########gradient_tilde = np.zeros((rot_dim, self.n_occupied))
+                #########hessian_tilde = np.zeros((self.n_occupied, self.n_occupied, rot_dim, rot_dim))
+                #########self.build_gradient_and_hessian(self.U2, A, G, gradient_tilde, hessian_tilde, True)
+                #########print(np.shape(gradient_tilde), flush = True)
+               
+                #########gradient_tilde2 = np.zeros((rot_dim, self.n_occupied))
+                #########A_tilde2 = np.zeros((rot_dim, rot_dim))
+                #########self.build_gradient(self.U2, A, G, gradient_tilde2, A_tilde2, True)
+
+                #########hessian_tilde3 = hessian_tilde.transpose(2,0,3,1)
+                #########hessian_tilde3 = hessian_tilde3.reshape((self.n_occupied*self.nmo, self.n_occupied*self.nmo))
+
+                #########hessian_diagonal3 = np.diagonal(hessian_tilde3).reshape((self.nmo, self.n_occupied))
+                #########reduced_hessian_diagonal = np.zeros(self.index_map_size)
+                #########index_count1 = 0 
+                #########for k in range(self.n_occupied):
+                #########    for r in range(k+1,self.nmo):
+                #########        if (k < self.n_in_a and r < self.n_in_a): continue
+                #########        if (self.n_in_a <= k < self.n_occupied and self.n_in_a <= r < self.n_occupied): continue
+                #########        reduced_hessian_diagonal[index_count1] = hessian_diagonal3[r][k]
+                #########        index_count1 += 1
+                #########self.build_hessian_diagonal(self.U2, G, A_tilde2)
+                ##########print("diagonal elements of the non redundant hessian")   
+                ##########for a in range(self.nmo):
+                ##########    for i in range(self.n_occupied):
+                ##########        aa = hessian_diagonal3[a][i] - self.hessian_diagonal[a][i]
+                ##########        if np.abs(aa) > 1e-12: print("ERROR TOO LARGE")
+                #########print("diagonal elements of the reduced hessian")   
+                #########for i in range(self.index_map_size):
+                #########    aa = self.reduced_hessian_diagonal[i] - reduced_hessian_diagonal[i]
+                #########    if np.abs(aa) > 1e-12: print("ERROR TOO LARGE")
+                #########reduced_hessian = np.zeros((self.index_map_size, self.index_map_size))
+                #########reduced_gradient = np.zeros(self.index_map_size)
+                #########index_count1 = 0 
+                #########for k in range(self.n_occupied):
+                #########    for r in range(k+1,self.nmo):
+                #########        if (k < self.n_in_a and r < self.n_in_a): continue
+                #########        if (self.n_in_a <= k < self.n_occupied and self.n_in_a <= r < self.n_occupied): continue
+                #########        reduced_gradient[index_count1] = gradient_tilde[r][k]
+                #########        #print(r,k,index_count1)
+                #########        index_count2 = 0 
+                #########        for l in range(self.n_occupied):
+                #########            for s in range(l+1,self.nmo):
+                #########                if (l < self.n_in_a and s < self.n_in_a): continue
+                #########                if (self.n_in_a <= l < self.n_occupied and self.n_in_a <= s < self.n_occupied): continue
+                #########                #if (k >= self.n_occupied and r >= self.n_occupied): continue
+                #########                reduced_hessian[index_count1][index_count2] = hessian_tilde3[r*self.n_occupied+k][s*self.n_occupied+l]
+                #########                #print(r,k,s,l,index_count1,index_count2)
+                #########                index_count2 += 1
+                #########        index_count1 += 1
+                #########print("reduced_gradient",reduced_gradient, flush = True)
+               
+
+                #new augmented hessian
+                beta = 0
+                dim00 = self.index_map_size + 1
+                augmented_hessian9= np.zeros((dim00, dim00))
+                w9= np.zeros((dim00, dim00))
+
+                step = np.zeros(self.index_map_size)
+                step10_norm = 0.0
+                #print("w",w)
+                #count10 = 0
+                #while np.abs((step10_norm - trust_radius)/trust_radius) > 1e-3:
+                #    print("iteration", count10, "beta", beta)
+                #    augmented_hessian9[:,:] = 0.0
+                #    augmented_hessian9[0,0] = beta
+                #    augmented_hessian9[0,1:] = reduced_gradient
+                #    augmented_hessian9[1:,0] = reduced_gradient.T
+                #    augmented_hessian9[1:,1:] = reduced_hessian
+
+                #    mu9, w9 = np.linalg.eigh(augmented_hessian9)
+                #    print("eig",mu9)
+                #    idx = mu9.argsort()[:dim00]
+                #    scale9 = w9[0][0]
+                #    print("scale",scale9)
+                #    if np.abs(scale9) < 1e-15:
+                #        break
+                #    step10 = w9[1:,0]/scale9
+                #    step10_norm = np.linalg.norm(step10)
+                #    if count10 == 0 and step10_norm < trust_radius: break
+                #    print("check eigenvalues and step norm from diagonalizing the bordering matrix")
+                #    print(mu9, flush=True)
+                #    print("step10 norm", step10_norm, flush=True)
+                #    beta = beta + (beta - mu9[0])/step10_norm * (trust_radius - step10_norm)/trust_radius * (trust_radius + 1.0/step10_norm)
+                #    count10 +=1 
+                #    if count10 == 20: break
+                ##w[:,0] = w[:,0]/scale
+                ##print(w)
+                #step9 = w9[1:,0]
+                if np.linalg.norm(reduced_gradient) > 1e-4:
+                    if hard_case == 1 and reduce_step == 1 and np.linalg.norm(first_component) < trust_radius:
+                        print(np.linalg.norm(first_component))
+                        xy_square = np.dot(first_component, second_component) * np.dot(first_component, second_component)
+                        x_square = np.dot(first_component, first_component) 
+                        y_square = np.dot(second_component, second_component) 
+                        delta = 4 * xy_square - 4 * y_square * (x_square - trust_radius * trust_radius)
+                        #print(delta)
+                        t1= (-2 * np.dot(first_component,second_component) - np.sqrt(delta))/ (2*y_square)
+                        t2= (-2 * np.dot(first_component,second_component) + np.sqrt(delta))/ (2*y_square)
+                        print("x^2, xy, y^2, t", x_square, np.dot(first_component,second_component), y_square, t1)
+                        adjusted_step = first_component + min(t1,t2) * second_component
+                        print("adjusted step norm", np.linalg.norm(adjusted_step))
+                        step = adjusted_step   
+                    else:
+                        mu9 = np.zeros(dim00)
+                        beta0 = 0
+                        both_roots_normalization = 0
+                        v1 = 0
+                        v2 = 0
+                        u1 = np.zeros(self.index_map_size)
+                        u2 = np.zeros(self.index_map_size)
+                        x1 = np.zeros(self.index_map_size)
+                        x2 = np.zeros(self.index_map_size)
+                        phi1 = 0
+                        phi2 = 0
+
+                        lambda1 = 0
+                        lambda2 = 0
+                        lambda_c = 0
+                        idx = self.reduced_hessian_diagonal.argsort()
+                        delta_u = self.reduced_hessian_diagonal[idx[0]]
+                        delta_l = 0
+                        alpha_u = delta_u + np.linalg.norm(reduced_gradient) * trust_radius
+                        alpha_l = 0
+                        count10 = 0
+                        #beta = min(0, alpha_u)
+                        beta = alpha_u
+                        print("trust radius", trust_radius)
+                        while np.abs((step10_norm - trust_radius)/trust_radius) > 1e-3:
+                            print("****************************") 
+                            print("iteration", count10, "beta", beta)
+                            beta0 = beta 
+                            mu9[:] = self.projection_step2(reduced_gradient, reduced_hessian, w9, beta, dim00)
+                            #augmented_hessian9[:,:] = 0.0
+                            #augmented_hessian9[0,0] = beta
+                            #augmented_hessian9[0,1:] = reduced_gradient
+                            #augmented_hessian9[1:,0] = reduced_gradient.T
+                            #augmented_hessian9[1:,1:] = reduced_hessian
+                            #mu9, w9 = np.linalg.eigh(augmented_hessian9)
+                            #print("eig",mu9)
+                            if count10 == 0:
+                                delta_l = mu9[0]
+                                alpha_l = delta_l - np.linalg.norm(reduced_gradient)/trust_radius
+                            print("ALPHA range", alpha_l, alpha_u)
+                            #idx = mu9.argsort()[:dim00]
+                            #print(idx)
+                            #w9[:,0] = w9[:,0]/np.linalg.norm(w9[:,0])
+                            #w9[:,1] = w9[:,1]/np.linalg.norm(w9[:,1])
+                            v1 = w9[0,0]/np.linalg.norm(w9[:,0])
+                            v2 = w9[0,1]/np.linalg.norm(w9[:,1])
+                            u1[:] = w9[1:,0]/np.linalg.norm(w9[:,0])
+                            u2[:] = w9[1:,1]/np.linalg.norm(w9[:,1])
+                            aa1 = np.linalg.norm(reduced_gradient) * np.abs(v1)
+                            bb1 = np.sqrt(1 - v1 * v1)
+                            aa2 = np.linalg.norm(reduced_gradient) * np.abs(v2) 
+                            bb2 =  np.sqrt(1 - v2 * v2)
+                            print("aa1, bb1", aa1, bb1, "aa2, bb2", aa2, bb2)
+                            if mu9[0] > -1e-8 and np.linalg.norm(u1) < trust_radius * v1: 
+                                hard_case = 2
+                                print("use newton step")
+                                break
+
+
+                            epsilon_v = 1e-4
+                            print (aa1 <= epsilon_v * bb1) 
+                            print (aa2 <= epsilon_v * bb2) 
+                            alpha = beta
+                            while (aa1 <= epsilon_v * bb1) and (aa2 <= epsilon_v * bb2) and np.abs(alpha_u-alpha_l) > max(1e-15, 1e-8 * max(np.abs(alpha_u), np.abs(alpha_l))):
+                                alpha_u = alpha
+                                alpha = (alpha_l + alpha_u)/2
+                                w9[:,:] = 0.0
+                                mu9[:] = self.projection_step2(reduced_gradient, reduced_hessian, w9, alpha, dim00)
+                                #w9[:,0] = w9[:,0]/np.linalg.norm(w9[:,0])
+                                #w9[:,1] = w9[:,1]/np.linalg.norm(w9[:,1])
+                                v1 = w9[0,0]/np.linalg.norm(w9[:,0])
+                                v2 = w9[0,1]/np.linalg.norm(w9[:,1])
+                                u1[:] = w9[1:,0]/np.linalg.norm(w9[:,0])
+                                u2[:] = w9[1:,1]/np.linalg.norm(w9[:,1])
+                                aa1 = np.linalg.norm(reduced_gradient) * np.abs(v1)
+                                bb1 = np.sqrt(1 - v1 * v1)
+                                aa2 = np.linalg.norm(reduced_gradient) * np.abs(v2) 
+                                bb2 =  np.sqrt(1 - v2 * v2)
+                                print(alpha, aa1 <= epsilon_v * bb1, aa2 <= epsilon_v * bb2, mu9[0], mu9[1], bb1,bb2)
+                            if (aa1 > epsilon_v * bb1) and (aa2 > epsilon_v * bb2):
+                                both_roots_normalization = 2
+                            beta = alpha
+                            #update delta_u
+                            temptemp = np.dot(reduced_hessian, u1)
+                            temptemp2 = np.dot(u1, temptemp)
+
+                            delta_u2 = mu9[0] - v1 * np.dot(reduced_gradient, u1)/np.dot(u1,u1)
+                            delta_u = min(delta_u, temptemp2/np.dot(u1,u1))
+                            print("new delta_u", delta_u)
+                            ####scale9 = w9[0][0]
+                            ####print("scale",scale9)
+                            ####if np.abs(scale9) < 1e-15:
+                            ####    break
+                            #assign (k-1) and k-iteration values
+                            lambda1 = lambda2
+                            x1 = x2
+                            phi1 = phi2
+                            print("two roots", mu9[0], mu9[1])
+                            if (aa1 > epsilon_v * bb1):
+                                step10 = u1/v1
+                                second_component[:] = u2
+                                lambda2 = mu9[0]
+                                print("norm from first root", np.linalg.norm(step10))
+                                if aa2 > epsilon_v * bb2:
+                                    second_component[:] = u2/v2
+                                    print("second root norm", np.linalg.norm(second_component))
+                                if np.linalg.norm(step10) < trust_radius: alpha_l = beta
+                                if np.linalg.norm(step10) > trust_radius: alpha_u = beta
+                            else:
+                                step10 = u2/v2
+                                second_component[:] = u1
+                                lambda2 = mu9[1]
+                                print("norm from second root", np.linalg.norm(step10))
+                                alpha_u = beta
+                            print("NEW ALPHA range", alpha_l, alpha_u)
+                            step10_norm = np.linalg.norm(step10)
+                            x2 = step10
+                            if mu9[0] > -1e-8 and np.linalg.norm(u1) < trust_radius * v1: 
+                                hard_case = 2
+                                print("use newton step")
+                                break
+                            phi2 = -np.dot(reduced_gradient, x2)
+                            #print(step10)
+                            #print(x1)
+                            #print(x2)
+                            #if count10 == 0 and step10_norm < trust_radius: break
+                            #print("check eigenvalues and step norm from diagonalizing the bordering matrix")
+                            #print(mu9, flush=True)
+                            print("step10 norm", step10_norm, "current beta", beta, flush=True)
+                            x1_norm = np.linalg.norm(x1)
+                            x2_norm = np.linalg.norm(x2)
+                            phi2_p = np.dot(x2, x2)
+                            phi1_p = np.dot(x1, x1)
+                            print("phi1", phi1, "phi1_p", phi1_p, "phi2", phi2, "phi2_p", phi2_p)
+                            if np.abs((step10_norm - trust_radius)/trust_radius) <= 1e-3:
+                                step = step10
+                                hard_case = 0 
+                                break
+                            print("check orthogonality of the first two roots")
+                            vv1 = w9[0,0]
+                            vv2 = w9[0,1]
+                            uu1 = w9[1:,0]
+                            uu2 = w9[1:,1]
+                            #check if the quasi-optimal condition is satisfied
+                            print("quasi-optimal condition", (1+ trust_radius * trust_radius) * (vv1 * vv1 + vv2 * vv2), flush = True)
+                            qs = (1+ trust_radius * trust_radius) * (vv1 * vv1 + vv2 * vv2)
+                            print(np.dot(w9[:,:2].T, w9[:,:2]))
+
+                            #construct quasi-optimal step
+                            epsilon_hc = 1e-6
+                            eta = epsilon_hc/(1-epsilon_hc)
+                            tau1 = 1
+                            tau2 = 1
+                            if qs > 1.0:
+                                tau1 = (vv1 - vv2 * np.sqrt(qs -1))/(vv1 * vv1 + vv2 * vv2)/np.sqrt(1 + trust_radius * trust_radius)
+                                tau2 = (vv2 + vv1 * np.sqrt(qs -1))/(vv1 * vv1 + vv2 * vv2)/np.sqrt(1 + trust_radius * trust_radius)
+                            elif np.abs(qs - 1.0) < 1e-15:
+                                tau1 = vv1/np.sqrt(vv1 * vv1 + vv2 * vv2)
+                                tau2 = vv2/np.sqrt(vv1 * vv1 + vv2 * vv2)
+                            x_tilde = (tau1 * uu1 + tau2 * uu2) / (tau1 * vv1 + tau2 * vv2)
+
+                            lambda_tilde = tau1 * tau1 * lambda1 + tau2 * tau2 * lambda2
+                            psi_tilde = 0.5 * self.microiteration_predicted_energy2(self.U2, reduced_gradient, A_tilde2, G1, x_tilde)
+                            if qs > 1.0 or np.abs(qs - 1.0) < 1e-15:
+                                print("x_tilde norm1", np.linalg.norm(x_tilde), 2.0 * psi_tilde)
+                                if (mu9[1] - mu9[0]) * tau2 * tau2 * (1 + trust_radius * trust_radius) < -2.0 * eta * psi_tilde:
+                                    print("find quasi-optimal solution1", flush = True)
+                                    hard_case = 3
+                                    break
+                                else:
+                                    if qs > 1.0:
+                                        tau1 = (vv1 + vv2 * np.sqrt(qs -1))/(vv1 * vv1 + vv2 * vv2)/np.sqrt(1 + trust_radius * trust_radius)
+                                        tau2 = (vv2 - vv1 * np.sqrt(qs -1))/(vv1 * vv1 + vv2 * vv2)/np.sqrt(1 + trust_radius * trust_radius)
+                                        x_tilde = (tau1 * uu1 + tau2 * uu2) / (tau1 * vv1 + tau2 * vv2)
+                                        lambda_tilde = tau1 * tau1 * lambda1 + tau2 * tau2 * lambda2
+                                        psi_tilde = 0.5 * self.microiteration_predicted_energy2(self.U2, reduced_gradient, A_tilde2, G1, x_tilde)
+                                        print("x_tilde norm2", np.linalg.norm(x_tilde), 2.0 * psi_tilde, flush = True)
+                                        if (mu9[1] - mu9[0]) * tau2 * tau2 * (1 + trust_radius * trust_radius) < -2.0 * eta * psi_tilde:
+                                            print("find quasi-optimal solution2", flush = True)
+                                            hard_case = 3
+                                            break
+                            if np.abs(alpha_u-alpha_l) <= max(1e-15, 1e-8 * max(np.abs(alpha_u), np.abs(alpha_l))):
+                                print("interval too small")
+                                if x2_norm < trust_radius: 
+                                    hard_case = 1
+                                break
+
+
+                            if count10 == 0 or (np.abs(x2_norm - x1_norm) <= 1e-15):
+                                beta = beta + (beta - lambda2)/x2_norm * (trust_radius - x2_norm)/trust_radius * (trust_radius + 1.0/x2_norm)
+                            else:
+                                print("denominator", x2_norm-x1_norm)
+                                if (np.abs(x2_norm - x1_norm) > 1e-15):
+                                    lambda_c = (lambda1 * x1_norm * (x2_norm - trust_radius) + lambda2 * x2_norm * (trust_radius - x1_norm))/trust_radius/(x2_norm - x1_norm)
+                                else:
+                                    lambda_c = delta_u
+                                if lambda_c > delta_u:
+                                    print("need to safeguard delta_u", lambda_c, delta_u)
+                                    lambda_c = delta_u
+                                #lambda_c = (lambda1 * x1_norm * (x2_norm - trust_radius) + lambda2 * x2_norm * (trust_radius - x1_norm))/trust_radius/(x2_norm - x1_norm)
+                                #print(lambda_c)
+                                omega_k = (lambda2 - lambda_c)/(lambda2 - lambda1)
+                                ratio1 = x1_norm * x2_norm * (x2_norm - x1_norm)/(omega_k * x2_norm + (1-omega_k) * x1_norm)
+                                ratio2 = (lambda1 - lambda_c) * (lambda2 - lambda_c) / (lambda2 - lambda1)
+                                beta = lambda_c + omega_k *phi1 + (1-omega_k) * phi2 + ratio1 * ratio2
+                            print("beta after interpolation", beta)
+                            #safeguard alpha
+                            if beta < alpha_l or beta > alpha_u:
+                                print("need to safeguard alpha")
+                                if count10 == 0: 
+                                    beta = delta_u + phi2 + phi2_p * (delta_u - lambda2)
+                                elif x2_norm < x1_norm:
+                                    print("use phi2")
+                                    beta = delta_u + phi2 + phi2_p * (delta_u - lambda2)
+                                else:
+                                    print("use phi1")
+                                    beta = delta_u + phi1 + phi1_p * (delta_u - lambda1)
+                                if beta < alpha_l or beta > alpha_u:
+                                    print("rwttrye")
+                                    beta = (alpha_l + alpha_u)/2 
+                            count10 +=1
+                            #if np.abs(beta -beta0) <= 1e-12: 
+                            #    print("possible convergence")
+                            #    print(beta, beta0)
+                            #    print(x2_norm)
+
+                            #    if x2_norm < trust_radius:
+                            #        print("11111111")
+                            #        hard_case = 1
+                            #    elif x2_norm > trust_radius and both_roots_normalization == 2:    
+                            #        print("22222222")
+                            #        hard_case = 1
+
+                            #    break
+                            if count10 == 50: break
+                        print("check hard case", hard_case)
+                        if hard_case == 1:
+                            first_component[:] = x2[:]
+                            if x2_norm > trust_radius:
+                                temp_vector = np.zeros(self.index_map_size)
+                                temp_vector[:] = second_component[:]
+                                second_component[:] = first_component[:]
+                                first_component[:] = temp_vector[:]
+                            print(first_component)
+                            print(second_component)
+                            #product2 = np.dot(x, step2)
+                            print("norm of current root", np.linalg.norm(first_component))
+                            xy_square = np.dot(first_component, second_component) * np.dot(first_component, second_component)
+                            x_square = np.dot(first_component, first_component) 
+                            y_square = np.dot(second_component, second_component) 
+                            delta = 4 * xy_square - 4 * y_square * (x_square - trust_radius * trust_radius)
+                            #print(delta)
+                            t1= (-2 * np.dot(first_component,second_component) - np.sqrt(delta))/ (2*y_square)
+                            t2= (-2 * np.dot(first_component,second_component) + np.sqrt(delta))/ (2*y_square)
+                            print("x^2, xy, y^2, t", x_square, np.dot(first_component,second_component), y_square, t1)
+                            adjusted_step = first_component + min(t1,t2) * second_component
+                            print("adjusted step norm", np.linalg.norm(adjusted_step))
+                            step = adjusted_step
+
+                        if hard_case == 2:
+                            Q = np.zeros((1, self.index_map_size))
+                            H1_op = LinearOperator((self.index_map_size, self.index_map_size), matvec = lambda Q:  self.mv2(self.U2, A_tilde2, G1, Q, 1,0, 0)) 
+                            x, exitCode= minres(H1_op, -reduced_gradient, tol = 1e-6)
+                            print("exitcode", exitCode)
+                            step = x
+
+                        if hard_case == 3:
+                            step = x_tilde
+
+                else:
+                    print("gradient is small, use Newton step")
+                    Q = np.zeros((1, self.index_map_size))
+                    H1_op = LinearOperator((self.index_map_size, self.index_map_size), matvec = lambda Q:  self.mv2(self.U2, A_tilde2, G1, Q, 1,0, 0)) 
+                    x, exitCode= minres(H1_op, -reduced_gradient, tol = 1e-6)
+                    print("exitcode", exitCode)
+                    hard_case = 2
+                    step = x
+                    print(step)
+                #w[:,0] = w[:,0]/scale
+                #print(w)
+                step9 = w9[1:,0]
+
+
+
+
+                ###############alpha = 1  
+                ###############alpha_min = 1  
+                ###############alpha_max = 1  
+                ###############dim0 = self.index_map_size + 1
+                ###############step3= np.zeros((self.index_map_size))
+                ###############step_norm3 = 0
+                ###############step2 =np.zeros((self.index_map_size))
+                ###############step_norm2, scale = self.microiteration_step2(reduced_gradient, reduced_hessian, step2, alpha, dim0)
+                ###############print("scale", scale, flush = True)
+                ###############if np.abs(scale) > 1e-4:
+                ###############    ##find (alpha_min, alpha_max)
+                ###############    while True: 
+                ###############        step_norm3 = self.microiteration_step(reduced_gradient, reduced_hessian, step3, alpha, dim0)
+                ###############        #print("step", step, flush=True)
+                ###############        if step_norm3 > trust_radius:
+                ###############            alpha_min = alpha
+                ###############            alpha = alpha * 10
+                ###############        else:
+                ###############            alpha_max = alpha
+                ###############            break
+                ###############    print("alpha range", alpha_min, alpha_max, flush = True)
+                ###############    #bisection search
+                ###############    count1 =0
+                ###############    if alpha_max != 1:
+                ###############        while True:
+                ###############            #print(alpha_min, alpha_max)
+                ###############            alpha = 0.5 * (alpha_min + alpha_max)
+                ###############            step_norm3 = self.microiteration_step(reduced_gradient, reduced_hessian, step3, alpha, dim0)
+                ###############            if np.abs((step_norm3 - trust_radius)/trust_radius) <= 1e-3:
+                ###############            #if trust_radius - step_norm3 <= 1e-2 and trust_radius - step_norm3 >= 0.0:
+                ###############                break
+                ###############            elif (trust_radius - step_norm3)/trust_radius >  1e-3:
+                ###############            #elif trust_radius - step_norm3 > 1e-2:
+                ###############                alpha_max = alpha
+                ###############            else:
+                ###############                alpha_min = alpha
+                ###############            count1 +=1
+                ###############            if count1 ==150: break
+                ###############else:
+                ###############    print("PROBLEM!!!!!!!!!", flush = True)
+                ###############    step3 = trust_radius * step2/step_norm2
+                ###############    step_norm3 = trust_radius
+
+
+
+                ###############self.mu_min = 0.0
+                ################start = timer() 
+                ################trial_vector, hard_case = self.Davidson_augmented_hessian_solve(self.U2, A_tilde2, G, G1, self.reduced_hessian_diagonal, reduced_gradient,
+                ################        davidson_step, trust_radius, guess_vector, restart)
+                ################end   = timer() 
+                ################print("solving augmented hessian took", end - start)
+                ###############start = timer() 
+                ###############trial_vector, hard_case = self.Davidson_augmented_hessian_solve2(self.U2, A_tilde2, G, G1, self.reduced_hessian_diagonal, reduced_gradient,
+                ###############        davidson_step, trust_radius, guess_vector, restart)
+                ###############end   = timer() 
+                ###############print("solving augmented hessian2 took", end - start)
+
+
+                ###############print("hard case", hard_case) 
+                ###############print("smallest eigenvalue of the augmented hessian", self.mu_min)
+                ###############step2 = davidson_step.flatten()
+                ###############product = np.einsum("p,p->",reduced_gradient, step2)
+                ###############np.set_printoptions(precision = 14)  
+                ###############print("check dot product of gradient and first eigenvector", product)
+                ###############trust_radius_hard_case = trust_radius 
+                ###############if hard_case == 0:
+                ###############    step = step2
+                ###############else:
+                ###############    ####print("eigenvalue of the non-redundant hessian", mu1, flush = True)
+                ###############    ####product = np.einsum("p,p->",reduced_gradient, w1[:,0])
+                ###############    ####H_lambda = reduced_hessian - mu1[0] * np.eye(self.index_map_size)
+                ###############    ####step_limit = -np.einsum("pq,q->p", np.linalg.pinv(H_lambda), reduced_gradient)
+                ###############    ####H_lambda_inverse = np.linalg.pinv(H_lambda)
+                ###############    ####print("conditional number from product", np.linalg.norm(H_lambda) * np.linalg.norm(H_lambda_inverse))
+                ###############    ####print("step_limit", step_limit)
+                ###############    ####print("limit of step norm", np.linalg.norm(step_limit))
+                ###############    ####print("check dot product of gradient and first eigenvector", product)
+                ###############    Q = np.zeros((1, self.index_map_size))
+                ###############    #H_diag = self.reduced_hessian_diagonal - mu1[0] 
+                ###############    #Q[0,:] = np.divide(-reduced_gradient, H_diag, out=np.zeros_like(H_diag), where=H_diag!=0)
+                ###############    #S = np.zeros_like(Q)
+                ###############    
+                ###############    #H_op = LinearOperator((self.index_map_size, self.index_map_size), matvec = lambda Q:  self.mv(self.U2, A_tilde2, G, Q, 1,0, self.mu_min)) 
+                ###############    H1_op = LinearOperator((self.index_map_size, self.index_map_size), matvec = lambda Q:  self.mv2(self.U2, A_tilde2, G1, Q, 1,0, self.mu_min)) 
+                ###############    #S=H_op.matvec(Q.T)
+                ###############    #print(S)
+                ###############    #S2 = np.einsum("pq,qr->pr", H_lambda, Q.T)
+                ###############    #print(S2)
+                ###############    #print("diagonal element of the reduced hessian", np.diagonal(reduced_hessian))   
+                ###############    x, exitCode= minres(H1_op, -reduced_gradient, tol = 1e-6)
+                ###############    #x, istop, itn, normr, normar, norma, conda, normx = lsmr(H_op, -reduced_gradient)[:8]
+                ###############    #print("reo0", x, istop, itn, normr, normx, conda)
+                ###############    print("exitcode", exitCode)
+                ###############    print("step norm from scipy solver", np.linalg.norm(x))
+                ###############    #Q1 = np.random.rand(1, self.index_map_size)
+                ###############    #start = timer()
+                ###############    #S1=H_op.matvec(Q1.T)
+                ###############    #end = timer()
+                ###############    #print("build sigma with numpy took", end - start)
+                ###############    #start = timer()
+                ###############    #S2=H1_op.matvec(Q1.T)
+                ###############    #end = timer()
+                ###############    #print("build sigma with numba took", end - start)
+                ###############    #print("rg8l", np.allclose(S1,S2, rtol=1e-14,atol=1e-14))
+                ###############    #for j in range(self.index_map_size):
+                ###############    #    abc = S1[j] -S2[j]
+                ###############    #    if np.abs(abc) > 1e-14: print(j, abc)
+                ###############    #for i in range(1):
+                ###############    #   for r in range(self.nmo):
+                ###############    #       for l in range(self.n_occupied):
+                ###############    #           a = sigma_total4[i][r][l]-self.sigma_total5[i][r][l]
+                ###############    #           if np.absolute(a) > 1e-14: print (i,r,l,a, "large error")
+                ###############    
+
+                ###############    #print("step from scipy solver", x)
+                ###############    #print(np.shape(x))
+                ###############    #S = np.zeros((1, self.index_map_size))
+                ###############    #S = H_op.matvec(davidson_step.T)
+                ###############    #print(S)
+                ###############    #test_g = np.einsum("pq,q->p", H_lambda,x)
+                ###############    #test_g2 = np.einsum("pq,q->p", H_lambda,step_limit)
+                ###############    #print(test_g)
+                ###############    #print(test_g2)
+                ###############    #print(reduced_gradient)
+                ###############    if (np.linalg.norm(x) < trust_radius):
+                ###############        step = x
+                ###############        #product2 = np.dot(x, step2)
+                ###############        xy_square = np.dot(x, step2) * np.dot(x, step2)
+                ###############        x_square = np.dot(x, x) 
+                ###############        y_square = np.dot(step2, step2) 
+                ###############        delta = 4 * xy_square - 4 * y_square * (x_square - trust_radius * trust_radius)
+                ###############        #print(delta)
+                ###############        t1= (-2 * np.dot(x,step2) - np.sqrt(delta))/ (2*y_square)
+                ###############        t2= (-2 * np.dot(x,step2) + np.sqrt(delta))/ (2*y_square)
+                ###############        print("x^2, xy, y^2, t", x_square, np.dot(x, step2), y_square, t1)
+                ###############        adjusted_step = step + min(t1,t2) * step2
+                ###############        print("adjusted step norm", np.linalg.norm(adjusted_step))
+                ###############        step = adjusted_step
+                ###############        trust_radius_hard_case = np.linalg.norm(adjusted_step)
+                ###############        trust_radius = trust_radius_hard_case
+                ###############    else:
+                ###############        step = x/np.linalg.norm(x) * trust_radius
+
+                ###############    #step = step2/np.linalg.norm(step2) * trust_radius 
+
+
+                step_norm = np.linalg.norm(step)
+                
+
+                
+                start = timer()
+                Rai = np.zeros((self.n_act_orb, self.n_in_a))
+                Rvi = np.zeros((self.n_virtual,self.n_in_a))
+                Rva = np.zeros((self.n_virtual,self.n_act_orb))
+                for i in range(self.index_map_size):
+                    s = self.index_map[i][0] 
+                    l = self.index_map[i][1]
+                    if s >= self.n_in_a and s < self.n_occupied and l < self.n_in_a:
+                        Rai[s-self.n_in_a][l] = step[i]
+                    elif s >= self.n_occupied and l < self.n_in_a:
+                        Rvi[s-self.n_occupied][l] = step[i]
+                    else:
+                        Rva[s-self.n_occupied][l-self.n_in_a] = step[i]
+
+                self.build_unitary_matrix(Rai, Rvi, Rva)
+                #print("jnti",self.E_core)
+
+                U_temp = np.einsum("pq,qs->ps", self.U_total, self.U_delta) 
+                J_temp = np.zeros((self.n_occupied, self.n_occupied, self.nmo, self.nmo))
+                K_temp = np.zeros((self.n_occupied, self.n_occupied, self.nmo, self.nmo))
+
+                K_temp = np.ascontiguousarray(K_temp)
+                c_full_transformation_macroiteration(U_temp, self.twoeint, J_temp, K_temp, self.index_map_pq, self.index_map_kl, self.nmo, self.n_occupied) 
+                #self.full_transformation_macroiteration(self.U_total, self.J, self.K)
+
+                temp8 = np.zeros((self.nmo, self.nmo))
+                temp8 = np.einsum("pq,qs->ps", self.H1, U_temp)
+                h1_temp = np.einsum("ps,pr->rs", temp8, U_temp)
+                temp8 = np.einsum("pq,qs->ps", self.d_cmo1, U_temp)
+                d_cmo_temp = np.einsum("ps,pr->rs", temp8, U_temp)
+
+
+                new_energy = self.rdm_exact_energy(J_temp, K_temp, h1_temp, d_cmo_temp, eigenvecs)
+                energy_change = new_energy - old_energy
+                print("old energy", old_energy, "new energy", new_energy, "energy change", energy_change, flush = True)
+                
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+                #predicted_energy1 = self.microiteration_predicted_energy(reduced_gradient, reduced_hessian, step)
+                predicted_energy2 = self.microiteration_predicted_energy2(self.U2, reduced_gradient, A_tilde2, G1, step)
+                print("microiteration predicted energy", predicted_energy2, flush = True)
+                end   = timer()
+                print("build unitary matrix and recheck energy took", end - start)
+           
+                if microiteration == 0 and orbital_optimization_step == 0: 
+                   convergence_threshold = min(0.01 * gradient_norm, np.power(gradient_norm,2))
+                if energy_change < 0.0 or hard_case == 2:
+                     #restart = False
+                     #predicted_energy1 = self.microiteration_predicted_energy(reduced_gradient, reduced_hessian, step)
+                     #predicted_energy2 = self.microiteration_predicted_energy2(self.U2, reduced_gradient, A_tilde2, G, step)
+                     #print("microinteration predicted energy", predicted_energy1, predicted_energy2, flush = True)
+                     self.U_total = np.einsum("pq,qs->ps", self.U_total, self.U_delta)
+                     if microiteration == 0 and orbital_optimization_step == 0: 
+                     #    convergence_threshold = min(0.01 * gradient_norm, np.power(gradient_norm,2))
+                         #convergence_threshold = 0.01 * gradient_norm
+                         ###10/10/2024 comment out this part to use standard trust region method 
+                         #if step_norm > 0.1: 
+                         #    N_microiterations = 5
+                         #    N_orbital_optimization_steps = 4
+                         #elif step_norm <= 0.1 and step_norm > 0.01:
+                         #    N_microiterations = 7 
+                         #    N_orbital_optimization_steps = 3
+                         ###end comment
+                         print("number of microiteration", N_microiterations, flush = True)    
+                         print("number of optimization steps", N_orbital_optimization_steps, flush = True)    
+                     orbital_optimization_step += 1   
+                     ratio = energy_change/predicted_energy2
+                     print("compare model with actual energy change",ratio)
+                     trust_radius = self.step_control(ratio, trust_radius)
+                         
+
+                     #self.build_gradient_and_hessian(self.U2, A, G, gradient_tilde, hessian_tilde, True)
+                     #print(np.shape(gradient_tilde), flush = True)
+                     
+                     start = timer()
+                     self.J[:,:,:,:] = J_temp
+                     self.K[:,:,:,:] = K_temp
+                     self.H_spatial2[:,:] = h1_temp
+                     self.d_cmo[:,:] = d_cmo_temp
+                     #self.full_transformation_macroiteration(self.U_total, self.J, self.K)
+                     temp_energy = self.rdm_exact_energy(self.J, self.K, self.H_spatial2, self.d_cmo, eigenvecs)
+                     print("check energy again",temp_energy)
+                     A[:,:] = 0
+                     A_tilde2[:,:] = 0
+                     G[:,:,:,:] = 0
+                     gradient_tilde[:] = 0
+                     hessian_tilde[:,:,:,:] = 0
+                     self.build_intermediates(eigenvecs, A, G, True)
+                     self.build_gradient_and_hessian(self.U2, A, G, gradient_tilde, hessian_tilde, True)
+                     self.build_gradient(self.U2, A, G, gradient_tilde, A_tilde2, True)
+                     end   = timer() 
+                     #self.build_gradient2(self.U2, A, G, hessian_tilde, gradient_tilde, A_tilde2, True)
+                     G1 = G.transpose(3,1,2,0).reshape(self.nmo*self.n_occupied,self.nmo*self.n_occupied)
+                     print("build gradient took", end - start)
+
+                     hessian_tilde3 = hessian_tilde.transpose(2,0,3,1)
+                     hessian_tilde3 = hessian_tilde3.reshape((self.n_occupied*self.nmo, self.n_occupied*self.nmo))
+
+                     #hessian_diagonal3 = np.diagonal(hessian_tilde3).reshape((self.nmo, self.n_occupied))
+                     #reduced_hessian_diagonal = np.zeros(self.index_map_size)
+                     #index_count1 = 0 
+                     #for k in range(self.n_occupied):
+                     #    for r in range(k+1,self.nmo):
+                     #        if (k < self.n_in_a and r < self.n_in_a): continue
+                     #        if (self.n_in_a <= k < self.n_occupied and self.n_in_a <= r < self.n_occupied): continue
+                     #        reduced_hessian_diagonal[index_count1] = hessian_diagonal3[r][k]
+                     #        index_count1 += 1
+                     start = timer() 
+                     self.build_hessian_diagonal(self.U2, G, A_tilde2)
+                     end   = timer() 
+                     print("build hessian diagonal took", end - start)
+                     #print("diagonal elements of the reduced hessian")   
+                     #for i in range(self.index_map_size):
+                     #    aa = self.reduced_hessian_diagonal[i] - reduced_hessian_diagonal[i]
+                     #    if np.abs(aa) > 1e-12: print("ERROR TOO LARGE")
+                     #reduced_hessian = np.zeros((self.index_map_size, self.index_map_size))
+                     reduced_gradient[:] = 0 
+                     reduced_hessian[:,:] = 0 
+                     index_count1 = 0 
+                     np.set_printoptions(precision = 14)
+                     for k in range(self.n_occupied):
+                         for r in range(k+1,self.nmo):
+                             if (k < self.n_in_a and r < self.n_in_a): continue
+                             if (self.n_in_a <= k < self.n_occupied and self.n_in_a <= r < self.n_occupied): continue
+                             reduced_gradient[index_count1] = gradient_tilde[r][k]
+                             #print(r,k,index_count1)
+                             index_count2 = 0 
+                             for l in range(self.n_occupied):
+                                 for s in range(l+1,self.nmo):
+                                     if (l < self.n_in_a and s < self.n_in_a): continue
+                                     if (self.n_in_a <= l < self.n_occupied and self.n_in_a <= s < self.n_occupied): continue
+                                     #if (k >= self.n_occupied and r >= self.n_occupied): continue
+                                     reduced_hessian[index_count1][index_count2] = hessian_tilde3[r*self.n_occupied+k][s*self.n_occupied+l]
+                                     #print(r,k,s,l,index_count1,index_count2)
+                                     index_count2 += 1
+                             index_count1 += 1
+                     #print("reduced_gradient",reduced_gradient, flush = True)
+                     mu1, w1 = np.linalg.eigh(reduced_hessian)
+                     print("eigenvalue of the reduced hessian", mu1)
+                     print("dot product of gradient and first eigenvector of hessian", np.dot(reduced_gradient, w1[:,0]))
+                     print("dot product of gradient and second eigenvector of hessian", np.dot(reduced_gradient, w1[:,1]))
+                     H_lambda = reduced_hessian - mu1[0] * np.eye(self.index_map_size)
+                     step_limit = -np.einsum("pq,q->p", np.linalg.pinv(H_lambda), reduced_gradient)
+                     print("norm of critical step", np.linalg.norm(step_limit))
+                     print("alpha critical", mu1[0] - np.dot(reduced_gradient, step_limit))
+                     print("gradient norm", np.linalg.norm(reduced_gradient))
+
+
+
+                     
+                     current_energy = old_energy + energy_change
+                     print("now accept step, check current energy", current_energy)
+                     hard_case = 0
+                else:
+                    restart = False
+                    #guess_vector = trial_vector
+                    reduce_step = 1
+                    trust_radius = 0.5 * trust_radius
+                    print("Reject step, restart", flush = True)
+                    print("new trust radius", trust_radius, flush = True)
+            #if convergence == 1:
+            #    #active_twoeint[:,:,:,:] = self.active_twoeint[:,:,:,:] 
+            #    #active_fock_core[:,:] = self.active_fock_core[:,:] 
+            #    #d_cmo[:,:] = self.d_cmo[:,:]
+
+            #    #self.U_total = np.einsum("pq,qs->ps", self.U_total, self.U2)
+            #    #temp8 = np.zeros((self.nmo, self.nmo))
+            #    #temp8 = np.einsum("pq,qs->ps", self.H_spatial2, self.U2)
+            #    #self.H_spatial2[:,:] = np.einsum("ps,pr->rs", temp8, self.U2)
+            #    #temp8 = np.einsum("pq,qs->ps", self.d_cmo, self.U2)
+            #    #self.d_cmo[:,:] = np.einsum("ps,pr->rs", temp8, self.U2)
+            #    break
+
+
+            start = timer()
+            active_twoeint = self.J[self.n_in_a:self.n_occupied, self.n_in_a:self.n_occupied, self.n_in_a:self.n_occupied, self.n_in_a:self.n_occupied] 
+            fock_core = copy.deepcopy(self.H_spatial2) 
+            fock_core += 2.0 * np.einsum("jjrs->rs", self.J[:self.n_in_a,:self.n_in_a,:,:]) 
+            fock_core -= np.einsum("jjrs->rs", self.K[:self.n_in_a,:self.n_in_a,:,:]) 
+            
+            E_core = 0.0  
+            E_core += np.einsum("jj->", self.H_spatial2[:self.n_in_a,:self.n_in_a]) 
+            E_core += np.einsum("jj->", fock_core[:self.n_in_a,:self.n_in_a]) 
+
+
+            active_fock_core = np.zeros((self.n_act_orb, self.n_act_orb))
+            active_fock_core[:,:] = fock_core[self.n_in_a:self.n_occupied, self.n_in_a:self.n_occupied]
+            d_cmo = self.d_cmo
+            occupied_J = np.zeros((self.n_occupied, self.n_occupied, self.n_occupied, self.n_occupied))
+            occupied_J[self.n_in_a: self.n_occupied,self.n_in_a: self.n_occupied,self.n_in_a: self.n_occupied,self.n_in_a: self.n_occupied] = copy.deepcopy(active_twoeint)        
+            self.H_diag3 = np.zeros(H_dim)
+            occupied_fock_core = np.zeros((self.n_occupied, self.n_occupied))
+            occupied_fock_core[self.n_in_a: self.n_occupied,self.n_in_a: self.n_occupied] = copy.deepcopy(active_fock_core) 
+            occupied_d_cmo = np.zeros((self.n_occupied, self.n_occupied))
+            occupied_d_cmo = copy.deepcopy(d_cmo[: self.n_occupied,: self.n_occupied]) 
+            gkl2 = copy.deepcopy(active_fock_core) 
+            gkl2 -= 0.5 * np.einsum("kjjl->kl", active_twoeint) 
+            #print("recheck energy", flush = True)
+            #active_one_e_energy = np.dot(occupied_fock_core[self.n_in_a: self.n_occupied,self.n_in_a: self.n_occupied].flatten(), self.D_tu_avg)
+            #active_two_e_energy = 0.5 * np.dot(occupied_J[self.n_in_a: self.n_occupied,self.n_in_a: self.n_occupied,self.n_in_a: self.n_occupied,self.n_in_a: self.n_occupied].flatten(), self.D_tuvw_avg)
+            #active_one_pe_energy = -np.sqrt(self.omega/2) * np.dot(occupied_d_cmo[self.n_in_a:self.n_occupied,self.n_in_a:self.n_occupied].flatten(), self.Dpe_tu_avg)
+            #ci_dependent_energy = self.calculate_ci_dependent_energy(eigenvecs, d_cmo)
+            #sum_energy = (active_one_e_energy + active_two_e_energy + active_one_pe_energy + self.E_core2 +
+            #        self.Enuc + self.d_c + ci_dependent_energy)
+            #print("sum_energy    active_one    active_two E_core active_pe_energy ci_dependent_energy E_nuc")
+            #print("gfhgy",
+            #    "{:20.12f}".format(sum_energy),
+            #    "{:20.12f}".format(active_one_e_energy),
+            #    "{:20.12f}".format(active_two_e_energy),
+            #    "{:20.12f}".format(self.E_core2),
+            #    "{:20.12f}".format(active_one_pe_energy),
+            #    "{:20.12f}".format(ci_dependent_energy),
+            #    "{:20.12f}".format(self.Enuc),
+            #    flush = True
+            #)
+            occupied_J = occupied_J.reshape(self.n_occupied * self.n_occupied, self.n_occupied * self.n_occupied)
+
+            c_H_diag_cas_spin(
+                    occupied_fock_core, 
+                    occupied_J, 
+                    self.H_diag3, 
+                    self.N_p, 
+                    self.num_alpha, 
+                    self.nmo, 
+                    self.n_act_a, 
+                    self.n_act_orb, 
+                    self.n_in_a, 
+                    E_core, 
+                    self.omega, 
+                    self.Enuc, 
+                    self.d_c, 
+                    self.Y,
+                    self.target_spin)
+            print(self.H_diag3)
+            d_diag = 2.0 * np.einsum("ii->", d_cmo[:self.n_in_a,:self.n_in_a])
+            self.constdouble[3] = self.d_exp - d_diag
+            self.constdouble[4] = 1e-9 
+            self.constdouble[5] = E_core
+            self.constint[8] = 4 
+            eigenvals = np.zeros((self.davidson_roots))
+            #eigenvecs = np.zeros((self.davidson_roots, H_dim))
+            #eigenvecs[:,:] = 0.0
+            #print("heyhey5", eigenvecs)
+            c_get_roots(
+                gkl2,
+                occupied_J,
+                occupied_d_cmo,
+                self.H_diag3,
+                self.S_diag,
+                self.S_diag_projection,
+                eigenvals,
+                eigenvecs,
+                self.table,
+                self.table_creation,
+                self.table_annihilation,
+                self.b_array,
+                self.constint,
+                self.constdouble,
+                self.index_Hdiag,
+                True,
+                self.target_spin,
+            )
+            end   = timer() 
+            print("CI step took", end - start, flush = True)
+
+
+            #print("current residual", self.constdouble[4])
+            current_residual = self.constdouble[4]
+            avg_energy = 0.0
+            for i in range(self.davidson_roots):
+                avg_energy += self.weight[i] * eigenvals[i]
+            print("microiteration",microiteration + 1, "current average energy", avg_energy, flush = True)
+            current_energy = avg_energy
+            
+            start = timer() 
+            self.build_state_avarage_rdms(eigenvecs)
+            end   = timer() 
+            print("building RDM took", end - start)
+
+            current_energy2 = self.rdm_exact_energy(self.J, self.K, self.H_spatial2, self.d_cmo, eigenvecs)
+            
+            self.build_intermediates(eigenvecs, A, G, True)
+            self.build_gradient_and_hessian(self.U2, A, G, gradient_tilde, hessian_tilde, True)
+            #print(np.shape(gradient_tilde), flush = True)
+            
+            start = timer() 
+            self.build_gradient(self.U2, A, G, gradient_tilde, A_tilde2, True)
+            G1 = G.transpose(3,1,2,0).reshape(self.nmo*self.n_occupied,self.nmo*self.n_occupied)
+            end   = timer() 
+            #self.build_gradient2(self.U2, A, G, hessian_tilde, gradient_tilde, A_tilde2, True)
+            
+
+            
+            print("build gradient took", end - start)
+            hessian_tilde3 = hessian_tilde.transpose(2,0,3,1)
+            hessian_tilde3 = hessian_tilde3.reshape((self.n_occupied*self.nmo, self.n_occupied*self.nmo))
+
+            #hessian_diagonal3 = np.diagonal(hessian_tilde3).reshape((self.nmo, self.n_occupied))
+            reduced_hessian_diagonal = np.zeros(self.index_map_size)
+            start = timer()    
+            self.build_hessian_diagonal(self.U2, G, A_tilde2)
+            end   = timer() 
+            print("build hessian diagonal took", end - start)
+            reduced_hessian = np.zeros((self.index_map_size, self.index_map_size))
+            reduced_gradient = np.zeros(self.index_map_size)
+            index_count1 = 0 
+            for k in range(self.n_occupied):
+                for r in range(k+1,self.nmo):
+                    if (k < self.n_in_a and r < self.n_in_a): continue
+                    if (self.n_in_a <= k < self.n_occupied and self.n_in_a <= r < self.n_occupied): continue
+                    reduced_gradient[index_count1] = gradient_tilde[r][k]
+                    #print(r,k,index_count1)
+                    index_count2 = 0 
+                    for l in range(self.n_occupied):
+                        for s in range(l+1,self.nmo):
+                            if (l < self.n_in_a and s < self.n_in_a): continue
+                            if (self.n_in_a <= l < self.n_occupied and self.n_in_a <= s < self.n_occupied): continue
+                            #if (k >= self.n_occupied and r >= self.n_occupied): continue
+                            reduced_hessian[index_count1][index_count2] = hessian_tilde3[r*self.n_occupied+k][s*self.n_occupied+l]
+                            #print(r,k,s,l,index_count1,index_count2)
+                            index_count2 += 1
+                    index_count1 += 1
+            #print("reduced_gradient",reduced_gradient, flush = True)
+            np.set_printoptions(precision = 14)
+            mu1, w1 = np.linalg.eigh(reduced_hessian)
+            print("eigenvalue of the reduced hessian", mu1)
+            print("dot product of gradient and first eigenvector of hessian", np.dot(reduced_gradient, w1[:,0]))
+            print("dot product of gradient and second eigenvector of hessian", np.dot(reduced_gradient, w1[:,1]))
+            H_lambda = reduced_hessian - mu1[0] * np.eye(self.index_map_size)
+            step_limit = -np.einsum("pq,q->p", np.linalg.pinv(H_lambda), reduced_gradient)
+            print("norm of critical step", np.linalg.norm(step_limit))
+            print("alpha critical", mu1[0] - np.dot(reduced_gradient, step_limit))
+            gradient_norm = np.linalg.norm(reduced_gradient)
+            print("gradient norm", gradient_norm)
+            alpha_critical = mu1[0] - np.dot(reduced_gradient, step_limit)
+            augmented_hessian90= np.zeros((dim00, dim00))
+            augmented_hessian90[0,0] = alpha_critical
+            augmented_hessian90[0,1:] = reduced_gradient
+            augmented_hessian90[1:,0] = reduced_gradient.T
+            augmented_hessian90[1:,1:] = reduced_hessian
+
+            mu90, w90 = np.linalg.eigh(augmented_hessian90)
+            print(mu90[0], mu90[1])
+            if w90[0,0] > 1e-15:
+                zzzz = w90[1:,0]/w90[0,0]
+                print(np.linalg.norm(zzzz))
+            elif w90[0,1] > 1e-15:
+                yyyy = w90[1:,1]/w90[0,1]
+                print("second case", np.linalg.norm(yyyy))
+            print("ci energy", current_energy, "rdm_energy", current_energy2)
+            print("current gradient_norm and residual", gradient_norm, current_residual)
+            print("current convergence_threshold", convergence_threshold)
+            total_norm = np.sqrt(np.power(gradient_norm,2) + np.power(current_residual,2)) 
+            #macroiteration_energy_current = current_energy2
+            #if total_norm < convergence_threshold: 
+            #    print("total norm", total_norm, flush = True)
+            #    #self.U_total = np.einsum("pq,qs->ps", self.U_total, self.U2)
+            #    #temp8 = np.zeros((self.nmo, self.nmo))
+            #    #temp8 = np.einsum("pq,qs->ps", self.H_spatial2, self.U2)
+            #    #self.H_spatial2[:,:] = np.einsum("ps,pr->rs", temp8, self.U2)
+            #    #self.d_cmo[:,:] = d_cmo[:,:]
+            #    #print(eigenvecs)
+            #    #print("u2i",self.U2)
+            #    print("microiteration converged! (small total norm)", flush = True)
+            #    break 
+
+
+            microiteration += 1
+
+
+
+
+
+
+
+
+
+    def bfgs_orbital_optimization(self, eigenvecs, c_get_roots):
+        self.eigenvecs = eigenvecs
+        self.H1 = copy.deepcopy(self.H_spatial2)
+        self.d_cmo1 = copy.deepcopy(self.d_cmo)
+        #print("E_core", self.E_core)
+        self.U2 = np.eye(self.nmo)
+        self.U_total = np.eye(self.nmo)
+        U_temp = np.eye(self.nmo)
+        convergence_threshold = 1e-5
+        trust_radius = 0.4   
+        rot_dim = self.nmo
+        np1 = self.N_p + 1
+        H_dim = self.num_alpha * self.num_alpha * np1
+        A = np.zeros((rot_dim, rot_dim))
+        G = np.zeros((self.n_occupied, self.n_occupied, rot_dim, rot_dim))
+        #A2 = np.zeros((rot_dim, rot_dim))
+        #G2 = np.zeros((self.n_occupied, self.n_occupied, rot_dim, rot_dim))
+        #print(eigenvecs)
+        self.reduced_hessian_diagonal = np.zeros(self.index_map_size)
+
+        active_twoeint = np.zeros((self.n_act_orb, self.n_act_orb, self.n_act_orb, self.n_act_orb))
+        active_fock_core = np.zeros((self.n_act_orb, self.n_act_orb))
+        d_cmo = np.zeros((self.nmo, self.nmo))
+
+        gradient_tilde = np.zeros((rot_dim, self.n_occupied))
+        hessian_tilde = np.zeros((self.n_occupied, self.n_occupied, rot_dim, rot_dim))
+        gradient_tilde2 = np.zeros((rot_dim, self.n_occupied))
+        A_tilde2 = np.zeros((rot_dim, rot_dim))
+
+        davidson_step = np.zeros((1, self.index_map_size))
+        guess_vector = np.zeros((1, self.index_map_size+1))
+        #convergence_threshold = 1e-4
+        convergence = 0
+        #while(True):
+        macroiteration_energy_initial = 0.0
+        macroiteration_energy_current = 0.0
+        N_orbital_optimization_steps = 1
+        N_microiterations = 5000 
+        microiteration = 0
+        x00 = np.zeros(self.index_map_size)
+        while(microiteration < N_microiterations):
+            print("\n")
+            print("\n")
+            print("MACROITERATION", microiteration+1,flush = True)
+
+        #while(microiteration < 2):
+            #trust_radius = 0.35 
+            #A[:,:] = 0.0
+            #G[:,:,:,:] = 0.0
+            #start = timer()
+            #self.build_intermediates(eigenvecs, A, G, True)
+            #end   = timer()
+            #print("build intermediates took", end - start,flush = True)
+           
+
+            start = timer()
+            start1 = timer()
+            macroiteration_energy_initial = macroiteration_energy_current 
+            
+            macroiteration_energy_current = self.rdm_exact_energy(self.J, self.K, self.H_spatial2, self.d_cmo, self.eigenvecs)
+            
+
+
+            end   = timer()
+            print("check initial energy took", end - start,flush = True)
+           
+
+
+
+            #self.build_gradient_and_hessian(self.U2, A, G, gradient_tilde, hessian_tilde, True)
+            
+            #start = timer() 
+            #self.build_gradient(self.U2, A, G, gradient_tilde, A_tilde2, True)
+            #G1 = G.transpose(3,1,2,0).reshape(self.nmo*self.n_occupied,self.nmo*self.n_occupied)
+            #end   = timer() 
+            ##self.build_gradient2(self.U2, A, G, hessian_tilde, gradient_tilde, A_tilde2, True)
+            #
+
+            #
+            #print("build gradient took", end - start,flush = True)
+            #hessian_tilde3 = hessian_tilde.transpose(2,0,3,1)
+            #hessian_tilde3 = hessian_tilde3.reshape((self.n_occupied*self.nmo, self.n_occupied*self.nmo))
+
+            ##hessian_diagonal3 = np.diagonal(hessian_tilde3).reshape((self.nmo, self.n_occupied))
+            #reduced_hessian_diagonal = np.zeros(self.index_map_size)
+            #start = timer()    
+            #self.build_hessian_diagonal(self.U2, G, A_tilde2)
+            #end   = timer() 
+            #print("build hessian diagonal took", end - start,flush = True)
+            #reduced_hessian = np.zeros((self.index_map_size, self.index_map_size))
+            #reduced_gradient = np.zeros(self.index_map_size)
+            #print(np.shape(reduced_gradient), np.shape(gradient_tilde))
+            #index_count1 = 0 
+            #for k in range(self.n_occupied):
+            #    for r in range(k+1,self.nmo):
+            #        if (k < self.n_in_a and r < self.n_in_a): continue
+            #        if (self.n_in_a <= k < self.n_occupied and self.n_in_a <= r < self.n_occupied): continue
+            #        reduced_gradient[index_count1] = gradient_tilde[r][k]
+            #        #index_count2 = 0 
+            #        #for l in range(self.n_occupied):
+            #        #    for s in range(l+1,self.nmo):
+            #        #        if (l < self.n_in_a and s < self.n_in_a): continue
+            #        #        if (self.n_in_a <= l < self.n_occupied and self.n_in_a <= s < self.n_occupied): continue
+            #        #        #if (k >= self.n_occupied and r >= self.n_occupied): continue
+            #        #        reduced_hessian[index_count1][index_count2] = hessian_tilde3[r*self.n_occupied+k][s*self.n_occupied+l]
+            #        #        #print(r,k,s,l,index_count1,index_count2)
+            #        #        index_count2 += 1
+            #        index_count1 += 1
+            #print("reduced_gradient",reduced_gradient, flush = True)
+            ####np.set_printoptions(precision = 14)
+            ####mu1, w1 = np.linalg.eigh(reduced_hessian)
+            ####print("eigenvalue of the reduced hessian", mu1,flush = True)
+            ####print("dot product of gradient and first eigenvector of hessian", np.dot(reduced_gradient, w1[:,0]),flush = True)
+            ####print("dot product of gradient and second eigenvector of hessian", np.dot(reduced_gradient, w1[:,1]),flush = True)
+            ####H_lambda = reduced_hessian - mu1[0] * np.eye(self.index_map_size)
+            ####step_limit = -np.einsum("pq,q->p", np.linalg.pinv(H_lambda), reduced_gradient)
+            ####print("norm of critical step", np.linalg.norm(step_limit),flush = True)
+            ####print("alpha critical", mu1[0] - np.dot(reduced_gradient, step_limit),flush = True)
+            #gradient_norm = np.linalg.norm(reduced_gradient)
+            #print("gradient norm", gradient_norm,flush = True)
+            ##if microiteration ==0:  
+            ##    convergence_threshold = min(0.01 * gradient_norm, np.power(gradient_norm,2))
+            #if gradient_norm < 1e-6:
+            #    print("Microiteration converged (small gradient norm)")
+            #    break
+            print("LETS CHECK ENERGY AT THE BEGINING OF EACH MICROITERATION",flush = True)
+            print(macroiteration_energy_initial, macroiteration_energy_current,flush = True)
+            print("initial convergence threshold", convergence_threshold,flush = True)
+            if (np.abs(macroiteration_energy_current - macroiteration_energy_initial) < 1e-9) and microiteration >=2:
+            #if (np.abs(current_energy - old_energy) < 1e-15) and microiteration >=2:
+                print("microiteration converged (small energy change)",flush = True)
+                #self.U_total = np.einsum("pq,qs->ps", self.U_total, self.U2)
+                break
+
+
+            #print("eigenvec", self.eigenvecs,flush = True)
+            x0 = np.zeros(self.index_map_size)
+            x0[:] = x00
+            res = scipy.optimize.minimize(self.energy_function, x0, method='BFGS', jac=self.energy_grad, options={'disp': True}) 
+            step = res.x
+            #print(res.x,flush = True)
+            step_norm = np.linalg.norm(step)
+            x00 = res.x 
+
+            
+            start = timer()
+            Rai = np.zeros((self.n_act_orb, self.n_in_a))
+            Rvi = np.zeros((self.n_virtual,self.n_in_a))
+            Rva = np.zeros((self.n_virtual,self.n_act_orb))
+            for i in range(self.index_map_size):
+                s = self.index_map[i][0] 
+                l = self.index_map[i][1]
+                if s >= self.n_in_a and s < self.n_occupied and l < self.n_in_a:
+                    Rai[s-self.n_in_a][l] = step[i]
+                elif s >= self.n_occupied and l < self.n_in_a:
+                    Rvi[s-self.n_occupied][l] = step[i]
+                else:
+                    Rva[s-self.n_occupied][l-self.n_in_a] = step[i]
+
+            self.build_unitary_matrix(Rai, Rvi, Rva)
+            #print("jnti",self.E_core)
+
+            U_temp = self.U_delta 
+            J_temp = np.zeros((self.n_occupied, self.n_occupied, self.nmo, self.nmo))
+            K_temp = np.zeros((self.n_occupied, self.n_occupied, self.nmo, self.nmo))
+
+            K_temp = np.ascontiguousarray(K_temp)
+            c_full_transformation_macroiteration(U_temp, self.twoeint, J_temp, K_temp, self.index_map_pq, self.index_map_kl, self.nmo, self.n_occupied) 
+            #self.full_transformation_macroiteration(self.U_total, self.J, self.K)
+
+            temp8 = np.zeros((self.nmo, self.nmo))
+            temp8 = np.einsum("pq,qs->ps", self.H1, U_temp)
+            h1_temp = np.einsum("ps,pr->rs", temp8, U_temp)
+            temp8 = np.einsum("pq,qs->ps", self.d_cmo1, U_temp)
+            d_cmo_temp = np.einsum("ps,pr->rs", temp8, U_temp)
+
+
+            new_energy = self.rdm_exact_energy(J_temp, K_temp, h1_temp, d_cmo_temp, eigenvecs)
+
+            end   = timer()
+            print("build unitary matrix and recheck energy took", end - start,flush = True)
+            self.J[:,:,:,:] = J_temp
+            self.K[:,:,:,:] = K_temp
+            self.H_spatial2[:,:] = h1_temp
+            self.d_cmo[:,:] = d_cmo_temp
+            #self.full_transformation_macroiteration(self.U_total, self.J, self.K)
+            #temp_energy = self.rdm_exact_energy(self.J, self.K, self.H_spatial2, self.d_cmo, eigenvecs)
+            #print("check energy again",temp_energy,flush = True)
+            A[:,:] = 0
+            A_tilde2[:,:] = 0
+            #G[:,:,:,:] = 0
+            #gradient_tilde[:] = 0
+            #hessian_tilde[:,:,:,:] = 0
+            ###self.build_intermediates(eigenvecs, A, G, True)
+            ###self.build_gradient_and_hessian(self.U2, A, G, gradient_tilde, hessian_tilde, True)
+            ###self.build_gradient(self.U2, A, G, gradient_tilde, A_tilde2, True)
+            ###end   = timer() 
+            ####self.build_gradient2(self.U2, A, G, hessian_tilde, gradient_tilde, A_tilde2, True)
+            ###G1 = G.transpose(3,1,2,0).reshape(self.nmo*self.n_occupied,self.nmo*self.n_occupied)
+            ###print("build gradient took", end - start,flush = True)
+
+            ###hessian_tilde3 = hessian_tilde.transpose(2,0,3,1)
+            ###hessian_tilde3 = hessian_tilde3.reshape((self.n_occupied*self.nmo, self.n_occupied*self.nmo))
+
+            #hessian_diagonal3 = np.diagonal(hessian_tilde3).reshape((self.nmo, self.n_occupied))
+            #reduced_hessian_diagonal = np.zeros(self.index_map_size)
+            #index_count1 = 0 
+            #for k in range(self.n_occupied):
+            #    for r in range(k+1,self.nmo):
+            #        if (k < self.n_in_a and r < self.n_in_a): continue
+            #        if (self.n_in_a <= k < self.n_occupied and self.n_in_a <= r < self.n_occupied): continue
+            #        reduced_hessian_diagonal[index_count1] = hessian_diagonal3[r][k]
+            #        index_count1 += 1
+            #start = timer() 
+            #self.build_hessian_diagonal(self.U2, G, A_tilde2)
+            #end   = timer() 
+            #print("build hessian diagonal took", end - start,flush = True)
+            #print("diagonal elements of the reduced hessian")   
+            #for i in range(self.index_map_size):
+            #    aa = self.reduced_hessian_diagonal[i] - reduced_hessian_diagonal[i]
+            #    if np.abs(aa) > 1e-12: print("ERROR TOO LARGE")
+            #reduced_hessian = np.zeros((self.index_map_size, self.index_map_size))
+            #reduced_gradient[:] = 0 
+            #reduced_hessian[:,:] = 0 
+            #index_count1 = 0 
+            #np.set_printoptions(precision = 14)
+            #for k in range(self.n_occupied):
+            #    for r in range(k+1,self.nmo):
+            #        if (k < self.n_in_a and r < self.n_in_a): continue
+            #        if (self.n_in_a <= k < self.n_occupied and self.n_in_a <= r < self.n_occupied): continue
+            #        reduced_gradient[index_count1] = gradient_tilde[r][k]
+            #        #print(r,k,index_count1)
+            #        index_count2 = 0 
+            #        for l in range(self.n_occupied):
+            #            for s in range(l+1,self.nmo):
+            #                if (l < self.n_in_a and s < self.n_in_a): continue
+            #                if (self.n_in_a <= l < self.n_occupied and self.n_in_a <= s < self.n_occupied): continue
+            #                #if (k >= self.n_occupied and r >= self.n_occupied): continue
+            #                reduced_hessian[index_count1][index_count2] = hessian_tilde3[r*self.n_occupied+k][s*self.n_occupied+l]
+            #                #print(r,k,s,l,index_count1,index_count2)
+            #                index_count2 += 1
+            #        index_count1 += 1
+            ##print("reduced_gradient",reduced_gradient, flush = True)
+            #mu1, w1 = np.linalg.eigh(reduced_hessian)
+            #print("eigenvalue of the reduced hessian", mu1,flush = True)
+            #print("dot product of gradient and first eigenvector of hessian", np.dot(reduced_gradient, w1[:,0]),flush = True)
+            #print("dot product of gradient and second eigenvector of hessian", np.dot(reduced_gradient, w1[:,1]),flush = True)
+            #H_lambda = reduced_hessian - mu1[0] * np.eye(self.index_map_size)
+            #step_limit = -np.einsum("pq,q->p", np.linalg.pinv(H_lambda), reduced_gradient)
+            #print("norm of critical step", np.linalg.norm(step_limit),flush = True)
+            #print("alpha critical", mu1[0] - np.dot(reduced_gradient, step_limit),flush = True)
+            #print("gradient norm", np.linalg.norm(reduced_gradient),flush = True)
+
+
+
+
+            start = timer()
+            active_twoeint = self.J[self.n_in_a:self.n_occupied, self.n_in_a:self.n_occupied, self.n_in_a:self.n_occupied, self.n_in_a:self.n_occupied] 
+            fock_core = copy.deepcopy(self.H_spatial2) 
+            fock_core += 2.0 * np.einsum("jjrs->rs", self.J[:self.n_in_a,:self.n_in_a,:,:]) 
+            fock_core -= np.einsum("jjrs->rs", self.K[:self.n_in_a,:self.n_in_a,:,:]) 
+            
+            E_core = 0.0  
+            E_core += np.einsum("jj->", self.H_spatial2[:self.n_in_a,:self.n_in_a]) 
+            E_core += np.einsum("jj->", fock_core[:self.n_in_a,:self.n_in_a]) 
+
+
+            active_fock_core = np.zeros((self.n_act_orb, self.n_act_orb))
+            active_fock_core[:,:] = fock_core[self.n_in_a:self.n_occupied, self.n_in_a:self.n_occupied]
+            d_cmo = self.d_cmo
+            occupied_J = np.zeros((self.n_occupied, self.n_occupied, self.n_occupied, self.n_occupied))
+            occupied_J[self.n_in_a: self.n_occupied,self.n_in_a: self.n_occupied,self.n_in_a: self.n_occupied,self.n_in_a: self.n_occupied] = copy.deepcopy(active_twoeint)        
+            self.H_diag3 = np.zeros(H_dim)
+            occupied_fock_core = np.zeros((self.n_occupied, self.n_occupied))
+            occupied_fock_core[self.n_in_a: self.n_occupied,self.n_in_a: self.n_occupied] = copy.deepcopy(active_fock_core) 
+            occupied_d_cmo = np.zeros((self.n_occupied, self.n_occupied))
+            occupied_d_cmo = copy.deepcopy(d_cmo[: self.n_occupied,: self.n_occupied]) 
+            gkl2 = copy.deepcopy(active_fock_core) 
+            gkl2 -= 0.5 * np.einsum("kjjl->kl", active_twoeint) 
+            #print("recheck energy", flush = True)
+            #active_one_e_energy = np.dot(occupied_fock_core[self.n_in_a: self.n_occupied,self.n_in_a: self.n_occupied].flatten(), self.D_tu_avg)
+            #active_two_e_energy = 0.5 * np.dot(occupied_J[self.n_in_a: self.n_occupied,self.n_in_a: self.n_occupied,self.n_in_a: self.n_occupied,self.n_in_a: self.n_occupied].flatten(), self.D_tuvw_avg)
+            #active_one_pe_energy = -np.sqrt(self.omega/2) * np.dot(occupied_d_cmo[self.n_in_a:self.n_occupied,self.n_in_a:self.n_occupied].flatten(), self.Dpe_tu_avg)
+            #ci_dependent_energy = self.calculate_ci_dependent_energy(eigenvecs, d_cmo)
+            #sum_energy = (active_one_e_energy + active_two_e_energy + active_one_pe_energy + self.E_core2 +
+            #        self.Enuc + self.d_c + ci_dependent_energy)
+            #print("sum_energy    active_one    active_two E_core active_pe_energy ci_dependent_energy E_nuc")
+            #print("gfhgy",
+            #    "{:20.12f}".format(sum_energy),
+            #    "{:20.12f}".format(active_one_e_energy),
+            #    "{:20.12f}".format(active_two_e_energy),
+            #    "{:20.12f}".format(self.E_core2),
+            #    "{:20.12f}".format(active_one_pe_energy),
+            #    "{:20.12f}".format(ci_dependent_energy),
+            #    "{:20.12f}".format(self.Enuc),
+            #    flush = True
+            #)
+            occupied_J = occupied_J.reshape(self.n_occupied * self.n_occupied, self.n_occupied * self.n_occupied)
+
+            c_H_diag_cas_spin(
+                    occupied_fock_core, 
+                    occupied_J, 
+                    self.H_diag3, 
+                    self.N_p, 
+                    self.num_alpha, 
+                    self.nmo, 
+                    self.n_act_a, 
+                    self.n_act_orb, 
+                    self.n_in_a, 
+                    E_core, 
+                    self.omega, 
+                    self.Enuc, 
+                    self.d_c, 
+                    self.Y,
+                    self.target_spin)
+            #print(self.H_diag3,flush = True)
+            d_diag = 2.0 * np.einsum("ii->", d_cmo[:self.n_in_a,:self.n_in_a])
+            self.constdouble[3] = self.d_exp - d_diag
+            self.constdouble[4] = 1e-9 
+            self.constdouble[5] = E_core
+            self.constint[8] = 4 
+            eigenvals = np.zeros((self.davidson_roots))
+            #eigenvecs = np.zeros((self.davidson_roots, H_dim))
+            #eigenvecs[:,:] = 0.0
+            #print("heyhey5", eigenvecs)
+            c_get_roots(
+                gkl2,
+                occupied_J,
+                occupied_d_cmo,
+                self.H_diag3,
+                self.S_diag,
+                self.S_diag_projection,
+                eigenvals,
+                eigenvecs,
+                self.table,
+                self.table_creation,
+                self.table_annihilation,
+                self.b_array,
+                self.constint,
+                self.constdouble,
+                self.index_Hdiag,
+                True,
+                self.target_spin,
+            )
+            end   = timer() 
+            print("CI step took", end - start, flush = True)
+
+
+            #print("current residual", self.constdouble[4])
+            current_residual = self.constdouble[4]
+            avg_energy = 0.0
+            for i in range(self.davidson_roots):
+                avg_energy += self.weight[i] * eigenvals[i]
+            print("microiteration",microiteration + 1, "current average energy", avg_energy, flush = True)
+            current_energy = avg_energy
+            
+            start = timer() 
+            self.build_state_avarage_rdms(eigenvecs)
+            end   = timer() 
+            print("building RDM took", end - start,flush = True)
+
+            current_energy2 = self.rdm_exact_energy(self.J, self.K, self.H_spatial2, self.d_cmo, eigenvecs)
+            
+            ###self.build_intermediates(eigenvecs, A, G, True)
+            ###self.build_gradient_and_hessian(self.U2, A, G, gradient_tilde, hessian_tilde, True)
+            ####print(np.shape(gradient_tilde), flush = True)
+            ###
+            ###start = timer() 
+            ###self.build_gradient(self.U2, A, G, gradient_tilde, A_tilde2, True)
+            ###G1 = G.transpose(3,1,2,0).reshape(self.nmo*self.n_occupied,self.nmo*self.n_occupied)
+            ###end   = timer() 
+            ####self.build_gradient2(self.U2, A, G, hessian_tilde, gradient_tilde, A_tilde2, True)
+            ###
+
+            ###
+            ###print("build gradient took", end - start)
+            ###hessian_tilde3 = hessian_tilde.transpose(2,0,3,1)
+            ###hessian_tilde3 = hessian_tilde3.reshape((self.n_occupied*self.nmo, self.n_occupied*self.nmo))
+
+            ####hessian_diagonal3 = np.diagonal(hessian_tilde3).reshape((self.nmo, self.n_occupied))
+            ###reduced_hessian_diagonal = np.zeros(self.index_map_size)
+            ###start = timer()    
+            ###self.build_hessian_diagonal(self.U2, G, A_tilde2)
+            ###end   = timer() 
+            ###print("build hessian diagonal took", end - start)
+            ###reduced_hessian = np.zeros((self.index_map_size, self.index_map_size))
+            ###reduced_gradient = np.zeros(self.index_map_size)
+            ###index_count1 = 0 
+            ###for k in range(self.n_occupied):
+            ###    for r in range(k+1,self.nmo):
+            ###        if (k < self.n_in_a and r < self.n_in_a): continue
+            ###        if (self.n_in_a <= k < self.n_occupied and self.n_in_a <= r < self.n_occupied): continue
+            ###        reduced_gradient[index_count1] = gradient_tilde[r][k]
+            ###        #print(r,k,index_count1)
+            ###        index_count2 = 0 
+            ###        for l in range(self.n_occupied):
+            ###            for s in range(l+1,self.nmo):
+            ###                if (l < self.n_in_a and s < self.n_in_a): continue
+            ###                if (self.n_in_a <= l < self.n_occupied and self.n_in_a <= s < self.n_occupied): continue
+            ###                #if (k >= self.n_occupied and r >= self.n_occupied): continue
+            ###                reduced_hessian[index_count1][index_count2] = hessian_tilde3[r*self.n_occupied+k][s*self.n_occupied+l]
+            ###                #print(r,k,s,l,index_count1,index_count2)
+            ###                index_count2 += 1
+            ###        index_count1 += 1
+            ###        
+            ####print("reduced_gradient",reduced_gradient, flush = True)
+            ###np.set_printoptions(precision = 14)
+            ###mu1, w1 = np.linalg.eigh(reduced_hessian)
+            ###print("eigenvalue of the reduced hessian", mu1)
+            ###print("dot product of gradient and first eigenvector of hessian", np.dot(reduced_gradient, w1[:,0]),flush = True)
+            ###print("dot product of gradient and second eigenvector of hessian", np.dot(reduced_gradient, w1[:,1]),flush = True)
+            ###H_lambda = reduced_hessian - mu1[0] * np.eye(self.index_map_size)
+            ###step_limit = -np.einsum("pq,q->p", np.linalg.pinv(H_lambda), reduced_gradient)
+            ###print("norm of critical step", np.linalg.norm(step_limit),flush = True)
+            ###print("alpha critical", mu1[0] - np.dot(reduced_gradient, step_limit),flush = True)
+            ###gradient_norm = np.linalg.norm(reduced_gradient)
+            ###print("gradient norm", gradient_norm,flush = True)
+
+            print("ci energy", current_energy, "rdm_energy", current_energy2,flush = True)
+            ###print("current gradient_norm and residual", gradient_norm, current_residual,flush = True)
+            ###print("current convergence_threshold", convergence_threshold,flush = True)
+            ###total_norm = np.sqrt(np.power(gradient_norm,2) + np.power(current_residual,2))
+            ###self.eigenvecs = eigenvecs
+            ###print("eigenvec", self.eigenvecs,flush = True)
+            #macroiteration_energy_current = current_energy2
+            #if total_norm < convergence_threshold: 
+            #    print("total norm", total_norm, flush = True)
+            #    #self.U_total = np.einsum("pq,qs->ps", self.U_total, self.U2)
+            #    #temp8 = np.zeros((self.nmo, self.nmo))
+            #    #temp8 = np.einsum("pq,qs->ps", self.H_spatial2, self.U2)
+            #    #self.H_spatial2[:,:] = np.einsum("ps,pr->rs", temp8, self.U2)
+            #    #self.d_cmo[:,:] = d_cmo[:,:]
+            #    #print(eigenvecs)
+            #    #print("u2i",self.U2)
+            #    print("microiteration converged! (small total norm)", flush = True)
+            #    break 
+
+
+            microiteration += 1
 
 
 
@@ -10005,9 +12281,16 @@ class PFHamiltonianGenerator:
                     break
                 else:
                     hard_case = 0
+                    normalized_eigvecs = aug_eigvecs/np.linalg.norm(aug_eigvecs)
+                    print(normalized_eigvecs)
+                    bb = normalized_eigvecs[0,0]
+                    aa = np.linalg.norm(guess_gradient) * np.abs(bb) 
+                    cc = np.sqrt(1-bb*bb)
+                    print("epsilon",aa/cc, "norm of hessian", np.linalg.norm(guess_hessian))
                     projected_step = aug_eigvecs[1:,0]/aug_eigvecs[0][0]
                     projected_step /=alpha
                     projected_step_norm = np.sqrt(np.dot(projected_step, projected_step.T))
+                    print(alpha, aug_eigvecs[0][0],projected_step_norm)
                     #print("projected step norm", projected_step_norm)
                     if projected_step_norm > trust_radius:
                         alpha_min = alpha
@@ -10309,8 +12592,8 @@ class PFHamiltonianGenerator:
                             full_eigvecs[i][index1+1] = aug_eigvecs[j+1][i]
                     #end1 = timer()
                     #print("alpha step7 took", end1 - start1)
-
-
+ 
+                    #print("scale", full_eigvecs[0][0], "alpha", alpha, flush = True)     
                     if np.absolute(full_eigvecs[0][0]) < 1e-4 and alpha == 1:
                         hard_case = 1
                         break
@@ -10328,7 +12611,7 @@ class PFHamiltonianGenerator:
                             alpha_max = alpha
                             break
 
-                print("alpha range", alpha_min, alpha_max)
+                print("alpha range", alpha_min, alpha_max, flush = True)
                 #end = timer()
                 #print("finding alpha range took", end - start)
                 #start = timer()
@@ -10401,6 +12684,7 @@ class PFHamiltonianGenerator:
                         #print(step)
                         step /= alpha
                         step_norm = np.sqrt(np.dot(step, step.T))
+                        #if np.abs((step_norm - trust_radius)/trust_radius) > 1e-3:
                         if trust_radius - step_norm <= 1e-2 and trust_radius - step_norm >= 0.0:
                             break
                         elif trust_radius - step_norm > 1e-2:
@@ -10933,6 +13217,27 @@ class PFHamiltonianGenerator:
         #print(mu, flush=True)
         return mu 
  
+    def projection_step2(self, gradient_tilde, hessian_tilde, aug_eigenvecs, alpha, dim0):
+        augmented_hessian = np.zeros((dim0, dim0))
+        #print("projected_gradient", gradient_tilde, flush = True)
+        
+        augmented_hessian[0,0] = alpha 
+        augmented_hessian[0,1:] = gradient_tilde
+        augmented_hessian[1:,0] = gradient_tilde.T
+        augmented_hessian[1:,1:] = hessian_tilde
+        #print("projected_hessian")
+        #self.printA(hessian_tilde)
+        #print("projected_augmented_hessian")
+        #self.printA(augmented_hessian)
+        #print(" ", flush = True)
+
+        mu, aug_eigenvecs[:,:] = np.linalg.eigh(augmented_hessian)
+        #np.set_printoptions(precision = 14)
+        #print("check eigenvalues and eigenvectors of the projected augmented hessian", flush = True)
+        #print("eigenvecs",aug_eigenvecs, flush = True)
+        #print("alpha",alpha, flush = True)
+        #print(mu, flush=True)
+        return mu
     
 
     def mv(self, U, A_tilde, G, R_reduced, num_states, pointer, eigval):
