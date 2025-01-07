@@ -7831,11 +7831,13 @@ class PFHamiltonianGenerator:
 
     def rdm_exact_energy(self, J, K, h1, d_cmo, eigenvecs):
 
+        # corresponds to Eq. (2) in Nam's notes
         active_twoeint = J[self.n_in_a:self.n_occupied, self.n_in_a:self.n_occupied, self.n_in_a:self.n_occupied, self.n_in_a:self.n_occupied] 
         fock_core = copy.deepcopy(h1) 
         fock_core += 2.0 * np.einsum("jjrs->rs", J[:self.n_in_a,:self.n_in_a,:,:]) 
         fock_core -= np.einsum("jjrs->rs", K[:self.n_in_a,:self.n_in_a,:,:]) 
         
+        # corresponds to Eq. (3) in Nam's notes
         E_core = 0.0  
         E_core += np.einsum("jj->", h1[:self.n_in_a,:self.n_in_a]) 
         E_core += np.einsum("jj->", fock_core[:self.n_in_a,:self.n_in_a]) 
@@ -7844,8 +7846,9 @@ class PFHamiltonianGenerator:
         #print(eigenvecs)
         active_fock_core = np.zeros((self.n_act_orb, self.n_act_orb))
         active_fock_core[:,:] = fock_core[self.n_in_a:self.n_occupied, self.n_in_a:self.n_occupied]
-        active_one_e_energy = np.dot(active_fock_core.flatten(), self.D_tu_avg)
-        active_two_e_energy = 0.5 * np.dot(active_twoeint.flatten(), self.D_tuvw_avg)
+        active_one_e_energy = np.dot(active_fock_core.flatten(), self.D_tu_avg) # (F')_tu D^{IJ}_tu
+        active_two_e_energy = 0.5 * np.dot(active_twoeint.flatten(), self.D_tuvw_avg) # 1/2 (tu|vw)' D_tu;vw
+        # -\sqrt{w/2} d_tu D_tu
         active_one_pe_energy = -np.sqrt(self.omega/2) * np.dot(d_cmo[self.n_in_a:self.n_occupied,self.n_in_a:self.n_occupied].flatten(), self.Dpe_tu_avg)
         ci_dependent_energy = self.calculate_ci_dependent_energy(eigenvecs, d_cmo)
         sum_energy = (active_one_e_energy + active_two_e_energy + active_one_pe_energy + E_core +
@@ -7895,6 +7898,111 @@ class PFHamiltonianGenerator:
 
         
         return sum_energy
+
+    def energy_grad_finite_difference_element(self, step):
+        """
+        A function to compute the elements of the orbital gradient using centered finite differences
+        """
+        Rai = np.zeros((self.n_act_orb, self.n_in_a))
+        Rvi = np.zeros((self.n_virtual,self.n_in_a))
+        Rva = np.zeros((self.n_virtual,self.n_act_orb))
+
+        rot_dim = self.nmo
+        A_num = np.zeros((rot_dim, rot_dim))
+
+        # define step size for orbitals - is this reasonable???
+        _h = 0.001
+
+        # perform outter-loop to select gradient element to compute
+        for j in range(self.index_map):
+            gradS = self.index_map[j][0]
+            gradL = self.index_map[j][1]
+            
+            # perform inner-loop to build R with forward displacement
+            for i in range(self.index_map_size):
+                s = self.index_map[i][0] 
+                l = self.index_map[i][1]
+
+                # if this is the element to displace, do forward displacement
+                if i==j:
+                    step_val = step[i] + _h
+                # otherwise, don't displace
+                else:
+                    step_val = step[i]
+
+                if s >= self.n_in_a and s < self.n_occupied and l < self.n_in_a:
+                    Rai[s-self.n_in_a][l] = step_val
+                elif s >= self.n_occupied and l < self.n_in_a:
+                    Rvi[s-self.n_occupied][l] = step_val
+                else:
+                    Rva[s-self.n_occupied][l-self.n_in_a] = step_val
+
+            # build unitary matrix with one element displaced - the resulting unitary matrix will be antisymmetrized 
+            self.build_unitary_matrix(Rai, Rvi, Rva)
+            U_temp = self.U_delta 
+            J_temp = np.zeros((self.n_occupied, self.n_occupied, self.nmo, self.nmo))
+            K_temp = np.zeros((self.n_occupied, self.n_occupied, self.nmo, self.nmo))
+
+            K_temp = np.ascontiguousarray(K_temp)
+
+            # transform with displaced 
+            c_full_transformation_macroiteration(U_temp, self.twoeint, J_temp, K_temp, self.index_map_pq, self.index_map_kl, self.nmo, self.n_occupied) 
+            #self.full_transformation_macroiteration(self.U_total, self.J, self.K)
+
+            temp8 = np.zeros((self.nmo, self.nmo))
+            temp8 = np.einsum("pq,qs->ps", self.H1, U_temp)
+            h1_temp = np.einsum("ps,pr->rs", temp8, U_temp)
+            temp8 = np.einsum("pq,qs->ps", self.d_cmo1, U_temp)
+            d_cmo_temp = np.einsum("ps,pr->rs", temp8, U_temp)
+
+            # compute energy from forward displaced 
+            forward_energy = self.rdm_exact_energy(J_temp, K_temp, h1_temp, d_cmo_temp, self.eigenvecs)
+
+            # perform inner-loop to build R with forward displacement
+            for i in range(self.index_map_size):
+                s = self.index_map[i][0] 
+                l = self.index_map[i][1]
+
+                # if this is the element to displace, do forward displacement
+                if i==j:
+                    step_val = step[i] - _h
+                # otherwise, don't displace
+                else:
+                    step_val = step[i]
+
+                if s >= self.n_in_a and s < self.n_occupied and l < self.n_in_a:
+                    Rai[s-self.n_in_a][l] = step_val
+                elif s >= self.n_occupied and l < self.n_in_a:
+                    Rvi[s-self.n_occupied][l] = step_val
+                else:
+                    Rva[s-self.n_occupied][l-self.n_in_a] = step_val
+
+            # build unitary matrix with one element displaced - the resulting unitary matrix will be antisymmetrized 
+            self.build_unitary_matrix(Rai, Rvi, Rva)
+            U_temp = self.U_delta 
+            J_temp = np.zeros((self.n_occupied, self.n_occupied, self.nmo, self.nmo))
+            K_temp = np.zeros((self.n_occupied, self.n_occupied, self.nmo, self.nmo))
+
+            K_temp = np.ascontiguousarray(K_temp)
+
+            # transform with displaced 
+            c_full_transformation_macroiteration(U_temp, self.twoeint, J_temp, K_temp, self.index_map_pq, self.index_map_kl, self.nmo, self.n_occupied) 
+            #self.full_transformation_macroiteration(self.U_total, self.J, self.K)
+
+            temp8 = np.zeros((self.nmo, self.nmo))
+            temp8 = np.einsum("pq,qs->ps", self.H1, U_temp)
+            h1_temp = np.einsum("ps,pr->rs", temp8, U_temp)
+            temp8 = np.einsum("pq,qs->ps", self.d_cmo1, U_temp)
+            d_cmo_temp = np.einsum("ps,pr->rs", temp8, U_temp)
+
+
+            backward_energy = self.rdm_exact_energy(J_temp, K_temp, h1_temp, d_cmo_temp, self.eigenvecs)
+
+            A_num[gradS, gradL] = (forward_energy - backward_energy) / (4 * _h)
+        
+        return A_num
+
+    
    
     def energy_grad(self, step):
      
