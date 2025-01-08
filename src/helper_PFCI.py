@@ -8008,10 +8008,10 @@ class PFHamiltonianGenerator:
             backward_energy = self.rdm_exact_energy(J_temp, K_temp, h1_temp, d_cmo_temp, self.eigenvecs)
 
             # assign gradient element A_sl
-            A_num[gradS, gradL] = (forward_energy - backward_energy) / (2 * _h)
+            A_num[gradS, gradL] = (forward_energy - backward_energy) / (4 * _h)
 
             # assign transpose element -A_ls
-            A_num[gradL, gradS] = (backward_energy - forward_energy) / (2 * _h)
+            A_num[gradL, gradS] = (backward_energy - forward_energy) / (4 * _h)
         
         return A_num
 
