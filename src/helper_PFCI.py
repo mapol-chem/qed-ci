@@ -8011,7 +8011,7 @@ class PFHamiltonianGenerator:
             A_num[gradS, gradL] = (forward_energy - backward_energy) / (2 * _h)
 
             # assign transpose element -A_ls
-
+            A_num[gradL, gradS] = (backward_energy - forward_energy) / (2 * _h)
         
         return A_num
 
