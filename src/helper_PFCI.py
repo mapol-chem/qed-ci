@@ -7907,6 +7907,7 @@ class PFHamiltonianGenerator:
         Rvi = np.zeros((self.n_virtual,self.n_in_a))
         Rva = np.zeros((self.n_virtual,self.n_act_orb))
 
+        # initialize numerical gradient array
         rot_dim = self.nmo
         A_num = np.zeros((rot_dim, rot_dim))
 
@@ -7915,6 +7916,7 @@ class PFHamiltonianGenerator:
 
         # perform outter-loop to select gradient element to compute
         for j in range(self.index_map):
+            # these are the indices of the current gradient element
             gradS = self.index_map[j][0]
             gradL = self.index_map[j][1]
             
@@ -7930,6 +7932,8 @@ class PFHamiltonianGenerator:
                 else:
                     step_val = step[i]
 
+                # build appropriate active-inactive, virtual-inactive, or virtual-active 
+                # block as normal except for one element has a displacement 
                 if s >= self.n_in_a and s < self.n_occupied and l < self.n_in_a:
                     Rai[s-self.n_in_a][l] = step_val
                 elif s >= self.n_occupied and l < self.n_in_a:
@@ -7937,18 +7941,21 @@ class PFHamiltonianGenerator:
                 else:
                     Rva[s-self.n_occupied][l-self.n_in_a] = step_val
 
-            # build unitary matrix with one element displaced - the resulting unitary matrix will be antisymmetrized 
+            # build unitary matrix with one element displaced - the resulting unitary matrix will be antisymmetrized
+            # so the transpose element will also have a displacement
             self.build_unitary_matrix(Rai, Rvi, Rva)
-            U_temp = self.U_delta 
+
+            # store the displaced unitary matrix
+            U_temp = np.copy(self.U_delta) 
             J_temp = np.zeros((self.n_occupied, self.n_occupied, self.nmo, self.nmo))
             K_temp = np.zeros((self.n_occupied, self.n_occupied, self.nmo, self.nmo))
 
             K_temp = np.ascontiguousarray(K_temp)
 
-            # transform with displaced 
+            # transform 2ei, J, and K with displaced unitary matrix
             c_full_transformation_macroiteration(U_temp, self.twoeint, J_temp, K_temp, self.index_map_pq, self.index_map_kl, self.nmo, self.n_occupied) 
-            #self.full_transformation_macroiteration(self.U_total, self.J, self.K)
 
+            # initialize temporary arrays and perform transformations on 1e arrays
             temp8 = np.zeros((self.nmo, self.nmo))
             temp8 = np.einsum("pq,qs->ps", self.H1, U_temp)
             h1_temp = np.einsum("ps,pr->rs", temp8, U_temp)
@@ -7958,18 +7965,20 @@ class PFHamiltonianGenerator:
             # compute energy from forward displaced 
             forward_energy = self.rdm_exact_energy(J_temp, K_temp, h1_temp, d_cmo_temp, self.eigenvecs)
 
-            # perform inner-loop to build R with forward displacement
+            # perform inner-loop to build R with backward displacement
             for i in range(self.index_map_size):
                 s = self.index_map[i][0] 
                 l = self.index_map[i][1]
 
-                # if this is the element to displace, do forward displacement
+                # if this is the element to displace, do backwared displacement
                 if i==j:
                     step_val = step[i] - _h
                 # otherwise, don't displace
                 else:
                     step_val = step[i]
 
+                # build appropriate active-inactive, virtual-inactive, or virtual-active 
+                # block as normal except for one element has a displacement 
                 if s >= self.n_in_a and s < self.n_occupied and l < self.n_in_a:
                     Rai[s-self.n_in_a][l] = step_val
                 elif s >= self.n_occupied and l < self.n_in_a:
@@ -7979,7 +7988,7 @@ class PFHamiltonianGenerator:
 
             # build unitary matrix with one element displaced - the resulting unitary matrix will be antisymmetrized 
             self.build_unitary_matrix(Rai, Rvi, Rva)
-            U_temp = self.U_delta 
+            U_temp = np.copy(self.U_delta) 
             J_temp = np.zeros((self.n_occupied, self.n_occupied, self.nmo, self.nmo))
             K_temp = np.zeros((self.n_occupied, self.n_occupied, self.nmo, self.nmo))
 
@@ -7998,7 +8007,11 @@ class PFHamiltonianGenerator:
 
             backward_energy = self.rdm_exact_energy(J_temp, K_temp, h1_temp, d_cmo_temp, self.eigenvecs)
 
-            A_num[gradS, gradL] = (forward_energy - backward_energy) / (4 * _h)
+            # assign gradient element A_sl
+            A_num[gradS, gradL] = (forward_energy - backward_energy) / (2 * _h)
+
+            # assign transpose element -A_ls
+
         
         return A_num
 
