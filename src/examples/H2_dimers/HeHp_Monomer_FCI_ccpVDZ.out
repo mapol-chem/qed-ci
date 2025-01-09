@@ -1,0 +1,1486 @@
+
+Scratch directory: /tmp/
+   => Libint2 <=
+
+    Primary   basis highest AM E, G, H:  5, 4, 3
+    Auxiliary basis highest AM E, G, H:  6, 5, 4
+    Onebody   basis highest AM E, G, H:  6, 5, 4
+    Solid Harmonics ordering:            gaussian
+
+*** tstart() called on CHEM9LYY31VAWS
+*** at Thu Dec 19 13:56:01 2024
+
+   => Loading Basis Set <=
+
+    Name: CC-PVDZ
+    Role: ORBITAL
+    Keyword: BASIS
+    atoms 1, 3 entry H          line    22 file /Users/jfoley19/Code/psi4/objdir-Release/stage/share/psi4/basis/cc-pvdz.gbs 
+    atoms 2, 4 entry HE         line    32 file /Users/jfoley19/Code/psi4/objdir-Release/stage/share/psi4/basis/cc-pvdz.gbs 
+
+
+         ---------------------------------------------------------
+                                   SCF
+               by Justin Turney, Rob Parrish, Andy Simmonett
+                          and Daniel G. A. Smith
+                              RHF Reference
+                        1 Threads,    500 MiB Core
+         ---------------------------------------------------------
+
+  ==> Geometry <==
+
+    Molecular point group: c1
+    Full point group: C_inf_v
+
+    Geometry (in Angstrom), charge = 2, multiplicity = 1:
+
+       Center              X                  Y                   Z               Mass       
+    ------------   -----------------  -----------------  -----------------  -----------------
+         H            0.000000000000     0.000000000000  -5000000.607129431330     1.007825032230
+         HE           0.000000000000     0.000000000000  -4999999.847129431553     4.002603254130
+         H            0.000000000000     0.000000000000  4999999.392870569602     1.007825032230
+         HE           0.000000000000     0.000000000000  5000000.152870569378     4.002603254130
+
+  Running in c1 symmetry.
+
+  Rotational constants: A = ************  B =      0.00000  C =      0.00000 [cm^-1]
+  Rotational constants: A = ************  B =      0.00000  C =      0.00000 [MHz]
+  Nuclear repulsion =    2.785143690989853
+
+  Charge       = 2
+  Multiplicity = 1
+  Electrons    = 4
+  Nalpha       = 2
+  Nbeta        = 2
+
+  ==> Algorithm <==
+
+  SCF Algorithm Type is PK.
+  DIIS enabled.
+  MOM disabled.
+  Fractional occupation disabled.
+  Guess Type is SAD.
+  Energy threshold   = 1.00e-10
+  Density threshold  = 1.00e-10
+  Integral threshold = 1.00e-12
+
+  ==> Primary Basis <==
+
+  Basis Set: CC-PVDZ
+    Blend: CC-PVDZ
+    Number of shells: 12
+    Number of basis functions: 20
+    Number of Cartesian functions: 20
+    Spherical Harmonics?: true
+    Max angular momentum: 1
+
+  ==> Integral Setup <==
+
+  Using in-core PK algorithm.
+   Calculation information:
+      Number of atoms:                   4
+      Number of AO shells:              12
+      Number of primitives:             20
+      Number of atomic orbitals:        20
+      Number of basis functions:        20
+
+      Integral cutoff                 1.00e-12
+      Number of threads:                 1
+
+  Performing in-core PK
+  Using 44310 doubles for integral storage.
+  We computed 903 shell quartets total.
+  Whereas there are 3081 unique shell quartets.
+
+  ==> DiskJK: Disk-Based J/K Matrices <==
+
+    J tasked:                  Yes
+    K tasked:                  Yes
+    wK tasked:                  No
+    Memory [MiB]:              375
+    Schwarz Cutoff:          1E-12
+
+    OpenMP threads:              1
+
+  Minimum eigenvalue in the overlap matrix is 9.0668780553E-02.
+  Reciprocal condition number of the overlap matrix is 3.1781390758E-02.
+    Using symmetric orthogonalization.
+
+  ==> Pre-Iterations <==
+
+  SCF Guess: Superposition of Atomic Densities via on-the-fly atomic UHF (no occupation information).
+
+   -------------------------
+    Irrep   Nso     Nmo    
+   -------------------------
+     A         20      20 
+   -------------------------
+    Total      20      20
+   -------------------------
+
+  ==> Iterations <==
+
+                        Total Energy        Delta E     RMS |[F,P]|
+
+   @RHF iter SAD:    -6.95823778895034   -6.95824e+00   0.00000e+00 
+   @RHF iter   1:    -5.80382864607559    1.15441e+00   1.36416e-02 ADIIS/DIIS
+   @RHF iter   2:    -5.84567036439841   -4.18417e-02   1.96888e-03 ADIIS/DIIS
+   @RHF iter   3:    -5.84664658010165   -9.76216e-04   1.28936e-04 ADIIS/DIIS
+   @RHF iter   4:    -5.84665053338907   -3.95329e-06   5.91800e-06 DIIS
+   @RHF iter   5:    -5.84665054029426   -6.90518e-09   3.61093e-07 DIIS
+   @RHF iter   6:    -5.84665054032323   -2.89715e-11   2.70091e-08 DIIS
+   @RHF iter   7:    -5.84665054032343   -2.03393e-13   1.35557e-09 DIIS
+   @RHF iter   8:    -5.84665054032343    3.55271e-15   4.76683e-11 DIIS
+  Energy and wave function converged.
+
+
+  ==> Post-Iterations <==
+
+    Orbital Energies [Eh]
+    ---------------------
+
+    Doubly Occupied:                                                      
+
+       1A     -1.642806     2A     -1.642806  
+
+    Virtual:                                                              
+
+       3A     -0.248891     4A     -0.248891     5A      0.168600  
+       6A      0.168600     7A      0.870650     8A      0.870650  
+       9A      0.870778    10A      0.870778    11A      0.870778  
+      12A      0.870778    13A      1.663975    14A      1.663975  
+      15A      2.257321    16A      2.257321    17A      2.257321  
+      18A      2.257321    19A      3.468918    20A      3.468918  
+
+    Final Occupation by Irrep:
+              A 
+    DOCC [     2 ]
+    NA   [     2 ]
+    NB   [     2 ]
+
+  @RHF Final Energy:    -5.84665054032343
+
+   => Energetics <=
+
+    Nuclear Repulsion Energy =              2.7851436909898526
+    One-Electron Energy =                 -10.6923628179977168
+    Two-Electron Energy =                   2.0605685866844370
+    Total Energy =                         -5.8466505403234272
+
+Computation Completed
+
+
+Properties will be evaluated at   0.000000,   0.000000,   0.000000 [a0]
+
+Properties computed using the SCF density matrix
+
+
+ Multipole Moments:
+
+ ------------------------------------------------------------------------------------
+     Multipole            Electronic (a.u.)      Nuclear  (a.u.)        Total (a.u.)
+ ------------------------------------------------------------------------------------
+
+ L = 1.  Multiply by 2.5417464519 to convert [e a0] to [Debye]
+ Dipole X            :          0.0000000            0.0000000            0.0000000
+ Dipole Y            :         -0.0000000            0.0000000           -0.0000000
+ Dipole Z            :         -0.1934420           -1.1390827           -1.3325246
+ Magnitude           :                                                    1.3325246
+
+ ------------------------------------------------------------------------------------
+
+*** tstop() called on CHEM9LYY31VAWS at Thu Dec 19 13:56:01 2024
+Module time:
+	user time   =       0.15 seconds =       0.00 minutes
+	system time =       0.04 seconds =       0.00 minutes
+	total time  =          0 seconds =       0.00 minutes
+Total time:
+	user time   =       0.15 seconds =       0.00 minutes
+	system time =       0.04 seconds =       0.00 minutes
+	total time  =          0 seconds =       0.00 minutes
+
+Scratch directory: /tmp/
+ MINTS: Wrapper to libmints.
+   by Justin Turney
+
+   Calculation information:
+      Number of threads:                 1
+      Number of atoms:                   4
+      Number of AO shells:              12
+      Number of SO shells:              12
+      Number of primitives:             20
+      Number of atomic orbitals:        20
+      Number of basis functions:        20
+
+      Number of irreps:                  1
+      Integral cutoff                 1.00e-12
+      Number of functions per irrep: [  20 ]
+
+ OEINTS: Overlap, kinetic, potential, dipole, and quadrupole integrals
+         stored in file 35.
+
+      Computing two-electron integrals...done
+      Computed 1553 non-zero two-electron integrals.
+        Stored in file 33.
+
+
+         ---------------------------------------------------------
+                          Configuration Interaction
+                            (a 'D E T C I' module)
+
+                 C. David Sherrill, Daniel G. A. Smith, and
+                              Matt L. Leininger
+         ---------------------------------------------------------
+
+
+   ==> Parameters <==
+
+    EX LEVEL       =        4      H0 BLOCKSIZE  =     1000
+    VAL EX LEVEL   =        0      H0 GUESS SIZE =     1000
+    H0COUPLINGSIZE =        0      H0 COUPLING   =       NO
+    MAXITER        =       24      NUM PRINT     =       20
+    NUM ROOTS      =       10      ICORE         =        1
+    PRINT LVL      =        1      FCI           =      YES
+    R CONV         = 1.00e-04      MIXED         =      YES
+    E CONV         = 1.00e-10      MIXED4        =      YES
+    R4S            =       NO      REPL OTF      =       NO
+    DIAG METHOD    =      SEM      FOLLOW ROOT   =        0
+    PRECONDITIONER = DAVIDSON      UPDATE        = DAVIDSON
+    S              =   0.0000      Ms0           =      YES
+    GUESS VECTOR   =  H0BLOCK      OPENTYPE      =     NONE
+    COLLAPSE SIZE  =        1      HD AVG        = EVANGELISTI
+    MAX NUM VECS   =      250      REF SYM       =     AUTO
+    IOPEN        =       NO
+
+    EX ALLOW       =  1  1  1  1 
+    STATE AVERAGE  =  0(1.00) 
+
+   ==> CI Orbital and Space information <==
+
+   ------------------------------------
+               Space    Total     A
+   ------------------------------------
+                 Nso       20    20
+                 Nmo       20    20
+               Ndocc        2     2
+               Nsocc        0     0
+   ------------------------------------
+              CI Spaces
+   ------------------------------------
+        Dropped DOCC        0     0
+              Active       20    20
+        Dropped UOCC        0     0
+   ------------------------------------
+
+   ==> Setting up CI strings <==
+
+    There are 190 alpha and 190 beta strings
+    The CI space requires 36100 (3.61E+04) determinants and 1 blocks
+
+   ==> Transforming CI integrals <==
+
+	Presorting SO-basis two-electron integrals.
+	Sorting File: SO Ints (nn|nn) nbuckets = 1
+	Constructing frozen core operators
+	Starting first half-transformation.
+	Sorting half-transformed integrals.
+	First half integral transformation complete.
+	Starting second half-transformation.
+	Two-electron integral transformation complete.
+
+   ==> Starting CI iterations <==
+
+    H0 Block Eigenvalue =  -5.88849670
+
+    Simultaneous Expansion Method (Block Davidson Method)
+    Using 10 initial trial vectors
+
+(sem_iter): H0block_->H0b_diag[1][1] - H0block_->H0b_diag[2][1] = -0.662517 - 0.662517 = -1.325033 > 1.0E-8
+(sem_iter): H0block_->H0b_diag[7][2] - H0block_->H0b_diag[8][2] = -0.662517 - 0.662517 = -1.325033 > 1.0E-8
+(sem_iter): H0block_->H0b_diag[1][5] - H0block_->H0b_diag[2][5] = 0.205640 - -0.205640 = 0.411280 > 1.0E-8
+(sem_iter): H0block_->H0b_diag[7][6] - H0block_->H0b_diag[8][6] = -0.205640 - 0.205640 = -0.411280 > 1.0E-8
+(sem_iter): H0block_->H0b_diag[3][7] - H0block_->H0b_diag[4][7] = 0.000000 - -0.000000 = 0.000000 > 1.0E-8
+(sem_iter): H0block_->H0b_diag[3][8] - H0block_->H0b_diag[4][8] = -0.000002 - -0.000000 = -0.000001 > 1.0E-8
+(sem_iter): H0block_->H0b_diag[3][9] - H0block_->H0b_diag[4][9] = 0.982459 - 0.047014 = 0.935445 > 1.0E-8
+(sem_iter): H0block_->H0b_diag[3][10] - H0block_->H0b_diag[4][10] = 0.047014 - -0.982459 = 1.029473 > 1.0E-8
+(sem_iter): H0block_->H0b_diag[49][14] - H0block_->H0b_diag[50][14] = -0.233886 - -0.856688 = 0.622801 > 1.0E-8
+(sem_iter): H0block_->H0b_diag[49][15] - H0block_->H0b_diag[50][15] = 0.856688 - -0.233886 = 1.090574 > 1.0E-8
+(sem_iter): H0block_->H0b_diag[5][16] - H0block_->H0b_diag[6][16] = -0.001522 - -0.022933 = 0.021411 > 1.0E-8
+(sem_iter): H0block_->H0b_diag[5][17] - H0block_->H0b_diag[6][17] = 0.022933 - -0.001522 = 0.024455 > 1.0E-8
+(sem_iter): H0block_->H0b_diag[3][18] - H0block_->H0b_diag[4][18] = 0.002479 - 0.022849 = -0.020370 > 1.0E-8
+(sem_iter): H0block_->H0b_diag[3][19] - H0block_->H0b_diag[4][19] = 0.022849 - -0.002479 = 0.025328 > 1.0E-8
+(sem_iter): H0block_->H0b_diag[1][20] - H0block_->H0b_diag[2][20] = -0.000000 - 0.000000 = -0.000000 > 1.0E-8
+(sem_iter): H0block_->H0b_diag[1][21] - H0block_->H0b_diag[2][21] = 0.015579 - -0.015579 = 0.031159 > 1.0E-8
+(sem_iter): H0block_->H0b_diag[29][22] - H0block_->H0b_diag[30][22] = -0.644083 - 0.644083 = -1.288166 > 1.0E-8
+(sem_iter): H0block_->H0b_diag[29][23] - H0block_->H0b_diag[30][23] = -0.266432 - 0.266432 = -0.532864 > 1.0E-8
+(sem_iter): H0block_->H0b_diag[33][24] - H0block_->H0b_diag[34][24] = 0.306452 - -0.306452 = 0.612905 > 1.0E-8
+(sem_iter): H0block_->H0b_diag[33][25] - H0block_->H0b_diag[34][25] = 0.626032 - -0.626032 = 1.252064 > 1.0E-8
+(sem_iter): H0block_->H0b_diag[7][26] - H0block_->H0b_diag[8][26] = -0.095738 - 0.095738 = -0.191476 > 1.0E-8
+(sem_iter): H0block_->H0b_diag[1][27] - H0block_->H0b_diag[2][27] = 0.095738 - -0.095738 = 0.191476 > 1.0E-8
+     Iter   Root       Total Energy       Delta E      C RMS
+
+   @CI  0:     0     -5.888496697217   -8.6736E+00   4.3859E-01  
+   @CI  0:     1     -4.885713026948   -7.6709E+00   4.4293E-01  
+   @CI  0:     2     -4.884291580765   -7.6694E+00   4.5039E-01  
+   @CI  0:     3     -4.499448986457   -7.2846E+00   4.0517E-01  
+   @CI  0:     4     -4.499216851046   -7.2844E+00   4.0647E-01  
+   @CI  0:     5     -4.266972261698   -7.0521E+00   2.9529E-01  
+   @CI  0:     6     -3.899841117580   -6.6850E+00   4.7351E-01  
+   @CI  0:     7     -3.899841117580   -6.6850E+00   4.7351E-01  
+   @CI  0:     8     -3.899841116973   -6.6850E+00   4.7351E-01  
+   @CI  0:     9     -3.899841116973   -6.6850E+00   4.7351E-01  
+
+   @CI  1:     0     -5.920535119917   -3.2038E-02   4.1312E-02  
+   @CI  1:     1     -4.924152951455   -3.8440E-02   5.2346E-02  
+   @CI  1:     2     -4.924016023612   -3.9724E-02   5.8525E-02  
+   @CI  1:     3     -4.532929966837   -3.3481E-02   4.7214E-02  
+   @CI  1:     4     -4.532929397986   -3.3713E-02   4.7315E-02  
+   @CI  1:     5     -4.293045012072   -2.6073E-02   5.4407E-02  
+   @CI  1:     6     -3.953442723581   -5.3602E-02   7.8215E-02  
+   @CI  1:     7     -3.953442723581   -5.3602E-02   7.8215E-02  
+   @CI  1:     8     -3.953442722865   -5.3602E-02   7.8215E-02  
+   @CI  1:     9     -3.953442722865   -5.3602E-02   7.8215E-02  
+
+   @CI  2:     0     -5.920736980404   -2.0186E-04   5.4766E-03  
+   @CI  2:     1     -4.924611743661   -4.5879E-04   6.7859E-03  
+   @CI  2:     2     -4.924605665139   -5.8964E-04   8.4656E-03  
+   @CI  2:     3     -4.533348884013   -4.1892E-04   7.3290E-03  
+   @CI  2:     4     -4.533347584802   -4.1819E-04   7.9554E-03  
+   @CI  2:     5     -4.293833972803   -7.8896E-04   9.9099E-03  
+   @CI  2:     6     -3.954741465967   -1.2987E-03   1.4722E-02  
+   @CI  2:     7     -3.954741465967   -1.2987E-03   1.4722E-02  
+   @CI  2:     8     -3.954741465738   -1.2987E-03   1.4722E-02  
+   @CI  2:     9     -3.954741465738   -1.2987E-03   1.4722E-02  
+
+   @CI  3:     0     -5.920742197436   -5.2170E-06   1.1535E-03  
+   @CI  3:     1     -4.924620228996   -8.4853E-06   9.6976E-04  
+   @CI  3:     2     -4.924619899237   -1.4234E-05   1.6265E-03  
+   @CI  3:     3     -4.533362752508   -1.3868E-05   2.2224E-03  
+   @CI  3:     4     -4.533362582808   -1.4998E-05   2.6939E-03  
+   @CI  3:     5     -4.293863100922   -2.9128E-05   2.3391E-03  
+   @CI  3:     6     -3.954794032713   -5.2567E-05   3.7610E-03  
+   @CI  3:     7     -3.954794032713   -5.2567E-05   3.7610E-03  
+   @CI  3:     8     -3.954794032212   -5.2566E-05   3.7610E-03  
+   @CI  3:     9     -3.954794032212   -5.2566E-05   3.7610E-03  
+
+   @CI  4:     0     -5.920742384340   -1.8690E-07   1.2704E-04  
+   @CI  4:     1     -4.924620425321   -1.9633E-07   1.6282E-04  
+   @CI  4:     2     -4.924620415089   -5.1585E-07   2.8572E-04  
+   @CI  4:     3     -4.533364851868   -2.0994E-06   8.1627E-04  
+   @CI  4:     4     -4.533364666291   -2.0835E-06   1.0364E-03  
+   @CI  4:     5     -4.293865359747   -2.2588E-06   9.3121E-04  
+   @CI  4:     6     -3.954798195896   -4.1632E-06   9.8128E-04  
+   @CI  4:     7     -3.954798195896   -4.1632E-06   9.8128E-04  
+   @CI  4:     8     -3.954798195365   -4.1632E-06   9.8128E-04  
+   @CI  4:     9     -3.954798195365   -4.1632E-06   9.8128E-04  
+
+   @CI  5:     0     -5.920742386881   -2.5409E-09   1.4739E-05  
+   @CI  5:     1     -4.924620431060   -5.7388E-09   3.5903E-05  
+   @CI  5:     2     -4.924620429629   -1.4541E-08   4.6571E-05  
+   @CI  5:     3     -4.533365062052   -2.1018E-07   2.1550E-04  
+   @CI  5:     4     -4.533365045510   -3.7922E-07   3.2104E-04  
+   @CI  5:     5     -4.293865757989   -3.9824E-07   3.8796E-04  
+   @CI  5:     6     -3.954798431858   -2.3596E-07   2.0909E-04  
+   @CI  5:     7     -3.954798431858   -2.3596E-07   2.0909E-04  
+   @CI  5:     8     -3.954798431326   -2.3596E-07   2.0909E-04  
+   @CI  5:     9     -3.954798431326   -2.3596E-07   2.0909E-04  
+
+   @CI  6:     0     -5.920742386913   -3.2115E-11   1.7621E-06 c
+   @CI  6:     1     -4.924620431356   -2.9600E-10   8.2476E-06  
+   @CI  6:     2     -4.924620430027   -3.9733E-10   8.3772E-06  
+   @CI  6:     3     -4.533365072123   -1.0072E-08   3.5578E-05  
+   @CI  6:     4     -4.533365070950   -2.5439E-08   7.3528E-05  
+   @CI  6:     5     -4.293865796490   -3.8502E-08   8.3792E-05  
+   @CI  6:     6     -3.954798442567   -1.0709E-08   4.5444E-05  
+   @CI  6:     7     -3.954798442567   -1.0709E-08   4.5444E-05  
+   @CI  6:     8     -3.954798442035   -1.0709E-08   4.5444E-05  
+   @CI  6:     9     -3.954798442035   -1.0709E-08   4.5444E-05  
+
+   @CI  7:     0     -5.920742386913   -1.1546E-13   1.5405E-06 c
+   @CI  7:     1     -4.924620431370   -1.4099E-11   1.4700E-06 c
+   @CI  7:     2     -4.924620430041   -1.4329E-11   1.4708E-06 c
+   @CI  7:     3     -4.533365072394   -2.7040E-10   9.3069E-06  
+   @CI  7:     4     -4.533365072254   -1.3045E-09   1.3210E-05  
+   @CI  7:     5     -4.293865798380   -1.8893E-09   2.0953E-05  
+   @CI  7:     6     -3.954798443014   -4.4715E-10   8.8542E-06  
+   @CI  7:     7     -3.954798443014   -4.4716E-10   8.8542E-06  
+   @CI  7:     8     -3.954798442482   -4.4714E-10   8.8542E-06  
+   @CI  7:     9     -3.954798442482   -4.4716E-10   8.8542E-06  
+
+   @CI  8:     0     -5.920742386913   1.2434E-14   1.5385E-06 c
+   @CI  8:     1     -4.924620431371   -2.7267E-13   9.3360E-07 c
+   @CI  8:     2     -4.924620430041   -2.7089E-13   9.3372E-07 c
+   @CI  8:     3     -4.533365072421   -2.7381E-11   2.4314E-06 c
+   @CI  8:     4     -4.533365072294   -3.9462E-11   2.4606E-06 c
+   @CI  8:     5     -4.293865798504   -1.2468E-10   5.2952E-06  
+   @CI  8:     6     -3.954798443031   -1.7523E-11   1.6354E-06 c
+   @CI  8:     7     -3.954798443031   -1.7530E-11   1.6354E-06 c
+   @CI  8:     8     -3.954798442499   -1.7539E-11   1.6354E-06 c
+   @CI  8:     9     -3.954798442499   -1.7512E-11   1.6354E-06 c
+
+   @CI  9:     0     -5.920742386913   -3.5527E-15   1.5385E-06 c
+   @CI  9:     1     -4.924620431371   7.9936E-15   9.3359E-07 c
+   @CI  9:     2     -4.924620430041   5.3291E-15   9.3372E-07 c
+   @CI  9:     3     -4.533365072421   -8.8818E-16   2.4314E-06 c
+   @CI  9:     4     -4.533365072294   7.9936E-15   2.4607E-06 c
+   @CI  9:     5     -4.293865798511   -6.5974E-12   8.2053E-07 c
+   @CI  9:     6     -3.954798443031   -1.0658E-14   1.6354E-06 c
+   @CI  9:     7     -3.954798443031   3.5527E-15   1.6354E-06 c
+   @CI  9:     8     -3.954798442499   1.3323E-14   1.6354E-06 c
+   @CI  9:     9     -3.954798442499   -8.8818E-16   1.6354E-06 c
+
+
+   ==> Energetics <==
+
+    SCF energy =           -5.846650540323427
+    Total CI energy =      -5.920742386913123
+
+   ==> FCI root 0 information <==
+
+    FCI Root 0 energy =    -5.920742386913123
+
+   The 20 most important determinants:
+
+    *   1    0.990133  (    0,    0)  1AX 2AX 
+    *   2   -0.041812  (    4,    4)  2AX 4AX 
+    *   3   -0.041812  (    1,    1)  1AX 3AX 
+    *   4   -0.029252  (   21,   21)  1AX 8AX 
+    *   5   -0.029252  (   16,   16)  2AX 7AX 
+    *   6   -0.024509  (   67,    4)  2AX 4AB 13AA 
+    *   7   -0.024509  (    4,   67)  2AX 4AA 13AB 
+    *   8   -0.024509  (    1,   78)  1AX 3AA 14AB 
+    *   9   -0.024509  (   78,    1)  1AX 3AB 14AA 
+    *  10   -0.023705  (   67,   67)  2AX 13AX 
+    *  11   -0.023705  (   78,   78)  1AX 14AX 
+    *  12    0.021773  (   16,    4)  2AX 4AB 7AA 
+    *  13    0.021773  (    4,   16)  2AX 4AA 7AB 
+    *  14    0.021773  (    1,   21)  1AX 3AA 8AB 
+    *  15    0.021773  (   21,    1)  1AX 3AB 8AA 
+    *  16   -0.020539  (   11,   11)  2AX 6AX 
+    *  17   -0.020539  (    6,    6)  1AX 5AX 
+    *  18   -0.020095  (   11,    4)  2AX 4AB 6AA 
+    *  19   -0.020095  (    4,   11)  2AX 4AA 6AB 
+    *  20   -0.020095  (    1,    6)  1AX 3AA 5AB 
+
+
+   ==> FCI root 1 information <==
+
+    FCI Root 1 energy =    -4.924620431370550
+
+   The 20 most important determinants:
+
+    *   1   -0.672096  (    0,    1)  1AX 2AA 3AB 
+    *   2   -0.672096  (    1,    0)  1AX 2AB 3AA 
+    *   3    0.176902  (    1,    1)  1AX 3AX 
+    *   4   -0.137176  (    6,    0)  1AX 2AB 5AA 
+    *   5   -0.137176  (    0,    6)  1AX 2AA 5AB 
+    *   6   -0.062958  (   21,    1)  1AX 3AB 8AA 
+    *   7   -0.062958  (    1,   21)  1AX 3AA 8AB 
+    *   8    0.042137  (    6,    1)  1AX 3AB 5AA 
+    *   9    0.042137  (    1,    6)  1AX 3AA 5AB 
+    *  10    0.028382  (    4,    5)  2AA 3AB 4AX 
+    *  11    0.028382  (    5,    4)  2AB 3AA 4AX 
+    *  12    0.027396  (    6,    6)  1AX 5AX 
+    *  13    0.023868  (   78,    1)  1AX 3AB 14AA 
+    *  14    0.023868  (    1,   78)  1AX 3AA 14AB 
+    *  15    0.022289  (    0,    0)  1AX 2AX 
+    *  16    0.019856  (   16,   17)  2AA 3AB 7AX 
+    *  17    0.019856  (   17,   16)  2AB 3AA 7AX 
+    *  18    0.019013  (    1,  171)  1AX 3AA 20AB 
+    *  19    0.019013  (  171,    1)  1AX 3AB 20AA 
+    *  20   -0.017523  (   21,   21)  1AX 8AX 
+
+
+   ==> FCI root 2 information <==
+
+    FCI Root 2 energy =    -4.924620430041394
+
+   The 20 most important determinants:
+
+    *   1   -0.672096  (    4,    0)  1AB 2AX 4AA 
+    *   2   -0.672096  (    0,    4)  1AA 2AX 4AB 
+    *   3   -0.176902  (    4,    4)  2AX 4AX 
+    *   4   -0.137176  (   11,    0)  1AB 2AX 6AA 
+    *   5   -0.137176  (    0,   11)  1AA 2AX 6AB 
+    *   6    0.062958  (    4,   16)  2AX 4AA 7AB 
+    *   7    0.062958  (   16,    4)  2AX 4AB 7AA 
+    *   8   -0.042137  (   11,    4)  2AX 4AB 6AA 
+    *   9   -0.042137  (    4,   11)  2AX 4AA 6AB 
+    *  10    0.028382  (    5,    1)  1AB 3AX 4AA 
+    *  11    0.028382  (    1,    5)  1AA 3AX 4AB 
+    *  12   -0.027396  (   11,   11)  2AX 6AX 
+    *  13   -0.023868  (    4,   67)  2AX 4AA 13AB 
+    *  14   -0.023868  (   67,    4)  2AX 4AB 13AA 
+    *  15   -0.022293  (    0,    0)  1AX 2AX 
+    *  16   -0.019856  (   21,   24)  1AA 4AB 8AX 
+    *  17   -0.019856  (   24,   21)  1AB 4AA 8AX 
+    *  18   -0.019013  (    4,  154)  2AX 4AA 19AB 
+    *  19   -0.019013  (  154,    4)  2AX 4AB 19AA 
+    *  20    0.017523  (   16,   16)  2AX 7AX 
+
+
+   ==> FCI root 3 information <==
+
+    FCI Root 3 energy =    -4.533365072420944
+
+   The 20 most important determinants:
+
+    *   1    0.673292  (    6,    0)  1AX 2AB 5AA 
+    *   2    0.673292  (    0,    6)  1AX 2AA 5AB 
+    *   3   -0.144922  (    1,    0)  1AX 2AB 3AA 
+    *   4   -0.144922  (    0,    1)  1AX 2AA 3AB 
+    *   5   -0.104336  (    6,    1)  1AX 3AB 5AA 
+    *   6   -0.104336  (    1,    6)  1AX 3AA 5AB 
+    *   7    0.073308  (    6,   21)  1AX 5AA 8AB 
+    *   8    0.073308  (   21,    6)  1AX 5AB 8AA 
+    *   9   -0.045208  (    6,   78)  1AX 5AA 14AB 
+    *  10   -0.045208  (   78,    6)  1AX 5AB 14AA 
+    *  11   -0.035775  (    6,    6)  1AX 5AX 
+    *  12    0.032731  (    0,   21)  1AX 2AA 8AB 
+    *  13    0.032731  (   21,    0)  1AX 2AB 8AA 
+    *  14    0.028433  (    9,    4)  2AB 4AX 5AA 
+    *  15    0.028433  (    4,    9)  2AA 4AX 5AB 
+    *  16   -0.019892  (   16,   19)  2AA 5AB 7AX 
+    *  17   -0.019892  (   19,   16)  2AB 5AA 7AX 
+    *  18   -0.017347  (    6,  171)  1AX 5AA 20AB 
+    *  19   -0.017347  (  171,    6)  1AX 5AB 20AA 
+    *  20    0.016666  (    9,   67)  2AB 4AA 5AA 13AB 
+
+
+   ==> FCI root 4 information <==
+
+    FCI Root 4 energy =    -4.533365072293645
+
+   The 20 most important determinants:
+
+    *   1    0.673291  (    0,   11)  1AA 2AX 6AB 
+    *   2    0.673291  (   11,    0)  1AB 2AX 6AA 
+    *   3   -0.144923  (    0,    4)  1AA 2AX 4AB 
+    *   4   -0.144923  (    4,    0)  1AB 2AX 4AA 
+    *   5    0.104334  (    4,   11)  2AX 4AA 6AB 
+    *   6    0.104334  (   11,    4)  2AX 4AB 6AA 
+    *   7   -0.073308  (   16,   11)  2AX 6AB 7AA 
+    *   8   -0.073308  (   11,   16)  2AX 6AA 7AB 
+    *   9    0.045206  (   67,   11)  2AX 6AB 13AA 
+    *  10    0.045206  (   11,   67)  2AX 6AA 13AB 
+    *  11    0.035772  (   11,   11)  2AX 6AX 
+    *  12    0.032731  (    0,   16)  1AA 2AX 7AB 
+    *  13    0.032731  (   16,    0)  1AB 2AX 7AA 
+    *  14   -0.028432  (    1,   12)  1AA 3AX 6AB 
+    *  15   -0.028432  (   12,    1)  1AB 3AX 6AA 
+    *  16    0.019892  (   21,   26)  1AA 6AB 8AX 
+    *  17    0.019892  (   26,   21)  1AB 6AA 8AX 
+    *  18    0.017348  (   11,  154)  2AX 6AA 19AB 
+    *  19    0.017348  (  154,   11)  2AX 6AB 19AA 
+    *  20    0.016666  (    1,   83)  1AA 3AA 6AB 14AB 
+
+
+   ==> FCI root 5 information <==
+
+    FCI Root 5 energy =    -4.293865798510848
+
+   The 20 most important determinants:
+
+    *   1    0.440043  (    0,    5)  1AA 2AA 3AB 4AB 
+    *   2    0.440043  (    5,    0)  1AB 2AB 3AA 4AA 
+    *   3   -0.440043  (    4,    1)  1AB 2AA 3AB 4AA 
+    *   4   -0.440043  (    1,    4)  1AA 2AB 3AA 4AB 
+    *   5    0.143058  (    0,   12)  1AA 2AA 3AB 6AB 
+    *   6    0.143058  (   12,    0)  1AB 2AB 3AA 6AA 
+    *   7   -0.143058  (   11,    1)  1AB 2AA 3AB 6AA 
+    *   8   -0.143058  (    1,   11)  1AA 2AB 3AA 6AB 
+    *   9   -0.143058  (    0,    9)  1AA 2AA 4AB 5AB 
+    *  10   -0.143058  (    9,    0)  1AB 2AB 4AA 5AA 
+    *  11   -0.143058  (    4,    6)  1AB 2AA 4AA 5AB 
+    *  12   -0.143058  (    6,    4)  1AA 2AB 4AB 5AA 
+    *  13   -0.046508  (    6,   11)  1AA 2AB 5AA 6AB 
+    *  14   -0.046508  (   11,    6)  1AB 2AA 5AB 6AA 
+    *  15    0.046508  (   14,    0)  1AB 2AB 5AA 6AA 
+    *  16    0.046508  (    0,   14)  1AA 2AA 5AB 6AB 
+    *  17   -0.046043  (   67,    1)  1AB 2AA 3AB 13AA 
+    *  18    0.046043  (   68,    0)  1AB 2AB 3AA 13AA 
+    *  19    0.046043  (    0,   68)  1AA 2AA 3AB 13AB 
+    *  20   -0.046043  (    1,   67)  1AA 2AB 3AA 13AB 
+
+
+   ==> FCI root 6 information <==
+
+    FCI Root 6 energy =    -3.954798443031462
+
+   The 20 most important determinants:
+
+    *   1    0.626264  (    0,   37)  1AA 2AX 10AB 
+    *   2    0.626264  (   37,    0)  1AB 2AX 10AA 
+    *   3    0.283297  (    0,   29)  1AA 2AX 9AB 
+    *   4    0.283297  (   29,    0)  1AB 2AX 9AA 
+    *   5    0.105968  (    4,   37)  2AX 4AA 10AB 
+    *   6    0.105968  (   37,    4)  2AX 4AB 10AA 
+    *   7   -0.057246  (   16,   37)  2AX 7AA 10AB 
+    *   8   -0.057246  (   37,   16)  2AX 7AB 10AA 
+    *   9    0.051525  (   37,   67)  2AX 10AA 13AB 
+    *  10    0.051525  (   67,   37)  2AX 10AB 13AA 
+    *  11    0.047936  (   29,    4)  2AX 4AB 9AA 
+    *  12    0.047936  (    4,   29)  2AX 4AA 9AB 
+    *  13    0.034933  (   37,   11)  2AX 6AB 10AA 
+    *  14    0.034933  (   11,   37)  2AX 6AA 10AB 
+    *  15   -0.026446  (    1,   38)  1AA 3AX 10AB 
+    *  16   -0.026446  (   38,    1)  1AB 3AX 10AA 
+    *  17   -0.025896  (   16,   29)  2AX 7AA 9AB 
+    *  18   -0.025896  (   29,   16)  2AX 7AB 9AA 
+    *  19    0.023308  (   29,   67)  2AX 9AA 13AB 
+    *  20    0.023308  (   67,   29)  2AX 9AB 13AA 
+
+
+   ==> FCI root 7 information <==
+
+    FCI Root 7 energy =    -3.954798443031436
+
+   The 20 most important determinants:
+
+    *   1   -0.626264  (   29,    0)  1AB 2AX 9AA 
+    *   2   -0.626264  (    0,   29)  1AA 2AX 9AB 
+    *   3    0.283297  (   37,    0)  1AB 2AX 10AA 
+    *   4    0.283297  (    0,   37)  1AA 2AX 10AB 
+    *   5   -0.105968  (   29,    4)  2AX 4AB 9AA 
+    *   6   -0.105968  (    4,   29)  2AX 4AA 9AB 
+    *   7    0.057246  (   29,   16)  2AX 7AB 9AA 
+    *   8    0.057246  (   16,   29)  2AX 7AA 9AB 
+    *   9   -0.051525  (   29,   67)  2AX 9AA 13AB 
+    *  10   -0.051525  (   67,   29)  2AX 9AB 13AA 
+    *  11    0.047936  (   37,    4)  2AX 4AB 10AA 
+    *  12    0.047936  (    4,   37)  2AX 4AA 10AB 
+    *  13   -0.034933  (   29,   11)  2AX 6AB 9AA 
+    *  14   -0.034933  (   11,   29)  2AX 6AA 9AB 
+    *  15    0.026446  (   30,    1)  1AB 3AX 9AA 
+    *  16    0.026446  (    1,   30)  1AA 3AX 9AB 
+    *  17   -0.025896  (   37,   16)  2AX 7AB 10AA 
+    *  18   -0.025896  (   16,   37)  2AX 7AA 10AB 
+    *  19    0.023308  (   37,   67)  2AX 10AA 13AB 
+    *  20    0.023308  (   67,   37)  2AX 10AB 13AA 
+
+
+   ==> FCI root 8 information <==
+
+    FCI Root 8 energy =    -3.954798442499438
+
+   The 20 most important determinants:
+
+    *   1   -0.591214  (   45,    0)  1AX 2AB 11AA 
+    *   2   -0.591214  (    0,   45)  1AX 2AA 11AB 
+    *   3   -0.350613  (   55,    0)  1AX 2AB 12AA 
+    *   4   -0.350613  (    0,   55)  1AX 2AA 12AB 
+    *   5    0.100038  (   45,    1)  1AX 3AB 11AA 
+    *   6    0.100038  (    1,   45)  1AX 3AA 11AB 
+    *   7    0.059326  (   55,    1)  1AX 3AB 12AA 
+    *   8    0.059326  (    1,   55)  1AX 3AA 12AB 
+    *   9   -0.054042  (   45,   21)  1AX 8AB 11AA 
+    *  10   -0.054042  (   21,   45)  1AX 8AA 11AB 
+    *  11    0.048641  (   45,   78)  1AX 11AA 14AB 
+    *  12    0.048641  (   78,   45)  1AX 11AB 14AA 
+    *  13    0.032978  (   45,    6)  1AX 5AB 11AA 
+    *  14    0.032978  (    6,   45)  1AX 5AA 11AB 
+    *  15   -0.032049  (   55,   21)  1AX 8AB 12AA 
+    *  16   -0.032049  (   21,   55)  1AX 8AA 12AB 
+    *  17    0.028846  (   55,   78)  1AX 12AA 14AB 
+    *  18    0.028846  (   78,   55)  1AX 12AB 14AA 
+    *  19   -0.024966  (   48,    4)  2AB 4AX 11AA 
+    *  20   -0.024966  (    4,   48)  2AA 4AX 11AB 
+
+
+   ==> FCI root 9 information <==
+
+    FCI Root 9 energy =    -3.954798442499381
+
+   The 20 most important determinants:
+
+    *   1    0.591214  (   55,    0)  1AX 2AB 12AA 
+    *   2    0.591214  (    0,   55)  1AX 2AA 12AB 
+    *   3   -0.350613  (   45,    0)  1AX 2AB 11AA 
+    *   4   -0.350613  (    0,   45)  1AX 2AA 11AB 
+    *   5   -0.100038  (   55,    1)  1AX 3AB 12AA 
+    *   6   -0.100038  (    1,   55)  1AX 3AA 12AB 
+    *   7    0.059326  (   45,    1)  1AX 3AB 11AA 
+    *   8    0.059326  (    1,   45)  1AX 3AA 11AB 
+    *   9    0.054042  (   55,   21)  1AX 8AB 12AA 
+    *  10    0.054042  (   21,   55)  1AX 8AA 12AB 
+    *  11   -0.048641  (   55,   78)  1AX 12AA 14AB 
+    *  12   -0.048641  (   78,   55)  1AX 12AB 14AA 
+    *  13   -0.032978  (   55,    6)  1AX 5AB 12AA 
+    *  14   -0.032978  (    6,   55)  1AX 5AA 12AB 
+    *  15   -0.032049  (   45,   21)  1AX 8AB 11AA 
+    *  16   -0.032049  (   21,   45)  1AX 8AA 11AB 
+    *  17    0.028846  (   45,   78)  1AX 11AA 14AB 
+    *  18    0.028846  (   78,   45)  1AX 11AB 14AA 
+    *  19    0.024966  (   58,    4)  2AB 4AX 12AA 
+    *  20    0.024966  (    4,   58)  2AA 4AX 12AB 
+
+		 "A good bug is a dead bug" 
+
+			 - Starship Troopers
+
+		 "I didn't write FORTRAN.  That's the problem."
+
+			 - Edward Valeev
+
+
+Properties will be evaluated at   0.000000,   0.000000,   0.000000 [a0]
+
+Properties computed using the FCI density matrix
+
+
+ Multipole Moments:
+
+ ------------------------------------------------------------------------------------
+     Multipole            Electronic (a.u.)      Nuclear  (a.u.)        Total (a.u.)
+ ------------------------------------------------------------------------------------
+
+ L = 1.  Multiply by 2.5417464519 to convert [e a0] to [Debye]
+ Dipole X            :         -0.0000000            0.0000000           -0.0000000
+ Dipole Y            :          0.0000000            0.0000000            0.0000000
+ Dipole Z            :         -0.1478629           -1.1390827           -1.2869456
+ Magnitude           :                                                    1.2869456
+
+ ------------------------------------------------------------------------------------
+
+Scratch directory: /tmp/
+   => Libint2 <=
+
+    Primary   basis highest AM E, G, H:  5, 4, 3
+    Auxiliary basis highest AM E, G, H:  6, 5, 4
+    Onebody   basis highest AM E, G, H:  6, 5, 4
+    Solid Harmonics ordering:            gaussian
+
+*** tstart() called on CHEM9LYY31VAWS
+*** at Thu Dec 19 14:07:34 2024
+
+   => Loading Basis Set <=
+
+    Name: CC-PVDZ
+    Role: ORBITAL
+    Keyword: BASIS
+    atoms 1, 3 entry H          line    22 file /Users/jfoley19/Code/psi4/objdir-Release/stage/share/psi4/basis/cc-pvdz.gbs 
+    atoms 2, 4 entry HE         line    32 file /Users/jfoley19/Code/psi4/objdir-Release/stage/share/psi4/basis/cc-pvdz.gbs 
+
+
+         ---------------------------------------------------------
+                                   SCF
+               by Justin Turney, Rob Parrish, Andy Simmonett
+                          and Daniel G. A. Smith
+                              RHF Reference
+                        1 Threads,    500 MiB Core
+         ---------------------------------------------------------
+
+  ==> Geometry <==
+
+    Molecular point group: c1
+    Full point group: C_inf_v
+
+    Geometry (in Angstrom), charge = 2, multiplicity = 1:
+
+       Center              X                  Y                   Z               Mass       
+    ------------   -----------------  -----------------  -----------------  -----------------
+         H            0.000000000000     0.000000000000  -5000000.607129431330     1.007825032230
+         HE           0.000000000000     0.000000000000  -4999999.847129431553     4.002603254130
+         H            0.000000000000     0.000000000000  4999999.392870569602     1.007825032230
+         HE           0.000000000000     0.000000000000  5000000.152870569378     4.002603254130
+
+  Running in c1 symmetry.
+
+  Rotational constants: A = ************  B =      0.00000  C =      0.00000 [cm^-1]
+  Rotational constants: A = ************  B =      0.00000  C =      0.00000 [MHz]
+  Nuclear repulsion =    2.785143690989853
+
+  Charge       = 2
+  Multiplicity = 1
+  Electrons    = 4
+  Nalpha       = 2
+  Nbeta        = 2
+
+  ==> Algorithm <==
+
+  SCF Algorithm Type is PK.
+  DIIS enabled.
+  MOM disabled.
+  Fractional occupation disabled.
+  Guess Type is SAD.
+  Energy threshold   = 1.00e-10
+  Density threshold  = 1.00e-10
+  Integral threshold = 1.00e-12
+
+  ==> Primary Basis <==
+
+  Basis Set: CC-PVDZ
+    Blend: CC-PVDZ
+    Number of shells: 12
+    Number of basis functions: 20
+    Number of Cartesian functions: 20
+    Spherical Harmonics?: true
+    Max angular momentum: 1
+
+  ==> Integral Setup <==
+
+  Using in-core PK algorithm.
+   Calculation information:
+      Number of atoms:                   4
+      Number of AO shells:              12
+      Number of primitives:             20
+      Number of atomic orbitals:        20
+      Number of basis functions:        20
+
+      Integral cutoff                 1.00e-12
+      Number of threads:                 1
+
+  Performing in-core PK
+  Using 44310 doubles for integral storage.
+  We computed 903 shell quartets total.
+  Whereas there are 3081 unique shell quartets.
+
+  ==> DiskJK: Disk-Based J/K Matrices <==
+
+    J tasked:                  Yes
+    K tasked:                  Yes
+    wK tasked:                  No
+    Memory [MiB]:              375
+    Schwarz Cutoff:          1E-12
+
+    OpenMP threads:              1
+
+  Minimum eigenvalue in the overlap matrix is 9.0668780553E-02.
+  Reciprocal condition number of the overlap matrix is 3.1781390758E-02.
+    Using symmetric orthogonalization.
+
+  ==> Pre-Iterations <==
+
+  SCF Guess: Superposition of Atomic Densities via on-the-fly atomic UHF (no occupation information).
+
+   -------------------------
+    Irrep   Nso     Nmo    
+   -------------------------
+     A         20      20 
+   -------------------------
+    Total      20      20
+   -------------------------
+
+  ==> Iterations <==
+
+                        Total Energy        Delta E     RMS |[F,P]|
+
+   @RHF iter SAD:    -6.95823778895034   -6.95824e+00   0.00000e+00 
+   @RHF iter   1:    -5.80382864607559    1.15441e+00   1.36416e-02 ADIIS/DIIS
+   @RHF iter   2:    -5.84567036439841   -4.18417e-02   1.96888e-03 ADIIS/DIIS
+   @RHF iter   3:    -5.84664658010165   -9.76216e-04   1.28936e-04 ADIIS/DIIS
+   @RHF iter   4:    -5.84665053338907   -3.95329e-06   5.91800e-06 DIIS
+   @RHF iter   5:    -5.84665054029426   -6.90518e-09   3.61093e-07 DIIS
+   @RHF iter   6:    -5.84665054032323   -2.89715e-11   2.70091e-08 DIIS
+   @RHF iter   7:    -5.84665054032343   -2.03393e-13   1.35557e-09 DIIS
+   @RHF iter   8:    -5.84665054032343    3.55271e-15   4.76683e-11 DIIS
+  Energy and wave function converged.
+
+
+  ==> Post-Iterations <==
+
+    Orbital Energies [Eh]
+    ---------------------
+
+    Doubly Occupied:                                                      
+
+       1A     -1.642806     2A     -1.642806  
+
+    Virtual:                                                              
+
+       3A     -0.248891     4A     -0.248891     5A      0.168600  
+       6A      0.168600     7A      0.870650     8A      0.870650  
+       9A      0.870778    10A      0.870778    11A      0.870778  
+      12A      0.870778    13A      1.663975    14A      1.663975  
+      15A      2.257321    16A      2.257321    17A      2.257321  
+      18A      2.257321    19A      3.468918    20A      3.468918  
+
+    Final Occupation by Irrep:
+              A 
+    DOCC [     2 ]
+    NA   [     2 ]
+    NB   [     2 ]
+
+  @RHF Final Energy:    -5.84665054032343
+
+   => Energetics <=
+
+    Nuclear Repulsion Energy =              2.7851436909898526
+    One-Electron Energy =                 -10.6923628179977168
+    Two-Electron Energy =                   2.0605685866844370
+    Total Energy =                         -5.8466505403234272
+
+Computation Completed
+
+
+Properties will be evaluated at   0.000000,   0.000000,   0.000000 [a0]
+
+Properties computed using the SCF density matrix
+
+
+ Multipole Moments:
+
+ ------------------------------------------------------------------------------------
+     Multipole            Electronic (a.u.)      Nuclear  (a.u.)        Total (a.u.)
+ ------------------------------------------------------------------------------------
+
+ L = 1.  Multiply by 2.5417464519 to convert [e a0] to [Debye]
+ Dipole X            :          0.0000000            0.0000000            0.0000000
+ Dipole Y            :         -0.0000000            0.0000000           -0.0000000
+ Dipole Z            :         -0.1934420           -1.1390827           -1.3325246
+ Magnitude           :                                                    1.3325246
+
+ ------------------------------------------------------------------------------------
+
+*** tstop() called on CHEM9LYY31VAWS at Thu Dec 19 14:07:34 2024
+Module time:
+	user time   =       0.10 seconds =       0.00 minutes
+	system time =       0.00 seconds =       0.00 minutes
+	total time  =          0 seconds =       0.00 minutes
+Total time:
+	user time   =       2.14 seconds =       0.04 minutes
+	system time =       0.74 seconds =       0.01 minutes
+	total time  =        693 seconds =      11.55 minutes
+
+Scratch directory: /tmp/
+ MINTS: Wrapper to libmints.
+   by Justin Turney
+
+   Calculation information:
+      Number of threads:                 1
+      Number of atoms:                   4
+      Number of AO shells:              12
+      Number of SO shells:              12
+      Number of primitives:             20
+      Number of atomic orbitals:        20
+      Number of basis functions:        20
+
+      Number of irreps:                  1
+      Integral cutoff                 1.00e-12
+      Number of functions per irrep: [  20 ]
+
+ OEINTS: Overlap, kinetic, potential, dipole, and quadrupole integrals
+         stored in file 35.
+
+      Computing two-electron integrals...done
+      Computed 1553 non-zero two-electron integrals.
+        Stored in file 33.
+
+
+         ---------------------------------------------------------
+                          Configuration Interaction
+                            (a 'D E T C I' module)
+
+                 C. David Sherrill, Daniel G. A. Smith, and
+                              Matt L. Leininger
+         ---------------------------------------------------------
+
+
+   ==> Parameters <==
+
+    EX LEVEL       =        4      H0 BLOCKSIZE  =     1000
+    VAL EX LEVEL   =        0      H0 GUESS SIZE =     1000
+    H0COUPLINGSIZE =        0      H0 COUPLING   =       NO
+    MAXITER        =       24      NUM PRINT     =       20
+    NUM ROOTS      =       10      ICORE         =        1
+    PRINT LVL      =        1      FCI           =      YES
+    R CONV         = 1.00e-04      MIXED         =      YES
+    E CONV         = 1.00e-10      MIXED4        =      YES
+    R4S            =       NO      REPL OTF      =       NO
+    DIAG METHOD    =      SEM      FOLLOW ROOT   =        0
+    PRECONDITIONER = DAVIDSON      UPDATE        = DAVIDSON
+    S              =   0.0000      Ms0           =      YES
+    GUESS VECTOR   =  H0BLOCK      OPENTYPE      =     NONE
+    COLLAPSE SIZE  =        1      HD AVG        = EVANGELISTI
+    MAX NUM VECS   =      250      REF SYM       =     AUTO
+    IOPEN        =       NO
+
+    EX ALLOW       =  1  1  1  1 
+    STATE AVERAGE  =  0(1.00) 
+
+   ==> CI Orbital and Space information <==
+
+   ------------------------------------
+               Space    Total     A
+   ------------------------------------
+                 Nso       20    20
+                 Nmo       20    20
+               Ndocc        2     2
+               Nsocc        0     0
+   ------------------------------------
+              CI Spaces
+   ------------------------------------
+        Dropped DOCC        0     0
+              Active       20    20
+        Dropped UOCC        0     0
+   ------------------------------------
+
+   ==> Setting up CI strings <==
+
+    There are 190 alpha and 190 beta strings
+    The CI space requires 36100 (3.61E+04) determinants and 1 blocks
+
+   ==> Transforming CI integrals <==
+
+	Presorting SO-basis two-electron integrals.
+	Sorting File: SO Ints (nn|nn) nbuckets = 1
+	Constructing frozen core operators
+	Starting first half-transformation.
+	Sorting half-transformed integrals.
+	First half integral transformation complete.
+	Starting second half-transformation.
+	Two-electron integral transformation complete.
+
+   ==> Starting CI iterations <==
+
+    H0 Block Eigenvalue =  -5.88849670
+
+    Simultaneous Expansion Method (Block Davidson Method)
+    Using 10 initial trial vectors
+
+(sem_iter): H0block_->H0b_diag[1][1] - H0block_->H0b_diag[2][1] = -0.662517 - 0.662517 = -1.325033 > 1.0E-8
+(sem_iter): H0block_->H0b_diag[7][2] - H0block_->H0b_diag[8][2] = -0.662517 - 0.662517 = -1.325033 > 1.0E-8
+(sem_iter): H0block_->H0b_diag[1][5] - H0block_->H0b_diag[2][5] = 0.205640 - -0.205640 = 0.411280 > 1.0E-8
+(sem_iter): H0block_->H0b_diag[7][6] - H0block_->H0b_diag[8][6] = -0.205640 - 0.205640 = -0.411280 > 1.0E-8
+(sem_iter): H0block_->H0b_diag[3][7] - H0block_->H0b_diag[4][7] = 0.000000 - -0.000000 = 0.000000 > 1.0E-8
+(sem_iter): H0block_->H0b_diag[3][8] - H0block_->H0b_diag[4][8] = -0.000002 - -0.000000 = -0.000001 > 1.0E-8
+(sem_iter): H0block_->H0b_diag[3][9] - H0block_->H0b_diag[4][9] = 0.982459 - 0.047014 = 0.935445 > 1.0E-8
+(sem_iter): H0block_->H0b_diag[3][10] - H0block_->H0b_diag[4][10] = 0.047014 - -0.982459 = 1.029473 > 1.0E-8
+(sem_iter): H0block_->H0b_diag[49][14] - H0block_->H0b_diag[50][14] = -0.233886 - -0.856688 = 0.622801 > 1.0E-8
+(sem_iter): H0block_->H0b_diag[49][15] - H0block_->H0b_diag[50][15] = 0.856688 - -0.233886 = 1.090574 > 1.0E-8
+(sem_iter): H0block_->H0b_diag[5][16] - H0block_->H0b_diag[6][16] = -0.001522 - -0.022933 = 0.021411 > 1.0E-8
+(sem_iter): H0block_->H0b_diag[5][17] - H0block_->H0b_diag[6][17] = 0.022933 - -0.001522 = 0.024455 > 1.0E-8
+(sem_iter): H0block_->H0b_diag[3][18] - H0block_->H0b_diag[4][18] = 0.002479 - 0.022849 = -0.020370 > 1.0E-8
+(sem_iter): H0block_->H0b_diag[3][19] - H0block_->H0b_diag[4][19] = 0.022849 - -0.002479 = 0.025328 > 1.0E-8
+(sem_iter): H0block_->H0b_diag[1][20] - H0block_->H0b_diag[2][20] = -0.000000 - 0.000000 = -0.000000 > 1.0E-8
+(sem_iter): H0block_->H0b_diag[1][21] - H0block_->H0b_diag[2][21] = 0.015579 - -0.015579 = 0.031159 > 1.0E-8
+(sem_iter): H0block_->H0b_diag[29][22] - H0block_->H0b_diag[30][22] = -0.644083 - 0.644083 = -1.288166 > 1.0E-8
+(sem_iter): H0block_->H0b_diag[29][23] - H0block_->H0b_diag[30][23] = -0.266432 - 0.266432 = -0.532864 > 1.0E-8
+(sem_iter): H0block_->H0b_diag[33][24] - H0block_->H0b_diag[34][24] = 0.306452 - -0.306452 = 0.612905 > 1.0E-8
+(sem_iter): H0block_->H0b_diag[33][25] - H0block_->H0b_diag[34][25] = 0.626032 - -0.626032 = 1.252064 > 1.0E-8
+(sem_iter): H0block_->H0b_diag[7][26] - H0block_->H0b_diag[8][26] = -0.095738 - 0.095738 = -0.191476 > 1.0E-8
+(sem_iter): H0block_->H0b_diag[1][27] - H0block_->H0b_diag[2][27] = 0.095738 - -0.095738 = 0.191476 > 1.0E-8
+     Iter   Root       Total Energy       Delta E      C RMS
+
+   @CI  0:     0     -5.888496697217   -8.6736E+00   4.3859E-01  
+   @CI  0:     1     -4.885713026948   -7.6709E+00   4.4293E-01  
+   @CI  0:     2     -4.884291580765   -7.6694E+00   4.5039E-01  
+   @CI  0:     3     -4.499448986457   -7.2846E+00   4.0517E-01  
+   @CI  0:     4     -4.499216851046   -7.2844E+00   4.0647E-01  
+   @CI  0:     5     -4.266972261698   -7.0521E+00   2.9529E-01  
+   @CI  0:     6     -3.899841117580   -6.6850E+00   4.7351E-01  
+   @CI  0:     7     -3.899841117580   -6.6850E+00   4.7351E-01  
+   @CI  0:     8     -3.899841116973   -6.6850E+00   4.7351E-01  
+   @CI  0:     9     -3.899841116973   -6.6850E+00   4.7351E-01  
+
+   @CI  1:     0     -5.920535119917   -3.2038E-02   4.1312E-02  
+   @CI  1:     1     -4.924152951455   -3.8440E-02   5.2346E-02  
+   @CI  1:     2     -4.924016023612   -3.9724E-02   5.8525E-02  
+   @CI  1:     3     -4.532929966837   -3.3481E-02   4.7214E-02  
+   @CI  1:     4     -4.532929397986   -3.3713E-02   4.7315E-02  
+   @CI  1:     5     -4.293045012072   -2.6073E-02   5.4407E-02  
+   @CI  1:     6     -3.953442723581   -5.3602E-02   7.8215E-02  
+   @CI  1:     7     -3.953442723581   -5.3602E-02   7.8215E-02  
+   @CI  1:     8     -3.953442722865   -5.3602E-02   7.8215E-02  
+   @CI  1:     9     -3.953442722865   -5.3602E-02   7.8215E-02  
+
+   @CI  2:     0     -5.920736980404   -2.0186E-04   5.4766E-03  
+   @CI  2:     1     -4.924611743661   -4.5879E-04   6.7859E-03  
+   @CI  2:     2     -4.924605665139   -5.8964E-04   8.4656E-03  
+   @CI  2:     3     -4.533348884013   -4.1892E-04   7.3290E-03  
+   @CI  2:     4     -4.533347584802   -4.1819E-04   7.9554E-03  
+   @CI  2:     5     -4.293833972803   -7.8896E-04   9.9099E-03  
+   @CI  2:     6     -3.954741465967   -1.2987E-03   1.4722E-02  
+   @CI  2:     7     -3.954741465967   -1.2987E-03   1.4722E-02  
+   @CI  2:     8     -3.954741465738   -1.2987E-03   1.4722E-02  
+   @CI  2:     9     -3.954741465738   -1.2987E-03   1.4722E-02  
+
+   @CI  3:     0     -5.920742197436   -5.2170E-06   1.1535E-03  
+   @CI  3:     1     -4.924620228996   -8.4853E-06   9.6976E-04  
+   @CI  3:     2     -4.924619899237   -1.4234E-05   1.6265E-03  
+   @CI  3:     3     -4.533362752508   -1.3868E-05   2.2224E-03  
+   @CI  3:     4     -4.533362582808   -1.4998E-05   2.6939E-03  
+   @CI  3:     5     -4.293863100922   -2.9128E-05   2.3391E-03  
+   @CI  3:     6     -3.954794032713   -5.2567E-05   3.7610E-03  
+   @CI  3:     7     -3.954794032713   -5.2567E-05   3.7610E-03  
+   @CI  3:     8     -3.954794032212   -5.2566E-05   3.7610E-03  
+   @CI  3:     9     -3.954794032212   -5.2566E-05   3.7610E-03  
+
+   @CI  4:     0     -5.920742384340   -1.8690E-07   1.2704E-04  
+   @CI  4:     1     -4.924620425321   -1.9633E-07   1.6282E-04  
+   @CI  4:     2     -4.924620415089   -5.1585E-07   2.8572E-04  
+   @CI  4:     3     -4.533364851868   -2.0994E-06   8.1627E-04  
+   @CI  4:     4     -4.533364666291   -2.0835E-06   1.0364E-03  
+   @CI  4:     5     -4.293865359747   -2.2588E-06   9.3121E-04  
+   @CI  4:     6     -3.954798195896   -4.1632E-06   9.8128E-04  
+   @CI  4:     7     -3.954798195896   -4.1632E-06   9.8128E-04  
+   @CI  4:     8     -3.954798195365   -4.1632E-06   9.8128E-04  
+   @CI  4:     9     -3.954798195365   -4.1632E-06   9.8128E-04  
+
+   @CI  5:     0     -5.920742386881   -2.5409E-09   1.4739E-05  
+   @CI  5:     1     -4.924620431060   -5.7388E-09   3.5903E-05  
+   @CI  5:     2     -4.924620429629   -1.4541E-08   4.6571E-05  
+   @CI  5:     3     -4.533365062052   -2.1018E-07   2.1550E-04  
+   @CI  5:     4     -4.533365045510   -3.7922E-07   3.2104E-04  
+   @CI  5:     5     -4.293865757989   -3.9824E-07   3.8796E-04  
+   @CI  5:     6     -3.954798431858   -2.3596E-07   2.0909E-04  
+   @CI  5:     7     -3.954798431858   -2.3596E-07   2.0909E-04  
+   @CI  5:     8     -3.954798431326   -2.3596E-07   2.0909E-04  
+   @CI  5:     9     -3.954798431326   -2.3596E-07   2.0909E-04  
+
+   @CI  6:     0     -5.920742386913   -3.2115E-11   1.7621E-06 c
+   @CI  6:     1     -4.924620431356   -2.9600E-10   8.2476E-06  
+   @CI  6:     2     -4.924620430027   -3.9733E-10   8.3772E-06  
+   @CI  6:     3     -4.533365072123   -1.0072E-08   3.5578E-05  
+   @CI  6:     4     -4.533365070950   -2.5439E-08   7.3528E-05  
+   @CI  6:     5     -4.293865796490   -3.8502E-08   8.3792E-05  
+   @CI  6:     6     -3.954798442567   -1.0709E-08   4.5444E-05  
+   @CI  6:     7     -3.954798442567   -1.0709E-08   4.5444E-05  
+   @CI  6:     8     -3.954798442035   -1.0709E-08   4.5444E-05  
+   @CI  6:     9     -3.954798442035   -1.0709E-08   4.5444E-05  
+
+   @CI  7:     0     -5.920742386913   -1.1546E-13   1.5405E-06 c
+   @CI  7:     1     -4.924620431370   -1.4099E-11   1.4700E-06 c
+   @CI  7:     2     -4.924620430041   -1.4329E-11   1.4708E-06 c
+   @CI  7:     3     -4.533365072394   -2.7040E-10   9.3069E-06  
+   @CI  7:     4     -4.533365072254   -1.3045E-09   1.3210E-05  
+   @CI  7:     5     -4.293865798380   -1.8893E-09   2.0953E-05  
+   @CI  7:     6     -3.954798443014   -4.4715E-10   8.8542E-06  
+   @CI  7:     7     -3.954798443014   -4.4716E-10   8.8542E-06  
+   @CI  7:     8     -3.954798442482   -4.4714E-10   8.8542E-06  
+   @CI  7:     9     -3.954798442482   -4.4716E-10   8.8542E-06  
+
+   @CI  8:     0     -5.920742386913   1.2434E-14   1.5385E-06 c
+   @CI  8:     1     -4.924620431371   -2.7267E-13   9.3360E-07 c
+   @CI  8:     2     -4.924620430041   -2.7089E-13   9.3372E-07 c
+   @CI  8:     3     -4.533365072421   -2.7381E-11   2.4314E-06 c
+   @CI  8:     4     -4.533365072294   -3.9462E-11   2.4606E-06 c
+   @CI  8:     5     -4.293865798504   -1.2468E-10   5.2952E-06  
+   @CI  8:     6     -3.954798443031   -1.7523E-11   1.6354E-06 c
+   @CI  8:     7     -3.954798443031   -1.7530E-11   1.6354E-06 c
+   @CI  8:     8     -3.954798442499   -1.7539E-11   1.6354E-06 c
+   @CI  8:     9     -3.954798442499   -1.7512E-11   1.6354E-06 c
+
+   @CI  9:     0     -5.920742386913   -3.5527E-15   1.5385E-06 c
+   @CI  9:     1     -4.924620431371   7.9936E-15   9.3359E-07 c
+   @CI  9:     2     -4.924620430041   5.3291E-15   9.3372E-07 c
+   @CI  9:     3     -4.533365072421   -8.8818E-16   2.4314E-06 c
+   @CI  9:     4     -4.533365072294   7.9936E-15   2.4607E-06 c
+   @CI  9:     5     -4.293865798511   -6.5974E-12   8.2053E-07 c
+   @CI  9:     6     -3.954798443031   -1.0658E-14   1.6354E-06 c
+   @CI  9:     7     -3.954798443031   3.5527E-15   1.6354E-06 c
+   @CI  9:     8     -3.954798442499   1.3323E-14   1.6354E-06 c
+   @CI  9:     9     -3.954798442499   -8.8818E-16   1.6354E-06 c
+
+
+   ==> Energetics <==
+
+    SCF energy =           -5.846650540323427
+    Total CI energy =      -5.920742386913123
+
+   ==> FCI root 0 information <==
+
+    FCI Root 0 energy =    -5.920742386913123
+
+   The 20 most important determinants:
+
+    *   1    0.990133  (    0,    0)  1AX 2AX 
+    *   2   -0.041812  (    4,    4)  2AX 4AX 
+    *   3   -0.041812  (    1,    1)  1AX 3AX 
+    *   4   -0.029252  (   21,   21)  1AX 8AX 
+    *   5   -0.029252  (   16,   16)  2AX 7AX 
+    *   6   -0.024509  (   67,    4)  2AX 4AB 13AA 
+    *   7   -0.024509  (    4,   67)  2AX 4AA 13AB 
+    *   8   -0.024509  (    1,   78)  1AX 3AA 14AB 
+    *   9   -0.024509  (   78,    1)  1AX 3AB 14AA 
+    *  10   -0.023705  (   67,   67)  2AX 13AX 
+    *  11   -0.023705  (   78,   78)  1AX 14AX 
+    *  12    0.021773  (   16,    4)  2AX 4AB 7AA 
+    *  13    0.021773  (    4,   16)  2AX 4AA 7AB 
+    *  14    0.021773  (    1,   21)  1AX 3AA 8AB 
+    *  15    0.021773  (   21,    1)  1AX 3AB 8AA 
+    *  16   -0.020539  (   11,   11)  2AX 6AX 
+    *  17   -0.020539  (    6,    6)  1AX 5AX 
+    *  18   -0.020095  (   11,    4)  2AX 4AB 6AA 
+    *  19   -0.020095  (    4,   11)  2AX 4AA 6AB 
+    *  20   -0.020095  (    1,    6)  1AX 3AA 5AB 
+
+
+   ==> FCI root 1 information <==
+
+    FCI Root 1 energy =    -4.924620431370550
+
+   The 20 most important determinants:
+
+    *   1   -0.672096  (    0,    1)  1AX 2AA 3AB 
+    *   2   -0.672096  (    1,    0)  1AX 2AB 3AA 
+    *   3    0.176902  (    1,    1)  1AX 3AX 
+    *   4   -0.137176  (    6,    0)  1AX 2AB 5AA 
+    *   5   -0.137176  (    0,    6)  1AX 2AA 5AB 
+    *   6   -0.062958  (   21,    1)  1AX 3AB 8AA 
+    *   7   -0.062958  (    1,   21)  1AX 3AA 8AB 
+    *   8    0.042137  (    6,    1)  1AX 3AB 5AA 
+    *   9    0.042137  (    1,    6)  1AX 3AA 5AB 
+    *  10    0.028382  (    4,    5)  2AA 3AB 4AX 
+    *  11    0.028382  (    5,    4)  2AB 3AA 4AX 
+    *  12    0.027396  (    6,    6)  1AX 5AX 
+    *  13    0.023868  (   78,    1)  1AX 3AB 14AA 
+    *  14    0.023868  (    1,   78)  1AX 3AA 14AB 
+    *  15    0.022289  (    0,    0)  1AX 2AX 
+    *  16    0.019856  (   16,   17)  2AA 3AB 7AX 
+    *  17    0.019856  (   17,   16)  2AB 3AA 7AX 
+    *  18    0.019013  (    1,  171)  1AX 3AA 20AB 
+    *  19    0.019013  (  171,    1)  1AX 3AB 20AA 
+    *  20   -0.017523  (   21,   21)  1AX 8AX 
+
+
+   ==> FCI root 2 information <==
+
+    FCI Root 2 energy =    -4.924620430041394
+
+   The 20 most important determinants:
+
+    *   1   -0.672096  (    4,    0)  1AB 2AX 4AA 
+    *   2   -0.672096  (    0,    4)  1AA 2AX 4AB 
+    *   3   -0.176902  (    4,    4)  2AX 4AX 
+    *   4   -0.137176  (   11,    0)  1AB 2AX 6AA 
+    *   5   -0.137176  (    0,   11)  1AA 2AX 6AB 
+    *   6    0.062958  (    4,   16)  2AX 4AA 7AB 
+    *   7    0.062958  (   16,    4)  2AX 4AB 7AA 
+    *   8   -0.042137  (   11,    4)  2AX 4AB 6AA 
+    *   9   -0.042137  (    4,   11)  2AX 4AA 6AB 
+    *  10    0.028382  (    5,    1)  1AB 3AX 4AA 
+    *  11    0.028382  (    1,    5)  1AA 3AX 4AB 
+    *  12   -0.027396  (   11,   11)  2AX 6AX 
+    *  13   -0.023868  (    4,   67)  2AX 4AA 13AB 
+    *  14   -0.023868  (   67,    4)  2AX 4AB 13AA 
+    *  15   -0.022293  (    0,    0)  1AX 2AX 
+    *  16   -0.019856  (   21,   24)  1AA 4AB 8AX 
+    *  17   -0.019856  (   24,   21)  1AB 4AA 8AX 
+    *  18   -0.019013  (    4,  154)  2AX 4AA 19AB 
+    *  19   -0.019013  (  154,    4)  2AX 4AB 19AA 
+    *  20    0.017523  (   16,   16)  2AX 7AX 
+
+
+   ==> FCI root 3 information <==
+
+    FCI Root 3 energy =    -4.533365072420944
+
+   The 20 most important determinants:
+
+    *   1    0.673292  (    6,    0)  1AX 2AB 5AA 
+    *   2    0.673292  (    0,    6)  1AX 2AA 5AB 
+    *   3   -0.144922  (    1,    0)  1AX 2AB 3AA 
+    *   4   -0.144922  (    0,    1)  1AX 2AA 3AB 
+    *   5   -0.104336  (    6,    1)  1AX 3AB 5AA 
+    *   6   -0.104336  (    1,    6)  1AX 3AA 5AB 
+    *   7    0.073308  (    6,   21)  1AX 5AA 8AB 
+    *   8    0.073308  (   21,    6)  1AX 5AB 8AA 
+    *   9   -0.045208  (    6,   78)  1AX 5AA 14AB 
+    *  10   -0.045208  (   78,    6)  1AX 5AB 14AA 
+    *  11   -0.035775  (    6,    6)  1AX 5AX 
+    *  12    0.032731  (    0,   21)  1AX 2AA 8AB 
+    *  13    0.032731  (   21,    0)  1AX 2AB 8AA 
+    *  14    0.028433  (    9,    4)  2AB 4AX 5AA 
+    *  15    0.028433  (    4,    9)  2AA 4AX 5AB 
+    *  16   -0.019892  (   16,   19)  2AA 5AB 7AX 
+    *  17   -0.019892  (   19,   16)  2AB 5AA 7AX 
+    *  18   -0.017347  (    6,  171)  1AX 5AA 20AB 
+    *  19   -0.017347  (  171,    6)  1AX 5AB 20AA 
+    *  20    0.016666  (    9,   67)  2AB 4AA 5AA 13AB 
+
+
+   ==> FCI root 4 information <==
+
+    FCI Root 4 energy =    -4.533365072293645
+
+   The 20 most important determinants:
+
+    *   1    0.673291  (    0,   11)  1AA 2AX 6AB 
+    *   2    0.673291  (   11,    0)  1AB 2AX 6AA 
+    *   3   -0.144923  (    0,    4)  1AA 2AX 4AB 
+    *   4   -0.144923  (    4,    0)  1AB 2AX 4AA 
+    *   5    0.104334  (    4,   11)  2AX 4AA 6AB 
+    *   6    0.104334  (   11,    4)  2AX 4AB 6AA 
+    *   7   -0.073308  (   16,   11)  2AX 6AB 7AA 
+    *   8   -0.073308  (   11,   16)  2AX 6AA 7AB 
+    *   9    0.045206  (   67,   11)  2AX 6AB 13AA 
+    *  10    0.045206  (   11,   67)  2AX 6AA 13AB 
+    *  11    0.035772  (   11,   11)  2AX 6AX 
+    *  12    0.032731  (    0,   16)  1AA 2AX 7AB 
+    *  13    0.032731  (   16,    0)  1AB 2AX 7AA 
+    *  14   -0.028432  (    1,   12)  1AA 3AX 6AB 
+    *  15   -0.028432  (   12,    1)  1AB 3AX 6AA 
+    *  16    0.019892  (   21,   26)  1AA 6AB 8AX 
+    *  17    0.019892  (   26,   21)  1AB 6AA 8AX 
+    *  18    0.017348  (   11,  154)  2AX 6AA 19AB 
+    *  19    0.017348  (  154,   11)  2AX 6AB 19AA 
+    *  20    0.016666  (    1,   83)  1AA 3AA 6AB 14AB 
+
+
+   ==> FCI root 5 information <==
+
+    FCI Root 5 energy =    -4.293865798510848
+
+   The 20 most important determinants:
+
+    *   1    0.440043  (    0,    5)  1AA 2AA 3AB 4AB 
+    *   2    0.440043  (    5,    0)  1AB 2AB 3AA 4AA 
+    *   3   -0.440043  (    4,    1)  1AB 2AA 3AB 4AA 
+    *   4   -0.440043  (    1,    4)  1AA 2AB 3AA 4AB 
+    *   5    0.143058  (    0,   12)  1AA 2AA 3AB 6AB 
+    *   6    0.143058  (   12,    0)  1AB 2AB 3AA 6AA 
+    *   7   -0.143058  (   11,    1)  1AB 2AA 3AB 6AA 
+    *   8   -0.143058  (    1,   11)  1AA 2AB 3AA 6AB 
+    *   9   -0.143058  (    0,    9)  1AA 2AA 4AB 5AB 
+    *  10   -0.143058  (    9,    0)  1AB 2AB 4AA 5AA 
+    *  11   -0.143058  (    4,    6)  1AB 2AA 4AA 5AB 
+    *  12   -0.143058  (    6,    4)  1AA 2AB 4AB 5AA 
+    *  13   -0.046508  (    6,   11)  1AA 2AB 5AA 6AB 
+    *  14   -0.046508  (   11,    6)  1AB 2AA 5AB 6AA 
+    *  15    0.046508  (   14,    0)  1AB 2AB 5AA 6AA 
+    *  16    0.046508  (    0,   14)  1AA 2AA 5AB 6AB 
+    *  17   -0.046043  (   67,    1)  1AB 2AA 3AB 13AA 
+    *  18    0.046043  (   68,    0)  1AB 2AB 3AA 13AA 
+    *  19    0.046043  (    0,   68)  1AA 2AA 3AB 13AB 
+    *  20   -0.046043  (    1,   67)  1AA 2AB 3AA 13AB 
+
+
+   ==> FCI root 6 information <==
+
+    FCI Root 6 energy =    -3.954798443031462
+
+   The 20 most important determinants:
+
+    *   1    0.626264  (    0,   37)  1AA 2AX 10AB 
+    *   2    0.626264  (   37,    0)  1AB 2AX 10AA 
+    *   3    0.283297  (    0,   29)  1AA 2AX 9AB 
+    *   4    0.283297  (   29,    0)  1AB 2AX 9AA 
+    *   5    0.105968  (    4,   37)  2AX 4AA 10AB 
+    *   6    0.105968  (   37,    4)  2AX 4AB 10AA 
+    *   7   -0.057246  (   16,   37)  2AX 7AA 10AB 
+    *   8   -0.057246  (   37,   16)  2AX 7AB 10AA 
+    *   9    0.051525  (   37,   67)  2AX 10AA 13AB 
+    *  10    0.051525  (   67,   37)  2AX 10AB 13AA 
+    *  11    0.047936  (   29,    4)  2AX 4AB 9AA 
+    *  12    0.047936  (    4,   29)  2AX 4AA 9AB 
+    *  13    0.034933  (   37,   11)  2AX 6AB 10AA 
+    *  14    0.034933  (   11,   37)  2AX 6AA 10AB 
+    *  15   -0.026446  (    1,   38)  1AA 3AX 10AB 
+    *  16   -0.026446  (   38,    1)  1AB 3AX 10AA 
+    *  17   -0.025896  (   16,   29)  2AX 7AA 9AB 
+    *  18   -0.025896  (   29,   16)  2AX 7AB 9AA 
+    *  19    0.023308  (   29,   67)  2AX 9AA 13AB 
+    *  20    0.023308  (   67,   29)  2AX 9AB 13AA 
+
+
+   ==> FCI root 7 information <==
+
+    FCI Root 7 energy =    -3.954798443031436
+
+   The 20 most important determinants:
+
+    *   1   -0.626264  (   29,    0)  1AB 2AX 9AA 
+    *   2   -0.626264  (    0,   29)  1AA 2AX 9AB 
+    *   3    0.283297  (   37,    0)  1AB 2AX 10AA 
+    *   4    0.283297  (    0,   37)  1AA 2AX 10AB 
+    *   5   -0.105968  (   29,    4)  2AX 4AB 9AA 
+    *   6   -0.105968  (    4,   29)  2AX 4AA 9AB 
+    *   7    0.057246  (   29,   16)  2AX 7AB 9AA 
+    *   8    0.057246  (   16,   29)  2AX 7AA 9AB 
+    *   9   -0.051525  (   29,   67)  2AX 9AA 13AB 
+    *  10   -0.051525  (   67,   29)  2AX 9AB 13AA 
+    *  11    0.047936  (   37,    4)  2AX 4AB 10AA 
+    *  12    0.047936  (    4,   37)  2AX 4AA 10AB 
+    *  13   -0.034933  (   29,   11)  2AX 6AB 9AA 
+    *  14   -0.034933  (   11,   29)  2AX 6AA 9AB 
+    *  15    0.026446  (   30,    1)  1AB 3AX 9AA 
+    *  16    0.026446  (    1,   30)  1AA 3AX 9AB 
+    *  17   -0.025896  (   37,   16)  2AX 7AB 10AA 
+    *  18   -0.025896  (   16,   37)  2AX 7AA 10AB 
+    *  19    0.023308  (   37,   67)  2AX 10AA 13AB 
+    *  20    0.023308  (   67,   37)  2AX 10AB 13AA 
+
+
+   ==> FCI root 8 information <==
+
+    FCI Root 8 energy =    -3.954798442499438
+
+   The 20 most important determinants:
+
+    *   1   -0.591214  (   45,    0)  1AX 2AB 11AA 
+    *   2   -0.591214  (    0,   45)  1AX 2AA 11AB 
+    *   3   -0.350613  (   55,    0)  1AX 2AB 12AA 
+    *   4   -0.350613  (    0,   55)  1AX 2AA 12AB 
+    *   5    0.100038  (   45,    1)  1AX 3AB 11AA 
+    *   6    0.100038  (    1,   45)  1AX 3AA 11AB 
+    *   7    0.059326  (   55,    1)  1AX 3AB 12AA 
+    *   8    0.059326  (    1,   55)  1AX 3AA 12AB 
+    *   9   -0.054042  (   45,   21)  1AX 8AB 11AA 
+    *  10   -0.054042  (   21,   45)  1AX 8AA 11AB 
+    *  11    0.048641  (   45,   78)  1AX 11AA 14AB 
+    *  12    0.048641  (   78,   45)  1AX 11AB 14AA 
+    *  13    0.032978  (   45,    6)  1AX 5AB 11AA 
+    *  14    0.032978  (    6,   45)  1AX 5AA 11AB 
+    *  15   -0.032049  (   55,   21)  1AX 8AB 12AA 
+    *  16   -0.032049  (   21,   55)  1AX 8AA 12AB 
+    *  17    0.028846  (   55,   78)  1AX 12AA 14AB 
+    *  18    0.028846  (   78,   55)  1AX 12AB 14AA 
+    *  19   -0.024966  (   48,    4)  2AB 4AX 11AA 
+    *  20   -0.024966  (    4,   48)  2AA 4AX 11AB 
+
+
+   ==> FCI root 9 information <==
+
+    FCI Root 9 energy =    -3.954798442499381
+
+   The 20 most important determinants:
+
+    *   1    0.591214  (   55,    0)  1AX 2AB 12AA 
+    *   2    0.591214  (    0,   55)  1AX 2AA 12AB 
+    *   3   -0.350613  (   45,    0)  1AX 2AB 11AA 
+    *   4   -0.350613  (    0,   45)  1AX 2AA 11AB 
+    *   5   -0.100038  (   55,    1)  1AX 3AB 12AA 
+    *   6   -0.100038  (    1,   55)  1AX 3AA 12AB 
+    *   7    0.059326  (   45,    1)  1AX 3AB 11AA 
+    *   8    0.059326  (    1,   45)  1AX 3AA 11AB 
+    *   9    0.054042  (   55,   21)  1AX 8AB 12AA 
+    *  10    0.054042  (   21,   55)  1AX 8AA 12AB 
+    *  11   -0.048641  (   55,   78)  1AX 12AA 14AB 
+    *  12   -0.048641  (   78,   55)  1AX 12AB 14AA 
+    *  13   -0.032978  (   55,    6)  1AX 5AB 12AA 
+    *  14   -0.032978  (    6,   55)  1AX 5AA 12AB 
+    *  15   -0.032049  (   45,   21)  1AX 8AB 11AA 
+    *  16   -0.032049  (   21,   45)  1AX 8AA 11AB 
+    *  17    0.028846  (   45,   78)  1AX 11AA 14AB 
+    *  18    0.028846  (   78,   45)  1AX 11AB 14AA 
+    *  19    0.024966  (   58,    4)  2AB 4AX 12AA 
+    *  20    0.024966  (    4,   58)  2AA 4AX 12AB 
+
+		 "A good bug is a dead bug" 
+
+			 - Starship Troopers
+
+		 "I didn't write FORTRAN.  That's the problem."
+
+			 - Edward Valeev
+
+
+Properties will be evaluated at   0.000000,   0.000000,   0.000000 [a0]
+
+Properties computed using the FCI density matrix
+
+
+ Multipole Moments:
+
+ ------------------------------------------------------------------------------------
+     Multipole            Electronic (a.u.)      Nuclear  (a.u.)        Total (a.u.)
+ ------------------------------------------------------------------------------------
+
+ L = 1.  Multiply by 2.5417464519 to convert [e a0] to [Debye]
+ Dipole X            :         -0.0000000            0.0000000           -0.0000000
+ Dipole Y            :          0.0000000            0.0000000            0.0000000
+ Dipole Z            :         -0.1478629           -1.1390827           -1.2869456
+ Magnitude           :                                                    1.2869456
+
+ ------------------------------------------------------------------------------------
