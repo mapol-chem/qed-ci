@@ -2302,7 +2302,7 @@ class PFHamiltonianGenerator:
                 # np.set_printoptions(precision=12)
                 # print(np.diag(eig_mat))
                 ################################################################self.build_JK()
-                self.build_state_avarage_rdms(eigenvecs)
+                self.build_state_average_rdms(eigenvecs)
                 # print(self.D_tu_avg)
                 # print("qrqr")
                 # print(self.D_tu_avg2)
@@ -2324,7 +2324,7 @@ class PFHamiltonianGenerator:
                 #                 tu * self.n_act_orb * self.n_act_orb + vw,
                 #                 ((t+self.n_in_a) * self.n_occupied + u+self.n_in_a)*self.n_occupied*self.n_occupied + (v+self.n_in_a)*self.n_occupied + w+self.n_in_a)
 
-                #####get state-avaraged rdms
+                #####get state-averaged rdms
                 ####self.D_tu_avg = np.zeros((self.n_act_orb * self.n_act_orb))
                 ####self.Dpe_tu_avg = np.zeros((self.n_act_orb * self.n_act_orb))
                 ####self.D_tuvw_avg = np.zeros((self.n_act_orb * self.n_act_orb * self.n_act_orb * self.n_act_orb))
@@ -2387,8 +2387,8 @@ class PFHamiltonianGenerator:
                 #                #dum = self.D_tuvw_avg[tv * self.n_act_orb * self.n_act_orb + uw]-self.D_tuvw_avg[tv * self.n_act_orb * self.n_act_orb + wu]
                 #                if dum > 1e-14: print("hiha",'{:.12f}'.format(dum))
 
-                # test avarage energy
-                print("test avarage energy")
+                # test average energy
+                print("test average energy")
                 avg_energy = 0.0
                 for i in range(self.davidson_roots):
                     avg_energy += self.weight[i] * eigenvals[i]
@@ -3329,7 +3329,7 @@ class PFHamiltonianGenerator:
                 ########            avg_energy += self.weight[i] * eigenvals[i]
                 ########        print("avg energy", macroiteration, avg_energy)
                 ########        print("average energy at the start of macroiteration", avg_energy)
-                ########        self.build_state_avarage_rdms(eigenvecs)
+                ########        self.build_state_average_rdms(eigenvecs)
 
                 ########    if macroiteration > 0 and convergence == 1:
 
@@ -3722,7 +3722,7 @@ class PFHamiltonianGenerator:
                                 "average energy at the start of macroiteration",
                                 avg_energy,
                             )
-                            self.build_state_avarage_rdms(eigenvecs)
+                            self.build_state_average_rdms(eigenvecs)
 
                         if macroiteration > 0 and convergence == 1:
 
@@ -7922,7 +7922,7 @@ class PFHamiltonianGenerator:
                 ratio = exact_energy / predicted_energy
                 trust_radius = self.step_control(ratio, trust_radius)
                 current_energy = avg_energy
-                self.build_state_avarage_rdms(eigenvecs)
+                self.build_state_average_rdms(eigenvecs)
             else:
                 trust_radius = 0.7 * trust_radius
                 print("Reject step, restart")
@@ -8245,7 +8245,7 @@ class PFHamiltonianGenerator:
                 ratio = exact_energy / predicted_energy
                 trust_radius = self.step_control(ratio, trust_radius)
                 current_energy = avg_energy
-                self.build_state_avarage_rdms(eigenvecs)
+                self.build_state_average_rdms(eigenvecs)
 
                 self.build_intermediates_internal(
                     eigenvecs,
@@ -9143,7 +9143,7 @@ class PFHamiltonianGenerator:
                 ratio = exact_energy / predicted_energy
                 trust_radius = self.step_control(ratio, trust_radius)
                 current_energy = avg_energy
-                self.build_state_avarage_rdms(eigenvecs)
+                self.build_state_average_rdms(eigenvecs)
 
                 self.build_intermediates_internal(
                     eigenvecs,
@@ -9375,7 +9375,7 @@ class PFHamiltonianGenerator:
                 trust_radius = 0.75
         return trust_radius
 
-    def build_state_avarage_rdms(self, eigenvecs):
+    def build_state_average_rdms(self, eigenvecs):
         self.D_tu_avg = np.zeros((self.n_act_orb * self.n_act_orb))
         self.Dpe_tu_avg = np.zeros((self.n_act_orb * self.n_act_orb))
         self.D_tuvw_avg = np.zeros(
@@ -11212,7 +11212,7 @@ class PFHamiltonianGenerator:
                 avg_energy += self.weight[i] * eigenvals[i]
             # print("iteration",microiteration + 1, avg_energy, flush = True)
             current_energy = avg_energy
-            self.build_state_avarage_rdms(eigenvecs)
+            self.build_state_average_rdms(eigenvecs)
             total_norm = np.sqrt(
                 np.power(gradient_norm, 2) + np.power(current_residual, 2)
             )
@@ -11830,7 +11830,7 @@ class PFHamiltonianGenerator:
                 avg_energy += self.weight[i] * eigenvals[i]
             print("iteration", microiteration + 1, avg_energy, flush=True)
             current_energy = avg_energy
-            self.build_state_avarage_rdms(eigenvecs)
+            self.build_state_average_rdms(eigenvecs)
             total_norm = np.sqrt(
                 np.power(gradient_norm, 2) + np.power(current_residual, 2)
             )
@@ -12466,7 +12466,7 @@ class PFHamiltonianGenerator:
                 avg_energy += self.weight[i] * eigenvals[i]
             print("iteration", microiteration + 1, avg_energy, flush=True)
             current_energy = avg_energy
-            self.build_state_avarage_rdms(eigenvecs)
+            self.build_state_average_rdms(eigenvecs)
             total_norm = np.sqrt(
                 np.power(gradient_norm, 2) + np.power(current_residual, 2)
             )
@@ -13178,7 +13178,7 @@ class PFHamiltonianGenerator:
             current_energy = avg_energy
 
             start = timer()
-            self.build_state_avarage_rdms(eigenvecs)
+            self.build_state_average_rdms(eigenvecs)
             end = timer()
             print("building RDM took", end - start)
 
@@ -14656,7 +14656,7 @@ class PFHamiltonianGenerator:
             current_energy = avg_energy
 
             start = timer()
-            self.build_state_avarage_rdms(eigenvecs)
+            self.build_state_average_rdms(eigenvecs)
             end = timer()
             print("building RDM took", end - start)
 
@@ -16121,7 +16121,7 @@ class PFHamiltonianGenerator:
             current_energy = avg_energy
 
             start = timer()
-            self.build_state_avarage_rdms(eigenvecs)
+            self.build_state_average_rdms(eigenvecs)
             end = timer()
             print("building RDM took", end - start)
 
@@ -16646,7 +16646,7 @@ class PFHamiltonianGenerator:
             current_energy = avg_energy
 
             start = timer()
-            self.build_state_avarage_rdms(eigenvecs)
+            self.build_state_average_rdms(eigenvecs)
             end = timer()
             print("building RDM took", end - start, flush=True)
 
