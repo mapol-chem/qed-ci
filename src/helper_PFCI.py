@@ -3579,498 +3579,503 @@ class PFHamiltonianGenerator:
                 ########    macroiteration += 1
                 ########end = timer()
                 ########print("optimization took", end - start)
+                if self.casscf_optimization == True:
+                    ####back up wmk algorithm
+                    if self.n_in_a == 0 and self.n_act_orb == self.nmo:
+                        print("The requested casci level is equivalent to fci so no orbital optimization will be performed")
+                        pass
+                    else:
+                        start = timer()
+                        macroiteration = 0
+                        self.U_total = np.eye(self.nmo)
+                        old_avg_energy = avg_energy
+                        new_avg_energy = 0
+                        convergence = 0
+                        while macroiteration < 20000:
+                            if np.abs(new_avg_energy - old_avg_energy) < 1e-9:
+                                convergence = 1
+                            if macroiteration > 0:
 
-                ####back up wmk algorithm
-                if self.n_in_a == 0 and self.n_act_orb == self.nmo:
-                    pass
-                else:
-                    start = timer()
-                    macroiteration = 0
-                    self.U_total = np.eye(self.nmo)
-                    old_avg_energy = avg_energy
-                    new_avg_energy = 0
-                    convergence = 0
-                    while macroiteration < 20000:
-                        if np.abs(new_avg_energy - old_avg_energy) < 1e-9:
-                            convergence = 1
-                        if macroiteration > 0:
-
-                            # print("U total")
-                            # self.printA(self.U_total)
-                            print(
-                                "old energy",
-                                old_avg_energy,
-                                "new energy",
-                                new_avg_energy,
-                                flush=True,
-                            )
-                            occupied_J = np.zeros(
-                                (
-                                    self.n_occupied,
-                                    self.n_occupied,
-                                    self.n_occupied,
-                                    self.n_occupied,
+                                # print("U total")
+                                # self.printA(self.U_total)
+                                print(
+                                    "old energy",
+                                    old_avg_energy,
+                                    "new energy",
+                                    new_avg_energy,
+                                    flush=True,
                                 )
-                            )
-                            occupied_J[
-                                self.n_in_a : self.n_occupied,
-                                self.n_in_a : self.n_occupied,
-                                self.n_in_a : self.n_occupied,
-                                self.n_in_a : self.n_occupied,
-                            ] = copy.deepcopy(
-                                self.J[
+                                occupied_J = np.zeros(
+                                    (
+                                        self.n_occupied,
+                                        self.n_occupied,
+                                        self.n_occupied,
+                                        self.n_occupied,
+                                    )
+                                )
+                                occupied_J[
+                                    self.n_in_a : self.n_occupied,
+                                    self.n_in_a : self.n_occupied,
+                                    self.n_in_a : self.n_occupied,
+                                    self.n_in_a : self.n_occupied,
+                                ] = copy.deepcopy(
+                                    self.J[
+                                        self.n_in_a : self.n_occupied,
+                                        self.n_in_a : self.n_occupied,
+                                        self.n_in_a : self.n_occupied,
+                                        self.n_in_a : self.n_occupied,
+                                    ]
+                                )
+                                active_twoeint = self.J[
                                     self.n_in_a : self.n_occupied,
                                     self.n_in_a : self.n_occupied,
                                     self.n_in_a : self.n_occupied,
                                     self.n_in_a : self.n_occupied,
                                 ]
+                                self.H_diag3 = np.zeros(H_dim)
+                                fock_core = copy.deepcopy(self.H_spatial2)
+                                fock_core += 2.0 * np.einsum(
+                                    "jjrs->rs", self.J[: self.n_in_a, : self.n_in_a, :, :]
+                                )
+                                fock_core -= np.einsum(
+                                    "jjrs->rs", self.K[: self.n_in_a, : self.n_in_a, :, :]
+                                )
+
+                                active_fock_core = copy.deepcopy(
+                                    fock_core[
+                                        self.n_in_a : self.n_occupied,
+                                        self.n_in_a : self.n_occupied,
+                                    ]
+                                )
+                                occupied_fock_core = np.zeros(
+                                    (self.n_occupied, self.n_occupied)
+                                )
+                                occupied_fock_core[
+                                    self.n_in_a : self.n_occupied,
+                                    self.n_in_a : self.n_occupied,
+                                ] = copy.deepcopy(active_fock_core)
+                                occupied_d_cmo = np.zeros(
+                                    (self.n_occupied, self.n_occupied)
+                                )
+                                occupied_d_cmo = copy.deepcopy(
+                                    self.d_cmo[: self.n_occupied, : self.n_occupied]
+                                )
+                                gkl2 = copy.deepcopy(active_fock_core)
+                                gkl2 -= 0.5 * np.einsum("kjjl->kl", active_twoeint)
+
+                                occupied_J = occupied_J.reshape(
+                                    self.n_occupied * self.n_occupied,
+                                    self.n_occupied * self.n_occupied,
+                                )
+                                c_H_diag_cas_spin(
+                                    occupied_fock_core,
+                                    occupied_J,
+                                    self.H_diag3,
+                                    self.N_p,
+                                    self.num_alpha,
+                                    self.nmo,
+                                    self.n_act_a,
+                                    self.n_act_orb,
+                                    self.n_in_a,
+                                    self.E_core,
+                                    self.omega,
+                                    self.Enuc,
+                                    self.d_c,
+                                    self.Y,
+                                    self.target_spin,
+                                )
+                                d_diag = 2.0 * np.einsum(
+                                    "ii->", self.d_cmo[: self.n_in_a, : self.n_in_a]
+                                )
+                                self.constdouble[3] = self.d_exp - d_diag
+                                # self.constdouble[4] = 1e-5
+                                self.constdouble[4] = self.davidson_threshold
+                                self.constdouble[5] = self.E_core
+                                self.constint[8] = self.davidson_maxiter
+                                eigenvals = np.zeros((self.davidson_roots))
+                                # eigenvecs = np.zeros((self.davidson_roots, H_dim))
+                                # eigenvecs[:,:] = 0.0
+                                # print("heyhey5", eigenvecs)
+                                c_get_roots(
+                                    gkl2,
+                                    occupied_J,
+                                    occupied_d_cmo,
+                                    self.H_diag3,
+                                    self.S_diag,
+                                    self.S_diag_projection,
+                                    eigenvals,
+                                    eigenvecs,
+                                    self.table,
+                                    self.table_creation,
+                                    self.table_annihilation,
+                                    self.b_array,
+                                    self.constint,
+                                    self.constdouble,
+                                    self.index_Hdiag,
+                                    True,
+                                    self.target_spin,
+                                )
+                                avg_energy = 0.0
+                                for i in range(self.davidson_roots):
+                                    avg_energy += self.weight[i] * eigenvals[i]
+                                print("avg energy", macroiteration, avg_energy)
+                                print(
+                                    "average energy at the start of macroiteration",
+                                    avg_energy,
+                                )
+                                self.build_state_average_rdms(eigenvecs)
+
+                            if macroiteration > 0 and convergence == 1:
+
+                                self.CASSCFeigs = eigenvals
+                                self.CASSCFvecs = eigenvecs
+
+
+                                print(
+                                    "\nACTIVE PART OF DETERMINANTS THAT HAVE THE MOST IMPORTANT CONTRIBUTIONS"
+                                )
+                                Y = np.zeros(
+                                    self.n_act_a * (self.n_act_orb - self.n_act_a + 1) * 3,
+                                    dtype=np.int32,
+                                )
+                                c_graph(self.n_act_a, self.n_act_orb, Y)
+                                np1 = self.N_p + 1
+                                singlet_count = 0
+                                triplet_count = 0
+                                for i in range(eigenvecs.shape[0]):
+                                    total_spin = self.check_total_spin(
+                                        eigenvecs[i : (i + 1), :]
+                                    )
+                                    print(
+                                        "STATE",
+                                        i,
+                                        "ENERGY =",
+                                        eigenvals[i],
+                                        "<S^2>=",
+                                        total_spin,
+                                        "WEIGHT =",
+                                        self.weight[i],
+                                        end="",
+                                    )
+                                    if np.abs(total_spin) < 1e-5:
+                                        singlet_count += 1
+                                        print("\tSINGLET", singlet_count)
+                                    elif np.abs(total_spin - 2.0) < 1e-5:
+                                        triplet_count += 1
+                                        print("\tTRIPLET", triplet_count)
+                                    elif np.abs(total_spin - 6.0) < 1e-5:
+                                        print("\tQUINTET")
+
+                                    # print("state",i, "energy =",theta[i])
+                                    print(
+                                        "        amplitude",
+                                        "      position",
+                                        "         most important determinants",
+                                        "             number of photon",
+                                    )
+                                    index = np.argsort(np.abs(eigenvecs[i, :]))
+                                    # print(index)
+                                    Idet0 = (
+                                        index[eigenvecs.shape[1] - 1] % self.num_det
+                                    )  # determinant index of most significant contribution
+                                    photon_p0 = (
+                                        index[eigenvecs.shape[1] - 1] - Idet0
+                                    ) // self.num_det  # photon number block of determinant
+                                    Ib0 = Idet0 % self.num_alpha
+                                    Ia0 = Idet0 // self.num_alpha
+                                    a0 = c_index_to_string(
+                                        Ia0, self.n_act_a, self.n_act_orb, Y
+                                    )
+                                    b0 = c_index_to_string(
+                                        Ib0, self.n_act_a, self.n_act_orb, Y
+                                    )
+
+                                    alphalist = Determinant.obtBits2ObtIndexList(a0)
+                                    betalist = Determinant.obtBits2ObtIndexList(b0)
+                                    for j in range(min(H_dim, 10)):
+                                        Idet = (
+                                            index[eigenvecs.shape[1] - j - 1] % self.num_det
+                                        )
+                                        photon_p = (
+                                            index[eigenvecs.shape[1] - j - 1] - Idet
+                                        ) // self.num_det
+                                        Ib = Idet % self.num_alpha
+                                        Ia = Idet // self.num_alpha
+                                        a = c_index_to_string(
+                                            Ia, self.n_act_a, self.n_act_orb, Y
+                                        )
+                                        b = c_index_to_string(
+                                            Ib, self.n_act_a, self.n_act_orb, Y
+                                        )
+
+                                        alphalist = Determinant.obtBits2ObtIndexList(a)
+                                        betalist = Determinant.obtBits2ObtIndexList(b)
+
+                                        inactive_list = list(x for x in range(self.n_in_a))
+                                        alphalist2 = [x + self.n_in_a for x in alphalist]
+                                        # alphalist2[0:0] = inactive_list
+                                        betalist2 = [x + self.n_in_a for x in betalist]
+                                        # betalist2[0:0] = inactive_list
+
+                                        print(
+                                            "%20.12lf"
+                                            % (
+                                                eigenvecs[i][
+                                                    index[eigenvecs.shape[1] - j - 1]
+                                                ]
+                                            ),
+                                            "%9.3d" % (index[eigenvecs.shape[1] - j - 1]),
+                                            "alpha",
+                                            alphalist2,
+                                            "   beta",
+                                            betalist2,
+                                            "%4.1d" % (photon_p),
+                                            "photon",
+                                        )
+
+                                print("OPTIMIZATION CONVERGED", flush=True)
+                                print("avg energy final", macroiteration, avg_energy)
+                                if self.save_orbital == True:
+                                    new_C = np.einsum("pq,qr->pr", self.C, self.U_total)
+                                    # print(new_C)
+                                    np.savetxt("orbital.out", new_C)
+
+                                break
+                            old_avg_energy = avg_energy
+                            self.avg_energy = avg_energy
+                            if macroiteration > 0 and self.n_in_a > 0:
+                                start1 = timer()
+                                # self.internal_optimization2(avg_energy, eigenvecs)
+                                self.internal_optimization3(avg_energy, eigenvecs)
+                                end1 = timer()
+                                print("internal optimization took", end1 - start1)
+
+                            ###print("LETS TEST THE TWO WAYS TO CALCULATE SECOND ORDER ENERGY AGAIN")
+                            ###A = np.zeros((rot_dim, rot_dim))
+                            ###G = np.zeros((self.n_occupied, self.n_occupied, rot_dim, rot_dim))
+                            ###print("initial e_core", self.E_core)
+                            ###self.build_intermediates(eigenvecs, A, G, True)
+                            ###A2 = np.zeros((rot_dim, rot_dim))
+                            ###G2 = np.zeros((self.n_occupied, self.n_occupied, rot_dim, rot_dim))
+                            ###self.build_intermediates2(eigenvecs, A2, G2, True)
+                            ###print("test second order energy and ci updated integrals")
+                            ###exact_t_energy = self.microiteration_exact_energy(self.U_delta, A, G)
+                            ###print("exact_energy from second order expansion", exact_t_energy + avg_energy)
+                            ###active_twoeint = np.zeros((self.n_act_orb, self.n_act_orb, self.n_act_orb, self.n_act_orb))
+                            ###active_fock_core = np.zeros((self.n_act_orb, self.n_act_orb))
+                            ###d_cmo = np.zeros((self.nmo, self.nmo))
+                            ###self.microiteration_ci_integrals_transform(self.U_delta, eigenvecs, d_cmo, active_fock_core, active_twoeint)
+                            ###active_one_e_energy = np.dot(active_fock_core.flatten(), self.D_tu_avg)
+                            ###active_two_e_energy = 0.5 * np.dot(active_twoeint.flatten(), self.D_tuvw_avg)
+                            ###active_one_pe_energy = -np.sqrt(self.omega/2) * np.dot(d_cmo[self.n_in_a:self.n_occupied,self.n_in_a:self.n_occupied].flatten(), self.Dpe_tu_avg)
+                            ###ci_dependent_energy = self.calculate_ci_dependent_energy(eigenvecs, d_cmo)
+                            ###sum_energy = (active_one_e_energy + active_two_e_energy + active_one_pe_energy + self.E_core +
+                            ###        self.Enuc + self.d_c + ci_dependent_energy)
+                            ###print("gfhgy",
+                            ###    "{:20.12f}".format(sum_energy),
+                            ###    "{:20.12f}".format(active_one_e_energy),
+                            ###    "{:20.12f}".format(active_two_e_energy),
+                            ###    "{:20.12f}".format(self.E_core),
+                            ###    "{:20.12f}".format(active_one_pe_energy),
+                            ###    "{:20.12f}".format(self.Enuc),
+                            ###)
+
+                            np.set_printoptions(precision=14)
+                            if macroiteration == 0:
+                                convergence_threshold = 1e-3
+                            else:
+                                convergence_threshold = 1e-4
+                            print("avg energy", macroiteration, self.avg_energy)
+                            U0 = np.eye(self.nmo)
+                            # print("heyhey3",eigenvecs)
+                            start1 = timer()
+                            self.microiteration_optimization5(
+                                U0, eigenvecs, c_get_roots, convergence_threshold
                             )
+                            end1 = timer()
+                            print("microiteration took", end1 - start1)
+                            # print("heyhey",eigenvecs)
+                            # print("u2",self.U2)
+                            print("full transformation test")
+
+                            R = 0.5 * (self.U2 - self.U2.T)
+                            Rai = np.zeros((self.n_act_orb, self.n_in_a))
+                            Rai[:, :] = R[self.n_in_a : self.n_occupied, : self.n_in_a]
+                            print("norm of internal step", np.linalg.norm(Rai), flush=True)
+                            if np.linalg.norm(Rai) > 1e-4:
+                                # print("u2 before", self.U2,flush = True)
+                                print("RESTART MICROITERATION TO CORRECT INTERNAL ROTATION")
+                                Rvi = np.zeros((self.n_virtual, self.n_in_a))
+                                Rva = np.zeros((self.n_virtual, self.n_act_orb))
+                                self.build_unitary_matrix(Rai, Rvi, Rva)
+                                self.K = np.ascontiguousarray(self.K)
+                                start1 = timer()
+                                c_full_transformation_internal_optimization(
+                                    self.U_delta,
+                                    self.J,
+                                    self.K,
+                                    self.H_spatial2,
+                                    self.d_cmo,
+                                    self.J,
+                                    self.K,
+                                    self.H_spatial2,
+                                    self.d_cmo,
+                                    self.index_map_ab,
+                                    self.index_map_kl,
+                                    self.nmo,
+                                    self.n_occupied,
+                                )
+                                end1 = timer()
+                                print("full internal transformation took", end1 - start1)
+                                # self.full_transformation_internal_optimization(self.U_delta, self.H_spatial2, self.d_cmo, self.J, self.K)
+                                self.U_total = np.einsum(
+                                    "pq,qs->ps", self.U_total, self.U_delta
+                                )
+                                Rai[:, :] = 0.0
+                                Rvi[:, :] = R[self.n_occupied :, : self.n_in_a]
+                                Rva[:, :] = R[
+                                    self.n_occupied :, self.n_in_a : self.n_occupied
+                                ]
+                                self.build_unitary_matrix(Rai, Rvi, Rva)
+                                start1 = timer()
+                                self.microiteration_optimization5(
+                                    self.U_delta,
+                                    eigenvecs,
+                                    c_get_roots,
+                                    convergence_threshold,
+                                )
+                                end1 = timer()
+                                print("microiteration took", end1 - start1)
+                                Rkl = 0.5 * (
+                                    self.U2[: self.n_occupied, : self.n_occupied]
+                                    - self.U2.T[: self.n_occupied, : self.n_occupied]
+                                )
+                                Rai = np.zeros((self.n_act_orb, self.n_in_a))
+                                Rai[:, :] = Rkl[
+                                    self.n_in_a : self.n_occupied, : self.n_in_a
+                                ]
+                            print(
+                                "norm of internal step after",
+                                np.linalg.norm(Rai),
+                                flush=True,
+                            )
+                            # print("u2 after", self.U2,flush = True)
+
+                            temp8 = np.zeros((self.nmo, self.nmo))
+                            temp8 = np.einsum("pq,qs->ps", self.H_spatial2, self.U2)
+                            self.H_spatial2[:, :] = np.einsum("ps,pr->rs", temp8, self.U2)
+                            temp8 = np.einsum("pq,qs->ps", self.d_cmo, self.U2)
+                            self.d_cmo[:, :] = np.einsum("ps,pr->rs", temp8, self.U2)
+
+                            self.U_total = np.einsum("pq,qs->ps", self.U_total, self.U2)
+
+                            # print(self.U_total)
+
+                            ##JJ = np.zeros((self.n_occupied, self.n_occupied, self.nmo, self.nmo))
+                            ##KK = np.zeros((self.n_occupied, self.n_occupied, self.nmo, self.nmo))
+                            ##self.full_transformation_macroiteration(self.U_total, JJ, KK)
+                            start1 = timer()
+                            self.K = np.ascontiguousarray(self.K)
+                            c_full_transformation_macroiteration(
+                                self.U_total,
+                                self.twoeint,
+                                self.J,
+                                self.K,
+                                self.index_map_pq,
+                                self.index_map_kl,
+                                self.nmo,
+                                self.n_occupied,
+                            )
+                            # self.full_transformation_macroiteration(self.U_total, self.J, self.K)
+                            end1 = timer()
+                            print("full JK transformation took", end1 - start1)
+                            ##print("tvhj", np.allclose(self.K3,self.K, rtol=1e-14,atol=1e-14))
+                            ##print("oins", np.allclose(self.J3,self.J, rtol=1e-14,atol=1e-14))
+                            ##print("tc5k", np.allclose(self.h3,self.H_spatial2, rtol=1e-14,atol=1e-14))
+                            ##print("p0ba", np.allclose(self.d_cmo3,self.d_cmo, rtol=1e-14,atol=1e-14))
                             active_twoeint = self.J[
                                 self.n_in_a : self.n_occupied,
                                 self.n_in_a : self.n_occupied,
                                 self.n_in_a : self.n_occupied,
                                 self.n_in_a : self.n_occupied,
                             ]
-                            self.H_diag3 = np.zeros(H_dim)
-                            fock_core = copy.deepcopy(self.H_spatial2)
-                            fock_core += 2.0 * np.einsum(
+                            self.fock_core = copy.deepcopy(self.H_spatial2)
+                            self.fock_core += 2.0 * np.einsum(
                                 "jjrs->rs", self.J[: self.n_in_a, : self.n_in_a, :, :]
                             )
-                            fock_core -= np.einsum(
+                            self.fock_core -= np.einsum(
                                 "jjrs->rs", self.K[: self.n_in_a, : self.n_in_a, :, :]
                             )
 
-                            active_fock_core = copy.deepcopy(
-                                fock_core[
+                            self.E_core = 0.0
+                            self.E_core += np.einsum(
+                                "jj->", self.H_spatial2[: self.n_in_a, : self.n_in_a]
+                            )
+                            self.E_core += np.einsum(
+                                "jj->", self.fock_core[: self.n_in_a, : self.n_in_a]
+                            )
+
+                            # print(eigenvecs)
+                            active_fock_core = np.zeros((self.n_act_orb, self.n_act_orb))
+                            active_fock_core[:, :] = self.fock_core[
+                                self.n_in_a : self.n_occupied, self.n_in_a : self.n_occupied
+                            ]
+                            active_one_e_energy = np.dot(
+                                active_fock_core.flatten(), self.D_tu_avg
+                            )
+                            active_two_e_energy = 0.5 * np.dot(
+                                active_twoeint.flatten(), self.D_tuvw_avg
+                            )
+                            active_one_pe_energy = -np.sqrt(self.omega / 2) * np.dot(
+                                self.d_cmo[
                                     self.n_in_a : self.n_occupied,
                                     self.n_in_a : self.n_occupied,
-                                ]
+                                ].flatten(),
+                                self.Dpe_tu_avg,
                             )
-                            occupied_fock_core = np.zeros(
-                                (self.n_occupied, self.n_occupied)
+                            ci_dependent_energy = self.calculate_ci_dependent_energy(
+                                eigenvecs, self.d_cmo
                             )
-                            occupied_fock_core[
-                                self.n_in_a : self.n_occupied,
-                                self.n_in_a : self.n_occupied,
-                            ] = copy.deepcopy(active_fock_core)
-                            occupied_d_cmo = np.zeros(
-                                (self.n_occupied, self.n_occupied)
+                            sum_energy = (
+                                active_one_e_energy
+                                + active_two_e_energy
+                                + active_one_pe_energy
+                                + self.E_core
+                                + self.Enuc
+                                + self.d_c
+                                + ci_dependent_energy
                             )
-                            occupied_d_cmo = copy.deepcopy(
+                            print(
+                                "gfhgy end macroiteration",
+                                "{:20.12f}".format(sum_energy),
+                                "{:20.12f}".format(active_one_e_energy),
+                                "{:20.12f}".format(active_two_e_energy),
+                                "{:20.12f}".format(self.E_core),
+                                "{:20.12f}".format(active_one_pe_energy),
+                                "{:20.12f}".format(self.Enuc),
+                            )
+                            print("end one macroiteration")
+                            avg_energy = sum_energy
+                            self.occupied_K = copy.deepcopy(
+                                self.K[:, :, : self.n_occupied, : self.n_occupied]
+                            )
+                            self.occupied_J = copy.deepcopy(
+                                self.J[:, :, : self.n_occupied, : self.n_occupied]
+                            )
+                            self.occupied_h1 = copy.deepcopy(
+                                self.H_spatial2[: self.n_occupied, : self.n_occupied]
+                            )
+                            self.occupied_d_cmo = copy.deepcopy(
                                 self.d_cmo[: self.n_occupied, : self.n_occupied]
                             )
-                            gkl2 = copy.deepcopy(active_fock_core)
-                            gkl2 -= 0.5 * np.einsum("kjjl->kl", active_twoeint)
-
-                            occupied_J = occupied_J.reshape(
-                                self.n_occupied * self.n_occupied,
-                                self.n_occupied * self.n_occupied,
+                            self.occupied_fock_core = copy.deepcopy(
+                                self.fock_core[: self.n_occupied, : self.n_occupied]
                             )
-                            c_H_diag_cas_spin(
-                                occupied_fock_core,
-                                occupied_J,
-                                self.H_diag3,
-                                self.N_p,
-                                self.num_alpha,
-                                self.nmo,
-                                self.n_act_a,
-                                self.n_act_orb,
-                                self.n_in_a,
-                                self.E_core,
-                                self.omega,
-                                self.Enuc,
-                                self.d_c,
-                                self.Y,
-                                self.target_spin,
-                            )
-                            d_diag = 2.0 * np.einsum(
-                                "ii->", self.d_cmo[: self.n_in_a, : self.n_in_a]
-                            )
-                            self.constdouble[3] = self.d_exp - d_diag
-                            # self.constdouble[4] = 1e-5
-                            self.constdouble[4] = self.davidson_threshold
-                            self.constdouble[5] = self.E_core
-                            self.constint[8] = self.davidson_maxiter
-                            eigenvals = np.zeros((self.davidson_roots))
-                            # eigenvecs = np.zeros((self.davidson_roots, H_dim))
-                            # eigenvecs[:,:] = 0.0
-                            # print("heyhey5", eigenvecs)
-                            c_get_roots(
-                                gkl2,
-                                occupied_J,
-                                occupied_d_cmo,
-                                self.H_diag3,
-                                self.S_diag,
-                                self.S_diag_projection,
-                                eigenvals,
-                                eigenvecs,
-                                self.table,
-                                self.table_creation,
-                                self.table_annihilation,
-                                self.b_array,
-                                self.constint,
-                                self.constdouble,
-                                self.index_Hdiag,
-                                True,
-                                self.target_spin,
-                            )
-                            avg_energy = 0.0
-                            for i in range(self.davidson_roots):
-                                avg_energy += self.weight[i] * eigenvals[i]
-                            print("avg energy", macroiteration, avg_energy)
-                            print(
-                                "average energy at the start of macroiteration",
-                                avg_energy,
-                            )
-                            self.build_state_average_rdms(eigenvecs)
+                            new_avg_energy = avg_energy
 
-                        if macroiteration > 0 and convergence == 1:
-
-                            print(
-                                "\nACTIVE PART OF DETERMINANTS THAT HAVE THE MOST IMPORTANT CONTRIBUTIONS"
-                            )
-                            Y = np.zeros(
-                                self.n_act_a * (self.n_act_orb - self.n_act_a + 1) * 3,
-                                dtype=np.int32,
-                            )
-                            c_graph(self.n_act_a, self.n_act_orb, Y)
-                            np1 = self.N_p + 1
-                            singlet_count = 0
-                            triplet_count = 0
-                            for i in range(eigenvecs.shape[0]):
-                                total_spin = self.check_total_spin(
-                                    eigenvecs[i : (i + 1), :]
-                                )
-                                print(
-                                    "STATE",
-                                    i,
-                                    "ENERGY =",
-                                    eigenvals[i],
-                                    "<S^2>=",
-                                    total_spin,
-                                    "WEIGHT =",
-                                    self.weight[i],
-                                    end="",
-                                )
-                                if np.abs(total_spin) < 1e-5:
-                                    singlet_count += 1
-                                    print("\tSINGLET", singlet_count)
-                                elif np.abs(total_spin - 2.0) < 1e-5:
-                                    triplet_count += 1
-                                    print("\tTRIPLET", triplet_count)
-                                elif np.abs(total_spin - 6.0) < 1e-5:
-                                    print("\tQUINTET")
-
-                                # print("state",i, "energy =",theta[i])
-                                print(
-                                    "        amplitude",
-                                    "      position",
-                                    "         most important determinants",
-                                    "             number of photon",
-                                )
-                                index = np.argsort(np.abs(eigenvecs[i, :]))
-                                # print(index)
-                                Idet0 = (
-                                    index[eigenvecs.shape[1] - 1] % self.num_det
-                                )  # determinant index of most significant contribution
-                                photon_p0 = (
-                                    index[eigenvecs.shape[1] - 1] - Idet0
-                                ) // self.num_det  # photon number block of determinant
-                                Ib0 = Idet0 % self.num_alpha
-                                Ia0 = Idet0 // self.num_alpha
-                                a0 = c_index_to_string(
-                                    Ia0, self.n_act_a, self.n_act_orb, Y
-                                )
-                                b0 = c_index_to_string(
-                                    Ib0, self.n_act_a, self.n_act_orb, Y
-                                )
-
-                                alphalist = Determinant.obtBits2ObtIndexList(a0)
-                                betalist = Determinant.obtBits2ObtIndexList(b0)
-                                for j in range(min(H_dim, 10)):
-                                    Idet = (
-                                        index[eigenvecs.shape[1] - j - 1] % self.num_det
-                                    )
-                                    photon_p = (
-                                        index[eigenvecs.shape[1] - j - 1] - Idet
-                                    ) // self.num_det
-                                    Ib = Idet % self.num_alpha
-                                    Ia = Idet // self.num_alpha
-                                    a = c_index_to_string(
-                                        Ia, self.n_act_a, self.n_act_orb, Y
-                                    )
-                                    b = c_index_to_string(
-                                        Ib, self.n_act_a, self.n_act_orb, Y
-                                    )
-
-                                    alphalist = Determinant.obtBits2ObtIndexList(a)
-                                    betalist = Determinant.obtBits2ObtIndexList(b)
-
-                                    inactive_list = list(x for x in range(self.n_in_a))
-                                    alphalist2 = [x + self.n_in_a for x in alphalist]
-                                    # alphalist2[0:0] = inactive_list
-                                    betalist2 = [x + self.n_in_a for x in betalist]
-                                    # betalist2[0:0] = inactive_list
-
-                                    print(
-                                        "%20.12lf"
-                                        % (
-                                            eigenvecs[i][
-                                                index[eigenvecs.shape[1] - j - 1]
-                                            ]
-                                        ),
-                                        "%9.3d" % (index[eigenvecs.shape[1] - j - 1]),
-                                        "alpha",
-                                        alphalist2,
-                                        "   beta",
-                                        betalist2,
-                                        "%4.1d" % (photon_p),
-                                        "photon",
-                                    )
-
-                            print("OPTIMIZATION CONVERGED", flush=True)
-                            print("avg energy final", macroiteration, avg_energy)
-                            if self.save_orbital == True:
-                                new_C = np.einsum("pq,qr->pr", self.C, self.U_total)
-                                # print(new_C)
-                                np.savetxt("orbital.out", new_C)
-
-                            break
-                        old_avg_energy = avg_energy
-                        self.avg_energy = avg_energy
-                        if macroiteration > 0 and self.n_in_a > 0:
-                            start1 = timer()
-                            # self.internal_optimization2(avg_energy, eigenvecs)
-                            self.internal_optimization3(avg_energy, eigenvecs)
-                            end1 = timer()
-                            print("internal optimization took", end1 - start1)
-
-                        ###print("LETS TEST THE TWO WAYS TO CALCULATE SECOND ORDER ENERGY AGAIN")
-                        ###A = np.zeros((rot_dim, rot_dim))
-                        ###G = np.zeros((self.n_occupied, self.n_occupied, rot_dim, rot_dim))
-                        ###print("initial e_core", self.E_core)
-                        ###self.build_intermediates(eigenvecs, A, G, True)
-                        ###A2 = np.zeros((rot_dim, rot_dim))
-                        ###G2 = np.zeros((self.n_occupied, self.n_occupied, rot_dim, rot_dim))
-                        ###self.build_intermediates2(eigenvecs, A2, G2, True)
-                        ###print("test second order energy and ci updated integrals")
-                        ###exact_t_energy = self.microiteration_exact_energy(self.U_delta, A, G)
-                        ###print("exact_energy from second order expansion", exact_t_energy + avg_energy)
-                        ###active_twoeint = np.zeros((self.n_act_orb, self.n_act_orb, self.n_act_orb, self.n_act_orb))
-                        ###active_fock_core = np.zeros((self.n_act_orb, self.n_act_orb))
-                        ###d_cmo = np.zeros((self.nmo, self.nmo))
-                        ###self.microiteration_ci_integrals_transform(self.U_delta, eigenvecs, d_cmo, active_fock_core, active_twoeint)
-                        ###active_one_e_energy = np.dot(active_fock_core.flatten(), self.D_tu_avg)
-                        ###active_two_e_energy = 0.5 * np.dot(active_twoeint.flatten(), self.D_tuvw_avg)
-                        ###active_one_pe_energy = -np.sqrt(self.omega/2) * np.dot(d_cmo[self.n_in_a:self.n_occupied,self.n_in_a:self.n_occupied].flatten(), self.Dpe_tu_avg)
-                        ###ci_dependent_energy = self.calculate_ci_dependent_energy(eigenvecs, d_cmo)
-                        ###sum_energy = (active_one_e_energy + active_two_e_energy + active_one_pe_energy + self.E_core +
-                        ###        self.Enuc + self.d_c + ci_dependent_energy)
-                        ###print("gfhgy",
-                        ###    "{:20.12f}".format(sum_energy),
-                        ###    "{:20.12f}".format(active_one_e_energy),
-                        ###    "{:20.12f}".format(active_two_e_energy),
-                        ###    "{:20.12f}".format(self.E_core),
-                        ###    "{:20.12f}".format(active_one_pe_energy),
-                        ###    "{:20.12f}".format(self.Enuc),
-                        ###)
-
-                        np.set_printoptions(precision=14)
-                        if macroiteration == 0:
-                            convergence_threshold = 1e-3
-                        else:
-                            convergence_threshold = 1e-4
-                        print("avg energy", macroiteration, self.avg_energy)
-                        U0 = np.eye(self.nmo)
-                        # print("heyhey3",eigenvecs)
-                        start1 = timer()
-                        self.microiteration_optimization5(
-                            U0, eigenvecs, c_get_roots, convergence_threshold
-                        )
-                        end1 = timer()
-                        print("microiteration took", end1 - start1)
-                        # print("heyhey",eigenvecs)
-                        # print("u2",self.U2)
-                        print("full transformation test")
-
-                        R = 0.5 * (self.U2 - self.U2.T)
-                        Rai = np.zeros((self.n_act_orb, self.n_in_a))
-                        Rai[:, :] = R[self.n_in_a : self.n_occupied, : self.n_in_a]
-                        print("norm of internal step", np.linalg.norm(Rai), flush=True)
-                        if np.linalg.norm(Rai) > 1e-4:
-                            # print("u2 before", self.U2,flush = True)
-                            print("RESTART MICROITERATION TO CORRECT INTERNAL ROTATION")
-                            Rvi = np.zeros((self.n_virtual, self.n_in_a))
-                            Rva = np.zeros((self.n_virtual, self.n_act_orb))
-                            self.build_unitary_matrix(Rai, Rvi, Rva)
-                            self.K = np.ascontiguousarray(self.K)
-                            start1 = timer()
-                            c_full_transformation_internal_optimization(
-                                self.U_delta,
-                                self.J,
-                                self.K,
-                                self.H_spatial2,
-                                self.d_cmo,
-                                self.J,
-                                self.K,
-                                self.H_spatial2,
-                                self.d_cmo,
-                                self.index_map_ab,
-                                self.index_map_kl,
-                                self.nmo,
-                                self.n_occupied,
-                            )
-                            end1 = timer()
-                            print("full internal transformation took", end1 - start1)
-                            # self.full_transformation_internal_optimization(self.U_delta, self.H_spatial2, self.d_cmo, self.J, self.K)
-                            self.U_total = np.einsum(
-                                "pq,qs->ps", self.U_total, self.U_delta
-                            )
-                            Rai[:, :] = 0.0
-                            Rvi[:, :] = R[self.n_occupied :, : self.n_in_a]
-                            Rva[:, :] = R[
-                                self.n_occupied :, self.n_in_a : self.n_occupied
-                            ]
-                            self.build_unitary_matrix(Rai, Rvi, Rva)
-                            start1 = timer()
-                            self.microiteration_optimization5(
-                                self.U_delta,
-                                eigenvecs,
-                                c_get_roots,
-                                convergence_threshold,
-                            )
-                            end1 = timer()
-                            print("microiteration took", end1 - start1)
-                            Rkl = 0.5 * (
-                                self.U2[: self.n_occupied, : self.n_occupied]
-                                - self.U2.T[: self.n_occupied, : self.n_occupied]
-                            )
-                            Rai = np.zeros((self.n_act_orb, self.n_in_a))
-                            Rai[:, :] = Rkl[
-                                self.n_in_a : self.n_occupied, : self.n_in_a
-                            ]
-                        print(
-                            "norm of internal step after",
-                            np.linalg.norm(Rai),
-                            flush=True,
-                        )
-                        # print("u2 after", self.U2,flush = True)
-
-                        temp8 = np.zeros((self.nmo, self.nmo))
-                        temp8 = np.einsum("pq,qs->ps", self.H_spatial2, self.U2)
-                        self.H_spatial2[:, :] = np.einsum("ps,pr->rs", temp8, self.U2)
-                        temp8 = np.einsum("pq,qs->ps", self.d_cmo, self.U2)
-                        self.d_cmo[:, :] = np.einsum("ps,pr->rs", temp8, self.U2)
-
-                        self.U_total = np.einsum("pq,qs->ps", self.U_total, self.U2)
-
-                        # print(self.U_total)
-
-                        ##JJ = np.zeros((self.n_occupied, self.n_occupied, self.nmo, self.nmo))
-                        ##KK = np.zeros((self.n_occupied, self.n_occupied, self.nmo, self.nmo))
-                        ##self.full_transformation_macroiteration(self.U_total, JJ, KK)
-                        start1 = timer()
-                        self.K = np.ascontiguousarray(self.K)
-                        c_full_transformation_macroiteration(
-                            self.U_total,
-                            self.twoeint,
-                            self.J,
-                            self.K,
-                            self.index_map_pq,
-                            self.index_map_kl,
-                            self.nmo,
-                            self.n_occupied,
-                        )
-                        # self.full_transformation_macroiteration(self.U_total, self.J, self.K)
-                        end1 = timer()
-                        print("full JK transformation took", end1 - start1)
-                        ##print("tvhj", np.allclose(self.K3,self.K, rtol=1e-14,atol=1e-14))
-                        ##print("oins", np.allclose(self.J3,self.J, rtol=1e-14,atol=1e-14))
-                        ##print("tc5k", np.allclose(self.h3,self.H_spatial2, rtol=1e-14,atol=1e-14))
-                        ##print("p0ba", np.allclose(self.d_cmo3,self.d_cmo, rtol=1e-14,atol=1e-14))
-                        active_twoeint = self.J[
-                            self.n_in_a : self.n_occupied,
-                            self.n_in_a : self.n_occupied,
-                            self.n_in_a : self.n_occupied,
-                            self.n_in_a : self.n_occupied,
-                        ]
-                        self.fock_core = copy.deepcopy(self.H_spatial2)
-                        self.fock_core += 2.0 * np.einsum(
-                            "jjrs->rs", self.J[: self.n_in_a, : self.n_in_a, :, :]
-                        )
-                        self.fock_core -= np.einsum(
-                            "jjrs->rs", self.K[: self.n_in_a, : self.n_in_a, :, :]
-                        )
-
-                        self.E_core = 0.0
-                        self.E_core += np.einsum(
-                            "jj->", self.H_spatial2[: self.n_in_a, : self.n_in_a]
-                        )
-                        self.E_core += np.einsum(
-                            "jj->", self.fock_core[: self.n_in_a, : self.n_in_a]
-                        )
-
-                        # print(eigenvecs)
-                        active_fock_core = np.zeros((self.n_act_orb, self.n_act_orb))
-                        active_fock_core[:, :] = self.fock_core[
-                            self.n_in_a : self.n_occupied, self.n_in_a : self.n_occupied
-                        ]
-                        active_one_e_energy = np.dot(
-                            active_fock_core.flatten(), self.D_tu_avg
-                        )
-                        active_two_e_energy = 0.5 * np.dot(
-                            active_twoeint.flatten(), self.D_tuvw_avg
-                        )
-                        active_one_pe_energy = -np.sqrt(self.omega / 2) * np.dot(
-                            self.d_cmo[
-                                self.n_in_a : self.n_occupied,
-                                self.n_in_a : self.n_occupied,
-                            ].flatten(),
-                            self.Dpe_tu_avg,
-                        )
-                        ci_dependent_energy = self.calculate_ci_dependent_energy(
-                            eigenvecs, self.d_cmo
-                        )
-                        sum_energy = (
-                            active_one_e_energy
-                            + active_two_e_energy
-                            + active_one_pe_energy
-                            + self.E_core
-                            + self.Enuc
-                            + self.d_c
-                            + ci_dependent_energy
-                        )
-                        print(
-                            "gfhgy end macroiteration",
-                            "{:20.12f}".format(sum_energy),
-                            "{:20.12f}".format(active_one_e_energy),
-                            "{:20.12f}".format(active_two_e_energy),
-                            "{:20.12f}".format(self.E_core),
-                            "{:20.12f}".format(active_one_pe_energy),
-                            "{:20.12f}".format(self.Enuc),
-                        )
-                        print("end one macroiteration")
-                        avg_energy = sum_energy
-                        self.occupied_K = copy.deepcopy(
-                            self.K[:, :, : self.n_occupied, : self.n_occupied]
-                        )
-                        self.occupied_J = copy.deepcopy(
-                            self.J[:, :, : self.n_occupied, : self.n_occupied]
-                        )
-                        self.occupied_h1 = copy.deepcopy(
-                            self.H_spatial2[: self.n_occupied, : self.n_occupied]
-                        )
-                        self.occupied_d_cmo = copy.deepcopy(
-                            self.d_cmo[: self.n_occupied, : self.n_occupied]
-                        )
-                        self.occupied_fock_core = copy.deepcopy(
-                            self.fock_core[: self.n_occupied, : self.n_occupied]
-                        )
-                        new_avg_energy = avg_energy
-
-                        macroiteration += 1
-                    end = timer()
-                    print("optimization took", end - start)
+                            macroiteration += 1
+                        end = timer()
+                        print("optimization took", end - start)
 
             elif self.ci_level == "cis":
                 dres = self.Davidson(
@@ -4110,6 +4115,12 @@ class PFHamiltonianGenerator:
             self.ci_level = cavity_dictionary["ci_level"]
         else:
             self.ci_level = "cis"
+        
+        if "casscf_optimization" in cavity_dictionary:
+            self.casscf_optimization = cavity_dictionary["casscf_optimization"]
+        else:
+            self.casscf_optimization = True
+
         if "ignore_coupling" in cavity_dictionary:
             self.ignore_coupling = cavity_dictionary["ignore_coupling"]
         else:
