@@ -1,18 +1,18 @@
 # set path to the directory where helper_PFCI.py is located
 import sys
-sys.path.append("/home/nvu12/software/qed_ci_main/qed_ci_casscf4/qed-ci/src/")
+sys.path.append("/home/jfoley19/gm_casscf/qed-ci/src/")
 
 # import helper libraries
 import numpy as np
-#import psi4
-#from helper_PFCI import PFHamiltonianGenerator
-import json 
+import psi4
+from helper_PFCI import PFHamiltonianGenerator
+import json
 
 # set precision for printing numpy arrays
 np.set_printoptions(threshold=sys.maxsize)
 
 # create file prefix for output json file
-file_string = "LiH_r_scan_6311g_qedfci"
+file_string = "LiH_r_scan_6311g_qed_casscf_4e_5o_lamz_0.05_om_0.12086"
 
 # create template for molecular geometry
 mol_tmpl = """
@@ -40,9 +40,9 @@ cavity_options = {
     'photon_number_basis' : False,
     'canonical_mos' : False,
     'coherent_state_basis' : True,
-    'davidson_roots' : 7,
+    'davidson_roots' : 3,
     'davidson_threshold' : 1e-5,
-    'davidson_maxdim':40,
+    'davidson_maxdim':20,
     'spin_adaptation': "singlet",
     #'casscf_weight':np.array([1,1,1]),
     'davidson_maxiter':100,
@@ -60,9 +60,8 @@ calculation_data = {
     },
     "return_results" : {
 
-        "energies" : [],
-        "dipoles" : [],
-        "transition_dipoles" : [],
+        "casci_energies" : [],
+        "casscf_energies" : [],
     }
 
 }
@@ -83,23 +82,22 @@ r_values = np.linspace(1.0, 3.0, N_r_values)
 for r_val in r_values:
     # update the molecular geometry with the new r value
     mol_str = mol_tmpl.replace("**R**", str(r_val))
-    
+
     # create a new instance of the PFHamiltonianGenerator class
-    #test_pf = PFHamiltonianGenerator(
-    #    mol_str,
-    #    options_dict,
-    #    cavity_options)
+    test_pf = PFHamiltonianGenerator(
+        mol_str,
+        options_dict,
+        cavity_options)
     # create random energy values for 3 different states
-    energy_values = [-100., -102., -113.]
+    casci_energy_values = test_pf.CIeigs.tolist()
+    casscf_energy_values = test_pf.CASSCFeigs.tolist()
     # create random dipole values for 3 different states
-    dipole_values = [-5., -6., -7.]
     # add mol_str to the molecular geometry dictionary
     calculation_data["molecular_geometry"]["z-matrix"].append(mol_str)
     # add energy values to the return_results dictionary
-    calculation_data["return_results"]["energies"].append(energy_values)
-    # add dipole moments to the return_results dictionary
-    calculation_data["return_results"]["dipoles"].append(dipole_values)
-    
+    calculation_data["return_results"]["casci_energies"].append(casci_energy_values)
+    calculation_data["return_results"]["casscf_energies"].append(casscf_energy_values)
+
 
 # Function to write data to JSON file
 def write_to_json(data, filename):
@@ -111,4 +109,3 @@ output_filename = "new_data.json"
 write_to_json(calculation_data, output_filename)
 
 print(f"Data successfully written to {output_filename}")
-
