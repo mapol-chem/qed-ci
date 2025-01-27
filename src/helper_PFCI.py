@@ -9378,7 +9378,7 @@ class PFHamiltonianGenerator:
         )
 
     def step_control(self, ratio, trust_radius):
-        if ratio > 0 and ratio < 0.25:
+        if ratio >= 0 and ratio <= 0.25:
             trust_radius = 0.7 * trust_radius
         if ratio > 0.75:
             trust_radius = 1.2 * trust_radius
@@ -18981,6 +18981,11 @@ class PFHamiltonianGenerator:
         index_map = self.index_map
         index_map_size = self.index_map_size
         n_occupied = self.n_occupied
+        #print("U dtype:", U.dtype, "shape:", U.shape)
+        #print("A_tilde dtype:", A_tilde.dtype, "shape:", A_tilde.shape)
+        #print("index_map dtype:", index_map.dtype, "shape:", index_map.shape)
+        #print("G dtype:", G.dtype, "shape:", G.shape)
+        #print("R_reduced dtype:", R_reduced.dtype, "shape:", R_reduced.shape)
         return self.build_sigma_reduced5(
             U,
             A_tilde,
