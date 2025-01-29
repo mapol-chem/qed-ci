@@ -8128,7 +8128,7 @@ class PFHamiltonianGenerator:
                     t1 = (-2 * np.dot(x, step2) - np.sqrt(delta)) / (2 * y_square)
                     t2 = (-2 * np.dot(x, step2) + np.sqrt(delta)) / (2 * y_square)
                     # print("x^2, xy, y^2, t", x_square, np.dot(x, step2), y_square, t1)
-                    adjusted_step = step + min(t1, t2) * step2
+                    adjusted_step = step + min(np.abs(t1), np.abs(t2)) * step2
                     print("adjusted step norm", np.linalg.norm(adjusted_step))
                     trust_radius_hard_case = np.linalg.norm(x)
                     step = adjusted_step
@@ -8552,7 +8552,7 @@ class PFHamiltonianGenerator:
                         y_square,
                         t1,
                     )
-                    adjusted_step = first_component + min(t1, t2) * second_component
+                    adjusted_step = first_component + min(np.abs(t1), np.abs(t2)) * second_component
                     print("adjusted step norm", np.linalg.norm(adjusted_step))
                     step = adjusted_step
                 else:
@@ -8997,7 +8997,7 @@ class PFHamiltonianGenerator:
                             y_square,
                             t1,
                         )
-                        adjusted_step = first_component + min(t1, t2) * second_component
+                        adjusted_step = first_component + min(np.abs(t1), np.abs(t2)) * second_component
                         print("adjusted step norm", np.linalg.norm(adjusted_step))
                         step = adjusted_step
 
@@ -12125,7 +12125,7 @@ class PFHamiltonianGenerator:
                         print(
                             "x^2, xy, y^2, t", x_square, np.dot(x, step2), y_square, t1
                         )
-                        adjusted_step = step + min(t1, t2) * step2
+                        adjusted_step = step + min(np.abs(t1), np.abs(t2)) * step2
                         print("adjusted step norm", np.linalg.norm(adjusted_step))
                         step = adjusted_step
                         trust_radius_hard_case = np.linalg.norm(adjusted_step)
@@ -12836,7 +12836,7 @@ class PFHamiltonianGenerator:
                         print(
                             "x^2, xy, y^2, t", x_square, np.dot(x, step2), y_square, t1
                         )
-                        adjusted_step = step + min(t1, t2) * step2
+                        adjusted_step = step + min(np.abs(t1), np.abs(t2)) * step2
                         print("adjusted step norm", np.linalg.norm(adjusted_step))
                         step = adjusted_step
                         trust_radius_hard_case = np.linalg.norm(adjusted_step)
@@ -13497,7 +13497,7 @@ class PFHamiltonianGenerator:
                             y_square,
                             t1,
                         )
-                        adjusted_step = first_component + min(t1, t2) * second_component
+                        adjusted_step = first_component + min(np.abs(t1), np.abs(t2)) * second_component
                         print("adjusted step norm", np.linalg.norm(adjusted_step))
                         step = adjusted_step
                     else:
@@ -14006,7 +14006,7 @@ class PFHamiltonianGenerator:
                                 t1,
                             )
                             adjusted_step = (
-                                first_component + min(t1, t2) * second_component
+                                first_component + min(np.abs(t1), np.abs(t2)) * second_component
                             )
                             print("adjusted step norm", np.linalg.norm(adjusted_step))
                             step = adjusted_step
@@ -15070,7 +15070,7 @@ class PFHamiltonianGenerator:
                             y_square,
                             t1,
                         )
-                        adjusted_step = first_component + min(t1, t2) * second_component
+                        adjusted_step = first_component + min(np.abs(t1), np.abs(t2)) * second_component
                         print("adjusted step norm", np.linalg.norm(adjusted_step))
                         step = adjusted_step
                     else:
@@ -15586,7 +15586,7 @@ class PFHamiltonianGenerator:
                                 t1,
                             )
                             adjusted_step = (
-                                first_component + min(t1, t2) * second_component
+                                first_component + min(np.abs(t1), np.abs(t2)) * second_component
                             )
                             print("adjusted step norm", np.linalg.norm(adjusted_step))
                             step = adjusted_step
@@ -15759,7 +15759,7 @@ class PFHamiltonianGenerator:
                 ###############        t1= (-2 * np.dot(x,step2) - np.sqrt(delta))/ (2*y_square)
                 ###############        t2= (-2 * np.dot(x,step2) + np.sqrt(delta))/ (2*y_square)
                 ###############        print("x^2, xy, y^2, t", x_square, np.dot(x, step2), y_square, t1)
-                ###############        adjusted_step = step + min(t1,t2) * step2
+                ###############        adjusted_step = step + min(np.abs(t1), np.abs(t2)) * step2
                 ###############        print("adjusted step norm", np.linalg.norm(adjusted_step))
                 ###############        step = adjusted_step
                 ###############        trust_radius_hard_case = np.linalg.norm(adjusted_step)
