@@ -5890,6 +5890,10 @@ class PFHamiltonianGenerator:
         # An array to hold the excitation energies
         theta = [0.0] * L
 
+        # an array to hold the excitation rank count and cumulative weight
+        self.determinant_count_by_excitation_rank = np.zeros(self.n_act_el)
+        self.determinant_cumulative_weight_by_excitation_rank = np.zeros(self.n_act_el)
+
         # generate initial guess
         Q_idx = H_diag.argsort()[:indim]
         # print(Q_idx)
@@ -6171,8 +6175,14 @@ class PFHamiltonianGenerator:
                 a0 = c_index_to_string(Ia0, self.n_act_a, self.n_act_orb, Y)
                 b0 = c_index_to_string(Ib0, self.n_act_a, self.n_act_orb, Y)
 
+                
                 alphalist = Determinant.obtBits2ObtIndexList(a0)
                 betalist = Determinant.obtBits2ObtIndexList(b0)
+
+                # store alphalist and betalist for the reference to a numpy array
+                a_ref = np.array(alphalist)
+                b_ref = np.array(betalist)
+                
                 for j in range(min(H_dim, 10)):
                     Idet = index[Q.shape[0] - j - 1] % self.num_det
                     photon_p = (index[Q.shape[0] - j - 1] - Idet) // self.num_det
