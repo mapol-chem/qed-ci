@@ -6182,8 +6182,9 @@ class PFHamiltonianGenerator:
                 # store alphalist and betalist for the reference to a numpy array
                 a_ref = np.array(alphalist)
                 b_ref = np.array(betalist)
-                
-                for j in range(min(H_dim, 10)):
+
+                #for j in range(min(H_dim, 10)):
+                for j in range(H_dim):
                     Idet = index[Q.shape[0] - j - 1] % self.num_det
                     photon_p = (index[Q.shape[0] - j - 1] - Idet) // self.num_det
                     Ib = Idet % self.num_alpha
