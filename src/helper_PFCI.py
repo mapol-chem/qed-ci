@@ -2416,7 +2416,8 @@ class PFHamiltonianGenerator:
                     + ci_dependent_energy
                 )
                 print(
-                    "{:20.12f}".format(sum_energy), "{:20.12f}".format(avg_energy),
+                    "{:20.12f}".format(sum_energy),
+                    "{:20.12f}".format(avg_energy),
                 )
                 # print(
                 #    "{:20.12f}".format(sum_energy),
@@ -3582,7 +3583,9 @@ class PFHamiltonianGenerator:
                 if self.casscf_optimization == True:
                     ####back up wmk algorithm
                     if self.n_in_a == 0 and self.n_act_orb == self.nmo:
-                        print("The requested casci level is equivalent to fci so no orbital optimization will be performed")
+                        print(
+                            "The requested casci level is equivalent to fci so no orbital optimization will be performed"
+                        )
                         pass
                     else:
                         start = timer()
@@ -3635,10 +3638,12 @@ class PFHamiltonianGenerator:
                                 self.H_diag3 = np.zeros(H_dim)
                                 fock_core = copy.deepcopy(self.H_spatial2)
                                 fock_core += 2.0 * np.einsum(
-                                    "jjrs->rs", self.J[: self.n_in_a, : self.n_in_a, :, :]
+                                    "jjrs->rs",
+                                    self.J[: self.n_in_a, : self.n_in_a, :, :],
                                 )
                                 fock_core -= np.einsum(
-                                    "jjrs->rs", self.K[: self.n_in_a, : self.n_in_a, :, :]
+                                    "jjrs->rs",
+                                    self.K[: self.n_in_a, : self.n_in_a, :, :],
                                 )
 
                                 active_fock_core = copy.deepcopy(
@@ -3730,12 +3735,13 @@ class PFHamiltonianGenerator:
                                 self.CASSCFeigs = eigenvals
                                 self.CASSCFvecs = eigenvecs
 
-
                                 print(
                                     "\nACTIVE PART OF DETERMINANTS THAT HAVE THE MOST IMPORTANT CONTRIBUTIONS"
                                 )
                                 Y = np.zeros(
-                                    self.n_act_a * (self.n_act_orb - self.n_act_a + 1) * 3,
+                                    self.n_act_a
+                                    * (self.n_act_orb - self.n_act_a + 1)
+                                    * 3,
                                     dtype=np.int32,
                                 )
                                 c_graph(self.n_act_a, self.n_act_orb, Y)
@@ -3794,7 +3800,8 @@ class PFHamiltonianGenerator:
                                     betalist = Determinant.obtBits2ObtIndexList(b0)
                                     for j in range(min(H_dim, 10)):
                                         Idet = (
-                                            index[eigenvecs.shape[1] - j - 1] % self.num_det
+                                            index[eigenvecs.shape[1] - j - 1]
+                                            % self.num_det
                                         )
                                         photon_p = (
                                             index[eigenvecs.shape[1] - j - 1] - Idet
@@ -3811,8 +3818,12 @@ class PFHamiltonianGenerator:
                                         alphalist = Determinant.obtBits2ObtIndexList(a)
                                         betalist = Determinant.obtBits2ObtIndexList(b)
 
-                                        inactive_list = list(x for x in range(self.n_in_a))
-                                        alphalist2 = [x + self.n_in_a for x in alphalist]
+                                        inactive_list = list(
+                                            x for x in range(self.n_in_a)
+                                        )
+                                        alphalist2 = [
+                                            x + self.n_in_a for x in alphalist
+                                        ]
                                         # alphalist2[0:0] = inactive_list
                                         betalist2 = [x + self.n_in_a for x in betalist]
                                         # betalist2[0:0] = inactive_list
@@ -3824,7 +3835,8 @@ class PFHamiltonianGenerator:
                                                     index[eigenvecs.shape[1] - j - 1]
                                                 ]
                                             ),
-                                            "%9.3d" % (index[eigenvecs.shape[1] - j - 1]),
+                                            "%9.3d"
+                                            % (index[eigenvecs.shape[1] - j - 1]),
                                             "alpha",
                                             alphalist2,
                                             "   beta",
@@ -3901,10 +3913,14 @@ class PFHamiltonianGenerator:
                             R = 0.5 * (self.U2 - self.U2.T)
                             Rai = np.zeros((self.n_act_orb, self.n_in_a))
                             Rai[:, :] = R[self.n_in_a : self.n_occupied, : self.n_in_a]
-                            print("norm of internal step", np.linalg.norm(Rai), flush=True)
+                            print(
+                                "norm of internal step", np.linalg.norm(Rai), flush=True
+                            )
                             if np.linalg.norm(Rai) > 1e-4:
                                 # print("u2 before", self.U2,flush = True)
-                                print("RESTART MICROITERATION TO CORRECT INTERNAL ROTATION")
+                                print(
+                                    "RESTART MICROITERATION TO CORRECT INTERNAL ROTATION"
+                                )
                                 Rvi = np.zeros((self.n_virtual, self.n_in_a))
                                 Rva = np.zeros((self.n_virtual, self.n_act_orb))
                                 self.build_unitary_matrix(Rai, Rvi, Rva)
@@ -3926,7 +3942,9 @@ class PFHamiltonianGenerator:
                                     self.n_occupied,
                                 )
                                 end1 = timer()
-                                print("full internal transformation took", end1 - start1)
+                                print(
+                                    "full internal transformation took", end1 - start1
+                                )
                                 # self.full_transformation_internal_optimization(self.U_delta, self.H_spatial2, self.d_cmo, self.J, self.K)
                                 self.U_total = np.einsum(
                                     "pq,qs->ps", self.U_total, self.U_delta
@@ -3963,7 +3981,9 @@ class PFHamiltonianGenerator:
 
                             temp8 = np.zeros((self.nmo, self.nmo))
                             temp8 = np.einsum("pq,qs->ps", self.H_spatial2, self.U2)
-                            self.H_spatial2[:, :] = np.einsum("ps,pr->rs", temp8, self.U2)
+                            self.H_spatial2[:, :] = np.einsum(
+                                "ps,pr->rs", temp8, self.U2
+                            )
                             temp8 = np.einsum("pq,qs->ps", self.d_cmo, self.U2)
                             self.d_cmo[:, :] = np.einsum("ps,pr->rs", temp8, self.U2)
 
@@ -4016,9 +4036,12 @@ class PFHamiltonianGenerator:
                             )
 
                             # print(eigenvecs)
-                            active_fock_core = np.zeros((self.n_act_orb, self.n_act_orb))
+                            active_fock_core = np.zeros(
+                                (self.n_act_orb, self.n_act_orb)
+                            )
                             active_fock_core[:, :] = self.fock_core[
-                                self.n_in_a : self.n_occupied, self.n_in_a : self.n_occupied
+                                self.n_in_a : self.n_occupied,
+                                self.n_in_a : self.n_occupied,
                             ]
                             active_one_e_energy = np.dot(
                                 active_fock_core.flatten(), self.D_tu_avg
@@ -4115,7 +4138,7 @@ class PFHamiltonianGenerator:
             self.ci_level = cavity_dictionary["ci_level"]
         else:
             self.ci_level = "cis"
-        
+
         if "casscf_optimization" in cavity_dictionary:
             self.casscf_optimization = cavity_dictionary["casscf_optimization"]
         else:
@@ -5873,7 +5896,7 @@ class PFHamiltonianGenerator:
         if self.davidson_guess == "unit guess":
             Q = np.zeros((indim, H_dim))
             print("use unit guess")
-            BIGNUM = 10 ** 100
+            BIGNUM = 10**100
             H_diag2 = np.copy(H_diag)
             for i in range(indim):
                 minimum = H_diag2[0]
@@ -7559,9 +7582,9 @@ class PFHamiltonianGenerator:
             self.occupied_d_cmo[: self.n_occupied, : self.n_occupied] = occupied_d_cmo[
                 :, :
             ]
-            self.occupied_fock_core[
-                : self.n_occupied, : self.n_occupied
-            ] = occupied_fock_core[:, :]
+            self.occupied_fock_core[: self.n_occupied, : self.n_occupied] = (
+                occupied_fock_core[:, :]
+            )
             print("fsdb", self.E_core, E_core)
             self.E_core = E_core
             # self.gkl3 = np.zeros((self.n_act_orb, self.n_act_orb))
@@ -8552,7 +8575,9 @@ class PFHamiltonianGenerator:
                         y_square,
                         t1,
                     )
-                    adjusted_step = first_component + min(np.abs(t1), np.abs(t2)) * second_component
+                    adjusted_step = (
+                        first_component + min(np.abs(t1), np.abs(t2)) * second_component
+                    )
                     print("adjusted step norm", np.linalg.norm(adjusted_step))
                     step = adjusted_step
                 else:
@@ -8997,7 +9022,10 @@ class PFHamiltonianGenerator:
                             y_square,
                             t1,
                         )
-                        adjusted_step = first_component + min(np.abs(t1), np.abs(t2)) * second_component
+                        adjusted_step = (
+                            first_component
+                            + min(np.abs(t1), np.abs(t2)) * second_component
+                        )
                         print("adjusted step norm", np.linalg.norm(adjusted_step))
                         step = adjusted_step
 
@@ -10905,11 +10933,11 @@ class PFHamiltonianGenerator:
                                 ):
                                     continue
                                 # if (k >= self.n_occupied and r >= self.n_occupied): continue
-                                reduced_hessian[index_count1][
-                                    index_count2
-                                ] = hessian_tilde3[r * self.n_occupied + k][
-                                    s * self.n_occupied + l
-                                ]
+                                reduced_hessian[index_count1][index_count2] = (
+                                    hessian_tilde3[r * self.n_occupied + k][
+                                        s * self.n_occupied + l
+                                    ]
+                                )
                                 # print(r,k,s,l,index_count1,index_count2)
                                 index_count2 += 1
                         index_count1 += 1
@@ -11419,11 +11447,11 @@ class PFHamiltonianGenerator:
                                 ):
                                     continue
                                 # if (k >= self.n_occupied and r >= self.n_occupied): continue
-                                reduced_hessian[index_count1][
-                                    index_count2
-                                ] = hessian_tilde3[r * self.n_occupied + k][
-                                    s * self.n_occupied + l
-                                ]
+                                reduced_hessian[index_count1][index_count2] = (
+                                    hessian_tilde3[r * self.n_occupied + k][
+                                        s * self.n_occupied + l
+                                    ]
+                                )
                                 # print(r,k,s,l,index_count1,index_count2)
                                 index_count2 += 1
                         index_count1 += 1
@@ -13497,7 +13525,10 @@ class PFHamiltonianGenerator:
                             y_square,
                             t1,
                         )
-                        adjusted_step = first_component + min(np.abs(t1), np.abs(t2)) * second_component
+                        adjusted_step = (
+                            first_component
+                            + min(np.abs(t1), np.abs(t2)) * second_component
+                        )
                         print("adjusted step norm", np.linalg.norm(adjusted_step))
                         step = adjusted_step
                     else:
@@ -14006,7 +14037,8 @@ class PFHamiltonianGenerator:
                                 t1,
                             )
                             adjusted_step = (
-                                first_component + min(np.abs(t1), np.abs(t2)) * second_component
+                                first_component
+                                + min(np.abs(t1), np.abs(t2)) * second_component
                             )
                             print("adjusted step norm", np.linalg.norm(adjusted_step))
                             step = adjusted_step
@@ -14863,11 +14895,11 @@ class PFHamiltonianGenerator:
                             ):
                                 continue
                             # if (k >= self.n_occupied and r >= self.n_occupied): continue
-                            reduced_hessian[index_count1][
-                                index_count2
-                            ] = hessian_tilde3[r * self.n_occupied + k][
-                                s * self.n_occupied + l
-                            ]
+                            reduced_hessian[index_count1][index_count2] = (
+                                hessian_tilde3[r * self.n_occupied + k][
+                                    s * self.n_occupied + l
+                                ]
+                            )
                             # print(r,k,s,l,index_count1,index_count2)
                             index_count2 += 1
                     index_count1 += 1
@@ -15070,7 +15102,10 @@ class PFHamiltonianGenerator:
                             y_square,
                             t1,
                         )
-                        adjusted_step = first_component + min(np.abs(t1), np.abs(t2)) * second_component
+                        adjusted_step = (
+                            first_component
+                            + min(np.abs(t1), np.abs(t2)) * second_component
+                        )
                         print("adjusted step norm", np.linalg.norm(adjusted_step))
                         step = adjusted_step
                     else:
@@ -15586,7 +15621,8 @@ class PFHamiltonianGenerator:
                                 t1,
                             )
                             adjusted_step = (
-                                first_component + min(np.abs(t1), np.abs(t2)) * second_component
+                                first_component
+                                + min(np.abs(t1), np.abs(t2)) * second_component
                             )
                             print("adjusted step norm", np.linalg.norm(adjusted_step))
                             step = adjusted_step
@@ -15952,11 +15988,11 @@ class PFHamiltonianGenerator:
                                     ):
                                         continue
                                     # if (k >= self.n_occupied and r >= self.n_occupied): continue
-                                    reduced_hessian[index_count1][
-                                        index_count2
-                                    ] = hessian_tilde3[r * self.n_occupied + k][
-                                        s * self.n_occupied + l
-                                    ]
+                                    reduced_hessian[index_count1][index_count2] = (
+                                        hessian_tilde3[r * self.n_occupied + k][
+                                            s * self.n_occupied + l
+                                        ]
+                                    )
                                     # print(r,k,s,l,index_count1,index_count2)
                                     index_count2 += 1
                             index_count1 += 1
@@ -16191,11 +16227,11 @@ class PFHamiltonianGenerator:
                             ):
                                 continue
                             # if (k >= self.n_occupied and r >= self.n_occupied): continue
-                            reduced_hessian[index_count1][
-                                index_count2
-                            ] = hessian_tilde3[r * self.n_occupied + k][
-                                s * self.n_occupied + l
-                            ]
+                            reduced_hessian[index_count1][index_count2] = (
+                                hessian_tilde3[r * self.n_occupied + k][
+                                    s * self.n_occupied + l
+                                ]
+                            )
                             # print(r,k,s,l,index_count1,index_count2)
                             index_count2 += 1
                     index_count1 += 1
@@ -18981,11 +19017,11 @@ class PFHamiltonianGenerator:
         index_map = self.index_map
         index_map_size = self.index_map_size
         n_occupied = self.n_occupied
-        #print("U dtype:", U.dtype, "shape:", U.shape)
-        #print("A_tilde dtype:", A_tilde.dtype, "shape:", A_tilde.shape)
-        #print("index_map dtype:", index_map.dtype, "shape:", index_map.shape)
-        #print("G dtype:", G.dtype, "shape:", G.shape)
-        #print("R_reduced dtype:", R_reduced.dtype, "shape:", R_reduced.shape)
+        # print("U dtype:", U.dtype, "shape:", U.shape)
+        # print("A_tilde dtype:", A_tilde.dtype, "shape:", A_tilde.shape)
+        # print("index_map dtype:", index_map.dtype, "shape:", index_map.shape)
+        # print("G dtype:", G.dtype, "shape:", G.shape)
+        # print("R_reduced dtype:", R_reduced.dtype, "shape:", R_reduced.shape)
         return self.build_sigma_reduced5(
             U,
             A_tilde,
