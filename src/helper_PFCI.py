@@ -1833,7 +1833,8 @@ class PFHamiltonianGenerator:
                     a_ref = np.array(alphalist)
                     b_ref = np.array(betalist)
                     
-                    for j in range(min(H_dim, 10)):
+                    #for j in range(min(H_dim, 10)):
+                    for j in range(H_dim):
                         Idet = index[eigenvecs.shape[1] - j - 1] % self.num_det
                         photon_p = (
                             index[eigenvecs.shape[1] - j - 1] - Idet
@@ -1861,20 +1862,30 @@ class PFHamiltonianGenerator:
                         # alphalist2[0:0] = inactive_list
                         betalist2 = [x + self.n_in_a for x in betalist]
                         # betalist2[0:0] = inactive_list
+
                         c_i = eigenvecs[i][index[eigenvecs.shape[1] - j - 1]]
-                        print(
-                            "%20.12lf"
-                            % c_i,
-                            "%9.3d" % (index[eigenvecs.shape[1] - j - 1]),
-                            "alpha",
-                            alphalist2,
-                            "   beta",
-                            betalist2,
-                            "%4.1d" % (photon_p),
-                            "photon",
-                            "excitation ranke",
-                            excitation_rank
-                        )
+                        
+                        # increment count of configurations with this excitation rank
+                        self.casci_config_count_by_rank[excitation_rank] += 1
+
+                        # accumulate sum of squared weights for this excitation rank
+                        self.casci_sum_squared_weight_by_rank[excitation_rank] += c_i ** 2
+
+                        # only print first 10
+                        if j <= 10:
+                            print(
+                                "%20.12lf"
+                                % c_i,
+                                "%9.3d" % (index[eigenvecs.shape[1] - j - 1]),
+                                "alpha",
+                                alphalist2,
+                                "   beta",
+                                betalist2,
+                                "%4.1d" % (photon_p),
+                                "photon",
+                                "excitation ranke",
+                                excitation_rank
+                            )
 
                 print(" GOING TO COMPUTE 1-E PROPERTIES!", flush=True)
                 _mu_x_spin = np.einsum(
@@ -3848,6 +3859,14 @@ class PFHamiltonianGenerator:
                                         excitation_rank = a_diff_count + b_diff_count
                                         #print("Excitation rank",excitation_rank)
 
+                                        # get weight of current configh
+                                        c_i = eigenvecs[i][index[eigenvecs.shape[1] - j - 1]]
+                                        
+                                        # increment count of configurations with this excitation rank
+                                        self.casscf_config_count_by_rank[excitation_rank] += 1
+                                        
+                                        # accumulate sum of squared weights for this excitation rank
+                                        self.casscf_sum_squared_weight_by_rank[excitation_rank] += c_i ** 2
 
                                         inactive_list = list(
                                             x for x in range(self.n_in_a)
@@ -3859,24 +3878,24 @@ class PFHamiltonianGenerator:
                                         betalist2 = [x + self.n_in_a for x in betalist]
                                         # betalist2[0:0] = inactive_list
 
-                                        print(
-                                            "%20.12lf"
-                                            % (
-                                                eigenvecs[i][
-                                                    index[eigenvecs.shape[1] - j - 1]
-                                                ]
-                                            ),
-                                            "%9.3d"
-                                            % (index[eigenvecs.shape[1] - j - 1]),
-                                            "alpha",
-                                            alphalist2,
-                                            "   beta",
-                                            betalist2,
-                                            "%4.1d" % (photon_p),
-                                            "photon",
-                                            "excitation rank",
-                                            excitation_rank
-                                        )
+                                        # only print first 10
+                                        if j <= 10:
+                                            print(
+                                                "%20.12lf"
+                                                % (
+                                                    c_i
+                                                ),
+                                                "%9.3d"
+                                                % (index[eigenvecs.shape[1] - j - 1]),
+                                                "alpha",
+                                                alphalist2,
+                                                "   beta",
+                                                betalist2,
+                                                "%4.1d" % (photon_p),
+                                                "photon",
+                                                "excitation rank",
+                                                excitation_rank
+                                            )
 
                                 print("OPTIMIZATION CONVERGED", flush=True)
                                 print("avg energy final", macroiteration, avg_energy)
