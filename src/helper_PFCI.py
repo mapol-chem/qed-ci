@@ -3860,7 +3860,7 @@ class PFHamiltonianGenerator:
                                         
                                         if i == 0:
                                             a_curr = np.array(alphalist)
-                                            b_curr = np.array(alphalist)
+                                            b_curr = np.array(betalist)
 
                                             #sum up all instances where the occupation of the current determinant differs from the reference for alpha and beta strings
                                             a_diff_count = np.sum(a_ref != a_curr)
