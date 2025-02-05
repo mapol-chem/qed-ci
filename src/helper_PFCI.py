@@ -4320,12 +4320,12 @@ class PFHamiltonianGenerator:
                 self.n_act_el = 0
 
             # initialize arrays that will store the number of configurations by excitation rank for CASCI and CASSCF
-            self.casscf_config_count_by_rank = np.zeros(self.n_act_el)
-            self.casci_config_count_by_rank = np.zeros(self.n_act_el)
+            self.casscf_config_count_by_rank = np.zeros(self.n_act_el+1)
+            self.casci_config_count_by_rank = np.zeros(self.n_act_el+1)
 
             # initialize arrays that will store the sum of squared weights by excitation rank for CASCI and CASSCF
-            self.casscf_sum_squared_weight_by_rank = np.zeros(self.n_act_el)
-            self.casci_sum_squared_weight_by_rank = np.zeros(self.n_act_el)
+            self.casscf_sum_squared_weight_by_rank = np.zeros(self.n_act_el+1)
+            self.casci_sum_squared_weight_by_rank = np.zeros(self.n_act_el+1)
 
         else:
             self.n_act_orb = 0
