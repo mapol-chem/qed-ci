@@ -3798,7 +3798,11 @@ class PFHamiltonianGenerator:
 
                                     alphalist = Determinant.obtBits2ObtIndexList(a0)
                                     betalist = Determinant.obtBits2ObtIndexList(b0)
-                                    for j in range(min(H_dim, 10)):
+                                    a_ref = np.array(alphalist)
+                                    b_ref = np.array(betalist)
+
+                                    #for j in range(min(H_dim, 10)):
+                                    for j in range(H_dim):
                                         Idet = (
                                             index[eigenvecs.shape[1] - j - 1]
                                             % self.num_det
@@ -3817,6 +3821,17 @@ class PFHamiltonianGenerator:
 
                                         alphalist = Determinant.obtBits2ObtIndexList(a)
                                         betalist = Determinant.obtBits2ObtIndexList(b)
+                                        a_curr = np.array(alphalist)
+                                        b_curr = np.array(alphalist)
+
+                                        #sum up all instances where the occupation of the current determinant differs from the reference for alpha and beta strings
+                                        a_diff_count = np.sum(a_ref != a_curr)
+                                        b_diff_count = np.sum(b_ref != b_curr)
+                                        
+                                        # sum of alpha and beta difference instances is the excitation rank
+                                        excitation_rank = a_diff_count + b_diff_count
+                                        #print("Excitation rank",excitation_rank)
+
 
                                         inactive_list = list(
                                             x for x in range(self.n_in_a)
@@ -3843,6 +3858,8 @@ class PFHamiltonianGenerator:
                                             betalist2,
                                             "%4.1d" % (photon_p),
                                             "photon",
+                                            "excitation rank",
+                                            excitation_rank
                                         )
 
                                 print("OPTIMIZATION CONVERGED", flush=True)
