@@ -1861,10 +1861,10 @@ class PFHamiltonianGenerator:
                         # alphalist2[0:0] = inactive_list
                         betalist2 = [x + self.n_in_a for x in betalist]
                         # betalist2[0:0] = inactive_list
-
+                        c_i = eigenvecs[i][index[eigenvecs.shape[1] - j - 1]]
                         print(
                             "%20.12lf"
-                            % (eigenvecs[i][index[eigenvecs.shape[1] - j - 1]]),
+                            % c_i,
                             "%9.3d" % (index[eigenvecs.shape[1] - j - 1]),
                             "alpha",
                             alphalist2,
@@ -4299,6 +4299,14 @@ class PFHamiltonianGenerator:
                 self.n_act_el = cavity_dictionary["nact_els"]
             else:
                 self.n_act_el = 0
+
+            # initialize arrays that will store the number of configurations by excitation rank for CASCI and CASSCF
+            self.casscf_config_count_by_rank = np.zeros(self.n_act_el)
+            self.casci_config_count_by_rank = np.zeros(self.n_act_el)
+
+            # initialize arrays that will store the sum of squared weights by excitation rank for CASCI and CASSCF
+            self.casscf_sum_squared_weight_by_rank = np.zeros(self.n_act_el)
+            self.casci_sum_squared_weight_by_rank = np.zeros(self.n_act_el)
 
         else:
             self.n_act_orb = 0
