@@ -1830,8 +1830,10 @@ class PFHamiltonianGenerator:
                     alphalist = Determinant.obtBits2ObtIndexList(a0)
                     betalist = Determinant.obtBits2ObtIndexList(b0)
 
-                    a_ref = np.array(alphalist)
-                    b_ref = np.array(betalist)
+                    # count the ground state only for now!
+                    if i==0:
+                        a_ref = np.array(alphalist)
+                        b_ref = np.array(betalist)
                     
                     #for j in range(min(H_dim, 10)):
                     for j in range(H_dim):
@@ -1847,14 +1849,23 @@ class PFHamiltonianGenerator:
                         alphalist = Determinant.obtBits2ObtIndexList(a)
                         betalist = Determinant.obtBits2ObtIndexList(b)
 
-                        a_curr = np.array(alphalist)
-                        b_curr = np.array(betalist)
+                        c_i = eigenvecs[i][index[eigenvecs.shape[1] - j - 1]]
 
-                        a_diff_count = np.sum(a_ref != a_curr)
-                        b_diff_count = np.sum(b_ref != b_curr)
-
-                        # sum of alpha and beta difference instances is the excitation rank
-                        excitation_rank = a_diff_count + b_diff_count
+                        if i==0:
+                            a_curr = np.array(alphalist)
+                            b_curr = np.array(betalist)
+                            
+                            a_diff_count = np.sum(a_ref != a_curr)
+                            b_diff_count = np.sum(b_ref != b_curr)
+                            
+                            # sum of alpha and beta difference instances is the excitation rank
+                            excitation_rank = a_diff_count + b_diff_count
+                            
+                            # increment count of configurations with this excitation rank
+                            self.casci_config_count_by_rank[excitation_rank] += 1
+                            
+                            # accumulate sum of squared weights for this excitation rank
+                            self.casci_sum_squared_weight_by_rank[excitation_rank] += c_i ** 2
 
 
                         inactive_list = list(x for x in range(self.n_in_a))
@@ -1862,15 +1873,7 @@ class PFHamiltonianGenerator:
                         # alphalist2[0:0] = inactive_list
                         betalist2 = [x + self.n_in_a for x in betalist]
                         # betalist2[0:0] = inactive_list
-
-                        c_i = eigenvecs[i][index[eigenvecs.shape[1] - j - 1]]
                         
-                        # increment count of configurations with this excitation rank
-                        self.casci_config_count_by_rank[excitation_rank] += 1
-
-                        # accumulate sum of squared weights for this excitation rank
-                        self.casci_sum_squared_weight_by_rank[excitation_rank] += c_i ** 2
-
                         # only print first 10
                         if j <= 10:
                             print(
@@ -3825,8 +3828,11 @@ class PFHamiltonianGenerator:
 
                                     alphalist = Determinant.obtBits2ObtIndexList(a0)
                                     betalist = Determinant.obtBits2ObtIndexList(b0)
-                                    a_ref = np.array(alphalist)
-                                    b_ref = np.array(betalist)
+
+                                    # only if i==0:
+                                    if i == 0:
+                                        a_ref = np.array(alphalist)
+                                        b_ref = np.array(betalist)
 
                                     #for j in range(min(H_dim, 10)):
                                     for j in range(H_dim):
@@ -3848,25 +3854,26 @@ class PFHamiltonianGenerator:
 
                                         alphalist = Determinant.obtBits2ObtIndexList(a)
                                         betalist = Determinant.obtBits2ObtIndexList(b)
-                                        a_curr = np.array(alphalist)
-                                        b_curr = np.array(alphalist)
-
-                                        #sum up all instances where the occupation of the current determinant differs from the reference for alpha and beta strings
-                                        a_diff_count = np.sum(a_ref != a_curr)
-                                        b_diff_count = np.sum(b_ref != b_curr)
                                         
-                                        # sum of alpha and beta difference instances is the excitation rank
-                                        excitation_rank = a_diff_count + b_diff_count
-                                        #print("Excitation rank",excitation_rank)
-
                                         # get weight of current configh
                                         c_i = eigenvecs[i][index[eigenvecs.shape[1] - j - 1]]
                                         
-                                        # increment count of configurations with this excitation rank
-                                        self.casscf_config_count_by_rank[excitation_rank] += 1
+                                        if i == 0:
+                                            a_curr = np.array(alphalist)
+                                            b_curr = np.array(alphalist)
+
+                                            #sum up all instances where the occupation of the current determinant differs from the reference for alpha and beta strings
+                                            a_diff_count = np.sum(a_ref != a_curr)
+                                            b_diff_count = np.sum(b_ref != b_curr)
+                                            
+                                            # sum of alpha and beta difference instances is the excitation rank
+                                            excitation_rank = a_diff_count + b_diff_count
+                                            # increment count of configurations with this excitation rank
+                                            self.casscf_config_count_by_rank[excitation_rank] += 1
                                         
-                                        # accumulate sum of squared weights for this excitation rank
-                                        self.casscf_sum_squared_weight_by_rank[excitation_rank] += c_i ** 2
+                                            # accumulate sum of squared weights for this excitation rank
+                                            self.casscf_sum_squared_weight_by_rank[excitation_rank] += c_i ** 2
+                                    
 
                                         inactive_list = list(
                                             x for x in range(self.n_in_a)
