@@ -1,0 +1,4 @@
+clang++ -O3 -Xpreprocessor -fopenmp -I/opt/homebrew/opt/libomp/include -L/opt/homebrew/opt/libomp/lib -lomp -lopenblas -llapacke ci_solver.c -o ci_solver
+
+
+clang++ -O3 -Xpreprocessor -fopenmp -I/opt/homebrew/opt/openblas/include -L/opt/homebrew/opt/openblas/lib -lomp -lopenblas -llapacke ci_solver.c -o ci_solver

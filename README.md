@@ -31,3 +31,33 @@ Install intel oneapi
 Compile the code with intel compiler:
 - icx -fPIC -Wall -Wextra -qopenmp -c ci_solver.c orbital.c 
 - icx -shared -o cfunctions.so ci_solver.o orbital.o
+
+
+Replace Intel MKL with an alternative:
+
+Apple Accelerate framework: Includes optimized BLAS and LAPACK implementations.
+OpenBLAS: Open-source alternative that works on macOS.
+Netlib LAPACK: Standard LAPACK library, but slower than Accelerate or OpenBLAS.
+Modify #include directives:
+
+Replace <mkl.h> and <mkl_lapacke.h> with <Accelerate/Accelerate.h> for Apple’s built-in framework.
+
+If using OpenBLAS, include <cblas.h> and <lapacke.h>.
+JJF Note: can install OpenBlas with `brew install openblas`
+
+Modify build process:
+
+Replace -mkl with -framework Accelerate (for Apple’s Accelerate).
+
+If using OpenBLAS: -lopenblas -llapacke.
+Ensure compatibility with Clang/GCC:
+
+Replace any Intel-specific intrinsics.
+OpenMP is supported by GCC on macOS but requires libomp: Install via brew install libomp and link using -Xpreprocessor -fopenmp -lomp.
+
+# Note from brew install openblas:
+If you need to have openjdk first in your PATH, run:
+  echo 'export PATH="/opt/homebrew/opt/openjdk/bin:$PATH"' >> ~/.zshrc
+
+For compilers to find openjdk you may need to set:
+  export CPPFLAGS="-I/opt/homebrew/opt/openjdk/include"

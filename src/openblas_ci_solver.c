@@ -1071,8 +1071,7 @@ void constant_terms_contraction(double* c_vectors,double* c1_vectors,int num_alp
 }
 
 void symmetric_eigenvalue_problem(double* A, int N, double* eig) {
-    //MKL_INT n = N, lda = N, info;
-    lapack_int n = N, lda = N, info;	
+    MKL_INT n = N, lda = N, info;	
     //double w[N];
     
     /* Solve eigenproblem */

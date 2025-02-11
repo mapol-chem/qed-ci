@@ -1,13 +1,12 @@
-
 #include <stdlib.h>
 #include <stdio.h>
 #include "ci_solver.h"
 #include <string.h>
 #include <math.h>
 #include <cblas.h>
-#include <lapacke.h>
-#include <omp.h>
-#include <time.h>
+#include<omp.h>
+#include<time.h>
+#include "mkl_lapacke.h"
 #include <unistd.h>
 #define MIN(x, y) (((x) < (y)) ? (x) : (y))
 #define BIGNUM 1E100
@@ -17,64 +16,20 @@ void matrix_product(double* A, double* B, double* C, int m, int n, int k) {
      cblas_dgemm(CblasRowMajor, CblasNoTrans, CblasNoTrans, m, n, k, 1.0, A, k, B, n, 0.0, C, n);
 }
 
-int binomialCoeff(int n, int k) {
+int binomialCoeff(int n, int k)
+{
     int C[k + 1];
     memset(C, 0, sizeof(C));
+ 
     C[0] = 1; // nC0 is 1
+ 
     for (int i = 1; i <= n; i++) {
+        // Compute next row of pascal triangle using
+        // the previous row
         for (int j = MIN(i, k); j > 0; j--)
             C[j] = C[j] + C[j - 1];
     }
     return C[k];
-}
-
-// Other functions remain unchanged, ensuring they use OpenBLAS-compatible calls.
-
-void build_H_diag(double* h1e, double* h2e, double* H_diag, int N_p, int num_alpha, int nmo, int n_act_a, int n_act_orb, int n_in_a, double omega, double Enuc, double dc, int* Y) {
-    size_t num_dets = num_alpha * num_alpha;
-    int np1 = N_p + 1;
-    #pragma omp parallel for num_threads(16)
-    for (size_t index_photon_det = 0; index_photon_det < np1 * num_dets; index_photon_det++) {
-        size_t Idet = index_photon_det % num_dets;
-        int m = (index_photon_det - Idet) / num_dets;
-        int start = m * num_dets;
-    
-        int index_b = Idet % num_alpha;
-        int index_a = (Idet - index_b) / num_alpha;
-        size_t string_a = index_to_string(index_a, n_act_a, n_act_orb, Y);
-        size_t string_b = index_to_string(index_b, n_act_a, n_act_orb, Y);
-        size_t ab = string_a & string_b;
-        int length;
-        int* double_active = string_to_obtlist(ab, nmo, &length);
-        int dim_d = length + n_in_a;
-        int double_occupation[dim_d];
-        for (int i = 0; i < dim_d; i++) {
-            if (i < n_in_a) {
-                double_occupation[i] = i;    
-            } else {
-                double_occupation[i] = double_active[i - n_in_a] + n_in_a;    
-            }
-        }
-
-        size_t e = string_a ^ string_b;
-        size_t ea = e & string_a;
-        size_t eb = e & string_b;
-        int dim_s;
-        int* single_occupation_a = string_to_obtlist(ea, nmo, &dim_s);
-        int* single_occupation_b = string_to_obtlist(eb, nmo, &dim_s);
-        for (int i = 0; i < dim_s; i++) {
-            single_occupation_a[i] += n_in_a;
-            single_occupation_b[i] += n_in_a;
-        }
-        
-        double c = 0;
-        for (int a = 0; a < (dim_d + 2 * dim_s); a++) {
-            int i = double_occupation[a];
-            int n_i = 1; 
-            c += n_i * h1e[i * nmo + i];
-        }
-        H_diag[Idet + start] = c + m * omega + Enuc + dc;
-    }
 }
 
 
@@ -451,8 +406,93 @@ void single_replacement_list(int num_alpha, int N_ac, int n_o_ac, int* Y,int* ta
 }
 
 
+void build_H_diag(double* h1e, double* h2e, double* H_diag, int N_p, int num_alpha,int nmo, int n_act_a,int n_act_orb,int n_in_a, double omega, double Enuc, double dc, int* Y) {
+    size_t num_dets = num_alpha * num_alpha;
+    int np1 = N_p + 1;
+    #pragma omp parallel for num_threads(16)
+    for (size_t index_photon_det = 0; index_photon_det < np1*num_dets; index_photon_det++) {
+        size_t Idet = index_photon_det%num_dets;	
+        int m = (index_photon_det-Idet)/num_dets;	
+        int start =  m * num_dets; 
+    
+        int index_b = Idet%num_alpha;
+        int index_a = (Idet-index_b)/num_alpha;
+        size_t string_a = index_to_string(index_a,n_act_a,n_act_orb,Y);
+        size_t string_b = index_to_string(index_b,n_act_a,n_act_orb,Y);
+    	size_t ab = string_a & string_b;
+    	int length;
+    	int* double_active = string_to_obtlist(ab, nmo, &length);
+    	int dim_d = length+n_in_a;
+    	int double_occupation[dim_d];
+        for (int i = 0; i < dim_d; i++) {
+            if (i < n_in_a) {
+    	       double_occupation[i] = i;	    
+    	    }
+            else {
+    	       double_occupation[i] = double_active[i-n_in_a] + n_in_a;	
+    	    }
+    	}
+            
+        size_t e = string_a^string_b;
+        size_t ea = e&string_a;
+        size_t eb = e&string_b;
+        int dim_s;
+    	int* single_occupation_a = string_to_obtlist(ea, nmo, &dim_s);
+    	int* single_occupation_b = string_to_obtlist(eb, nmo, &dim_s);
+            for (int i = 0; i < dim_s; i++) {
+    	    single_occupation_a[i] += n_in_a;	
+    	    single_occupation_b[i] += n_in_a;	
+    	}
+            
+            int* occupation_list_spin = (int*) malloc((dim_d+2*dim_s)*3*sizeof(int));
+            memset(occupation_list_spin, 0, (dim_d+2*dim_s)*3*sizeof(int));
+            for (int i = 0; i < dim_d; i++) {
+                occupation_list_spin[i*3+0] = double_occupation[i];
+                occupation_list_spin[i*3+1] = 1; 
+                occupation_list_spin[i*3+2] = 1; 
+    	}
+            for (int i = 0; i < dim_s; i++) {
+                occupation_list_spin[(i+dim_d)*3+0] = single_occupation_a[i];
+                occupation_list_spin[(i+dim_d)*3+1] = 1; 
+                occupation_list_spin[(i+dim_d+dim_s)*3+0] = single_occupation_b[i];
+                occupation_list_spin[(i+dim_d+dim_s)*3+2] = 1; 
+    	}
+    	
+	double c = 0;
+        for (int a = 0; a < (dim_d+2*dim_s); a++) {
+            int i = occupation_list_spin[a*3+0];
+            int n_ia = occupation_list_spin[a*3+1]; 
+            int n_ib = occupation_list_spin[a*3+2];
+            int n_i = n_ia+ n_ib; 
+            int ii = i * nmo + i;
+            c += n_i * h1e[i*nmo+i];
+            for (int b = 0; b < (dim_d+2*dim_s); b++) {
+                int j = occupation_list_spin[b*3+0];
+                int n_ja = occupation_list_spin[b*3+1]; 
+                int n_jb = occupation_list_spin[b*3+2];
+                int n_j = n_ja + n_jb; 
+                int jj = j * nmo + j;
+                c += 0.5 * n_i * n_j * h2e[ii*nmo*nmo+jj];
+                int ij = i * nmo + j;
+                c -= 0.5 * (n_ia * n_ja + n_ib * n_jb) * h2e[ij*nmo*nmo+ij];
+    	    }
+    	}
+    	//for (int i = 0; i < dim_d + 2*dim_s; i++) {
+    	//    for (int j = 0; j < 3; j++) {
+    	//        printf("%4d", occupation_list_spin[i*3+j]);
+    	//    }
+    	//        printf("\n");
+     	//    
+    	//}
+    	//printf("\n");
+        H_diag[Idet+start] = c + m * omega + Enuc + dc;
+    	free(double_active);
+    	free(single_occupation_a);
+    	free(single_occupation_b);
+    	free(occupation_list_spin);
+    }
 
-
+}
 void build_H_diag_cas(double* h1e, double* h2e, double* H_diag, int N_p, int num_alpha,int nmo, int n_act_a,int n_act_orb,int n_in_a, double E_core, double omega, double Enuc, double dc, int* Y) {
     size_t num_dets = num_alpha * num_alpha;
     int np1 = N_p + 1;
@@ -1071,8 +1111,7 @@ void constant_terms_contraction(double* c_vectors,double* c1_vectors,int num_alp
 }
 
 void symmetric_eigenvalue_problem(double* A, int N, double* eig) {
-    //MKL_INT n = N, lda = N, info;
-    lapack_int n = N, lda = N, info;	
+    MKL_INT n = N, lda = N, info;	
     //double w[N];
     
     /* Solve eigenproblem */
