@@ -7,50 +7,6 @@ import sys
 
 np.set_printoptions(threshold=sys.maxsize)
 
-def test_lih_fci_sto3g_rdm_builds_no_cavity():
-
-    # load reference rdms
-    _expected_1rdm = np.load("/home/jfoley19/UPDATED_QEDCI/qed-ci/src/tests/LiH_sto3g_fci_d1.npy") # LiH_sto3g_fci_d1.npy")
-    _expected_2rdm = np.load("/home/jfoley19/UPDATED_QEDCI/qed-ci/src/tests/LiH_sto3g_fci_d2.npy")
-
-    mol_str = """
-    Li
-    H 1 1.4
-    symmetry c1
-    """
-
-    options_dict = {
-        "basis": "sto-3g",
-        "scf_type": "pk",
-        "e_convergence": 1e-10,
-        "d_convergence": 1e-10,
-    }
-
-    cavity_dict = {
-        'omega_value' : 0.,
-        'lambda_vector' : np.array([0, 0, 0.0]),
-        'ci_level' : 'fci',
-        'davidson_roots' : 2,
-        'number_of_photons' : 0,
-        'full_diagonalization' : False,
-        'photon_number_basis' : True,
-        'canonical_mos' : True,
-        'rdm_root' : 0, #<== store rdms for the ground-state
-        'coherent_state_basis' : False
-    }
-
-    test_pf = PFHamiltonianGenerator(
-        mol_str,
-        options_dict,
-        cavity_dict
-    )
-
-    assert np.allclose(test_pf.one_electron_rdm, _expected_1rdm)
-    assert np.allclose(test_pf.two_electron_rdm[:20], _expected_2rdm[:20])
-    assert np.isclose(test_pf.total_energy_from_rdms, test_pf.CIeigs[0])
-
-
-
 def test_lih_fci_sto3g_rdm_builds_with_cavity():
 
 

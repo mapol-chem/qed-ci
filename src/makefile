@@ -1,42 +1,25 @@
-export LDFLAGS="-L/opt/homebrew/opt/lapack/lib"
-export CPPFLAGS="-I/opt/homebrew/opt/lapack/include"
-CC = clang++
-CFLAGS = -O3 -Xpreprocessor -fopenmp -I$(OPENBLAS_INCLUDE) -I$(OMP_INCLUDE)
-LDFLAGS = -L$(OPENBLAS_LIB) -L$(OMP_LIB) -lomp -lopenblas -llapacke
+CC = clang
+CFLAGS = -std=c99 -fPIC -Wall -Wextra -arch arm64 -Xpreprocessor -fopenmp \
+         -I$(INCDIR) -DACCELERATE_NEW_LAPACK
+LDFLAGS = -L$(LIBDIR) -lomp -framework Accelerate
 
-# Detect macOS architecture
-#UNAME_S := $(shell uname -s)
-#ifeq ($(UNAME_S), Darwin)
-#    ifeq ($(shell uname -m), arm64)
-#        OPENBLAS_INCLUDE = opt/homebrew/opt/openblas/include
-#        OPENBLAS_LIB = opt/homebrew/opt/openblas/lib
-#        OMP_INCLUDE = /opt/homebrew/opt/libomp/include
-#        OMP_LIB = /opt/homebrew/opt/libomp/lib
-#    else
-#        OPENBLAS_INCLUDE = /usr/local/include
-#        OPENBLAS_LIB = /usr/local/lib
-#        OMP_INCLUDE = /usr/local/opt/libomp/include
-#        OMP_LIB = /usr/local/opt/libomp/lib
-#    endif
-#endif
+# Paths - make sure to find the correct path for PREFIX for your
+# machine!
+PREFIX := /Users/jfoley19/miniforge3/envs/psi4
+INCDIR := $(PREFIX)/include
+LIBDIR := $(PREFIX)/lib
 
-OPENBLAS_INCLUDE = /opt/homebrew/opt/openblas/include
-OPENBLAS_LIB = /opt/homebrew/opt/openblas/lib
-OMP_INCLUDE = /opt/homebrew/Caskroom/miniforge/base/envs/p4env/lib/clang/17.0.6/include
-#OMP_LIB = /opt/homebrew/opt/libomp/lib
 
-SRCS = ci_solver.c
-OBJS = $(SRCS:.c=.o)
-EXEC = ci_solver
+OBJS = ci_solver.o orbital.o
+TARGET = cfunctions.so
 
-all: $(EXEC)
-
-$(EXEC): $(OBJS)
-	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
+all: $(TARGET)
 
 %.o: %.c
 	$(CC) $(CFLAGS) -c $< -o $@
 
-clean:
-	rm -f $(OBJS) $(EXEC)
+$(TARGET): $(OBJS)
+	$(CC) -shared -o $(TARGET) $(OBJS) $(LDFLAGS)
 
+clean:
+	rm -f $(OBJS) $(TARGET)

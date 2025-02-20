@@ -1082,7 +1082,7 @@ void constant_terms_contraction(double* c_vectors,double* c1_vectors,int num_alp
 void symmetric_eigenvalue_problem(double* A, int N, double* eig) {
 
     double work_query;
-    int lwork = -1
+    int lwork = -1;
     int n = N, lda = N, info;
 
     // Transpose the input matrix (row-major to column-major)
