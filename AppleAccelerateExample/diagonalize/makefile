@@ -5,10 +5,10 @@ LDFLAGS = -framework Accelerate
 
 
 # Target executable
-TARGET = new_diag
+TARGET = diag_and_dgemm
 
 # Source files
-SRCS = new_diag.cpp
+SRCS = diag_and_dgemm.cpp
 
 # Object files
 OBJS = $(SRCS:.cpp=.o)
