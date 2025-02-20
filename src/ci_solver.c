@@ -11,6 +11,16 @@
 #define MIN(x, y) (((x) < (y)) ? (x) : (y))
 #define BIGNUM 1E100
 
+// Add transpose function since accelerate will expect column major ordering
+void transpose_matrix(double *A, int n) {
+    for (int i = 0; i < n; i++) {
+        for (int j = i + 1; j < n; j++) {
+            double temp = A[i * n + j];
+            A[i * n + j] = A[j * n + i];
+            A[j * n + i] = temp;
+        }
+    }
+}
 
 void matrix_product(double* A, double* B, double* C, int m, int n, int k) {
      cblas_dgemm(CblasRowMajor, CblasNoTrans, CblasNoTrans, m, n, k, 1.0, A, k, B, n, 0.0, C, n);
