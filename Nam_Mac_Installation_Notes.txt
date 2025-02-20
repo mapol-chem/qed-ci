@@ -1,5 +1,6 @@
-replace #include<mkl.h> and #include<cblas.h> in ci_solver.c and orbital.c by #include <Accelerate/Accelerate.h>
-add this function:
+[X] replace #include<mkl.h> and #include<cblas.h> in ci_solver.c and orbital.c by #include <Accelerate/Accelerate.h>
+
+[X] add this function:
 void transpose_matrix(double *A, int n) {
     for (int i = 0; i < n; i++) {
         for (int j = i + 1; j < n; j++) {
@@ -9,7 +10,8 @@ void transpose_matrix(double *A, int n) {
         }
     }
 }
-replace:
+
+[X] replace:
 MKL_INT n = N, lda = N, info;
     //double w[N];
     /* Solve eigenproblem */

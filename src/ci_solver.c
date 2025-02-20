@@ -1080,18 +1080,34 @@ void constant_terms_contraction(double* c_vectors,double* c1_vectors,int num_alp
 }
 
 void symmetric_eigenvalue_problem(double* A, int N, double* eig) {
-    //MKL_INT n = N, lda = N, info;
-    lapack_int n = N, lda = N, info;	
-    //double w[N];
-    
-    /* Solve eigenproblem */
-    info = LAPACKE_dsyev( LAPACK_ROW_MAJOR, 'V', 'U', n, A, lda, eig);
-    /* Check for convergence */
-    if( info > 0 ) {
-            printf( "The algorithm failed to compute eigenvalues.\n" );
-            exit( 1 );
+
+    double work_query;
+    int lwork = -1
+    int n = N, lda = N, info;
+
+    // Transpose the input matrix (row-major to column-major)
+    transpose_matrix(A, n);
+    // Perform workspace query
+    char jobz = 'V'; // Compute eigenvalues and eigenvectors
+    char uplo = 'U'; // Upper triangle of A is stored
+    dsyev_(&jobz, &uplo, &n, A, &lda, eig, &work_query, &lwork, &info);
+
+    // Allocate workspace
+    lwork = (int)work_query;
+    double *work = (double *)malloc(lwork * sizeof(double));
+
+    // Solve eigenproblem
+    dsyev_(&jobz, &uplo, &n, A, &lda, eig, work, &lwork, &info);
+    // Check for convergence
+    if (info > 0) {
+        printf("The algorithm failed to compute eigenvalues.\n");
+        exit(1);
     }
     
+    // Transpose the eigenvectors (column-major to row-major)
+    transpose_matrix(A, n);
+    // Free workspace
+    free(work);
 
 
     //stable selection sort
