@@ -45,7 +45,9 @@ double work_query;
     transpose_matrix(A, n);
     // Free workspace
     free(work);
-Comment out this line (deepseek gives me a suggestion to change it, but I have not done anything):
+
+
+[x] Comment out this line (deepseek gives me a suggestion to change it, but I have not done anything):
            //getMemory2(&currRealMem, &peakRealMem, &currVirtMem, &peakVirtMem);
 
 

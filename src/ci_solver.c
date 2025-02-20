@@ -1103,7 +1103,7 @@ void symmetric_eigenvalue_problem(double* A, int N, double* eig) {
         printf("The algorithm failed to compute eigenvalues.\n");
         exit(1);
     }
-    
+
     // Transpose the eigenvectors (column-major to row-major)
     transpose_matrix(A, n);
     // Free workspace
@@ -1471,7 +1471,7 @@ void davidson_spin(double* h1e, double* h2e, double* d_cmo, double* Hdiag, doubl
         memset(unconverged_idx, 0, nroots*sizeof(int));
         memset(convergence_check, 0, nroots*sizeof(bool));
         unsigned long currRealMem, peakRealMem, currVirtMem, peakVirtMem;
-        getMemory2(&currRealMem, &peakRealMem, &currVirtMem, &peakVirtMem);
+        //getMemory2(&currRealMem, &peakRealMem, &currVirtMem, &peakVirtMem);
 
         cblas_dgemm(CblasRowMajor, CblasTrans, CblasNoTrans, nroots, H_dim, L, 1.0, G, L, Q, H_dim, 0.0, eigenvecs, H_dim);
 
@@ -1724,7 +1724,7 @@ void davidson(double* h1e, double* h2e, double* d_cmo, double* Hdiag, double* ei
         memset(unconverged_idx, 0, nroots*sizeof(int));
         memset(convergence_check, 0, nroots*sizeof(bool));
         unsigned long currRealMem, peakRealMem, currVirtMem, peakVirtMem;
-        getMemory2(&currRealMem, &peakRealMem, &currVirtMem, &peakVirtMem);
+        //getMemory2(&currRealMem, &peakRealMem, &currVirtMem, &peakVirtMem);
 
 
 
@@ -3132,7 +3132,7 @@ void gram_schmidt_add(double* Q, int rows, int cols, int rows2) {
     }
 
 }
-void getMemory2(
+/* void getMemory2(
    unsigned long* currRealMem, unsigned long*  peakRealMem,
    unsigned long* currVirtMem, unsigned long*  peakVirtMem) {
 
@@ -3161,5 +3161,4 @@ void getMemory2(
     fclose(file);
     printf("resident%20.12lf peak resident%20.12lf\n",(double)*currRealMem/1024.0/1024.0,(double)*peakRealMem/1024.0/1024.0);
 
-}
-
+} */
