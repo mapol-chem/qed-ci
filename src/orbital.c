@@ -3,7 +3,7 @@
 #include "orbital.h"
 #include <string.h>
 #include <math.h>
-#include <mkl.h>
+#include <Accelerate/Accelerate.h>
 #include<omp.h>
 #include<time.h>
 #include <unistd.h>
