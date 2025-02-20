@@ -4,10 +4,9 @@
 #include "ci_solver.h"
 #include <string.h>
 #include <math.h>
-#include <cblas.h>
-#include <lapacke.h>
-#include <omp.h>
-#include <time.h>
+#include<omp.h>
+#include<time.h>
+#include <Accelerate/Accelerate.h>
 #include <unistd.h>
 #define MIN(x, y) (((x) < (y)) ? (x) : (y))
 #define BIGNUM 1E100
