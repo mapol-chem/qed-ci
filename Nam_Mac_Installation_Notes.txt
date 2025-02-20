@@ -1,0 +1,119 @@
+replace #include<mkl.h> and #include<cblas.h> in ci_solver.c and orbital.c by #include <Accelerate/Accelerate.h>
+add this function:
+void transpose_matrix(double *A, int n) {
+    for (int i = 0; i < n; i++) {
+        for (int j = i + 1; j < n; j++) {
+            double temp = A[i * n + j];
+            A[i * n + j] = A[j * n + i];
+            A[j * n + i] = temp;
+        }
+    }
+}
+replace:
+MKL_INT n = N, lda = N, info;
+    //double w[N];
+    /* Solve eigenproblem */
+    info = LAPACKE_dsyev( LAPACK_ROW_MAJOR, 'V', 'U', n, A, lda, eig);
+    /* Check for convergence */
+    if( info > 0 ) {
+            printf( "The algorithm failed to compute eigenvalues.\n" );
+            exit( 1 );
+    }
+with:
+double work_query;
+    int lwork = -1;
+    int n = N, lda = N, info;
+    // Transpose the input matrix (row-major to column-major)
+    transpose_matrix(A, n);
+    // Perform workspace query
+    char jobz = 'V'; // Compute eigenvalues and eigenvectors
+    char uplo = 'U'; // Upper triangle of A is stored
+    dsyev_(&jobz, &uplo, &n, A, &lda, eig, &work_query, &lwork, &info);
+    // Allocate workspace
+    lwork = (int)work_query;
+    double *work = (double *)malloc(lwork * sizeof(double));
+    // Solve eigenproblem
+    dsyev_(&jobz, &uplo, &n, A, &lda, eig, work, &lwork, &info);
+    // Check for convergence
+    if (info > 0) {
+        printf("The algorithm failed to compute eigenvalues.\n");
+        exit(1);
+    }
+    // Transpose the eigenvectors (column-major to row-major)
+    transpose_matrix(A, n);
+    // Free workspace
+    free(work);
+Comment out this line (deepseek gives me a suggestion to change it, but I have not done anything):
+           //getMemory2(&currRealMem, &peakRealMem, &currVirtMem, &peakVirtMem);
+
+
+
+clang -std=c99 -fPIC -Wall -Wextra -arch arm64 -Xpreprocessor -fopenmp -I/Users/nvu12/anaconda3/envs/p4dev/include -DACCELERATE_NEW_LAPACK  -c ci_solver.c orbital.c
+9:07
+clang -shared -o cfunctions.so ci_solver.o orbital.o -L/Users/nvu12/anaconda3/envs/p4dev/lib -lomp -framework Accelerate
+9:10
+Users/nvu12/anaconda3/envs/p4dev/include contains omp.h and Users/nvu12/anaconda3/envs/p4dev/lib contains libomp.dylib
+
+
+
+the function getMemory2 can be replaced with:
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#ifdef __APPLE__
+#include <mach/mach.h>
+#include <mach/task.h>
+#endif
+void getMemory2(
+    unsigned long* currRealMem, unsigned long* peakRealMem,
+    unsigned long* currVirtMem, unsigned long* peakVirtMem) {
+#ifdef __linux__
+    // Linux implementation
+    char buffer[1024] = "";
+    // Open the status file
+    FILE* file = fopen("/proc/self/status", "r");
+    if (file == NULL) {
+        perror("Failed to open /proc/self/status");
+        exit(1);
+    }
+    // Read the entire file
+    while (fscanf(file, " %1023s", buffer) == 1) {
+        if (strcmp(buffer, "VmRSS:") == 0) {
+            fscanf(file, " %lu", currRealMem);
+        }
+        if (strcmp(buffer, "VmHWM:") == 0) {
+            fscanf(file, " %lu", peakRealMem);
+        }
+        if (strcmp(buffer, "VmSize:") == 0) {
+            fscanf(file, " %lu", currVirtMem);
+        }
+        if (strcmp(buffer, "VmPeak:") == 0) {
+            fscanf(file, " %lu", peakVirtMem);
+        }
+    }
+    fclose(file);
+#elif __APPLE__
+    // macOS implementation
+    task_vm_info_data_t vmInfo;
+    mach_msg_type_number_t count = TASK_VM_INFO_COUNT;
+    kern_return_t result = task_info(mach_task_self(), TASK_VM_INFO, (task_info_t)&vmInfo, &count);
+    if (result != KERN_SUCCESS) {
+        fprintf(stderr, "Failed to retrieve memory usage\n");
+        exit(1);
+    }
+    // Convert bytes to kilobytes (to match Linux behavior)
+    *currRealMem = vmInfo.resident_size / 1024;
+    *currVirtMem = vmInfo.virtual_size / 1024;
+    // macOS does not provide peak memory usage directly
+    *peakRealMem = *currRealMem;
+    *peakVirtMem = *currVirtMem;
+#else
+    // Unsupported platform
+    fprintf(stderr, "Unsupported platform\n");
+    exit(1);
+#endif
+    // Print memory usage
+    printf("resident%20.12lf peak resident%20.12lf\n",
+           (double)*currRealMem / 1024.0 / 1024.0,
+           (double)*peakRealMem / 1024.0 / 1024.0);
+}
