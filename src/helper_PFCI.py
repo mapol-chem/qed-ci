@@ -1830,6 +1830,8 @@ class PFHamiltonianGenerator:
                     alphalist = Determinant.obtBits2ObtIndexList(a0)
                     betalist = Determinant.obtBits2ObtIndexList(b0)
 
+                    excitation_rank = 0
+
                     # count the ground state only for now!
                     if i==0:
                         a_ref = np.array(alphalist)
@@ -4456,6 +4458,16 @@ class PFHamiltonianGenerator:
         self.nmo = wfn.nmo()
         self.nso = 2 * self.nmo
         self.nvirt = self.nmo - self.ndocc
+
+        # this is a bad hack for now
+        if self.ci_level == "fci" or self.ci_level == "FCI":
+            # initialize arrays that will store the number of configurations by excitation rank for CASCI and CASSCF
+            self.casscf_config_count_by_rank = np.zeros(2 * self.ndocc + 1)
+            self.casci_config_count_by_rank = np.zeros(2 * self.ndocc + 1)
+
+            # initialize arrays that will store the sum of squared weights by excitation rank for CASCI and CASSCF
+            self.casscf_sum_squared_weight_by_rank = np.zeros(2 * self.ndocc + 1)
+            self.casci_sum_squared_weight_by_rank = np.zeros(2 * self.ndocc + 1)
 
         self.docc_list = [i for i in range(self.ndocc)]
         # print("mo coefficient")
