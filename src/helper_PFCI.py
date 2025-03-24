@@ -2448,7 +2448,7 @@ class PFHamiltonianGenerator:
                     + ci_dependent_energy
                 )
                 print(
-                    "{:20.12f}".format(sum_energy),
+                    "average energy zero" "{:20.12f}".format(sum_energy),
                     "{:20.12f}".format(avg_energy),
                 )
                 # print(
@@ -4428,7 +4428,7 @@ class PFHamiltonianGenerator:
         # print(self.fock_alpha)
 
         if self.use_orbital_guess == True:
-            if self.omega != 0.0:
+            if self.photon_number_basis == False:
                 wfn_dict["matrix"]["Fa"] = self.fock_alpha
                 wfn_dict["matrix"]["Fb"] = self.fock_alpha
             print("load file")
@@ -7578,7 +7578,7 @@ class PFHamiltonianGenerator:
         # print("pgxq", np.allclose(self.d_cmo3,self.d_cmo, rtol=1e-14,atol=1e-14))
 
     def internal_optimization_exact_energy(
-        self, E0, eigenvecs, occupied_h1, occupied_d_cmo, occupied_J, occupied_K
+        self, E0, eigenvecs, occupied_h1, occupied_d_cmo, occupied_J, occupied_K, hard_case
     ):
         # for k in range(self.n_occupied):
         #    for l in range(self.n_occupied):
@@ -7658,7 +7658,7 @@ class PFHamiltonianGenerator:
             + self.d_c
             + ci_dependent_energy
         )
-        if sum_energy - E0 < 0.0:
+        if sum_energy - E0 < 0.0 or hard_case == 2:
             self.occupied_J[:, :, : self.n_occupied, : self.n_occupied] = occupied_J[
                 :, :, :, :
             ]
@@ -7789,7 +7789,7 @@ class PFHamiltonianGenerator:
             gradient_norm = np.dot(gradient_tilde_ai, gradient_tilde_ai.T)
             gradient_norm = np.sqrt(gradient_norm)
             print("gradient norm", gradient_norm)
-            if gradient_norm < 1e-4 or microiteration == 40:
+            if gradient_norm < 1e-4 or microiteration == 20:
                 print("internal rotation converged!")
                 # print("qims", np.allclose(self.J, self.J_temp, rtol=1e-14,atol=1e-14))
                 # print("ynss", np.allclose(self.K, self.K_temp, rtol=1e-14,atol=1e-14))
@@ -7952,6 +7952,7 @@ class PFHamiltonianGenerator:
                 occupied_d_cmo,
                 occupied_J,
                 occupied_K,
+                hard_case
             )
             predicted_energy = self.internal_optimization_predicted_energy(
                 gradient_tilde_ai, hessian_tilde_ai, step
@@ -8266,6 +8267,7 @@ class PFHamiltonianGenerator:
                 occupied_d_cmo,
                 occupied_J,
                 occupied_K,
+                hard_case
             )
             predicted_energy = self.internal_optimization_predicted_energy(
                 gradient_tilde_ai, hessian_tilde_ai, step
@@ -9163,6 +9165,7 @@ class PFHamiltonianGenerator:
                 occupied_d_cmo,
                 occupied_J,
                 occupied_K,
+                hard_case
             )
             predicted_energy = self.internal_optimization_predicted_energy(
                 gradient_tilde_ai, hessian_tilde_ai, step
@@ -9223,7 +9226,7 @@ class PFHamiltonianGenerator:
                 self.constdouble[3] = self.d_exp - d_diag
                 self.constdouble[4] = 1e-5
                 self.constdouble[5] = self.E_core
-                self.constint[8] = 2
+                self.constint[8] = 3
                 eigenvals = np.zeros((self.davidson_roots))
                 # eigenvecs = np.zeros((self.davidson_roots, H_dim))
                 # eigenvecs[:,:] = 0.0
@@ -9321,7 +9324,8 @@ class PFHamiltonianGenerator:
             gradient_norm = np.linalg.norm(gradient_tilde_ai)
             print(gradient_norm, current_residual)
             if (
-                gradient_norm < 1e-4 and current_residual < 1e-5
+                #gradient_norm < 1e-4 and current_residual < 1e-5
+                gradient_norm < 1e-4 and self.constint[8] == 0
             ) or microiteration == 20:
                 print("internal rotation converged!")
                 # print("qims", np.allclose(self.J, self.J_temp, rtol=1e-14,atol=1e-14))
@@ -10677,7 +10681,7 @@ class PFHamiltonianGenerator:
         sum_energy = self.rdm_exact_energy(
             J_temp, K_temp, h1_temp, d_cmo_temp, self.eigenvecs
         )
-        print("ssssum", sum_energy)
+        #print("ssssum", sum_energy)
 
         rot_dim = self.nmo
         A = np.zeros((rot_dim, rot_dim))
@@ -14747,7 +14751,7 @@ class PFHamiltonianGenerator:
             self.constdouble[3] = self.d_exp - d_diag
             self.constdouble[4] = 1e-9
             self.constdouble[5] = self.E_core2
-            self.constint[8] = 3
+            self.constint[8] = 5
             eigenvals = np.zeros((self.davidson_roots))
             # eigenvecs = np.zeros((self.davidson_roots, H_dim))
             # eigenvecs[:,:] = 0.0

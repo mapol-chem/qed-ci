@@ -1513,13 +1513,15 @@ void davidson_spin(double* h1e, double* h2e, double* d_cmo, double* Hdiag, doubl
 	if (unconv == 0) {
             //cblas_dgemm(CblasRowMajor, CblasTrans, CblasNoTrans, nroots, H_dim, L, 1.0, G, L, Q, H_dim, 0.0, eigenvecs, H_dim);
             cblas_dcopy(nroots, theta, 1, eigenvals, 1);
-            double dum = 0.0;
-	    for (int i = 0; i < nroots; i++) {
+            constdouble[4] = 0.0;
+            for (int i = 0; i < nroots; i++) {
+                double dum = 0.0;
                 for (size_t j = 0; j < H_dim; j++) {
-	 	    dum += w[i * H_dim +j] * w[i * H_dim +j];	
-		}
-	    }
-	    constdouble[4] = sqrt(dum);	
+                    dum += w[i * H_dim +j] * w[i * H_dim +j];
+                }
+                constdouble[4] += sqrt(dum)/nroots;
+            }
+            constint[8] = 0;
 	    printf("converged\n");
     	    fflush(stdout);
 	    break;
@@ -1528,13 +1530,16 @@ void davidson_spin(double* h1e, double* h2e, double* d_cmo, double* Hdiag, doubl
 	    printf("Maximum iteration reaches. Please increase maxiter!\n");
             //cblas_dgemm(CblasRowMajor, CblasTrans, CblasNoTrans, nroots, H_dim, L, 1.0, G, L, Q, H_dim, 0.0, eigenvecs, H_dim);
 	    cblas_dcopy(nroots, theta, 1, eigenvals, 1);
-            double dum = 0.0;
-	    for (int i = 0; i < nroots; i++) {
+            constdouble[4] = 0.0;
+            for (int i = 0; i < nroots; i++) {
+                double dum = 0.0;
                 for (size_t j = 0; j < H_dim; j++) {
-	 	    dum += w[i * H_dim +j] * w[i * H_dim +j];	
-		}
-	    }
-	    constdouble[4] = sqrt(dum);	
+                    dum += w[i * H_dim +j] * w[i * H_dim +j];
+                }
+                constdouble[4] += sqrt(dum)/nroots;
+            }
+	    //constdouble[4] = sqrt(dum);	
+	    fflush(stdout);
 	    break;
 	}
 	if (unconv > 0) {
@@ -1762,13 +1767,16 @@ void davidson(double* h1e, double* h2e, double* d_cmo, double* Hdiag, double* ei
 	if (unconv == 0) {
             cblas_dgemm(CblasRowMajor, CblasTrans, CblasNoTrans, nroots, H_dim, L, 1.0, G, L, Q, H_dim, 0.0, eigenvecs, H_dim);
             cblas_dcopy(nroots, theta, 1, eigenvals, 1);
-            double dum = 0.0;
-	    for (int i = 0; i < nroots; i++) {
+            constdouble[4] = 0.0;
+            for (int i = 0; i < nroots; i++) {
+                double dum = 0.0;
                 for (size_t j = 0; j < H_dim; j++) {
-	 	    dum += w[i * H_dim +j] * w[i * H_dim +j];	
-		}
-	    }
-	    constdouble[4] = sqrt(dum);	
+                    dum += w[i * H_dim +j] * w[i * H_dim +j];
+                }
+                constdouble[4] += sqrt(dum)/nroots;
+            }
+            //constdouble[4] = sqrt(dum)/nroots;
+            constint[8] = 0;
 	    printf("converged\n");
     	    fflush(stdout);
 	    break;
@@ -1777,13 +1785,15 @@ void davidson(double* h1e, double* h2e, double* d_cmo, double* Hdiag, double* ei
 	    printf("Maximum iteration reaches. Please increase maxiter!\n");
             cblas_dgemm(CblasRowMajor, CblasTrans, CblasNoTrans, nroots, H_dim, L, 1.0, G, L, Q, H_dim, 0.0, eigenvecs, H_dim);
 	    cblas_dcopy(nroots, theta, 1, eigenvals, 1);
-            double dum = 0.0;
-	    for (int i = 0; i < nroots; i++) {
+            constdouble[4] = 0.0;
+            for (int i = 0; i < nroots; i++) {
+                double dum = 0.0;
                 for (size_t j = 0; j < H_dim; j++) {
-	 	    dum += w[i * H_dim +j] * w[i * H_dim +j];	
-		}
-	    }
-	    constdouble[4] = sqrt(dum);	
+                    dum += w[i * H_dim +j] * w[i * H_dim +j];
+                }
+                //printf("norm %20.12lf cons %20.12lf\n", sqrt(dum), sqrt(dum)/nroots);
+                constdouble[4] += sqrt(dum)/nroots;
+            }
 	    break;
 	}
 	if (unconv > 0) {
