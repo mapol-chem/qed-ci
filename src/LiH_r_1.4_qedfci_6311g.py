@@ -18,6 +18,7 @@ options_dict = {
 }
 
 cavity_dict = {
+        'molecule_id' : "LiH",
         'omega_value' : 0.12086,
         'lambda_vector' : np.array([0, 0, 0.05]),
         'ci_level' : 'fci',

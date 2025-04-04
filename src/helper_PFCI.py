@@ -2967,14 +2967,15 @@ class PFHamiltonianGenerator:
             self.basis_set = psi4_options_dict["basis_set"]
             self.method = cavity_options["method"] if "method" in cavity_options else "CQED-CI"
             cqed_result = CQEDQuantumChemistryResult(
-                molecule_id: self.molecule_id,
-                basis_set: self.basis_set,
-                method: str,
-                energies: List[float],
-                photon_frequency: float,
-                hoton_polarization: List[float],
-                coupling_vector: List[float]
+                molecule_id = self.molecule_id,
+                basis_set =  self.basis_set,
+                method = self.method,
+                energies =  self.CIeigs.tolist(),
+                photon_frequency = cavity_options["omega_value"],
+                coupling_vector = cavity_options["lambda_vector"].tolist()
                 )
+            
+            cqed_result.to_json("cqed_test.json")
 
 
     def parseCavityOptions(self, cavity_dictionary):
