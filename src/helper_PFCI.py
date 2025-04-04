@@ -2964,9 +2964,11 @@ class PFHamiltonianGenerator:
             t_dav_end = time.time()
             # print(f" Completed Davidson iterations in {t_dav_end - t_H_build} seconds", flush = True)
             # save data in CQEDQuantumChemistryResult
+            self.basis_set = psi4_options_dict["basis_set"]
+            self.method = cavity_options["method"] if "method" in cavity_options else "CQED-CI"
             cqed_result = CQEDQuantumChemistryResult(
-                molecule_id: str,
-                basis_set: str,
+                molecule_id: self.molecule_id,
+                basis_set: self.basis_set,
                 method: str,
                 energies: List[float],
                 photon_frequency: float,
@@ -2979,6 +2981,11 @@ class PFHamiltonianGenerator:
         """
         Parse the cavity dictionary for important parameters for the QED-CI calculation
         """
+        if "molecule_id" in cavity_dictionary:
+            self.molecule_id = cavity_dictionary["molecule_id"]
+        else:
+            raise ValueError("Cavity dictionary must contain 'molecule_id' key.")
+        
         if "omega_value" in cavity_dictionary:
             self.omega = cavity_dictionary["omega_value"]
         else:
