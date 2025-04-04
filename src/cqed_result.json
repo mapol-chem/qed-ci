@@ -1,0 +1,31 @@
+{
+    "molecule_id": "H2",
+    "basis_set": "cc-pVDZ",
+    "method": "FCI",
+    "electronic_energy": -1.174,
+    "photon_frequency": 0.01,
+    "photon_polarization": [
+        1.0,
+        0.0,
+        0.0
+    ],
+    "light_matter_coupling_strength": 0.05,
+    "cavity_mode_volume": 1000.0,
+    "quality_factor": 5000.0,
+    "dipole_moment": [
+        0.0,
+        0.0,
+        0.1
+    ],
+    "transition_dipoles": [
+        {
+            "state_1": "S0",
+            "state_2": "S1",
+            "dipole_vector": [
+                0.0,
+                0.1,
+                0.0
+            ]
+        }
+    ]
+}
