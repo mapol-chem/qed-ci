@@ -5,7 +5,7 @@ LDFLAGS = -L$(LIBDIR) -lomp -framework Accelerate
 
 # Paths - make sure to find the correct path for PREFIX for your
 # machine!
-PREFIX := /Users/jfoley19/miniforge3/envs/psi4
+PREFIX := /Users/jfoley19/miniforge3/envs/p4env
 INCDIR := $(PREFIX)/include
 LIBDIR := $(PREFIX)/lib
 

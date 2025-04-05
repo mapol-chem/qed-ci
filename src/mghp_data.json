@@ -1,0 +1,45 @@
+{
+    "molecular_geometry": {
+        "z-matrix": [
+            "\nMg\nH 1 2.55\n1 1\nsymmetry c1\n"
+        ]
+    },
+    "return_results": {
+        "casci_energies": [
+            [
+                -199.8795813194433,
+                -199.74478826684367,
+                -199.70235417551868,
+                -199.70087126415285
+            ]
+        ],
+        "casscf_energies": []
+    },
+    "omega_value": 0.0,
+    "lambda_vector": [
+        0,
+        0,
+        0.0
+    ],
+    "ci_level": "cas",
+    "ignore_coupling": false,
+    "number_of_photons": 0,
+    "natural_orbitals": false,
+    "photon_number_basis": false,
+    "canonical_mos": false,
+    "coherent_state_basis": true,
+    "davidson_roots": 4,
+    "davidson_threshold": 1e-05,
+    "davidson_maxdim": 20,
+    "spin_adaptation": "singlet",
+    "casscf_optimization": false,
+    "davidson_maxiter": 100,
+    "davidson_indim": 8,
+    "test_mode": false,
+    "nact_orbs": 12,
+    "nact_els": 6,
+    "basis": "cc-pVTZ",
+    "scf_type": "pk",
+    "e_convergence": 1e-10,
+    "d_convergence": 1e-10
+}
