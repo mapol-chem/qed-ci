@@ -9121,7 +9121,7 @@ class PFHamiltonianGenerator:
                     if hard_case == 2:
                         Q = np.zeros((1, self.n_act_orb * self.n_in_a))
                         x, exitCode = minres(
-                            hessian_tilde_ai, -gradient_tilde_ai, tol=1e-5
+                            hessian_tilde_ai, -gradient_tilde_ai, rtol=1e-5
                         )
                         print("exitcode", exitCode)
                         step = x
@@ -9136,7 +9136,7 @@ class PFHamiltonianGenerator:
 
             else:
                 print("gradient is small, use Newton step")
-                x, exitCode = minres(hessian_tilde_ai, -gradient_tilde_ai, tol=1e-5)
+                x, exitCode = minres(hessian_tilde_ai, -gradient_tilde_ai, rtol=1e-5)
                 print("exitcode", exitCode)
                 hard_case = 2
                 step = x
@@ -12212,7 +12212,7 @@ class PFHamiltonianGenerator:
                     # S2 = np.einsum("pq,qr->pr", H_lambda, Q.T)
                     # print(S2)
                     # print("diagonal element of the reduced hessian", np.diagonal(reduced_hessian))
-                    x, exitCode = minres(H_op, -reduced_gradient, tol=1e-6)
+                    x, exitCode = minres(H_op, -reduced_gradient, rtol=1e-6)
                     # x, istop, itn, normr, normar, norma, conda, normx = lsmr(H_op, -reduced_gradient)[:8]
                     # print("reo0", x, istop, itn, normr, normx, conda)
                     print("exitcode", exitCode)
@@ -12904,7 +12904,7 @@ class PFHamiltonianGenerator:
                     # S2 = np.einsum("pq,qr->pr", H_lambda, Q.T)
                     # print(S2)
                     # print("diagonal element of the reduced hessian", np.diagonal(reduced_hessian))
-                    x, exitCode = minres(H1_op, -reduced_gradient, tol=1e-6)
+                    x, exitCode = minres(H1_op, -reduced_gradient, rtol=1e-6)
                     # x, istop, itn, normr, normar, norma, conda, normx = lsmr(H_op, -reduced_gradient)[:8]
                     # print("reo0", x, istop, itn, normr, normx, conda)
                     print("exitcode", exitCode)
@@ -14140,7 +14140,7 @@ class PFHamiltonianGenerator:
                                     self.U2, A_tilde2, G1, Q, 1, 0, 0
                                 ),
                             )
-                            x, exitCode = minres(H1_op, -reduced_gradient, tol=1e-5)
+                            x, exitCode = minres(H1_op, -reduced_gradient, rtol=1e-5)
                             print("exitcode", exitCode)
                             step = x
 
@@ -14461,7 +14461,7 @@ class PFHamiltonianGenerator:
                         (self.index_map_size, self.index_map_size),
                         matvec=lambda Q: self.mv2(self.U2, A_tilde2, G1, Q, 1, 0, 0),
                     )
-                    x, exitCode = minres(H1_op, -reduced_gradient, tol=1e-5)
+                    x, exitCode = minres(H1_op, -reduced_gradient, rtol=1e-5)
                     print("exitcode", exitCode)
                     hard_case = 2
                     step = x
@@ -15724,7 +15724,7 @@ class PFHamiltonianGenerator:
                                     self.U2, A_tilde2, G1, Q, 1, 0, 0
                                 ),
                             )
-                            x, exitCode = minres(H1_op, -reduced_gradient, tol=1e-6)
+                            x, exitCode = minres(H1_op, -reduced_gradient, rtol=1e-6)
                             print("exitcode", exitCode)
                             step = x
 
@@ -15743,7 +15743,7 @@ class PFHamiltonianGenerator:
                         (self.index_map_size, self.index_map_size),
                         matvec=lambda Q: self.mv2(self.U2, A_tilde2, G1, Q, 1, 0, 0),
                     )
-                    x, exitCode = minres(H1_op, -reduced_gradient, tol=1e-6)
+                    x, exitCode = minres(H1_op, -reduced_gradient, rtol=1e-6)
                     print("exitcode", exitCode)
                     hard_case = 2
                     step = x
@@ -19126,14 +19126,14 @@ class PFHamiltonianGenerator:
         )
 
     @staticmethod
-    @nb.jit(
-        """float64[::1](float64[:,::1], float64[:,::1], int64[:,::1], float64[:,::1], float64[:,::1], 
-            int64, int64, int64, int64, int64, float64)""",
-        nopython=True,
-        cache=True,
-        fastmath=True,
-        parallel=True,
-    )
+    #@nb.jit(
+    #    """float64[::1](float64[:,::1], float64[:,::1], int64[:,::1], float64[:,::1], float64[:,::1], 
+    #        int64, int64, int64, int64, int64, float64)""",
+    #    nopython=True,
+    #    cache=True,
+    #    fastmath=True,
+    #    parallel=True,
+    #)
     def build_sigma_reduced5(
         U,
         A_tilde,
