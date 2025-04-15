@@ -3623,23 +3623,13 @@ class PFHamiltonianGenerator:
                         start = timer()
                         macroiteration = 0
                         self.U_total = np.eye(self.nmo)
-                        old_avg_energy = avg_energy
-                        new_avg_energy = 0
+                        old_avg_energy = 0
+                        new_avg_energy = avg_energy
                         convergence = 0
                         while macroiteration < 20000:
-                            if np.abs(new_avg_energy - old_avg_energy) < 1e-9:
-                                convergence = 1
                             if macroiteration > 0:
-
                                 # print("U total")
                                 # self.printA(self.U_total)
-                                print(
-                                    "old energy",
-                                    old_avg_energy,
-                                    "new energy",
-                                    new_avg_energy,
-                                    flush=True,
-                                )
                                 occupied_J = np.zeros(
                                     (
                                         self.n_occupied,
@@ -3752,15 +3742,25 @@ class PFHamiltonianGenerator:
                                     True,
                                     self.target_spin,
                                 )
+                                old_avg_energy = new_avg_energy
                                 avg_energy = 0.0
                                 for i in range(self.davidson_roots):
                                     avg_energy += self.weight[i] * eigenvals[i]
                                 print("avg energy", macroiteration, avg_energy)
+                                new_avg_energy = avg_energy
                                 print(
                                     "average energy at the start of macroiteration",
                                     avg_energy,
+                                    flush = True
                                 )
                                 self.build_state_average_rdms(eigenvecs)
+
+                            print("Macroiteration", macroiteration,
+                                    "old CI energy", old_avg_energy,
+                                    "new CI energy", new_avg_energy,
+                                    flush = True)
+                            if np.abs(new_avg_energy - old_avg_energy) < 1e-12:
+                                convergence = 1
 
                             if macroiteration > 0 and convergence == 1:
 
@@ -3914,7 +3914,6 @@ class PFHamiltonianGenerator:
                                     np.savetxt("orbital.out", new_C)
 
                                 break
-                            old_avg_energy = avg_energy
                             self.avg_energy = avg_energy
                             if macroiteration > 0 and self.n_in_a > 0:
                                 start1 = timer()
@@ -4139,7 +4138,7 @@ class PFHamiltonianGenerator:
                                 "{:20.12f}".format(self.Enuc),
                             )
                             print("end one macroiteration")
-                            avg_energy = sum_energy
+                            #avg_energy = sum_energy
                             self.occupied_K = copy.deepcopy(
                                 self.K[:, :, : self.n_occupied, : self.n_occupied]
                             )
@@ -4155,7 +4154,7 @@ class PFHamiltonianGenerator:
                             self.occupied_fock_core = copy.deepcopy(
                                 self.fock_core[: self.n_occupied, : self.n_occupied]
                             )
-                            new_avg_energy = avg_energy
+                            #new_avg_energy = avg_energy
 
                             macroiteration += 1
                         end = timer()
@@ -4407,12 +4406,12 @@ class PFHamiltonianGenerator:
         # collect rhf wfn object as dictionary
         wfn_dict = psi4.core.Wavefunction.to_file(wfn)
         ##print(self.C)
-        # U = ortho_group.rvs(wfn.nmo())
-        # new_C = np.einsum("pq,qr->pr", self.C, U)
+        #U = ortho_group.rvs(wfn.nmo())
+        #new_C = np.einsum("pq,qr->pr", self.C, U)
 
-        # self.C[:,:] = new_C[:,:]
+        #self.C[:,:] = new_C[:,:]
         ##update d_cmo
-        # self.d_cmo = np.dot(self.C.T, self.d_ao).dot(self.C)
+        #self.d_cmo = np.dot(self.C.T, self.d_ao).dot(self.C)
 
         # print("Unitary matrix")
         # print(U)
@@ -7658,7 +7657,7 @@ class PFHamiltonianGenerator:
             + self.d_c
             + ci_dependent_energy
         )
-        if sum_energy - E0 < 0.0 or hard_case == 2:
+        if sum_energy - E0 <= 0.0 or hard_case == 2:
             self.occupied_J[:, :, : self.n_occupied, : self.n_occupied] = occupied_J[
                 :, :, :, :
             ]
@@ -7675,6 +7674,7 @@ class PFHamiltonianGenerator:
             self.occupied_fock_core[: self.n_occupied, : self.n_occupied] = (
                 occupied_fock_core[:, :]
             )
+            print("hard case internal optimization", hard_case)
             print("fsdb", self.E_core, E_core)
             self.E_core = E_core
             # self.gkl3 = np.zeros((self.n_act_orb, self.n_act_orb))
@@ -8526,13 +8526,100 @@ class PFHamiltonianGenerator:
             microiteration += 1
             print(trust_radius)
 
+
     def internal_optimization3(self, E0, eigenvecs):
         print("avg_energy", E0)
         current_residual = 1.0
 
+
+        # test energy
+        print("lets test the energy at the beginning of the internal optimization")
+        occupied_fock_core = copy.deepcopy(
+            self.H_spatial2[: self.n_occupied, : self.n_occupied]
+        )
+        occupied_fock_core += 2.0 * np.einsum(
+            "jjrs->rs",
+            self.J[
+                : self.n_in_a,
+                : self.n_in_a,
+                : self.n_occupied,
+                : self.n_occupied,
+            ],
+        )
+        occupied_fock_core -= np.einsum(
+            "jjrs->rs",
+            self.K[
+                : self.n_in_a,
+                : self.n_in_a,
+                : self.n_occupied,
+                : self.n_occupied,
+            ],
+        )
+
+        E_core = 0.0
+        E_core += np.einsum(
+            "jj->", self.H_spatial2[: self.n_in_a, : self.n_in_a]
+        )
+        E_core += np.einsum(
+            "jj->", occupied_fock_core[: self.n_in_a, : self.n_in_a]
+        )
+        active_one_e_energy = np.dot(
+            occupied_fock_core[
+                self.n_in_a : self.n_occupied, self.n_in_a : self.n_occupied
+            ].flatten(),
+            self.D_tu_avg,
+        )
+        active_two_e_energy = 0.5 * np.dot(
+            self.J[
+                self.n_in_a : self.n_occupied,
+                self.n_in_a : self.n_occupied,
+                self.n_in_a : self.n_occupied,
+                self.n_in_a : self.n_occupied,
+            ].flatten(),
+            self.D_tuvw_avg,
+        )
+        active_one_pe_energy = -np.sqrt(self.omega / 2) * np.dot(
+            self.d_cmo[
+                self.n_in_a : self.n_occupied, self.n_in_a : self.n_occupied
+            ].flatten(),
+            self.Dpe_tu_avg,
+        )
+        ci_dependent_energy = self.calculate_ci_dependent_energy(
+            eigenvecs, self.d_cmo
+        )
+        sum_energy = (
+            active_one_e_energy
+            + active_two_e_energy
+            + active_one_pe_energy
+            + E_core
+            + self.Enuc
+            + self.d_c
+            + ci_dependent_energy
+        )
+        #self.avg_energy = sum_energy //just comment out on 04/11/25
+        # print("heyhey1",eigenvecs)
+        print(
+            "imgf00000",
+            sum_energy,
+            E_core,
+            active_one_e_energy,
+            active_two_e_energy,
+            active_one_pe_energy,
+            ci_dependent_energy,
+            self.Enuc,
+            self.d_c,
+        )
+
+
+
+
+
+
+
         self.U = np.eye(self.nmo)
         self.U1 = np.eye(self.nmo)
-        current_energy = E0
+        #current_energy = E0
+        current_energy = sum_energy
         trust_radius = 0.5
         trust_radius_hard_case = trust_radius
         rot_dim = self.n_occupied
@@ -8636,7 +8723,7 @@ class PFHamiltonianGenerator:
             step = np.zeros(self.n_act_orb * self.n_in_a)
             step10_norm = 0.0
             hessian_diagonal = np.diagonal(hessian_tilde_ai)
-            if np.linalg.norm(gradient_tilde_ai) > 1e-3:
+            if np.linalg.norm(gradient_tilde_ai) > 1e-4:
                 if (
                     hard_case == 1
                     and reduce_step == 1
@@ -8667,9 +8754,7 @@ class PFHamiltonianGenerator:
                         y_square,
                         t1,
                     )
-                    adjusted_step = (
-                        first_component + min(np.abs(t1), np.abs(t2)) * second_component
-                    )
+                    adjusted_step = first_component + min(np.abs(t1), np.abs(t2)) * second_component
                     print("adjusted step norm", np.linalg.norm(adjusted_step))
                     step = adjusted_step
                 else:
@@ -9114,10 +9199,7 @@ class PFHamiltonianGenerator:
                             y_square,
                             t1,
                         )
-                        adjusted_step = (
-                            first_component
-                            + min(np.abs(t1), np.abs(t2)) * second_component
-                        )
+                        adjusted_step = first_component + min(np.abs(t1), np.abs(t2)) * second_component
                         print("adjusted step norm", np.linalg.norm(adjusted_step))
                         step = adjusted_step
 
@@ -9137,7 +9219,7 @@ class PFHamiltonianGenerator:
                         if x2_norm < trust_radius:
                             step = x2
 
-            else:
+            elif np.linalg.norm(gradient_tilde_ai) <= 1e-4 and np.linalg.norm(gradient_tilde_ai) > 1e-8:
                 print("gradient is small, use Newton step")
                 x, exitCode = minres(hessian_tilde_ai, -gradient_tilde_ai, tol=1e-5)
                 print("exitcode", exitCode)
@@ -9145,7 +9227,8 @@ class PFHamiltonianGenerator:
                 step = x
                 # print(step)
             # w[:,0] = w[:,0]/scale
-
+            else:
+                step = np.zeros((self.n_act_orb * self.n_in_a))
             Rai = step.reshape(self.n_act_orb, self.n_in_a)
             Rvi = np.zeros((self.n_virtual, self.n_in_a))
             Rva = np.zeros((self.n_virtual, self.n_act_orb))
@@ -9170,7 +9253,7 @@ class PFHamiltonianGenerator:
             predicted_energy = self.internal_optimization_predicted_energy(
                 gradient_tilde_ai, hessian_tilde_ai, step
             )
-            if predicted_energy < 0:
+            if predicted_energy <= 0:
                 reduce_predicted_energy = 1
             else:
                 reduce_predicted_energy = 0
@@ -9183,7 +9266,7 @@ class PFHamiltonianGenerator:
                 flush=True,
             )
 
-            if exact_energy < 0.0 or hard_case == 2:
+            if exact_energy <= 0.0 or hard_case == 2:
                 self.U1 = np.einsum("pq,qs->ps", self.U1, self.U_delta)
                 self.occupied_J3 = self.occupied_J.reshape(
                     self.n_occupied * self.n_occupied, self.n_occupied * self.n_occupied
@@ -9226,13 +9309,13 @@ class PFHamiltonianGenerator:
                 self.constdouble[3] = self.d_exp - d_diag
                 self.constdouble[4] = 1e-5
                 self.constdouble[5] = self.E_core
-                self.constint[8] = 3
+                self.constint[8] = 5
                 eigenvals = np.zeros((self.davidson_roots))
                 # eigenvecs = np.zeros((self.davidson_roots, H_dim))
                 # eigenvecs[:,:] = 0.0
-                self.occupied_J3 = self.occupied_J.reshape(
-                    self.n_occupied * self.n_occupied, self.n_occupied * self.n_occupied
-                )
+                #self.occupied_J3 = self.occupied_J.reshape(
+                #    self.n_occupied * self.n_occupied, self.n_occupied * self.n_occupied
+                #)
                 c_get_roots(
                     self.gkl2,
                     self.occupied_J3,
@@ -9255,13 +9338,14 @@ class PFHamiltonianGenerator:
 
                 current_residual = self.constdouble[4]
                 print("current CI residual", current_residual)
+                print("CI convergence check", self.constint[8])
                 avg_energy = 0.0
                 for i in range(self.davidson_roots):
                     avg_energy += self.weight[i] * eigenvals[i]
                 self.avg_energy = avg_energy
-                predicted_energy = self.internal_optimization_predicted_energy(
-                    gradient_tilde_ai, hessian_tilde_ai, step
-                )
+                #predicted_energy = self.internal_optimization_predicted_energy(
+                #    gradient_tilde_ai, hessian_tilde_ai, step
+                #)
                 print(
                     "internal optimization iteration",
                     microiteration + 1,
@@ -9269,13 +9353,63 @@ class PFHamiltonianGenerator:
                     predicted_energy,
                     current_energy,
                     avg_energy,
-                    exact_energy / predicted_energy,
+                    #exact_energy / predicted_energy,
                     flush=True,
                 )
-                ratio = exact_energy / predicted_energy
-                trust_radius = self.step_control(ratio, trust_radius)
-                current_energy = avg_energy
                 self.build_state_average_rdms(eigenvecs)
+                if predicted_energy != 0:
+                    ratio = exact_energy / predicted_energy
+                    print("current ratio", ratio)
+                    trust_radius = self.step_control(ratio, trust_radius)
+
+                #update current energy using RDM energy
+                E_core = 0.0
+                E_core += np.einsum("jj->", self.occupied_h1[: self.n_in_a, : self.n_in_a])
+                E_core += np.einsum("jj->", self.occupied_fock_core[: self.n_in_a, : self.n_in_a])
+                active_one_e_energy = np.dot(
+                    self.occupied_fock_core[
+                        self.n_in_a : self.n_occupied, self.n_in_a : self.n_occupied
+                    ].flatten(),
+                    self.D_tu_avg,
+                )
+                active_two_e_energy = 0.5 * np.dot(
+                    self.occupied_J[
+                        self.n_in_a : self.n_occupied,
+                        self.n_in_a : self.n_occupied,
+                        self.n_in_a : self.n_occupied,
+                        self.n_in_a : self.n_occupied,
+                    ].flatten(),
+                    self.D_tuvw_avg,
+                )
+                active_one_pe_energy = -np.sqrt(self.omega / 2) * np.dot(
+                    self.occupied_d_cmo[
+                        self.n_in_a : self.n_occupied, self.n_in_a : self.n_occupied
+                    ].flatten(),
+                    self.Dpe_tu_avg,
+                )
+                ci_dependent_energy = self.calculate_ci_dependent_energy(
+                    eigenvecs, self.occupied_d_cmo
+                )
+                sum_energy = (
+                    active_one_e_energy
+                    + active_two_e_energy
+                    + active_one_pe_energy
+                    + E_core
+                    + self.Enuc
+                    + self.d_c
+                    + ci_dependent_energy
+                )
+                print(
+                    "new RDM energy",
+                    sum_energy,
+                    E_core,
+                    active_one_e_energy,
+                    active_two_e_energy,
+                    active_one_pe_energy,
+                    ci_dependent_energy,
+                    self.Enuc,
+                    self.d_c,
+                )
 
                 self.build_intermediates_internal(
                     eigenvecs,
@@ -9415,7 +9549,7 @@ class PFHamiltonianGenerator:
                     + self.d_c
                     + ci_dependent_energy
                 )
-                self.avg_energy = sum_energy
+                #self.avg_energy = sum_energy
                 # print("heyhey1",eigenvecs)
                 print(
                     "imgf",
@@ -13334,6 +13468,8 @@ class PFHamiltonianGenerator:
 
             microiteration += 1
 
+
+
     def microiteration_optimization5(
         self, U, eigenvecs, c_get_roots, convergence_threshold
     ):
@@ -13389,16 +13525,16 @@ class PFHamiltonianGenerator:
             # G2[:,:,:,:] = 0.0
             # self.build_intermediates2(eigenvecs, A2, G2, True)
             print("LETS CHECK ENERGY AT THE BEGINING OF EACH MICROITERATION")
-            print(old_energy, current_energy)
-            print("initial convergence threshold", convergence_threshold)
-            if (
-                np.abs(current_energy - old_energy)
-                < max(0.01 * convergence_threshold, 1e-10)
-            ) and microiteration >= 2:
-                # if (np.abs(current_energy - old_energy) < 1e-15) and microiteration >=2:
-                print("microiteration converged (small energy change)")
-                # self.U_total = np.einsum("pq,qs->ps", self.U_total, self.U2)
-                break
+            #print(old_energy, current_energy)
+            #print("initial convergence threshold", convergence_threshold)
+            #if (
+            #    np.abs(current_energy - old_energy)
+            #    < max(0.01 * convergence_threshold, 1e-10)
+            #) and microiteration >= 2:
+            #    # if (np.abs(current_energy - old_energy) < 1e-15) and microiteration >=2:
+            #    print("microiteration converged (small energy change)")
+            #    # self.U_total = np.einsum("pq,qs->ps", self.U_total, self.U2)
+            #    break
 
             start = timer()
             start1 = timer()
@@ -13430,13 +13566,25 @@ class PFHamiltonianGenerator:
             initial_energy_change = self.microiteration_exact_energy(self.U2, A, G1)
             end1 = timer()
             print("calculate initial exact energy took", end1 - start1)
-            old_energy = zero_energy + initial_energy_change
+            current_energy = zero_energy + initial_energy_change
             print(
                 "current energy from zero energy + second order energy change",
                 zero_energy + initial_energy_change,
                 flush=True,
             )
-            current_energy = old_energy
+            print(old_energy, current_energy)
+            print("initial convergence threshold", convergence_threshold)
+            if (
+                np.abs(current_energy - old_energy)
+                < max(0.01 * convergence_threshold, 1e-10)
+            ) and microiteration >= 2:
+                # if (np.abs(current_energy - old_energy) < 1e-15) and microiteration >=2:
+                print("microiteration converged (small energy change)")
+                # self.U_total = np.einsum("pq,qs->ps", self.U_total, self.U2)
+                break
+
+
+            old_energy = current_energy
             end = timer()
             print("check initial energy took", end - start)
 
@@ -13619,10 +13767,7 @@ class PFHamiltonianGenerator:
                             y_square,
                             t1,
                         )
-                        adjusted_step = (
-                            first_component
-                            + min(np.abs(t1), np.abs(t2)) * second_component
-                        )
+                        adjusted_step = first_component + min(np.abs(t1), np.abs(t2)) * second_component
                         print("adjusted step norm", np.linalg.norm(adjusted_step))
                         step = adjusted_step
                     else:
@@ -13886,7 +14031,7 @@ class PFHamiltonianGenerator:
                             print(np.dot(w9[:, :2].T, w9[:, :2]))
 
                             # construct quasi-optimal step
-                            epsilon_hc = 1e-6
+                            epsilon_hc = 1e-6 
                             eta = epsilon_hc / (1 - epsilon_hc)
                             tau1 = 1
                             tau2 = 1
@@ -14131,8 +14276,7 @@ class PFHamiltonianGenerator:
                                 t1,
                             )
                             adjusted_step = (
-                                first_component
-                                + min(np.abs(t1), np.abs(t2)) * second_component
+                                first_component + min(np.abs(t1), np.abs(t2)) * second_component
                             )
                             print("adjusted step norm", np.linalg.norm(adjusted_step))
                             step = adjusted_step
@@ -14145,7 +14289,7 @@ class PFHamiltonianGenerator:
                                     self.U2, A_tilde2, G1, Q, 1, 0, 0
                                 ),
                             )
-                            x, exitCode = minres(H1_op, -reduced_gradient, tol=1e-5)
+                            x, exitCode = minres(H1_op, -reduced_gradient, tol=1e-6)
                             print("exitcode", exitCode)
                             step = x
 
@@ -14466,7 +14610,7 @@ class PFHamiltonianGenerator:
                         (self.index_map_size, self.index_map_size),
                         matvec=lambda Q: self.mv2(self.U2, A_tilde2, G1, Q, 1, 0, 0),
                     )
-                    x, exitCode = minres(H1_op, -reduced_gradient, tol=1e-5)
+                    x, exitCode = minres(H1_op, -reduced_gradient, tol=1e-6)
                     print("exitcode", exitCode)
                     hard_case = 2
                     step = x
@@ -14751,7 +14895,8 @@ class PFHamiltonianGenerator:
             self.constdouble[3] = self.d_exp - d_diag
             self.constdouble[4] = 1e-9
             self.constdouble[5] = self.E_core2
-            self.constint[8] = 5
+            self.constint[8] = 5 
+            print("number of CI iteration", self.constint[8])
             eigenvals = np.zeros((self.davidson_roots))
             # eigenvecs = np.zeros((self.davidson_roots, H_dim))
             # eigenvecs[:,:] = 0.0
@@ -14790,13 +14935,29 @@ class PFHamiltonianGenerator:
                 avg_energy,
                 flush=True,
             )
-            current_energy = avg_energy
+            #current_energy = avg_energy
 
             start = timer()
             self.build_state_average_rdms(eigenvecs)
             end = timer()
             print("building RDM took", end - start)
-
+            #active_one_e_energy = np.dot(active_fock_core.flatten(), self.D_tu_avg)
+            #active_two_e_energy = 0.5 * np.dot(active_twoeint.flatten(), self.D_tuvw_avg)
+            #active_one_pe_energy = -np.sqrt(self.omega/2) * np.dot(d_cmo[self.n_in_a:self.n_occupied,self.n_in_a:self.n_occupied].flatten(), self.Dpe_tu_avg)
+            #ci_dependent_energy = self.calculate_ci_dependent_energy(eigenvecs, d_cmo)
+            #sum_energy = (active_one_e_energy + active_two_e_energy + active_one_pe_energy + self.E_core2 +
+            #       self.Enuc + self.d_c + ci_dependent_energy)
+            #print("RDM_energy    active_one    active_two E_core active_pe_energy ci_dependent_energy E_nuc")
+            #print("gfhgy",
+            #   "{:20.12f}".format(sum_energy),
+            #   "{:20.12f}".format(active_one_e_energy),
+            #   "{:20.12f}".format(active_two_e_energy),
+            #   "{:20.12f}".format(self.E_core2),
+            #   "{:20.12f}".format(active_one_pe_energy),
+            #   "{:20.12f}".format(ci_dependent_energy),
+            #   "{:20.12f}".format(self.Enuc),
+            #   flush = True
+            #)
             # print("current gradient_norm and residual", gradient_norm, current_residual)
             # print("current convergence_threshold", convergence_threshold)
             # total_norm = np.sqrt(np.power(gradient_norm,2) + np.power(current_residual,2))
@@ -14813,6 +14974,7 @@ class PFHamiltonianGenerator:
             #    break
 
             microiteration += 1
+
 
     def ah_orbital_optimization(self, eigenvecs, c_get_roots):
         self.H1 = copy.deepcopy(self.H_spatial2)
@@ -18193,7 +18355,7 @@ class PFHamiltonianGenerator:
         guess_vector,
         restart,
     ):
-        threshold = 1e-5
+        threshold = 1e-7
         count = 0
         # start = timer()
         print("restart", restart, "alpha", alpha)
