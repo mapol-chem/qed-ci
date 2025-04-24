@@ -23,6 +23,14 @@ The generation of determinant lists has been broken up into two methods based on
 
 
 ## To run the code:
+Install psi4 with Conda (easy option):
+- conda install psi4 python=3.10 -c conda-forge
+
+or
+
+Install psi4 from source (harder option):
+Follow directions [here](https://psicode.org/installs/v191/)
+
 Install numba:
 - pip install numba
 
