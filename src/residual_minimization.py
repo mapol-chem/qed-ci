@@ -42,7 +42,6 @@ class LinearRMSolver:
         """
         try:
             eigvals, eigvecs = np.linalg.eigh(S)
-            eigvals, eigvecs = np.linalg.eigh(S)
             non_redundant_indices = np.where(eigvals > thresh)[0]
 
             if len(non_redundant_indices) == 0:
