@@ -30,6 +30,10 @@ void constant_terms_contraction(double* c_vectors,double* c1_vectors,int num_alp
 void build_sigma(double* h1e, double* h2e, double* d_cmo, double* c_vectors, double *c1_vectors, 
 		 int* table, int* table_creation, int* table_annihilation, int N_ac, int n_o_ac, int n_o_in, int nmo, 
 		 int num_state, int N_p, double Enuc, double dc, double omega, double d_exp, double E_core, bool break_degeneracy);
+void build_sigma_2(double* h1e, double* h2e, double* d_cmo, double* c_vectors, double *c1_vectors, 
+		 int* table, int* table_creation, int* table_annihilation, int N_ac, int n_o_ac, int n_o_in, int nmo, 
+		 int num_state, int N_p, double Enuc, double dc, double omega1, double omega2, double d_exp, double E_core, bool break_degeneracy);
+
 
 void build_b_array(int* table, int* b_matrix, int num_alpha, int num_links, int nmo);
 
@@ -54,11 +58,13 @@ void davidson_spin(double* h1e, double* h2e, double* d_cmo, double* Hdiag, doubl
 void davidson(double* h1e, double* h2e, double* d_cmo, double* Hdiag, double* eigenvals, double* eigenvecs, int* table, 
 		int* table_creation, int* table_annihilation, int *constint, double *constdouble, bool casscf, callback_ build_sigma);
 
-void build_one_rdm(double* eigvec, double* D, int* table, int N_ac, int n_o_ac, int n_o_in, int num_photon, int state_p1, int state_p2);
-void build_two_rdm(double* eigvec, double* D, int* table, int N_ac, int n_o_ac, int n_o_in, int num_photon, int state_p1, int state_p2);
+void build_one_rdm(double* z_vector, double* eigvec, double* D, int* table, int N_ac, int n_o_ac, int n_o_in, int num_photon, int state_p1, int state_p2, bool z_state);
+void build_two_rdm(double* z_vector, double* eigvec, double* D, int* table, int N_ac, int n_o_ac, int n_o_in, int num_photon, int state_p1, int state_p2, bool z_state);
 void build_active_rdm(double* eigvec, double* D_tu, double* D_tuvw, int* table, int N_ac, int n_o_ac, int num_photon, int state_p1, int state_p2, double weight); 
+void build_active_rdm_z(double* z_vector, double* eigvec, double* D_tu, double* D_tuvw, int* table, int N_ac, int n_o_ac, int num_photon, int state_p1, int state_p2, double weight); 
 void build_active_photon_electron_one_rdm(double* eigvec, double* Dpe_tu, int* table, int N_ac, int n_o_ac, int num_photon, int state_p1, int state_p2, double weight); 
-void build_photon_electron_one_rdm(double* eigvec, double* Dpe, int* table, int N_ac, int n_o_ac, int n_o_in, int num_photon, int state_p1, int state_p2); 
+void build_active_photon_electron_one_rdm_z(double* z_vector, double* eigvec, double* Dpe_tu, int* table, int N_ac, int n_o_ac, int num_photon, int state_p1, int state_p2, double weight); 
+void build_photon_electron_one_rdm(double* z_vector, double* eigvec, double* Dpe, int* table, int N_ac, int n_o_ac, int n_o_in, int num_photon, int state_p1, int state_p2); 
 
 void get_roots(double* h1e, double* h2e, double* d_cmo, double* Hdiag, double* Sdiag, double* Sdiag_projection, double* eigenvals, double* eigenvecs, int* table, 
 		int* table_creation, int* table_annihilation, int* b_array, int *constint, double *constdouble, int* index_Hdiag, bool casscf, double target_spin);

@@ -45,6 +45,7 @@ lib_path = os.path.join(script_dir, "cfunctions.so")
 # import shared lib
 cfunctions = cdll.LoadLibrary(lib_path)
 
+
 cfunctions.get_graph.argtypes = [
     ctypes.c_int32,
     ctypes.c_int32,
@@ -104,6 +105,29 @@ cfunctions.build_sigma.argtypes = [
     ctypes.c_bool,
 ]
 
+cfunctions.build_sigma_2.argtypes = [
+    np.ctypeslib.ndpointer(ctypes.c_double, ndim=2, flags="C_CONTIGUOUS"),
+    np.ctypeslib.ndpointer(ctypes.c_double, ndim=2, flags="C_CONTIGUOUS"),
+    np.ctypeslib.ndpointer(ctypes.c_double, ndim=2, flags="C_CONTIGUOUS"),
+    np.ctypeslib.ndpointer(ctypes.c_double, ndim=2, flags="C_CONTIGUOUS"),
+    np.ctypeslib.ndpointer(ctypes.c_double, ndim=2, flags="C_CONTIGUOUS"),
+    np.ctypeslib.ndpointer(ctypes.c_int32, ndim=1, flags="C_CONTIGUOUS"),
+    np.ctypeslib.ndpointer(ctypes.c_int32, ndim=1, flags="C_CONTIGUOUS"),
+    np.ctypeslib.ndpointer(ctypes.c_int32, ndim=1, flags="C_CONTIGUOUS"),
+    ctypes.c_int32,
+    ctypes.c_int32,
+    ctypes.c_int32,
+    ctypes.c_int32,
+    ctypes.c_int32,
+    ctypes.c_int32,
+    ctypes.c_double,
+    ctypes.c_double,
+    ctypes.c_double,
+    ctypes.c_double,
+    ctypes.c_double,
+    ctypes.c_double,
+    ctypes.c_bool,
+]
 cfunctions.get_roots.argtypes = [
     np.ctypeslib.ndpointer(ctypes.c_double, ndim=2, flags="C_CONTIGUOUS"),
     np.ctypeslib.ndpointer(ctypes.c_double, ndim=2, flags="C_CONTIGUOUS"),
@@ -126,16 +150,6 @@ cfunctions.get_roots.argtypes = [
 
 cfunctions.build_one_rdm.argtypes = [
     np.ctypeslib.ndpointer(ctypes.c_double, ndim=2, flags="C_CONTIGUOUS"),
-    np.ctypeslib.ndpointer(ctypes.c_double, ndim=1, flags="C_CONTIGUOUS"),
-    np.ctypeslib.ndpointer(ctypes.c_int32, ndim=1, flags="C_CONTIGUOUS"),
-    ctypes.c_int32,
-    ctypes.c_int32,
-    ctypes.c_int32,
-    ctypes.c_int32,
-    ctypes.c_int32,
-    ctypes.c_int32,
-]
-cfunctions.build_two_rdm.argtypes = [
     np.ctypeslib.ndpointer(ctypes.c_double, ndim=2, flags="C_CONTIGUOUS"),
     np.ctypeslib.ndpointer(ctypes.c_double, ndim=1, flags="C_CONTIGUOUS"),
     np.ctypeslib.ndpointer(ctypes.c_int32, ndim=1, flags="C_CONTIGUOUS"),
@@ -145,6 +159,20 @@ cfunctions.build_two_rdm.argtypes = [
     ctypes.c_int32,
     ctypes.c_int32,
     ctypes.c_int32,
+    ctypes.c_bool,
+]
+cfunctions.build_two_rdm.argtypes = [
+    np.ctypeslib.ndpointer(ctypes.c_double, ndim=2, flags="C_CONTIGUOUS"),
+    np.ctypeslib.ndpointer(ctypes.c_double, ndim=2, flags="C_CONTIGUOUS"),
+    np.ctypeslib.ndpointer(ctypes.c_double, ndim=1, flags="C_CONTIGUOUS"),
+    np.ctypeslib.ndpointer(ctypes.c_int32, ndim=1, flags="C_CONTIGUOUS"),
+    ctypes.c_int32,
+    ctypes.c_int32,
+    ctypes.c_int32,
+    ctypes.c_int32,
+    ctypes.c_int32,
+    ctypes.c_int32,
+    ctypes.c_bool,
 ]
 
 cfunctions.build_active_rdm.argtypes = [
@@ -159,7 +187,21 @@ cfunctions.build_active_rdm.argtypes = [
     ctypes.c_int32,
     ctypes.c_double,
 ]
+cfunctions.build_active_rdm_z.argtypes = [
+    np.ctypeslib.ndpointer(ctypes.c_double, ndim=2, flags="C_CONTIGUOUS"),
+    np.ctypeslib.ndpointer(ctypes.c_double, ndim=2, flags="C_CONTIGUOUS"),
+    np.ctypeslib.ndpointer(ctypes.c_double, ndim=1, flags="C_CONTIGUOUS"),
+    np.ctypeslib.ndpointer(ctypes.c_double, ndim=1, flags="C_CONTIGUOUS"),
+    np.ctypeslib.ndpointer(ctypes.c_int32, ndim=1, flags="C_CONTIGUOUS"),
+    ctypes.c_int32,
+    ctypes.c_int32,
+    ctypes.c_int32,
+    ctypes.c_int32,
+    ctypes.c_int32,
+    ctypes.c_double,
+]
 cfunctions.build_photon_electron_one_rdm.argtypes = [
+    np.ctypeslib.ndpointer(ctypes.c_double, ndim=2, flags="C_CONTIGUOUS"),
     np.ctypeslib.ndpointer(ctypes.c_double, ndim=2, flags="C_CONTIGUOUS"),
     np.ctypeslib.ndpointer(ctypes.c_double, ndim=1, flags="C_CONTIGUOUS"),
     np.ctypeslib.ndpointer(ctypes.c_int32, ndim=1, flags="C_CONTIGUOUS"),
@@ -182,6 +224,18 @@ cfunctions.build_active_photon_electron_one_rdm.argtypes = [
     ctypes.c_double,
 ]
 
+cfunctions.build_active_photon_electron_one_rdm_z.argtypes = [
+    np.ctypeslib.ndpointer(ctypes.c_double, ndim=2, flags="C_CONTIGUOUS"),
+    np.ctypeslib.ndpointer(ctypes.c_double, ndim=2, flags="C_CONTIGUOUS"),
+    np.ctypeslib.ndpointer(ctypes.c_double, ndim=1, flags="C_CONTIGUOUS"),
+    np.ctypeslib.ndpointer(ctypes.c_int32, ndim=1, flags="C_CONTIGUOUS"),
+    ctypes.c_int32,
+    ctypes.c_int32,
+    ctypes.c_int32,
+    ctypes.c_int32,
+    ctypes.c_int32,
+    ctypes.c_double,
+]
 cfunctions.build_sigma_s_square.argtypes = [
     np.ctypeslib.ndpointer(ctypes.c_double, ndim=2, flags="C_CONTIGUOUS"),
     np.ctypeslib.ndpointer(ctypes.c_double, ndim=2, flags="C_CONTIGUOUS"),
@@ -458,6 +512,53 @@ def c_sigma(
         break_degeneracy,
     )
 
+def c_sigma_2(
+    h1e,
+    h2e,
+    d_cmo,
+    c_vectors,
+    s_vectors,
+    table,
+    table_creation,
+    table_annihilation,
+    N_ac,
+    n_o_ac,
+    n_o_in,
+    nmo,
+    num_state,
+    N_p,
+    Enuc,
+    dc,
+    omega1,
+    omega2,
+    d_exp,
+    E_core,
+    break_degeneracy,
+):
+    cfunctions.build_sigma_2(
+        h1e,
+        h2e,
+        d_cmo,
+        c_vectors,
+        s_vectors,
+        table,
+        table_creation,
+        table_annihilation,
+        N_ac,
+        n_o_ac,
+        n_o_in,
+        nmo,
+        num_state,
+        N_p,
+        Enuc,
+        dc,
+        omega1,
+        omega2,
+        d_exp,
+        E_core,
+        break_degeneracy,
+    )
+
 
 def c_sigma_s_square(
     c_vectors,
@@ -532,18 +633,18 @@ def c_get_roots(
 
 
 def c_build_one_rdm(
-    eigvec, D, table, N_ac, n_o_ac, n_o_in, num_photon, state_p1, state_p2
+    z_vector, eigvec, D, table, N_ac, n_o_ac, n_o_in, num_photon, state_p1, state_p2, z_state
 ):
     cfunctions.build_one_rdm(
-        eigvec, D, table, N_ac, n_o_ac, n_o_in, num_photon, state_p1, state_p2
+       z_vector, eigvec, D, table, N_ac, n_o_ac, n_o_in, num_photon, state_p1, state_p2, z_state
     )
 
 
 def c_build_two_rdm(
-    eigvec, D, table, N_ac, n_o_ac, n_o_in, num_photon, state_p1, state_p2
+    z_vector, eigvec, D, table, N_ac, n_o_ac, n_o_in, num_photon, state_p1, state_p2, z_state
 ):
     cfunctions.build_two_rdm(
-        eigvec, D, table, N_ac, n_o_ac, n_o_in, num_photon, state_p1, state_p2
+       z_vector, eigvec, D, table, N_ac, n_o_ac, n_o_in, num_photon, state_p1, state_p2, z_state
     )
 
 
@@ -562,13 +663,30 @@ def c_build_active_rdm(
         state_p2,
         weight,
     )
+def c_build_active_rdm_z(
+    z_vector, eigvec, D_tu, D_tuvw, table, N_ac, n_o_ac, num_photon, state_p1, state_p2, weight
+):
+    cfunctions.build_active_rdm_z(
+        z_vector,
+        eigvec,
+        D_tu,
+        D_tuvw,
+        table,
+        N_ac,
+        n_o_ac,
+        num_photon,
+        state_p1,
+        state_p2,
+        weight,
+    )
+
 
 
 def c_build_photon_electron_one_rdm(
-    eigvec, Dpe, table, N_ac, n_o_ac, n_o_in, num_photon, state_p1, state_p2
+    z_vector, eigvec, Dpe, table, N_ac, n_o_ac, n_o_in, num_photon, state_p1, state_p2
 ):
     cfunctions.build_photon_electron_one_rdm(
-        eigvec, Dpe, table, N_ac, n_o_ac, n_o_in, num_photon, state_p1, state_p2
+       z_vector, eigvec, Dpe, table, N_ac, n_o_ac, n_o_in, num_photon, state_p1, state_p2
     )
 
 
@@ -578,6 +696,14 @@ def c_build_active_photon_electron_one_rdm(
     cfunctions.build_active_photon_electron_one_rdm(
         eigvec, Dpe_tu, table, N_ac, n_o_ac, num_photon, state_p1, state_p2, weight
     )
+
+def c_build_active_photon_electron_one_rdm_z(
+    z_vector, eigvec, Dpe_tu, table, N_ac, n_o_ac, num_photon, state_p1, state_p2, weight
+):
+    cfunctions.build_active_photon_electron_one_rdm_z(
+       z_vector, eigvec, Dpe_tu, table, N_ac, n_o_ac, num_photon, state_p1, state_p2, weight
+    )
+
 
 
 def c_gram_schmidt_orthogonalization(Q, rows, cols):
@@ -1949,6 +2075,7 @@ class PFHamiltonianGenerator:
                         one_rdm = np.zeros((self.n_occupied * self.n_occupied))
                         c_build_one_rdm(
                             eigenvecs,
+                            eigenvecs,
                             one_rdm,
                             self.table,
                             self.n_act_a,
@@ -1957,6 +2084,7 @@ class PFHamiltonianGenerator:
                             np1,
                             i,
                             j,
+                            False
                         )
                         dipole_x = np.dot(_mu_x_spin.flatten(), one_rdm)
                         dipole_y = np.dot(_mu_y_spin.flatten(), one_rdm)
@@ -2053,6 +2181,7 @@ class PFHamiltonianGenerator:
                     one_rdm = np.zeros((self.n_occupied * self.n_occupied))
                     c_build_one_rdm(
                         eigenvecs,
+                        eigenvecs,
                         one_rdm,
                         self.table,
                         self.n_act_a,
@@ -2061,6 +2190,7 @@ class PFHamiltonianGenerator:
                         np1,
                         i,
                         i,
+                        False
                     )
                     two_rdm = np.zeros(
                         (
@@ -2072,6 +2202,7 @@ class PFHamiltonianGenerator:
                     )
                     c_build_two_rdm(
                         eigenvecs,
+                        eigenvecs,
                         two_rdm,
                         self.table,
                         self.n_act_a,
@@ -2080,6 +2211,7 @@ class PFHamiltonianGenerator:
                         np1,
                         i,
                         i,
+                        False
                     )
                     # for t in range(self.n_occupied):
                     #    for u in range(self.n_occupied):
@@ -2097,6 +2229,7 @@ class PFHamiltonianGenerator:
                     Dpe = np.zeros((self.n_occupied * self.n_occupied))
                     c_build_photon_electron_one_rdm(
                         eigenvecs,
+                        eigenvecs,
                         Dpe,
                         self.table,
                         self.n_act_a,
@@ -2106,6 +2239,31 @@ class PFHamiltonianGenerator:
                         i,
                         i,
                     )
+                    
+                    #one_rdm_temp = one_rdm.reshape((self.n_occupied, self.n_occupied))
+                    #one_rdm_full = np.zeros((self.nmo, self.nmo))
+                    #one_rdm_full[:self.n_occupied,:self.n_occupied] = one_rdm_temp[:,:] 
+                    #_eig, _vec = np.linalg.eigh(one_rdm_full)
+                    #_idx = _eig.argsort()[::-1]
+                    #self.noocs = _eig[_idx]
+                    #print("state",i)
+                    #print("eigenvalues of 1-RDM")
+                    #print(self.noocs)
+                    #print("sum of 1-RDM eigenvalues", np.sum(self.noocs))
+                    #one_rdm_pe_temp = Dpe.reshape((self.n_occupied, self.n_occupied))
+                    #one_rdm_pe_full = np.zeros((self.nmo, self.nmo))
+                    #one_rdm_pe_full[:self.n_occupied,:self.n_occupied] = one_rdm_pe_temp[:,:] 
+                    #_eig, _vec = np.linalg.eigh(one_rdm_pe_full)
+                    #_idx = _eig.argsort()[::-1]
+                    #self.noocs_pe = _eig[_idx]
+
+                    #print("1-pe-RDM in NO basis")
+                    #print(self.noocs_pe)
+                    #print("sum of 1-pe-RDM eigenvalues", np.sum(self.noocs_pe))
+                    #np.savetxt("occupation_number.out", self.noocs)
+                    #self.no_vec = _vec[:, _idx]
+                    #self.nat_orbs = np.dot(new_C, self.no_vec)
+                    #np.savetxt("natural_orbital.out", self.nat_orbs)
 
                     # two_rdm2 = two_rdm.reshape((self.n_occupied * self.n_occupied, self.n_occupied * self.n_occupied))
                     # print(two_rdm2[:(self.n_in_a*self.n_in_a),:(self.n_in_a*self.n_in_a)])
@@ -2136,6 +2294,7 @@ class PFHamiltonianGenerator:
                         + self.d_c
                         + photon_energy
                     )
+                    
                     # print("1e integral")
                     # for k in range(self.n_occupied):
                     #    for l in range(self.n_occupied):
@@ -3908,10 +4067,36 @@ class PFHamiltonianGenerator:
 
                                 print("OPTIMIZATION CONVERGED", flush=True)
                                 print("avg energy final", macroiteration, avg_energy)
+                                self.opt_C = np.einsum("pq,qr->pr", self.C, self.U_total)
                                 if self.save_orbital == True:
-                                    new_C = np.einsum("pq,qr->pr", self.C, self.U_total)
                                     # print(new_C)
-                                    np.savetxt("orbital.out", new_C)
+                                    np.savetxt("orbital.out", self.opt_C)
+                                    
+                                    #####for i in range(self.davidson_roots):
+                                    #####    one_rdm = np.zeros((self.n_occupied * self.n_occupied))
+                                    #####    c_build_one_rdm(
+                                    #####        eigenvecs,
+                                    #####        one_rdm,
+                                    #####        self.table,
+                                    #####        self.n_act_a,
+                                    #####        self.n_act_orb,
+                                    #####        self.n_in_a,
+                                    #####        np1,
+                                    #####        i,
+                                    #####        i,
+                                    #####    )
+                                    #####    one_rdm = one_rdm.reshape((self.n_occupied, self.n_occupied))
+                                    #####    one_rdm_full = np.zeros((self.nmo, self.nmo))
+                                    #####    one_rdm_full[:self.n_occupied,:self.n_occupied] = one_rdm[:,:] 
+                                    #####    _eig, _vec = np.linalg.eigh(one_rdm_full)
+                                    #####    _idx = _eig.argsort()[::-1]
+                                    #####    self.noocs = _eig[_idx]
+                                    #####    print(self.noocs)
+                                    ######np.savetxt("occupation_number.out", self.noocs)
+                                    ######self.no_vec = _vec[:, _idx]
+                                    ######self.nat_orbs = np.dot(new_C, self.no_vec)
+                                    ######np.savetxt("natural_orbital.out", self.nat_orbs)
+
 
                                 break
                             self.avg_energy = avg_energy
@@ -4158,6 +4343,9 @@ class PFHamiltonianGenerator:
 
                             macroiteration += 1
                         end = timer()
+                        self.eigenvecs = eigenvecs
+                        self.eigenvals = eigenvals
+
                         print("optimization took", end - start)
 
             elif self.ci_level == "cis":
@@ -4386,6 +4574,8 @@ class PFHamiltonianGenerator:
         self.d_ao = cqed_rhf_dict["1-E DIPOLE MATRIX AO"]
         self.d_cmo = cqed_rhf_dict["1-E DIPOLE MATRIX MO"]
 
+        self.d_hf = copy.deepcopy(self.d_cmo)
+
         if self.photon_number_basis:
             self.d_c = cqed_rhf_dict["NUMBER STATE NUCLEAR DIPOLE ENERGY"]
             self.d_PF_ao = cqed_rhf_dict["NUMBER STATE 1-E SCALED DIPOLE MATRIX AO"]
@@ -4418,6 +4608,7 @@ class PFHamiltonianGenerator:
         # update wfn_dict with orbitals from CQED-RHF
         wfn_dict["matrix"]["Ca"] = self.C
         wfn_dict["matrix"]["Cb"] = self.C
+        self.C_hf = copy.deepcopy(self.C)
         # mints = psi4.core.MintsHelper(wfn.basisset())
         # overlap_matrix = mints.ao_overlap()
         # overlap_matrix = np.asarray(overlap_matrix)
@@ -4469,6 +4660,8 @@ class PFHamiltonianGenerator:
             self.casci_sum_squared_weight_by_rank = np.zeros(2 * self.ndocc + 1)
 
         self.docc_list = [i for i in range(self.ndocc)]
+        self.wfn = wfn
+
         # print("mo coefficient")
         # for k in range(self.nmo):
         #    for l in range(self.nmo):
@@ -4526,6 +4719,7 @@ class PFHamiltonianGenerator:
             spin_ind = np.arange(_H_spin.shape[0], dtype=int) % 2
             # product of spatial and spin parts
             self.Hspin = _H_spin * (spin_ind.reshape(-1, 1) == spin_ind)
+        self.H_hf = copy.deepcopy(self.H_spatial2)
 
     def build2DSO(self):
         """Will build the 2-electron arrays in the spin orbital basis
@@ -5003,6 +5197,10 @@ class PFHamiltonianGenerator:
             )
         t_hf_end = time.time()
         print(f" Completed QED-RHF in {t_hf_end - t_hf_start} seconds")
+        #grab the number of atoms and nuclear gradient 
+        mol = psi4.geometry(molecule_string)
+        self.n_atoms = mol.natom()
+        self.nuclear_energy_gradient =  np.asarray(mol.nuclear_repulsion_energy_deriv1()).flatten()
 
         # Parse output of cqed-rhf calculation
         psi4_wfn = self.parseArrays(cqed_rhf_dict)
@@ -5078,6 +5276,7 @@ class PFHamiltonianGenerator:
         # build 2eInt in cqed-rhf basis
         print("number of MO", self.nmo)
         mints = psi4.core.MintsHelper(p4_wfn.basisset())
+        self.mints = psi4.core.MintsHelper(p4_wfn.basisset())
         if self.full_diagonalization or self.test_mode or self.ci_level == "cis":
             self.eri_so = np.asarray(mints.mo_spin_eri(self.Ca, self.Ca))
 
@@ -9206,7 +9405,7 @@ class PFHamiltonianGenerator:
                     if hard_case == 2:
                         Q = np.zeros((1, self.n_act_orb * self.n_in_a))
                         x, exitCode = minres(
-                            hessian_tilde_ai, -gradient_tilde_ai, tol=1e-5
+                            hessian_tilde_ai, -gradient_tilde_ai, rtol=1e-5
                         )
                         print("exitcode", exitCode)
                         step = x
@@ -9221,7 +9420,7 @@ class PFHamiltonianGenerator:
 
             elif np.linalg.norm(gradient_tilde_ai) <= 1e-4 and np.linalg.norm(gradient_tilde_ai) > 1e-8:
                 print("gradient is small, use Newton step")
-                x, exitCode = minres(hessian_tilde_ai, -gradient_tilde_ai, tol=1e-5)
+                x, exitCode = minres(hessian_tilde_ai, -gradient_tilde_ai, rtol=1e-5)
                 print("exitcode", exitCode)
                 hard_case = 2
                 step = x
@@ -12351,7 +12550,7 @@ class PFHamiltonianGenerator:
                     # S2 = np.einsum("pq,qr->pr", H_lambda, Q.T)
                     # print(S2)
                     # print("diagonal element of the reduced hessian", np.diagonal(reduced_hessian))
-                    x, exitCode = minres(H_op, -reduced_gradient, tol=1e-6)
+                    x, exitCode = minres(H_op, -reduced_gradient, rtol=1e-6)
                     # x, istop, itn, normr, normar, norma, conda, normx = lsmr(H_op, -reduced_gradient)[:8]
                     # print("reo0", x, istop, itn, normr, normx, conda)
                     print("exitcode", exitCode)
@@ -13043,7 +13242,7 @@ class PFHamiltonianGenerator:
                     # S2 = np.einsum("pq,qr->pr", H_lambda, Q.T)
                     # print(S2)
                     # print("diagonal element of the reduced hessian", np.diagonal(reduced_hessian))
-                    x, exitCode = minres(H1_op, -reduced_gradient, tol=1e-6)
+                    x, exitCode = minres(H1_op, -reduced_gradient, rtol=1e-6)
                     # x, istop, itn, normr, normar, norma, conda, normx = lsmr(H_op, -reduced_gradient)[:8]
                     # print("reo0", x, istop, itn, normr, normx, conda)
                     print("exitcode", exitCode)
@@ -14289,7 +14488,7 @@ class PFHamiltonianGenerator:
                                     self.U2, A_tilde2, G1, Q, 1, 0, 0
                                 ),
                             )
-                            x, exitCode = minres(H1_op, -reduced_gradient, tol=1e-6)
+                            x, exitCode = minres(H1_op, -reduced_gradient, rtol=1e-6)
                             print("exitcode", exitCode)
                             step = x
 
@@ -14610,7 +14809,7 @@ class PFHamiltonianGenerator:
                         (self.index_map_size, self.index_map_size),
                         matvec=lambda Q: self.mv2(self.U2, A_tilde2, G1, Q, 1, 0, 0),
                     )
-                    x, exitCode = minres(H1_op, -reduced_gradient, tol=1e-6)
+                    x, exitCode = minres(H1_op, -reduced_gradient, rtol=1e-6)
                     print("exitcode", exitCode)
                     hard_case = 2
                     step = x
@@ -14958,20 +15157,20 @@ class PFHamiltonianGenerator:
             #   "{:20.12f}".format(self.Enuc),
             #   flush = True
             #)
-            # print("current gradient_norm and residual", gradient_norm, current_residual)
-            # print("current convergence_threshold", convergence_threshold)
-            # total_norm = np.sqrt(np.power(gradient_norm,2) + np.power(current_residual,2))
-            # if total_norm < convergence_threshold:
-            #    print("total norm", total_norm, flush = True)
-            #    #self.U_total = np.einsum("pq,qs->ps", self.U_total, self.U2)
-            #    #temp8 = np.zeros((self.nmo, self.nmo))
-            #    #temp8 = np.einsum("pq,qs->ps", self.H_spatial2, self.U2)
-            #    #self.H_spatial2[:,:] = np.einsum("ps,pr->rs", temp8, self.U2)
-            #    #self.d_cmo[:,:] = d_cmo[:,:]
-            #    #print(eigenvecs)
-            #    #print("u2i",self.U2)
-            #    print("microiteration converged! (small total norm)", flush = True)
-            #    break
+            print("current gradient_norm and residual", gradient_norm, current_residual)
+            print("current convergence_threshold", convergence_threshold)
+            total_norm = np.sqrt(np.power(gradient_norm,2) + np.power(current_residual,2))
+            if total_norm < convergence_threshold:
+               print("total norm", total_norm, flush = True)
+               #self.U_total = np.einsum("pq,qs->ps", self.U_total, self.U2)
+               #temp8 = np.zeros((self.nmo, self.nmo))
+               #temp8 = np.einsum("pq,qs->ps", self.H_spatial2, self.U2)
+               #self.H_spatial2[:,:] = np.einsum("ps,pr->rs", temp8, self.U2)
+               #self.d_cmo[:,:] = d_cmo[:,:]
+               #print(eigenvecs)
+               #print("u2i",self.U2)
+               print("microiteration converged! (small total norm)", flush = True)
+               break
 
             microiteration += 1
 
@@ -15891,7 +16090,7 @@ class PFHamiltonianGenerator:
                                     self.U2, A_tilde2, G1, Q, 1, 0, 0
                                 ),
                             )
-                            x, exitCode = minres(H1_op, -reduced_gradient, tol=1e-6)
+                            x, exitCode = minres(H1_op, -reduced_gradient, rtol=1e-6)
                             print("exitcode", exitCode)
                             step = x
 
@@ -15910,7 +16109,7 @@ class PFHamiltonianGenerator:
                         (self.index_map_size, self.index_map_size),
                         matvec=lambda Q: self.mv2(self.U2, A_tilde2, G1, Q, 1, 0, 0),
                     )
-                    x, exitCode = minres(H1_op, -reduced_gradient, tol=1e-6)
+                    x, exitCode = minres(H1_op, -reduced_gradient, rtol=1e-6)
                     print("exitcode", exitCode)
                     hard_case = 2
                     step = x
@@ -19268,7 +19467,7 @@ class PFHamiltonianGenerator:
         return sigma_reduced
 
     def mv2(self, U, A_tilde, G, R_reduced, num_states, pointer, eigval):
-        R_reduced = R_reduced.reshape((1, self.index_map_size))
+        R_reduced = R_reduced.reshape((1, self.index_map_size)).astype(np.float64)
         nmo = self.nmo
         index_map = self.index_map
         index_map_size = self.index_map_size

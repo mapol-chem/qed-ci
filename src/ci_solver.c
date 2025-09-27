@@ -779,7 +779,47 @@ void build_sigma(double* h1e, double* h2e, double* d_cmo, double* c_vectors, dou
     }
 }
        
-
+void build_sigma_2(double* h1e, double* h2e, double* d_cmo, double* c_vectors, double *c1_vectors, 
+    int* table, int* table_creation, int* table_annihilation, int N_ac, int n_o_ac, int n_o_in, int nmo, 
+    int num_state, int N_p, double Enuc, double dc, double omega1, double omega2, double d_exp, double E_core, bool break_degeneracy) {
+    
+    int num_alpha = binomialCoeff(n_o_ac, N_ac);
+    int num_links = N_ac * (n_o_ac-N_ac) + N_ac;
+    int np1 = N_p + 1;
+    #pragma omp parallel for num_threads(12) collapse(2)
+    for (int n = 0; n < num_state; n++) {
+        for (int m = 0; m < np1; m++) {
+            sigma12(h1e, h2e, c_vectors, c1_vectors, num_alpha, num_links, table, nmo, n_o_ac, n_o_in, m, n, np1); 
+            sigma3(h2e, c_vectors, c1_vectors, table, table_creation, table_annihilation, 
+       	   N_ac, n_o_ac, n_o_in, nmo, m, n, np1);
+            double someconstant = m * omega1 + Enuc + dc + E_core;
+            if (break_degeneracy == true) {
+               someconstant = m * (omega1 + 1) + Enuc + dc + E_core;
+            }
+            constant_terms_contraction(c_vectors, c1_vectors, num_alpha, someconstant, m, m, n, np1);    
+	    if (N_p == 0) continue;
+            if ((0 < m) && (m < N_p)) {
+                someconstant = -sqrt(m * omega2/2);
+                sigma_dipole(d_cmo, c_vectors, c1_vectors, num_alpha, num_links, table, n_o_ac, n_o_in, someconstant, m-1, m, n, np1);  
+                constant_terms_contraction(c_vectors, c1_vectors, num_alpha, -d_exp * someconstant, m-1, m, n, np1);    
+                someconstant = -sqrt((m+1) * omega2/2);
+                sigma_dipole(d_cmo, c_vectors, c1_vectors, num_alpha, num_links, table, n_o_ac, n_o_in, someconstant, m+1, m, n, np1);  
+                constant_terms_contraction(c_vectors, c1_vectors, num_alpha, -d_exp * someconstant, m+1, m, n, np1);    
+            }
+            else if (m == N_p) {
+                someconstant = -sqrt(m * omega2/2);
+                sigma_dipole(d_cmo, c_vectors, c1_vectors, num_alpha, num_links, table, n_o_ac, n_o_in, someconstant, m-1, m, n, np1);  
+                constant_terms_contraction(c_vectors, c1_vectors, num_alpha, -d_exp * someconstant, m-1, m, n, np1);   
+            }
+            else {
+                someconstant = -sqrt((m+1) * omega2/2);
+                sigma_dipole(d_cmo, c_vectors, c1_vectors, num_alpha, num_links, table, n_o_ac, n_o_in, someconstant, m+1, m, n, np1);  
+                constant_terms_contraction(c_vectors, c1_vectors, num_alpha, -d_exp * someconstant, m+1, m, n, np1);   
+            }
+        }
+    }
+}
+ 
 
 void sigma3(double* h2e, double* c_vectors, double* c1_vectors, int* table,  int* table_creation, int* table_annihilation, 
 		 int N_ac, int n_o_ac, int n_o_in, int nmo, int photon_p, int state_p, int num_photon) {
@@ -1513,15 +1553,16 @@ void davidson_spin(double* h1e, double* h2e, double* d_cmo, double* Hdiag, doubl
 	if (unconv == 0) {
             //cblas_dgemm(CblasRowMajor, CblasTrans, CblasNoTrans, nroots, H_dim, L, 1.0, G, L, Q, H_dim, 0.0, eigenvecs, H_dim);
             cblas_dcopy(nroots, theta, 1, eigenvals, 1);
-            constdouble[4] = 0.0;
-            for (int i = 0; i < nroots; i++) {
+	    constdouble[4] = 0.0;
+	    for (int i = 0; i < nroots; i++) {
                 double dum = 0.0;
                 for (size_t j = 0; j < H_dim; j++) {
-                    dum += w[i * H_dim +j] * w[i * H_dim +j];
-                }
-                constdouble[4] += sqrt(dum)/nroots;
-            }
-            constint[8] = 0;
+	 	    dum += w[i * H_dim +j] * w[i * H_dim +j];	
+		}
+	        constdouble[4] += sqrt(dum)/nroots;	
+	    }
+	    //constdouble[4] = sqrt(dum)/nroots;	
+            constint[8] = 0;	    
 	    printf("converged\n");
     	    fflush(stdout);
 	    break;
@@ -1530,16 +1571,16 @@ void davidson_spin(double* h1e, double* h2e, double* d_cmo, double* Hdiag, doubl
 	    printf("Maximum iteration reaches. Please increase maxiter!\n");
             //cblas_dgemm(CblasRowMajor, CblasTrans, CblasNoTrans, nroots, H_dim, L, 1.0, G, L, Q, H_dim, 0.0, eigenvecs, H_dim);
 	    cblas_dcopy(nroots, theta, 1, eigenvals, 1);
-            constdouble[4] = 0.0;
-            for (int i = 0; i < nroots; i++) {
+	    constdouble[4] = 0.0;
+	    for (int i = 0; i < nroots; i++) {
                 double dum = 0.0;
                 for (size_t j = 0; j < H_dim; j++) {
-                    dum += w[i * H_dim +j] * w[i * H_dim +j];
-                }
-                constdouble[4] += sqrt(dum)/nroots;
-            }
-	    //constdouble[4] = sqrt(dum);	
-	    fflush(stdout);
+	 	    dum += w[i * H_dim +j] * w[i * H_dim +j];	
+		}
+	        constdouble[4] += sqrt(dum)/nroots;	
+	    }
+	    //constdouble[4] = sqrt(dum)/nroots;	
+    	    fflush(stdout);
 	    break;
 	}
 	if (unconv > 0) {
@@ -1767,16 +1808,16 @@ void davidson(double* h1e, double* h2e, double* d_cmo, double* Hdiag, double* ei
 	if (unconv == 0) {
             cblas_dgemm(CblasRowMajor, CblasTrans, CblasNoTrans, nroots, H_dim, L, 1.0, G, L, Q, H_dim, 0.0, eigenvecs, H_dim);
             cblas_dcopy(nroots, theta, 1, eigenvals, 1);
-            constdouble[4] = 0.0;
-            for (int i = 0; i < nroots; i++) {
+	    constdouble[4] = 0.0;
+	    for (int i = 0; i < nroots; i++) {
                 double dum = 0.0;
                 for (size_t j = 0; j < H_dim; j++) {
-                    dum += w[i * H_dim +j] * w[i * H_dim +j];
-                }
-                constdouble[4] += sqrt(dum)/nroots;
-            }
-            //constdouble[4] = sqrt(dum)/nroots;
-            constint[8] = 0;
+	 	    dum += w[i * H_dim +j] * w[i * H_dim +j];	
+		}
+	        constdouble[4] += sqrt(dum)/nroots;
+	    }
+	    //constdouble[4] = sqrt(dum)/nroots;
+            constint[8] = 0;	    
 	    printf("converged\n");
     	    fflush(stdout);
 	    break;
@@ -1785,15 +1826,17 @@ void davidson(double* h1e, double* h2e, double* d_cmo, double* Hdiag, double* ei
 	    printf("Maximum iteration reaches. Please increase maxiter!\n");
             cblas_dgemm(CblasRowMajor, CblasTrans, CblasNoTrans, nroots, H_dim, L, 1.0, G, L, Q, H_dim, 0.0, eigenvecs, H_dim);
 	    cblas_dcopy(nroots, theta, 1, eigenvals, 1);
-            constdouble[4] = 0.0;
-            for (int i = 0; i < nroots; i++) {
+	    constdouble[4] = 0.0;
+	    for (int i = 0; i < nroots; i++) {
                 double dum = 0.0;
                 for (size_t j = 0; j < H_dim; j++) {
-                    dum += w[i * H_dim +j] * w[i * H_dim +j];
-                }
-                //printf("norm %20.12lf cons %20.12lf\n", sqrt(dum), sqrt(dum)/nroots);
-                constdouble[4] += sqrt(dum)/nroots;
-            }
+	 	    dum += w[i * H_dim +j] * w[i * H_dim +j];	
+		}
+		//printf("norm %20.12lf cons %20.12lf\n", sqrt(dum), sqrt(dum)/nroots);
+	        constdouble[4] += sqrt(dum)/nroots;
+	    }
+	    //printf("new residual %20.12lf \n", constdouble[4]);
+	    //constdouble[4] = sqrt(dum)/nroots;	
 	    break;
 	}
 	if (unconv > 0) {
@@ -1862,7 +1905,7 @@ void davidson(double* h1e, double* h2e, double* d_cmo, double* Hdiag, double* ei
 
 }
 
-void build_one_rdm(double* eigvec, double* D, int* table, int N_ac, int n_o_ac, int n_o_in, int num_photon, int state_p1, int state_p2) {
+void build_one_rdm(double* z_vector, double* eigvec, double* D, int* table, int N_ac, int n_o_ac, int n_o_in, int num_photon, int state_p1, int state_p2, bool z_state) {
     int num_alpha = binomialCoeff(n_o_ac, N_ac);
     int num_links = N_ac * (n_o_ac-N_ac) + N_ac;
     size_t num_dets = num_alpha * num_alpha;
@@ -1874,7 +1917,12 @@ void build_one_rdm(double* eigvec, double* D, int* table, int N_ac, int n_o_ac, 
     //inactive block
     for (int i = 0; i < n_o_in; i++) {
 	int ii = i * n_occupied + i;
-        D[ii] = 2.0 * (state_p1 == state_p2);	
+	if (z_state == false) {
+            D[ii] = 2.0 * (state_p1 == state_p2);	
+	}
+	else {
+            D[ii] = 0.0;		
+	}
     }
     //active block
     for (int index_jb = 0; index_jb < num_alpha; index_jb++) {
@@ -1890,7 +1938,7 @@ void build_one_rdm(double* eigvec, double* D, int* table, int N_ac, int n_o_ac, 
                 for (int photon_p = 0; photon_p < num_photon; photon_p++) {
                     int index_I = index_ia * num_alpha + index_ib;
                     int index_J = index_ia * num_alpha + index_jb;
-        	    D[pq] += sign * eigvec[(state_p1 * num_photon + photon_p) * num_dets + index_I]
+        	    D[pq] += sign * z_vector[(state_p1 * num_photon + photon_p) * num_dets + index_I]
 				* eigvec[(state_p2 * num_photon + photon_p) * num_dets + index_J];
             
                 }
@@ -1909,7 +1957,7 @@ void build_one_rdm(double* eigvec, double* D, int* table, int N_ac, int n_o_ac, 
                 for (int photon_p = 0; photon_p < num_photon; photon_p++) {
                     int index_I = index_ia * num_alpha + index_ib;
                     int index_J = index_ja * num_alpha + index_ib;
-        	    D[pq] += sign * eigvec[(state_p1 * num_photon + photon_p) * num_dets + index_I]
+        	    D[pq] += sign * z_vector[(state_p1 * num_photon + photon_p) * num_dets + index_I]
 				* eigvec[(state_p2 * num_photon + photon_p) * num_dets + index_J];
             
                 }
@@ -1944,7 +1992,7 @@ void build_one_rdm(double* eigvec, double* D, int* table, int N_ac, int n_o_ac, 
     //return(dum2);
 }
 
-void build_two_rdm(double* eigvec, double* D, int* table, int N_ac, int n_o_ac, int n_o_in, int num_photon, int state_p1, int state_p2) {
+void build_two_rdm(double* z_vector, double* eigvec, double* D, int* table, int N_ac, int n_o_ac, int n_o_in, int num_photon, int state_p1, int state_p2, bool z_state) {
     int num_alpha = binomialCoeff(n_o_ac, N_ac);
     int num_links = N_ac * (n_o_ac-N_ac) + N_ac;
     size_t num_dets = num_alpha * num_alpha;
@@ -2117,7 +2165,7 @@ void build_two_rdm(double* eigvec, double* D, int* table, int N_ac, int n_o_ac, 
     }
 
     cblas_dgemm(CblasRowMajor, CblasNoTrans, CblasNoTrans, 1 , n_o_ac*n_o_ac, num_photon*num_dets, 1.0, 
-        	    eigvec + state_p1*num_photon*num_dets, num_photon*num_dets,
+        	    z_vector + state_p1*num_photon*num_dets, num_photon*num_dets,
         	    temp1, n_o_ac*n_o_ac, 0.0, D_tu, n_o_ac*n_o_ac);
     double* temp2 = (double*) malloc(num_dets*num_photon*n_o_ac*n_o_ac*sizeof(double));
     memset(temp2, 0.0, num_dets*num_photon*n_o_ac*n_o_ac*sizeof(double));
@@ -2134,7 +2182,7 @@ void build_two_rdm(double* eigvec, double* D, int* table, int N_ac, int n_o_ac, 
                 for (int photon_p = 0; photon_p < num_photon; photon_p++) {
                     int index_I = index_ia * num_alpha + index_ib;
                     int index_K = index_ka * num_alpha + index_ib;
-        	    temp2[(photon_p * num_dets + index_K) * n_o_ac * n_o_ac + pr] += sign * eigvec[(state_p1 * num_photon + photon_p) * num_dets + index_I];
+        	    temp2[(photon_p * num_dets + index_K) * n_o_ac * n_o_ac + pr] += sign * z_vector[(state_p1 * num_photon + photon_p) * num_dets + index_I];
             
                 }
             }
@@ -2153,7 +2201,7 @@ void build_two_rdm(double* eigvec, double* D, int* table, int N_ac, int n_o_ac, 
                 for (int photon_p = 0; photon_p < num_photon; photon_p++) {
                     int index_I = index_ia * num_alpha + index_ib;
                     int index_K = index_ia * num_alpha + index_kb;
-        	    temp2[(photon_p * num_dets + index_K) * n_o_ac * n_o_ac + pr] += sign * eigvec[(state_p1 * num_photon + photon_p) * num_dets + index_I];
+        	    temp2[(photon_p * num_dets + index_K) * n_o_ac * n_o_ac + pr] += sign * z_vector[(state_p1 * num_photon + photon_p) * num_dets + index_I];
             
                 }
             }
@@ -2208,8 +2256,6 @@ void build_two_rdm(double* eigvec, double* D, int* table, int N_ac, int n_o_ac, 
 
 
 
-
-
     //inactive block
     //Order 2-rdm D^ki_lj = D_kl,ij
     // D_klij = \sum C_im * C_im (4 * d_ij d_kl - 2 * d_kj d_il) 
@@ -2217,12 +2263,17 @@ void build_two_rdm(double* eigvec, double* D, int* table, int N_ac, int n_o_ac, 
         for (int l = 0; l < n_o_in; l++) {
             for (int i = 0; i < n_o_in; i++) {
                 for (int j = 0; j < n_o_in; j++) {
-	            int kl = k * n_occupied + l;
-	            int ij = i * n_occupied + j;
-                    D[kl * n_occupied * n_occupied + ij] = (4.0 * (i==j) * (k==l) - 2.0 * (k==j) * (i==l)) * (state_p1 == state_p2);
-		}
-	    }
-	}
+                    int kl = k * n_occupied + l;
+                    int ij = i * n_occupied + j;
+                    if (z_state == false){
+                        D[kl * n_occupied * n_occupied + ij] = (4.0 * (i==j) * (k==l) - 2.0 * (k==j) * (i==l)) * (state_p1 == state_p2);
+                    }   
+		    else {
+                        D[kl * n_occupied * n_occupied + ij] = 0.0;
+		    }    
+        	}
+            }
+        }
     }
     //inactive-active blocks
     for (int t = 0; t < n_o_ac; t++) {
@@ -2718,7 +2769,120 @@ void build_active_rdm(double* eigvec, double* D_tu, double* D_tuvw, int* table, 
     
 }
 
-void build_photon_electron_one_rdm(double* eigvec, double* Dpe, int* table, int N_ac, int n_o_ac, int n_o_in, int num_photon, int state_p1, int state_p2) {
+void build_active_rdm_z(double* z_vector, double* eigvec, double* D_tu, double* D_tuvw, int* table, int N_ac, int n_o_ac, int num_photon, int state_p1, int state_p2, double weight) {
+    int num_alpha = binomialCoeff(n_o_ac, N_ac);
+    int num_links = N_ac * (n_o_ac-N_ac) + N_ac;
+    size_t num_dets = num_alpha * num_alpha;
+   
+    double* temp1 = (double*) malloc(num_dets*num_photon*n_o_ac*n_o_ac*sizeof(double));
+    memset(temp1, 0.0, num_dets*num_photon*n_o_ac*n_o_ac*sizeof(double));
+    double* temp0 = (double*) malloc(n_o_ac*n_o_ac*sizeof(double));
+    memset(temp0, 0.0, n_o_ac*n_o_ac*sizeof(double));
+   
+
+    #pragma omp parallel for num_threads(16)
+    for (int index_ka = 0; index_ka < num_alpha; index_ka++) {
+        int stride = index_ka * num_links;
+        for (int excitation = 0; excitation < num_links; excitation++) {
+            int index_ja = table[(stride + excitation)*4+0];
+            int sign = table[(stride + excitation)*4+1];
+            int s = table[(stride + excitation)*4+2]; 
+            int q = table[(stride + excitation)*4+3]; 
+            int qs = q * n_o_ac + s;
+            for (int index_jb = 0; index_jb < num_alpha; index_jb++) {
+                for (int photon_p = 0; photon_p < num_photon; photon_p++) {
+                    int index_K = index_ka * num_alpha + index_jb;
+                    int index_J = index_ja * num_alpha + index_jb;
+        	    temp1[(photon_p * num_dets + index_K) * n_o_ac * n_o_ac + qs] += sign * eigvec[(state_p2 * num_photon + photon_p) * num_dets + index_J];
+            
+                }
+            }
+        }
+    }
+    #pragma omp parallel for num_threads(16)
+    for (int index_kb = 0; index_kb < num_alpha; index_kb++) {
+        int stride = index_kb * num_links;
+        for (int excitation = 0; excitation < num_links; excitation++) {
+            int index_jb = table[(stride + excitation)*4+0];
+            int sign = table[(stride + excitation)*4+1];
+            int s = table[(stride + excitation)*4+2]; 
+            int q = table[(stride + excitation)*4+3]; 
+            int qs = q * n_o_ac + s;
+            for (int index_ja = 0; index_ja < num_alpha; index_ja++) {
+                for (int photon_p = 0; photon_p < num_photon; photon_p++) {
+                    int index_K = index_ja * num_alpha + index_kb;
+                    int index_J = index_ja * num_alpha + index_jb;
+        	    temp1[(photon_p * num_dets + index_K) * n_o_ac * n_o_ac + qs] += sign * eigvec[(state_p2 * num_photon + photon_p) * num_dets + index_J];
+            
+                }
+            }
+        }
+    }
+    cblas_dgemm(CblasRowMajor, CblasNoTrans, CblasNoTrans, 1 , n_o_ac*n_o_ac, num_photon*num_dets, weight, 
+        	    z_vector + state_p1*num_photon*num_dets, num_photon*num_dets,
+        	    temp1, n_o_ac*n_o_ac, 0.0, temp0, n_o_ac*n_o_ac);
+
+    cblas_dgemm(CblasRowMajor, CblasNoTrans, CblasNoTrans, 1 , n_o_ac*n_o_ac, num_photon*num_dets, weight, 
+        	    z_vector + state_p1*num_photon*num_dets, num_photon*num_dets,
+        	    temp1, n_o_ac*n_o_ac, 1.0, D_tu, n_o_ac*n_o_ac);
+    double* temp2 = (double*) malloc(num_dets*num_photon*n_o_ac*n_o_ac*sizeof(double));
+    memset(temp2, 0.0, num_dets*num_photon*n_o_ac*n_o_ac*sizeof(double));
+    #pragma omp parallel for num_threads(16)
+    for (int index_ka = 0; index_ka < num_alpha; index_ka++) {
+        int stride = index_ka * num_links;
+        for (int excitation = 0; excitation < num_links; excitation++) {
+            int index_ia = table[(stride + excitation)*4+0];
+            int sign = table[(stride + excitation)*4+1];
+            int p = table[(stride + excitation)*4+2]; 
+            int r = table[(stride + excitation)*4+3]; 
+            int pr = p * n_o_ac + r;
+            for (int index_ib = 0; index_ib < num_alpha; index_ib++) {
+                for (int photon_p = 0; photon_p < num_photon; photon_p++) {
+                    int index_I = index_ia * num_alpha + index_ib;
+                    int index_K = index_ka * num_alpha + index_ib;
+        	    temp2[(photon_p * num_dets + index_K) * n_o_ac * n_o_ac + pr] += sign * z_vector[(state_p1 * num_photon + photon_p) * num_dets + index_I];
+            
+                }
+            }
+        }
+    }
+    #pragma omp parallel for num_threads(16)
+    for (int index_kb = 0; index_kb < num_alpha; index_kb++) {
+        int stride = index_kb * num_links;
+        for (int excitation = 0; excitation < num_links; excitation++) {
+            int index_ib = table[(stride + excitation)*4+0];
+            int sign = table[(stride + excitation)*4+1];
+            int p = table[(stride + excitation)*4+2]; 
+            int r = table[(stride + excitation)*4+3]; 
+            int pr = p * n_o_ac + r;
+            for (int index_ia = 0; index_ia < num_alpha; index_ia++) {
+                for (int photon_p = 0; photon_p < num_photon; photon_p++) {
+                    int index_I = index_ia * num_alpha + index_ib;
+                    int index_K = index_ia * num_alpha + index_kb;
+        	    temp2[(photon_p * num_dets + index_K) * n_o_ac * n_o_ac + pr] += sign * z_vector[(state_p1 * num_photon + photon_p) * num_dets + index_I];
+            
+                }
+            }
+        }
+    }
+    cblas_dgemm(CblasRowMajor, CblasTrans, CblasNoTrans, n_o_ac*n_o_ac , n_o_ac*n_o_ac, num_photon*num_dets, weight, 
+        	    temp2, n_o_ac*n_o_ac,
+        	    temp1, n_o_ac*n_o_ac, 1.0, D_tuvw, n_o_ac*n_o_ac);
+
+    for (int q = 0; q < n_o_ac; q++) {
+        for (int p = 0; p < n_o_ac; p++) {
+            for (int s = 0; s < n_o_ac; s++) {
+        	D_tuvw[(q*n_o_ac+p)*n_o_ac*n_o_ac + p*n_o_ac + s] -= temp0[q*n_o_ac+s];    
+            }
+        }
+    }
+    free(temp0);
+    free(temp1);
+    free(temp2);
+}
+
+
+void build_photon_electron_one_rdm(double* z_vector, double* eigvec, double* Dpe, int* table, int N_ac, int n_o_ac, int n_o_in, int num_photon, int state_p1, int state_p2) {
     int num_alpha = binomialCoeff(n_o_ac, N_ac);
     int num_links = N_ac * (n_o_ac-N_ac) + N_ac;
     size_t num_dets = num_alpha * num_alpha;
@@ -2732,17 +2896,17 @@ void build_photon_electron_one_rdm(double* eigvec, double* Dpe, int* table, int 
             for (int index_I = 0; index_I < num_dets; index_I++) {
                 if (N_p == 0) continue;
                 if ((0 < photon_p) && (photon_p < N_p)) {
-        	    Dpe[ii] += 2.0 * sqrt(photon_p)   * eigvec[(state_p1 * num_photon + photon_p) * num_dets + index_I]
+        	    Dpe[ii] += 2.0 * sqrt(photon_p)   * z_vector[(state_p1 * num_photon + photon_p) * num_dets + index_I]
 		         * eigvec[(state_p2 * num_photon + photon_p - 1) * num_dets + index_I];
-        	    Dpe[ii] += 2.0 * sqrt(photon_p+1) * eigvec[(state_p1 * num_photon + photon_p) * num_dets + index_I]
+        	    Dpe[ii] += 2.0 * sqrt(photon_p+1) * z_vector[(state_p1 * num_photon + photon_p) * num_dets + index_I]
 		    	* eigvec[(state_p2 * num_photon + photon_p + 1) * num_dets + index_I];
 		}
                 else if (photon_p == N_p) {
-        	    Dpe[ii] += 2.0 * sqrt(photon_p)   * eigvec[(state_p1 * num_photon + photon_p) * num_dets + index_I]
+        	    Dpe[ii] += 2.0 * sqrt(photon_p)   * z_vector[(state_p1 * num_photon + photon_p) * num_dets + index_I]
 		         * eigvec[(state_p2 * num_photon + photon_p - 1) * num_dets + index_I];
 		}
                 else{
-        	    Dpe[ii] += 2.0 * sqrt(photon_p+1) * eigvec[(state_p1 * num_photon + photon_p) * num_dets + index_I]
+        	    Dpe[ii] += 2.0 * sqrt(photon_p+1) * z_vector[(state_p1 * num_photon + photon_p) * num_dets + index_I]
 		    	* eigvec[(state_p2 * num_photon + photon_p + 1) * num_dets + index_I];
 		}
 	    }
@@ -2767,17 +2931,17 @@ void build_photon_electron_one_rdm(double* eigvec, double* Dpe, int* table, int 
                     int index_J = index_ia * num_alpha + index_jb;
 		    if (N_p == 0) continue;
                     if ((0 < photon_p) && (photon_p < N_p)) {
-        	        Dpe[pq] += sign * sqrt(photon_p)   * eigvec[(state_p1 * num_photon + photon_p) * num_dets + index_I]
+        	        Dpe[pq] += sign * sqrt(photon_p)   * z_vector[(state_p1 * num_photon + photon_p) * num_dets + index_I]
 			     * eigvec[(state_p2 * num_photon + photon_p - 1) * num_dets + index_J];
-        	        Dpe[pq] += sign * sqrt(photon_p+1) * eigvec[(state_p1 * num_photon + photon_p) * num_dets + index_I]
+        	        Dpe[pq] += sign * sqrt(photon_p+1) * z_vector[(state_p1 * num_photon + photon_p) * num_dets + index_I]
 				* eigvec[(state_p2 * num_photon + photon_p + 1) * num_dets + index_J];
 		    }
                     else if (photon_p == N_p) {
-        	        Dpe[pq] += sign * sqrt(photon_p)   * eigvec[(state_p1 * num_photon + photon_p) * num_dets + index_I]
+        	        Dpe[pq] += sign * sqrt(photon_p)   * z_vector[(state_p1 * num_photon + photon_p) * num_dets + index_I]
 			     * eigvec[(state_p2 * num_photon + photon_p - 1) * num_dets + index_J];
 		    }
                     else{
-        	        Dpe[pq] += sign * sqrt(photon_p+1) * eigvec[(state_p1 * num_photon + photon_p) * num_dets + index_I]
+        	        Dpe[pq] += sign * sqrt(photon_p+1) * z_vector[(state_p1 * num_photon + photon_p) * num_dets + index_I]
 				* eigvec[(state_p2 * num_photon + photon_p + 1) * num_dets + index_J];
 		    }
                 }
@@ -2798,17 +2962,17 @@ void build_photon_electron_one_rdm(double* eigvec, double* Dpe, int* table, int 
                     int index_J = index_ja * num_alpha + index_ib;
                     if (N_p == 0) continue;
                     if ((0 < photon_p) && (photon_p < N_p)) {
-        	        Dpe[pq] += sign * sqrt(photon_p)   * eigvec[(state_p1 * num_photon + photon_p) * num_dets + index_I]
+        	        Dpe[pq] += sign * sqrt(photon_p)   * z_vector[(state_p1 * num_photon + photon_p) * num_dets + index_I]
 			     * eigvec[(state_p2 * num_photon + photon_p - 1) * num_dets + index_J];
-        	        Dpe[pq] += sign * sqrt(photon_p+1) * eigvec[(state_p1 * num_photon + photon_p) * num_dets + index_I]
+        	        Dpe[pq] += sign * sqrt(photon_p+1) * z_vector[(state_p1 * num_photon + photon_p) * num_dets + index_I]
 				* eigvec[(state_p2 * num_photon + photon_p + 1) * num_dets + index_J];
 		    }
                     else if (photon_p == N_p) {
-        	        Dpe[pq] += sign * sqrt(photon_p)   * eigvec[(state_p1 * num_photon + photon_p) * num_dets + index_I]
+        	        Dpe[pq] += sign * sqrt(photon_p)   * z_vector[(state_p1 * num_photon + photon_p) * num_dets + index_I]
 			     * eigvec[(state_p2 * num_photon + photon_p - 1) * num_dets + index_J];
 		    }
                     else{
-        	        Dpe[pq] += sign * sqrt(photon_p+1) * eigvec[(state_p1 * num_photon + photon_p) * num_dets + index_I]
+        	        Dpe[pq] += sign * sqrt(photon_p+1) * z_vector[(state_p1 * num_photon + photon_p) * num_dets + index_I]
 				* eigvec[(state_p2 * num_photon + photon_p + 1) * num_dets + index_J];
 		    }
                 }
@@ -2890,6 +3054,82 @@ void build_active_photon_electron_one_rdm(double* eigvec, double* Dpe_tu, int* t
     }
  
 }
+
+
+
+void build_active_photon_electron_one_rdm_z(double* z_vector, double* eigvec, double* Dpe_tu, int* table, int N_ac, int n_o_ac, int num_photon, int state_p1, int state_p2, double weight) {
+    int num_alpha = binomialCoeff(n_o_ac, N_ac);
+    int num_links = N_ac * (n_o_ac-N_ac) + N_ac;
+    size_t num_dets = num_alpha * num_alpha;
+   
+    int N_p = num_photon - 1;
+    for (int index_jb = 0; index_jb < num_alpha; index_jb++) {
+        int stride = index_jb * num_links;
+        for (int excitation = 0; excitation < num_links; excitation++) {
+            int index_ib = table[(stride + excitation)*4+0];
+            int sign = table[(stride + excitation)*4+1];
+            int p = table[(stride + excitation)*4+2]; 
+            int q = table[(stride + excitation)*4+3]; 
+            int pq = p * n_o_ac + q;
+            for (int index_ia = 0; index_ia < num_alpha; index_ia++) {
+                for (int photon_p = 0; photon_p < num_photon; photon_p++) {
+                    int index_I = index_ia * num_alpha + index_ib;
+                    int index_J = index_ia * num_alpha + index_jb;
+		    if (N_p == 0) continue;
+                    if ((0 < photon_p) && (photon_p < N_p)) {
+        	        Dpe_tu[pq] += sign * weight * sqrt(photon_p)   * z_vector[(state_p1 * num_photon + photon_p) * num_dets + index_I]
+				* eigvec[(state_p2 * num_photon + photon_p - 1) * num_dets + index_J];
+        	        Dpe_tu[pq] += sign * weight * sqrt(photon_p+1) * z_vector[(state_p1 * num_photon + photon_p) * num_dets + index_I]
+				* eigvec[(state_p2 * num_photon + photon_p + 1) * num_dets + index_J];
+		    }
+                    else if (photon_p == N_p) {
+        	        Dpe_tu[pq] += sign * weight * sqrt(photon_p)   * z_vector[(state_p1 * num_photon + photon_p) * num_dets + index_I]
+				* eigvec[(state_p2 * num_photon + photon_p - 1) * num_dets + index_J];
+		    }
+                    else{
+        	        Dpe_tu[pq] += sign * weight * sqrt(photon_p+1) * z_vector[(state_p1 * num_photon + photon_p) * num_dets + index_I]
+				* eigvec[(state_p2 * num_photon + photon_p + 1) * num_dets + index_J];
+		    }
+                }
+            }
+        }
+    }
+    for (int index_ja = 0; index_ja < num_alpha; index_ja++) {
+        int stride = index_ja * num_links;
+        for (int excitation = 0; excitation < num_links; excitation++) {
+            int index_ia = table[(stride + excitation)*4+0];
+            int sign = table[(stride + excitation)*4+1];
+            int p = table[(stride + excitation)*4+2]; 
+            int q = table[(stride + excitation)*4+3]; 
+            int pq = p * n_o_ac + q;
+            for (int index_ib = 0; index_ib < num_alpha; index_ib++) {
+                for (int photon_p = 0; photon_p < num_photon; photon_p++) {
+                    int index_I = index_ia * num_alpha + index_ib;
+                    int index_J = index_ja * num_alpha + index_ib;
+                    if (N_p == 0) continue;
+                    if ((0 < photon_p) && (photon_p < N_p)) {
+        	        Dpe_tu[pq] += sign * weight * sqrt(photon_p)   * z_vector[(state_p1 * num_photon + photon_p) * num_dets + index_I]
+				* eigvec[(state_p2 * num_photon + photon_p - 1) * num_dets + index_J];
+        	        Dpe_tu[pq] += sign * weight * sqrt(photon_p+1) * z_vector[(state_p1 * num_photon + photon_p) * num_dets + index_I]
+				* eigvec[(state_p2 * num_photon + photon_p + 1) * num_dets + index_J];
+		    }
+                    else if (photon_p == N_p) {
+        	        Dpe_tu[pq] += sign * weight * sqrt(photon_p)   * z_vector[(state_p1 * num_photon + photon_p) * num_dets + index_I]
+				* eigvec[(state_p2 * num_photon + photon_p - 1) * num_dets + index_J];
+		    }
+                    else{
+        	        Dpe_tu[pq] += sign * weight * sqrt(photon_p+1) * z_vector[(state_p1 * num_photon + photon_p) * num_dets + index_I]
+				* eigvec[(state_p2 * num_photon + photon_p + 1) * num_dets + index_J];
+		    }
+                }
+            }
+        }
+    }
+ 
+}
+
+
+
 
 void build_b_array(int* table1, int* b_array, int num_alpha, int num_links, int n_o_ac) {
     for (int index_ib = 0; index_ib < num_alpha; index_ib++) {
