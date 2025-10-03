@@ -18564,7 +18564,8 @@ class PFHamiltonianGenerator:
         if self.index_map_size > 600:
             dim0 = 200
         else:
-            dim0 = self.index_map_size // 2
+            #dim0 = self.index_map_size // 2
+            dim0 = self.index_map_size 
         dim1 = max(count, dim0)
         # print("eepp",reduced_hessian_diagonal)
 

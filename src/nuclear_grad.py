@@ -553,6 +553,41 @@ class nuclear_grad(PFHamiltonianGenerator):
         self.r_z[:,:] = B_t + B_b
         r = self.pack_solution(self.r_Z,self.r_z)
         return r
+    def matvec_product(self, x, A, G1):
+        z_vector, Z_vector = self.unpack_solution(x)
+        #print("Z_Vector", Z_vector, "z_vector", z_vector, flush = True)
+        z_vector=self.project_out_all(z_vector, self.eigenvecs) 
+        self.build_state_average_rdms_z(z_vector, self.eigenvecs)
+        B_t = np.zeros_like(self.eigenvecs)
+        B_b = np.zeros_like(self.eigenvecs)
+        self.build_B_t(Z_vector, self.eigenvecs, B_t, A)
+        self.build_B_b(z_vector, B_b)
+        A_b = np.zeros((self.nmo, self.nmo))
+        self.build_A_b(z_vector, self.eigenvecs, A_b)
+        #print("A_b", A_b)
+        #print("data", flush = True)
+        A_t = np.zeros((self.nmo, self.nmo))
+        Z_residual_asym = np.zeros((self.nmo, self.nmo))
+        self.build_A_t(Z_vector, A, G1, A_t)
+        Z_residual_total = A_t + A_b  
+        #Z_residual_total = copy.deepcopy(2.0 * A_b)  
+        Z_residual_asym[:,:] = Z_residual_total - Z_residual_total.T
+        self.H_Z= np.zeros(self.index_map_size)
+        index_map = self.index_map
+        index_map_size = self.index_map_size
+        
+
+        self.H_z = np.zeros_like(self.eigenvecs)
+        for j in range(index_map_size):
+            r = index_map[j][0]
+            k = index_map[j][1]
+            self.H_Z[j] = 0.5 * Z_residual_asym[r][k]
+        self.H_z[:,:] = B_t + B_b
+        #self.H_z[:,:] = B_t
+        r = self.pack_solution(self.H_Z,self.H_z)
+        #print("data2", flush = True)
+        return r
+
 
 
     def build_H0_op(self, x, A, G1):
@@ -587,24 +622,140 @@ class nuclear_grad(PFHamiltonianGenerator):
 
     def build_total_gradient(self, Y):
         
-        Y_asym = Y-Y.T
-        Y_zero = np.zeros_like(Y_asym)
+        Y_asym = 0.5 * (Y-Y.T)
+        print("gradient norm of state:", np.linalg.norm(Y_asym.flatten()))
+        #Y_zero = np.zeros_like(Y_asym)
         Y_Z= np.zeros(self.index_map_size)
         index_map = self.index_map
         index_map_size = self.index_map_size
-        print("Y_asym", Y_asym)
+        #print("Y_asym", Y_asym)
         for j in range(index_map_size):
             r = index_map[j][0]
             k = index_map[j][1]
-            Y_Z[j] = 0.5 * Y_asym[r][k]
-            Y_zero[r][k] = Y_asym[r][k]
-            Y_zero[k][r] = -Y_asym[r][k]
-            print(r,k)
-        print("Y_zero", Y_zero)
+            Y_Z[j] = Y_asym[r][k]
+            #Y_zero[r][k] = Y_asym[r][k]
+            #Y_zero[k][r] = -Y_asym[r][k]
+        #print("Y_zero", Y_zero)
         Y_z = np.zeros_like(self.eigenvecs)
-        
         y = self.pack_solution(Y_Z,Y_z)
         return y
+    def solve2(self, A, G1, matvec_product, denom, max_iter, conv_thresh=1e-7):
+        """
+        Main driver loop to solve the linear system Ax + b = 0.
+        """
+        #self._reset()
+        residual = self.reduced_state_gradient.copy()
+        #random guess
+        #dim00 = self.index_map_size + self.davidson_roots * self.H_dim
+        #trial_0 = np.random.rand(dim00)
+
+        #temp2 = trial_0[self.index_map_size:].reshape(self.davidson_roots, self.H_dim)
+        #temp2=self.project_out_all(temp2, self.eigenvecs)
+        #trial_0[self.index_map_size:] = temp2.flatten()[:]
+        #norm = np.linalg.norm(trial_0)
+        #if norm > 1e-12:
+        #    trial_0 /= norm
+
+        #sigma = matvec_product(trial_0, A, G1)
+        #temp3 = sigma[self.index_map_size:].reshape(self.davidson_roots, self.H_dim)
+        #temp3=self.project_out_all(temp3, self.eigenvecs)
+        #sigma[self.index_map_size:] = temp3.flatten()[:]
+        #residual = sigma + self.reduced_state_gradient 
+
+        #print("initial guess", residual)
+        #residual = self.apply_preconditioner(A, G1, z)
+        #residual /= np.linalg.norm(residual)
+        solver_sym = LinearRMSolver(b_vector=self.reduced_state_gradient, max_subspace=100)
+        #solution_sym = solver_sym.solve(matvec_prod_sym, precond_sym, max_iter=100, conv_thresh=1e-7)
+        #print(denom[:self.index_map_size])
+        print("--------------------------------------------")
+        print("--- Start solving CP-SA-CASSCF equations ---")
+        print("--------------------------------------------")
+        for i in range(max_iter):
+            #sigma0 = matvec_product(residual, A, G1)
+            #residual0 = sigma0 + self.total_gradient
+            #print("zzz", np.linalg.norm(residual0))
+            residual_norm = np.linalg.norm(residual)
+            print(f"Iter: {i+1:3d}   Residual Norm: {residual_norm:.4e}")
+
+            if residual_norm < conv_thresh:
+                print("\n--- Convergence Achieved ---")
+                return solver_sym.get_solution()
+
+            trial_c = residual/denom
+            #trial_c = np.zeros_like(residual)
+            #Q = np.zeros(self.index_map_size)
+            #H1_op = LinearOperator(
+            #            (self.index_map_size, self.index_map_size),
+            #            matvec=lambda Q: self.mv3(A, G1, Q),
+            #        )
+            #residual_slice1 = copy.deepcopy(residual[:self.index_map_size])
+            #residual_slice2 = copy.deepcopy(residual[self.index_map_size:])
+            #delta_Z, exitCode = minres(H1_op,residual_slice1, rtol=1e-6)
+            #print("exit code", exitCode)
+            #trial_c[:self.index_map_size] = copy.deepcopy(delta_Z)
+            #trial_c[self.index_map_size:] = residual_slice2/denom[self.index_map_size:] 
+
+
+
+
+            #z_vector, Z_vector = self.unpack_solution(trial_c)
+            #for i in range(self.davidson_roots):
+            #    print("check dot product", np.dot(z_vector[i], self.eigenvecs[i]))
+            #print(trial_c[:self.index_map_size])
+            #self.print_matrix_nice(trial_c[self.index_map_size:].reshape(self.davidson_roots,self.H_dim)[0].reshape(self.num_alpha,self.num_alpha), precision=10, width=14, cols_per_line=6)
+            #self.print_matrix_nice(trial_c[self.index_map_size:].reshape(self.davidson_roots,self.H_dim)[1].reshape(self.num_alpha,self.num_alpha), precision=10, width=14, cols_per_line=6)
+
+
+            temp2 = trial_c[self.index_map_size:].reshape(self.davidson_roots, self.H_dim)
+            
+            temp2=self.project_out_all(temp2, self.eigenvecs)
+            trial_c[self.index_map_size:] = temp2.flatten()[:]
+            #self.projection(trial_c[self.index_map_size:])
+            #z_vector, Z_vector = self.unpack_solution(trial_c)
+            #for i in range(self.davidson_roots):
+            #    print("check dot product after", np.dot(z_vector[i], self.eigenvecs[i]))
+
+
+            #print("trial_c", trial_c)
+            norm = np.linalg.norm(trial_c)
+            if norm > 1e-12:
+                trial_c /= norm
+
+            sigma = matvec_product(trial_c, A, G1)
+            #print("sigma before projection")
+            #print(sigma[:self.index_map_size])
+            #self.print_matrix_nice(sigma[self.index_map_size:].reshape(2,self.H_dim)[0].reshape(4,4), precision=10, width=14, cols_per_line=6)
+            #self.print_matrix_nice(sigma[self.index_map_size:].reshape(2,self.H_dim)[1].reshape(4,4), precision=10, width=14, cols_per_line=6)
+
+
+            #z_vector, Z_vector = self.unpack_solution(sigma)
+            #for i in range(self.davidson_roots):
+            #    print("check dot product0", np.dot(z_vector[i], self.eigenvecs[i]))
+
+            temp3 = sigma[self.index_map_size:].reshape(self.davidson_roots, self.H_dim)
+            temp3=self.project_out_all(temp3, self.eigenvecs)
+            sigma[self.index_map_size:] = temp3.flatten()[:]
+
+            #self.projection(sigma[self.index_map_size:])
+            #z_vector, Z_vector = self.unpack_solution(trial_c)
+            #for i in range(self.davidson_roots):
+            #    print("check dot product after0", np.dot(z_vector[i], self.eigenvecs[i]))
+
+
+            #print("sigma", sigma)
+            residual_old =copy.deepcopy(residual)
+            residual = solver_sym.update_subspace_and_extrapolate(trial_c, sigma)
+            residual_new = copy.deepcopy(residual)
+            error = residual_new - residual_old
+            if i > 0 and np.linalg.norm(error) < 1e-10:
+                print("\n--- Convergence Achieved (solution becomes self-consistent)---")
+                return solver_sym.get_solution()
+
+
+        print("\n--- Solver did not converge within max iterations ---")
+        #return solver_sym.get_solution()
+
 
 
     def pack_solution(self, x_Z, x_z):
@@ -630,7 +781,7 @@ class nuclear_grad(PFHamiltonianGenerator):
         A_t = np.zeros((self.nmo, self.nmo))
         self.build_A_t(Z_vector, A, G1, A_t)
  
-        A_temp = A_t - A_t.transpose()
+        A_temp = 0.5 *(A_t - A_t.transpose())
         A_t_asym= np.zeros(self.index_map_size)
         index_map = self.index_map
         index_map_size = self.index_map_size
@@ -1217,104 +1368,159 @@ class nuclear_grad(PFHamiltonianGenerator):
         self.reduced_hessian_diagonal[:] = 0.0 
         U = np.eye(self.nmo)
         self.build_hessian_diagonal(U, G, A)
-        #print(self.reduced_hessian_diagonal)
-        total_diagonal = np.full((self.nmo, self.nmo), 1e20)
-        for j in range(index_map_size):
-            r = index_map[j][0]
-            k = index_map[j][1]
-            total_diagonal[r][k] = 2.0 * self.reduced_hessian_diagonal[j] 
-            total_diagonal[k][r] = 2.0 * self.reduced_hessian_diagonal[j]
+        
 
-        #self.print_matrix_nice(total_diagonal, precision=10, width=14, cols_per_line=6)
+
         self.build_Y(state, self.eigenvecs, Y)
         state_gradient = copy.deepcopy(Y)
-        #print("raw gradient")
-        #self.print_matrix_nice(Y, precision=10, width=14, cols_per_line=6)
-        Y = Y.flatten() 
-        self.antisymmetrize(Y, self.nmo)
-        print("gradient norm of state", state, ":", np.linalg.norm(Y))
-        #Y = Y.reshape(self.nmo, self.nmo)
-        #self.print_matrix_nice(Y.reshape(self.nmo,self.nmo), precision=10, width=14, cols_per_line=6)
-        
-        residual = np.zeros(self.nmo * self.nmo + self.davidson_roots * self.H_dim)
-        denom = np.zeros(self.nmo * self.nmo + self.davidson_roots * self.H_dim)
-        denom[:self.nmo * self.nmo] = total_diagonal.flatten()[:] 
+        self.reduced_state_gradient = self.build_total_gradient(Y)
+        denom0 = np.zeros(self.index_map_size + self.davidson_roots * self.H_dim)
+        #denom0[:self.index_map_size] = 2.0 * self.reduced_hessian_diagonal[:]
+        denom0[:self.index_map_size] = self.reduced_hessian_diagonal[:]
         for i in range(self.davidson_roots):
             for j in range(self.H_dim):
-                denom[self.nmo * self.nmo + i * self.H_dim + j] = self.H_diag3[j] - self.eigenvals[i]
-                #denom[self.nmo * self.nmo + i * self.H_dim + j] = 1.0 
-        residual[:self.nmo * self.nmo] = Y[:]
-        bb = copy.deepcopy(residual)
-        solver_sym1 = LinearRMSolver(b_vector=residual, max_subspace=1000)
-        max_iter = 1000
-        conv_thresh = 1e-7
-        print("--------------------------------------------")
-        print("--- Start solving CP-SA-CASSCF equations ---")
-        print("--------------------------------------------")
-        for i in range(max_iter):
-            residual_norm = np.linalg.norm(residual)
-            print(f"Iter: {i+1:3d}   Residual Norm: {residual_norm:.4e}")
+                denom0[self.index_map_size + i * self.H_dim + j] = self.H_diag3[j] - self.eigenvals[i]
 
-            if residual_norm < conv_thresh and i > 0:
-                print("\n--- Convergence Achieved ---")
-                self.c_vector = solver_sym1.get_solution()
-                break
-            trial_c = np.zeros(self.nmo * self.nmo + self.davidson_roots * self.H_dim)
-            #print("denom")
-            
-            trial_c[:] = residual/denom
-            #print("trial c after precondition")
-            #self.print_matrix_nice(trial_c[:self.nmo * self.nmo].reshape(self.nmo, self.nmo), precision=10, width=14, cols_per_line=6)
-            #self.print_matrix_nice(trial_c[self.nmo * self.nmo:].reshape(self.davidson_roots,H_dim)[0].reshape(self.num_alpha,self.num_alpha), precision=10, width=14, cols_per_line=6)
-            #self.print_matrix_nice(trial_c[self.nmo * self.nmo:].reshape(self.davidson_roots,H_dim)[1].reshape(self.num_alpha,self.num_alpha), precision=10, width=14, cols_per_line=6)
+        solution = self.solve2(A, G1, self.matvec_product, denom0, max_iter=20, conv_thresh=1e-7)
 
 
-            temp = trial_c[self.nmo * self.nmo:].reshape((self.davidson_roots, H_dim))
-            #for j in range(2):
-            #    temp[j] -= np.dot(temp[j], ci_vecs[j]) * ci_vecs[j]
-            temp=self.project_out_all(temp, self.eigenvecs) 
-            trial_c[self.nmo * self.nmo:] = temp.flatten()    
-            norm = np.linalg.norm(trial_c)
-            if norm > 1e-12:
-                trial_c /= norm
-            #print("trial c after normalization")
-            sigma = self.build_H0_op(trial_c, A, G1)
-            self.antisymmetrize(sigma, self.nmo)
-            self.purify(sigma, self.nmo) 
-            temp3 = sigma[self.nmo * self.nmo:].reshape((self.davidson_roots, H_dim))
-            #print("sigma before projection")
-            #self.print_matrix_nice(sigma[:self.nmo * self.nmo].reshape(self.nmo, self.nmo), precision=10, width=14, cols_per_line=6)
-            #self.print_matrix_nice(sigma[self.nmo * self.nmo:].reshape(self.davidson_roots,H_dim)[0].reshape(
-            #    self.num_alpha,self.num_alpha), precision=10, width=14, cols_per_line=6)
-            #self.print_matrix_nice(sigma[self.nmo * self.nmo:].reshape(self.davidson_roots,H_dim)[1].reshape(self.num_alpha,self.num_alpha), precision=10, width=14, cols_per_line=6)
-            #temp2 = sigma[self.nmo * self.nmo:].reshape((2, H_dim))
-            #for j in range(2):
-            #    temp2[j] -= np.dot(temp2[j], ci_vecs[j]) * ci_vecs[j]
-            #print(np.dot(temp2[0], ci_vecs[0]))
-            temp2 = sigma[self.nmo * self.nmo:].reshape((self.davidson_roots, H_dim))
-            #for j in range(2):
-            #    dot_prod = np.dot(temp2[j], ci_vecs[j])
-            #    projection = dot_prod * ci_vecs[j]
-            #    print(f"State {j}: dot_product = {dot_prod}")
-            #    print(f"State {j}: projection norm = {np.linalg.norm(projection)}")
-            #    temp2[j] -= projection
-            #    # Check dot product after projection (should be ~0)
-            #    print(f"State {j}: dot product after projection = {np.dot(temp2[j], ci_vecs[j])}")
-            temp2=self.project_out_all(temp2, self.eigenvecs) 
-            sigma[self.nmo * self.nmo:] = temp2.flatten()   
-            # After projection
-           
-            #print("sigma after projection")
-            #self.print_matrix_nice(sigma[:self.nmo * self.nmo].reshape(self.nmo, self.nmo), precision=10, width=14, cols_per_line=6)
-            #self.print_matrix_nice(sigma[self.nmo * self.nmo:].reshape(self.davidson_roots,H_dim)[0].reshape(self.num_alpha,self.num_alpha), precision=10, width=14, cols_per_line=6)
-            #self.print_matrix_nice(sigma[self.nmo * self.nmo:].reshape(self.davidson_roots,H_dim)[1].reshape(self.num_alpha,self.num_alpha), precision=10, width=14, cols_per_line=6)
 
-            residual = solver_sym1.update_subspace_and_extrapolate(trial_c, sigma)
-            #print("residual after linear rm")
-            #self.print_matrix_nice(residual[:self.nmo * self.nmo].reshape(self.nmo, self.nmo), precision=10, width=14, cols_per_line=6)
-            #self.print_matrix_nice(residual[self.nmo * self.nmo:].reshape(self.davidson_roots,H_dim)[0].reshape(self.num_alpha,self.num_alpha), precision=10, width=14, cols_per_line=6)
-            #self.print_matrix_nice(residual[self.nmo * self.nmo:].reshape(self.davidson_roots,H_dim)[1].reshape(self.num_alpha,self.num_alpha), precision=10, width=14, cols_per_line=6)
 
+
+        ####print(self.reduced_hessian_diagonal)
+        ###total_diagonal = np.full((self.nmo, self.nmo), 1e20)
+        ###for j in range(index_map_size):
+        ###    r = index_map[j][0]
+        ###    k = index_map[j][1]
+        ###    total_diagonal[r][k] = self.reduced_hessian_diagonal[j] 
+        ###    total_diagonal[k][r] = self.reduced_hessian_diagonal[j]
+
+        ####self.print_matrix_nice(total_diagonal, precision=10, width=14, cols_per_line=6)
+        ###self.build_Y(state, self.eigenvecs, Y)
+        ###state_gradient = copy.deepcopy(Y)
+        ####print("raw gradient")
+        ####self.print_matrix_nice(Y, precision=10, width=14, cols_per_line=6)
+        ###Y = Y.flatten() 
+        ###self.antisymmetrize(Y, self.nmo)
+        ###self.purify(Y, self.nmo)
+        ###print("gradient norm of state", state, ":", np.linalg.norm(Y))
+        ####Y = Y.reshape(self.nmo, self.nmo)
+        ####self.print_matrix_nice(Y.reshape(self.nmo,self.nmo), precision=10, width=14, cols_per_line=6)
+        ###
+        ###residual = np.zeros(self.nmo * self.nmo + self.davidson_roots * self.H_dim)
+        ###denom = np.zeros(self.nmo * self.nmo + self.davidson_roots * self.H_dim)
+        ###denom[:self.nmo * self.nmo] = total_diagonal.flatten()[:] 
+        ###for i in range(self.davidson_roots):
+        ###    for j in range(self.H_dim):
+        ###        denom[self.nmo * self.nmo + i * self.H_dim + j] = self.H_diag3[j] - self.eigenvals[i]
+
+
+
+
+        ###residual[:self.nmo * self.nmo] = Y[:]
+        ###bb = copy.deepcopy(residual)
+        ###b_vector = bb 
+
+        ###b_norm = np.linalg.norm(Y)
+        ###print(f"Initial gradient norm ||b||: {b_norm:.4e}")
+        ###
+        ####level_shift = 0 
+        ####level_shift = 1e-3
+        ####denom = denom + level_shift
+        #####denom += 1e-3
+        ####denom[abs(denom) < 1e-8] = 1e-8
+
+
+
+ 
+        ####residual[:self.nmo * self.nmo].fill(1)
+        ###solver_sym1 = LinearRMSolver(b_vector=residual, max_subspace=1000)
+        ###max_iter = 1000
+        ###conv_thresh = 1e-7
+        ###print("--------------------------------------------")
+        ###print("--- Start solving CP-SA-CASSCF equations ---")
+        ###print("--------------------------------------------")
+        ###for i in range(max_iter):
+        ###    residual_orb = residual[:self.nmo * self.nmo]
+        ###    residual_ci = residual[self.nmo * self.nmo:]
+
+        ###    rms_value1 = np.sqrt(np.mean(residual_orb**2))
+        ###    rms_value2 = np.sqrt(np.mean(residual_ci **2))
+        ###    print("rms", rms_value1, rms_value2)
+
+        ###    residual_norm = np.linalg.norm(residual)
+        ###    print(f"Iter: {i+1:3d}   Residual Norm: {residual_norm:.4e}")
+
+        ###    if residual_norm < conv_thresh and i > 0:
+        ###        print("\n--- Convergence Achieved ---")
+        ###        self.c_vector = solver_sym1.get_solution()
+        ###        break
+        ###    trial_c = np.zeros(self.nmo * self.nmo + self.davidson_roots * self.H_dim)
+        ###    #print("denom")
+        ###    
+        ###    trial_c[:] = residual/denom
+        ###    #print("trial c after precondition")
+        ###    #self.print_matrix_nice(trial_c[:self.nmo * self.nmo].reshape(self.nmo, self.nmo), precision=10, width=14, cols_per_line=6)
+        ###    #self.print_matrix_nice(trial_c[self.nmo * self.nmo:].reshape(self.davidson_roots,H_dim)[0].reshape(self.num_alpha,self.num_alpha), precision=10, width=14, cols_per_line=6)
+        ###    #self.print_matrix_nice(trial_c[self.nmo * self.nmo:].reshape(self.davidson_roots,H_dim)[1].reshape(self.num_alpha,self.num_alpha), precision=10, width=14, cols_per_line=6)
+
+
+        ###    temp = trial_c[self.nmo * self.nmo:].reshape((self.davidson_roots, H_dim))
+        ###    #for j in range(2):
+        ###    #    temp[j] -= np.dot(temp[j], ci_vecs[j]) * ci_vecs[j]
+        ###    temp=self.project_out_all(temp, self.eigenvecs) 
+        ###    trial_c[self.nmo * self.nmo:] = temp.flatten()    
+        ###    norm = np.linalg.norm(trial_c)
+        ###    if norm > 1e-12:
+        ###        trial_c /= norm
+        ###    print("trial c after normalization")
+        ###    sigma = self.build_H0_op(trial_c, A, G1)
+        ###    level_shift = 1e-3
+        ###    level_shift = 0
+        ###    sigma += level_shift * trial_c
+        ###    self.antisymmetrize(sigma, self.nmo)
+        ###    self.purify(sigma, self.nmo) 
+        ###    temp3 = sigma[self.nmo * self.nmo:].reshape((self.davidson_roots, H_dim))
+        ###    #print("sigma before projection")
+        ###    #self.print_matrix_nice(sigma[:self.nmo * self.nmo].reshape(self.nmo, self.nmo), precision=10, width=14, cols_per_line=6)
+        ###    #self.print_matrix_nice(sigma[self.nmo * self.nmo:].reshape(self.davidson_roots,H_dim)[0].reshape(
+        ###    #    self.num_alpha,self.num_alpha), precision=10, width=14, cols_per_line=6)
+        ###    #self.print_matrix_nice(sigma[self.nmo * self.nmo:].reshape(self.davidson_roots,H_dim)[1].reshape(self.num_alpha,self.num_alpha), precision=10, width=14, cols_per_line=6)
+        ###    #temp2 = sigma[self.nmo * self.nmo:].reshape((2, H_dim))
+        ###    #for j in range(2):
+        ###    #    temp2[j] -= np.dot(temp2[j], ci_vecs[j]) * ci_vecs[j]
+        ###    #print(np.dot(temp2[0], ci_vecs[0]))
+        ###    temp2 = sigma[self.nmo * self.nmo:].reshape((self.davidson_roots, H_dim))
+        ###    #for j in range(2):
+        ###    #    dot_prod = np.dot(temp2[j], ci_vecs[j])
+        ###    #    projection = dot_prod * ci_vecs[j]
+        ###    #    print(f"State {j}: dot_product = {dot_prod}")
+        ###    #    print(f"State {j}: projection norm = {np.linalg.norm(projection)}")
+        ###    #    temp2[j] -= projection
+        ###    #    # Check dot product after projection (should be ~0)
+        ###    #    print(f"State {j}: dot product after projection = {np.dot(temp2[j], ci_vecs[j])}")
+        ###    temp2=self.project_out_all(temp2, self.eigenvecs) 
+        ###    sigma[self.nmo * self.nmo:] = temp2.flatten()   
+        ###    # After projection
+        ###   
+        ###    #print("sigma after projection")
+        ###    #self.print_matrix_nice(sigma[:self.nmo * self.nmo].reshape(self.nmo, self.nmo), precision=10, width=14, cols_per_line=6)
+        ###    #self.print_matrix_nice(sigma[self.nmo * self.nmo:].reshape(self.davidson_roots,H_dim)[0].reshape(self.num_alpha,self.num_alpha), precision=10, width=14, cols_per_line=6)
+        ###    #self.print_matrix_nice(sigma[self.nmo * self.nmo:].reshape(self.davidson_roots,H_dim)[1].reshape(self.num_alpha,self.num_alpha), precision=10, width=14, cols_per_line=6)
+
+        ###    residual_old =copy.deepcopy(residual)
+        ###    residual = solver_sym1.update_subspace_and_extrapolate(trial_c, sigma)
+        ###    #print("residual after linear rm")
+        ###    #self.print_matrix_nice(residual[:self.nmo * self.nmo].reshape(self.nmo, self.nmo), precision=10, width=14, cols_per_line=6)
+        ###    #self.print_matrix_nice(residual[self.nmo * self.nmo:].reshape(self.davidson_roots,H_dim)[0].reshape(self.num_alpha,self.num_alpha), precision=10, width=14, cols_per_line=6)
+        ###    #self.print_matrix_nice(residual[self.nmo * self.nmo:].reshape(self.davidson_roots,H_dim)[1].reshape(self.num_alpha,self.num_alpha), precision=10, width=14, cols_per_line=6)
+
+        ###    residual_new = copy.deepcopy(residual)
+        ###    error = residual_new - residual_old
+        ###    if i > 0 and np.linalg.norm(error) < 1e-10:
+        ###        print("\n--- Convergence Achieved (solution becomes self-consistent)---")
+        ###        self.c_vector = solver_sym1.get_solution()
+        ###        break
 
 
         #print("\n--- Solver did not converge within max iterations ---")
@@ -1323,20 +1529,23 @@ class nuclear_grad(PFHamiltonianGenerator):
         #self.print_matrix_nice(trial_c[self.nmo * self.nmo:].reshape(self.davidson_roots,H_dim)[0].reshape(self.num_alpha,self.num_alpha), precision=10, width=14, cols_per_line=6)
         #self.print_matrix_nice(trial_c[self.nmo * self.nmo:].reshape(self.davidson_roots,H_dim)[1].reshape(self.num_alpha,self.num_alpha), precision=10, width=14, cols_per_line=6)
 
-        sigma = self.build_H0_op(self.c_vector, A, G1)
-        self.antisymmetrize(sigma, self.nmo)
-        self.purify(sigma, self.nmo) 
-        temp2 = sigma[self.nmo * self.nmo:].reshape((self.davidson_roots, H_dim))
-        temp2=self.project_out_all(temp2, self.eigenvecs) 
-        sigma[self.nmo * self.nmo:] = temp2.flatten()   
+        #sigma = self.build_H0_op(self.c_vector, A, G1)
+        #self.antisymmetrize(sigma, self.nmo)
+        #self.purify(sigma, self.nmo) 
+        #temp2 = sigma[self.nmo * self.nmo:].reshape((self.davidson_roots, H_dim))
+        #temp2=self.project_out_all(temp2, self.eigenvecs) 
+        #sigma[self.nmo * self.nmo:] = temp2.flatten()   
         #print("last sigma")
         #self.print_matrix_nice(sigma[:self.nmo * self.nmo].reshape(self.nmo, self.nmo), precision=10, width=14, cols_per_line=6)
         #self.print_matrix_nice(sigma[self.nmo * self.nmo:].reshape(self.davidson_roots,H_dim)[0].reshape(4,4), precision=10, width=14, cols_per_line=6)
         #self.print_matrix_nice(sigma[self.nmo * self.nmo:].reshape(self.davidson_roots,H_dim)[1].reshape(4,4), precision=10, width=14, cols_per_line=6)
         #print (np.linalg.norm(sigma+bb))
 
-        Z_final = self.c_vector[:self.nmo * self.nmo].reshape(self.nmo, self.nmo).copy()
-        z_final = self.c_vector[self.nmo * self.nmo:].reshape(self.davidson_roots,H_dim).copy()
+        ##Z_final = self.c_vector[:self.nmo * self.nmo].reshape(self.nmo, self.nmo).copy()
+        ##z_final = self.c_vector[self.nmo * self.nmo:].reshape(self.davidson_roots,H_dim).copy()
+        z_final,Z_final = self.unpack_solution(solution)
+
+        self.build_state_average_rdms_z(z_final, self.eigenvecs)
         #print("Z_final",Z_final)
         #print("z_final",z_final)
         A_t = np.zeros((self.nmo,self.nmo))
@@ -1475,9 +1684,9 @@ class nuclear_grad(PFHamiltonianGenerator):
             conv_thresh = 1e-7
 
             solver_sym3 = LinearRMSolver(b_vector=residual, max_subspace=140)
-            print("--------------------------------------------")
+            print("---------------------------------------------")
             print("------- Start solving CP-HF equations -------")
-            print("--------------------------------------------")
+            print("---------------------------------------------")
             for i in range(max_iter):
                 residual_norm = np.linalg.norm(residual)
                 print(f"Iter: {i+1:3d}   Residual Norm: {residual_norm:.4e}")
@@ -1494,9 +1703,9 @@ class nuclear_grad(PFHamiltonianGenerator):
                 if norm > 1e-12:
                     trial_c /= norm
                 #print("trial c after normalization")
-                sigma = self.build_sigma_hf(energy_diff, trial_c, temp_aibj)
+                sigma2 = self.build_sigma_hf(energy_diff, trial_c, temp_aibj)
                
-                residual = solver_sym3.update_subspace_and_extrapolate(trial_c, sigma)
+                residual = solver_sym3.update_subspace_and_extrapolate(trial_c, sigma2)
                 #print("residual after linear rm")
             kappa[:] = self.cp_hf_solution
         else:
@@ -1670,15 +1879,6 @@ class nuclear_grad(PFHamiltonianGenerator):
         self.print_matrix_nice(self.total_gradient.reshape(self.n_atoms, 3), precision=10, width=14, cols_per_line=6)
         print(self.total_gradient)
         print("gradient norm", np.linalg.norm(self.total_gradient))
-
-
-
-
-
-
-
-
-
 
 
 
