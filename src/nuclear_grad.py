@@ -665,7 +665,7 @@ class nuclear_grad(PFHamiltonianGenerator):
         #print("initial guess", residual)
         #residual = self.apply_preconditioner(A, G1, z)
         #residual /= np.linalg.norm(residual)
-        solver_sym = LinearRMSolver(b_vector=self.reduced_state_gradient, max_subspace=100)
+        solver_sym = LinearRMSolver(b_vector=self.reduced_state_gradient, max_subspace=max_iter)
         #solution_sym = solver_sym.solve(matvec_prod_sym, precond_sym, max_iter=100, conv_thresh=1e-7)
         #print(denom[:self.index_map_size])
         print("--------------------------------------------")
@@ -1380,8 +1380,7 @@ class nuclear_grad(PFHamiltonianGenerator):
         for i in range(self.davidson_roots):
             for j in range(self.H_dim):
                 denom0[self.index_map_size + i * self.H_dim + j] = self.H_diag3[j] - self.eigenvals[i]
-
-        solution = self.solve2(A, G1, self.matvec_product, denom0, max_iter=20, conv_thresh=1e-7)
+        solution = self.solve2(A, G1, self.matvec_product, denom0, max_iter=2000, conv_thresh=1e-7)
 
 
 
@@ -1680,10 +1679,10 @@ class nuclear_grad(PFHamiltonianGenerator):
              
             residual[:] = grad_hf_ai[:]
             bb = copy.deepcopy(residual)
-            max_iter = 140
+            max_iter = 2000
             conv_thresh = 1e-7
 
-            solver_sym3 = LinearRMSolver(b_vector=residual, max_subspace=140)
+            solver_sym3 = LinearRMSolver(b_vector=residual, max_subspace=2000)
             print("---------------------------------------------")
             print("------- Start solving CP-HF equations -------")
             print("---------------------------------------------")
