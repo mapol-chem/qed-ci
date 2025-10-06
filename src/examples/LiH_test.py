@@ -128,9 +128,9 @@ print("Numerical Gradient Element at CQED-RHF Level:\n")
 print(cqed_rhf_numerical_grad)
 
 ### differences between different cqed-rhf gradient approximations to z-component of H atom
-error_g1g2 = cqed_rhf_grad1[1,2] - cqed_rhf_grad2[1,2]
-error_gng1 = cqed_rhf_grad1[1,2] - cqed_rhf_numerical_grad
-error_gng2 = cqed_rhf_grad2[1,2] - cqed_rhf_numerical_grad
+error_g1g2 = cqed_rhf_grad1[0,2] - cqed_rhf_grad2[0,2]
+error_gng1 = cqed_rhf_grad1[0,2] - cqed_rhf_numerical_grad
+error_gng2 = cqed_rhf_grad2[0,2] - cqed_rhf_numerical_grad
 
 print(F"Error between g1 and g2: {error_g1g2:.12e}")
 print(F"Error between gn and g1: {error_gng1:.12e}")
@@ -139,7 +139,7 @@ print(F"Error between gn and g2: {error_gng2:.12e}")
 for i in range(n_states):
     print(F"Analytical CQED-CASSCF Gradient for state {i}")
     print(cqed_cas_analytic_grad[i,:,:])
-    state_error = cqed_cas_analytic_grad[i,1,2] - cqed_cas_numerical_grad[i]
+    state_error = cqed_cas_analytic_grad[i,0,2] - cqed_cas_numerical_grad[i]
     print(F"Numerical Gradient Element z for atom H")
     print(cqed_cas_numerical_grad[i])
     print("Error between Analytic and Numerical")
