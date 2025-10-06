@@ -50,7 +50,6 @@ class CQEDQuantumChemistryResult:
         method: str,
         energies: List[float],
         photon_frequency: float,
-        photon_polarization: List[float],
         coupling_vector: List[float]
     ):
             self.data = {
@@ -59,7 +58,6 @@ class CQEDQuantumChemistryResult:
             "method": method,
             "energies": energies,
             "photon_frequency": photon_frequency,
-            "photon_polarization": photon_polarization,
             "coupling_vector": coupling_vector
         }
 
@@ -2338,6 +2336,7 @@ class PFHamiltonianGenerator:
                         "{:20.12f}".format(eigenvals[i] - sum_energy),
                     )
 
+                self.build_state_average_rdms(eigenvecs)
                 print("test average energy")
                 avg_energy = 0.0
                 for i in range(self.davidson_roots):
@@ -2964,15 +2963,22 @@ class PFHamiltonianGenerator:
             t_dav_end = time.time()
             # print(f" Completed Davidson iterations in {t_dav_end - t_H_build} seconds", flush = True)
             # save data in CQEDQuantumChemistryResult
-            self.basis_set = psi4_options_dict["basis_set"]
+            self.basis_set = psi4_options_dict["basis"]
             self.method = cavity_options["method"] if "method" in cavity_options else "CQED-CI"
+
+            # check if the lambda vector is a numpy array or already a list
+            lambda_vector_copy = cavity_options["lambda_vector"]
+            if isinstance(lambda_vector_copy, list):
+                lvec = lambda_vector_copy
+            elif isinstance(lambda_vector_copy, np.ndarray):
+                lvec = lambda_vector_copy.tolist()
             cqed_result = CQEDQuantumChemistryResult(
                 molecule_id = self.molecule_id,
                 basis_set =  self.basis_set,
                 method = self.method,
                 energies =  self.CIeigs.tolist(),
                 photon_frequency = cavity_options["omega_value"],
-                coupling_vector = cavity_options["lambda_vector"].tolist()
+                coupling_vector = lvec
                 )
             
             cqed_result.to_json("cqed_test.json")
@@ -3212,12 +3218,12 @@ class PFHamiltonianGenerator:
         # collect rhf wfn object as dictionary
         wfn_dict = psi4.core.Wavefunction.to_file(wfn)
         ##print(self.C)
-        # U = ortho_group.rvs(wfn.nmo())
-        # new_C = np.einsum("pq,qr->pr", self.C, U)
-
-        # self.C[:,:] = new_C[:,:]
+        U = ortho_group.rvs(wfn.nmo())
+        new_C = np.einsum("pq,qr->pr", self.C, U)
+        
+        self.C[:,:] = new_C[:,:]
         ##update d_cmo
-        # self.d_cmo = np.dot(self.C.T, self.d_ao).dot(self.C)
+        self.d_cmo = np.dot(self.C.T, self.d_ao).dot(self.C)
 
         # print("Unitary matrix")
         # print(U)

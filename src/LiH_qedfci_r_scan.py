@@ -1,6 +1,6 @@
 # set path to the directory where helper_PFCI.py is located
 import sys
-sys.path.append("/home/jfoley19/gm_casscf/qed-ci/src/")
+sys.path.append("/Users/jfoley19/Code/qed-ci/src/")
 
 # import helper libraries
 import numpy as np
@@ -12,7 +12,7 @@ import json
 np.set_printoptions(threshold=sys.maxsize)
 
 # create file prefix for output json file
-file_string = "LiH_r_scan_6311g_qed_casscf_4e_5o_lamz_0.05_om_0.12086"
+file_string = "LiH_r_scan_6311g_fci_0.05_om_0.12086"
 
 # create template for molecular geometry
 mol_tmpl = """
@@ -31,25 +31,26 @@ options_dict = {
 
 # specify input parameters that are unique to the cavity quantum electrodynamics calculation
 cavity_options = {
+    'molecule_id' : "LiH",
     'omega_value' : 0.12086,
     'lambda_vector' : [0, 0, 0.05],
-    'ci_level' : 'cas',
+    'ci_level' : 'fci',
     'ignore_coupling' : False,
-    'number_of_photons' : 1,
+    'number_of_photons' : 4,
     'natural_orbitals' : False,
     'photon_number_basis' : False,
     'canonical_mos' : False,
     'coherent_state_basis' : True,
-    'davidson_roots' : 3,
-    'davidson_threshold' : 1e-5,
-    'davidson_maxdim':20,
+    'davidson_roots' : 4,
+    'davidson_threshold' : 1e-9,
+    'davidson_maxdim':784,
     'spin_adaptation': "singlet",
     #'casscf_weight':np.array([1,1,1]),
     'davidson_maxiter':100,
-    'davidson_indim':8,
+    'davidson_indim':780,
     'test_mode': False,
-    'nact_orbs' : 5,
-    'nact_els' : 4
+    #'nact_orbs' : 5,
+    #'nact_els' : 4
 }
 
 # create new dictionary to store calculation data
@@ -74,7 +75,7 @@ for keys, values in options_dict.items():
 
 # going to loop over r values and compute QED-CASSCF energy for each one
 # assign number of r values
-N_r_values = 10
+N_r_values = 21
 
 # create a list of r values between 1.0 and 3.0 angstroms
 r_values = np.linspace(1.0, 3.0, N_r_values)
@@ -95,8 +96,8 @@ for r_val in r_values:
     # add mol_str to the molecular geometry dictionary
     calculation_data["molecular_geometry"]["z-matrix"].append(mol_str)
     # add energy values to the return_results dictionary
-    calculation_data["return_results"]["casci_energies"].append(casci_energy_values)
-    calculation_data["return_results"]["casscf_energies"].append(casscf_energy_values)
+    calculation_data["return_results"]["fci_energies"].append(casci_energy_values)
+    #calculation_data["return_results"]["casscf_energies"].append(casscf_energy_values)
 
 
 # Function to write data to JSON file
@@ -105,7 +106,7 @@ def write_to_json(data, filename):
         json.dump(data, json_file, indent=4)
 
 # Writing data to a JSON file
-output_filename = "new_data.json"
+output_filename = "LiH_fci_10ph_lz_0.05_om_0.12086.json"
 write_to_json(calculation_data, output_filename)
 
 print(f"Data successfully written to {output_filename}")
