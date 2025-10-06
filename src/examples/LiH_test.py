@@ -1,6 +1,7 @@
 from oo_cqed_rhf import CQEDRHFCalculator
 import numpy as np
 import psi4
+import sys
 sys.path.append("/home/jfoley19/Code/qed-ci/src/")
 from helper_PFCI import PFHamiltonianGenerator
 from helper_PFCI import Determinant
@@ -35,6 +36,8 @@ psi4_options = {
     "e_convergence": 1e-7, # controls rhf and cqed-rhf convergence
     "d_convergence": 1e-5, 
 }
+
+options_dict = psi4_options
 
 # controls casscf options
 cavity_options = {
