@@ -84,7 +84,7 @@ cqed_cas_analytic_grad = np.zeros((n_states,2,3))
 for i in range(n_states):
     CASG.compute_grad(i)
     # get gradient for state i
-    cqed_cas_analytic_grad[i,:,:] = CASG.total_gradient
+    cqed_cas_analytic_grad[i,:,:] = CASG.total_gradient.reshape(2,3)
 
 
 ### set up numerical gradient for only z component of H
