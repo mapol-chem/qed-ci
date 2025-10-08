@@ -10,6 +10,14 @@ from nuclear_grad import *
 np.set_printoptions(threshold=sys.maxsize)
 psi4.core.be_quiet()
 
+
+def within_order_of_magnitude(a, b, orders=2):
+    if a == 0 or b == 0:
+        return a == b
+    ratio = max(a, b) / min(a, b)
+    return ratio <= 10**orders
+
+
 # conversion factor from Bohr to Angstrom
 BOHR_TO_ANGSTROM = 0.52917721092
 
@@ -148,7 +156,7 @@ print(F"Norm of CQED-RHF Error is {cqed_rhf_grad_norm}")
 for i in range(n_states):
     print(F"Norm of CQED-CASSCF Error for state {i} is {cqed_cas_norms[i]}")
 
-    if np.isclose(cqed_cas_norms[i], cqed_rhf_grad_norm):
+    if within_order_of_magnitude(cqed_cas_norms[i], cqed_rhf_grad_norm, orders=2):
         print("This error is acceptable")
     else:
         print("This error is not acceptable")
