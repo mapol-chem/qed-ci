@@ -137,7 +137,7 @@ print("Analytical CQED-RHF Gradient:\n")
 print(cqed_rhf_analytical_grad)
 
 print("Numerical CQED-RHF Gradient:\n")
-print(cqed_cas_numeric_grad)
+print(cqed_rhf_numerical_grad)
 
 cqed_rhf_grad_norm = np.linalg.norm(cqed_rhf_analytical_grad-cqed_rhf_numerical_grad)
 
