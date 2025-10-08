@@ -121,7 +121,7 @@ for i in range(num_atoms):
 
         # loop over states and compute gradient element for each one
         for k in range(n_states):
-            cqed_cas_numeric_grad[k, i, j] = (CAS_F.CASSCFeigs[k] - CAS_B.CASSCFeigs[k]) / (2 * delta / BOHR_TO_ANGSTROM)
+            cqed_cas_numeric_grad[k, i, j] = (CAS_F.CASSCFeigs[k] - CAS_B.CASSCFeigs[k]) / (2 * delta_ang / BOHR_TO_ANGSTROM)
 
 
 
