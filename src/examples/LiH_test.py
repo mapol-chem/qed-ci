@@ -10,26 +10,34 @@ from nuclear_grad import *
 np.set_printoptions(threshold=sys.maxsize)
 psi4.core.be_quiet()
 
+# conversion factor from Bohr to Angstrom
+BOHR_TO_ANGSTROM = 0.52917721092
 
+# delta value for geometry displacements in Angstroms
+delta_ang = 1e-4
 
-## geometry template
-mol_tmpl = """
+# delta value for geometry displacements in Bohr
+delta_au = delta_ang / BOHR_TO_ANGSTROM
+
+## initial geometry
+original_mol_string = """
 0 1
 Li 0.0    0.0   0.0
-H  0.0    0.0  **R**
-symmetry c1
+H  0.0    0.0   1.2
 no_reorient
 nocom
+symmetry c1
 """
 
+# get basic info about the atom
+mol = psi4.geometry(original_mol_string)
+num_atoms = mol.natom()
 
-
-# lambda vector along z
+# lambda vector 
 lambda_vector = np.array([0, 0, 0.05])
 
-
 # psi4 options
-psi4_options = {
+options_dict = {
     "basis": "6-31g",
     "save_jk": True,
     "scf_type": "pk",
@@ -37,7 +45,23 @@ psi4_options = {
     "d_convergence": 1e-5, 
 }
 
-options_dict = psi4_options
+### STEP 1: Get CQED-RHF Gradient of the ground state analytically and with finite differences
+calc = CQEDRHFCalculator(lambda_vector, original_mol_string, options_dict)
+
+# store mol_string as an attribute of calc
+calc.molecule_string = original_mol_string
+
+# get analytic cqed-rhf gradient 
+en, cqed_rhf_analytical_grad, g = calc.calc_force_and_energy(original_mol_string, use_psi4_scf_grad=False)
+
+# get numerical cqed-rhf gradient - not returned by this function, but stored in attribute self.numerical_energy_gradient
+calc.compute_numerical_gradient()
+# store numerical gradient 
+cqed_rhf_numerical_grad = calc.numerical_energy_gradient
+# restore calc.molecule_string to be safe
+calc.molecule_string = original_mol_string
+
+### STEP 2: Get CQED-RHF Gradient of all selected states analytically and with finite differences
 
 # controls casscf options
 cavity_options = {
@@ -58,90 +82,73 @@ cavity_options = {
     'nact_els' : 4
 }
 
-# get a gradient for each state
+## instantiate qed-cas gradient object
+CASG = nuclear_grad(original_mol_string, options_dict, cavity_options)
+
+# store number of states 
 n_states = cavity_options["davidson_roots"]
 
-# conversion factor
-BOHR_TO_ANGSTROM = 0.52917721092
-
-# central geometry in Angstroms
-r_center = 1.0
-
-# instantiate cqed-rhf gradient object
-mol_str = mol_tmpl.replace("**R**", f"{r_center:.6f}")
-calc = CQEDRHFCalculator(lambda_vector, mol_str, psi4_options)
-
-# get analytic gradient at center bond length, this gets full cartesian matrix
-en1, cqed_rhf_grad1, g = calc.calc_force_and_energy(mol_str, use_psi4_scf_grad=False)
-# get analytic gradient at center, this gets full cartesian matrix
-en2, cqed_rhf_grad2, g = calc.calc_force_and_energy(mol_str, use_psi4_scf_grad=True)
-
-## instantiate qed-cas gradient object
-CASG = nuclear_grad(mol_str, options_dict, cavity_options)
-
 # Initialize array for QED-CASSCF gradient elements for the z-coordinate of H atom
-cqed_cas_analytic_grad = np.zeros((n_states,2,3))
+cqed_cas_analytic_grad = np.zeros((n_states,num_atoms,3))
 for i in range(n_states):
     CASG.compute_grad(i)
     # get gradient for state i
     cqed_cas_analytic_grad[i,:,:] = CASG.total_gradient.reshape(2,3)
 
 
-### set up numerical gradient for only z component of H
-# displacement in angstroms
-h_ang = 0.002
+### set up numerical QED-CASSCF gradient
+cqed_cas_numeric_grad = np.zeros((n_states, num_atoms, 3))
 
-# displacement in Bohr
-h_bohr = h_ang / BOHR_TO_ANGSTROM
+# loop over atoms and coords and do displacements along each
+for i in range(num_atoms):
+    for j in range(3):
+        _displacement = np.zeros((num_atoms, 3))
 
-# array of bond lengths in Angstrom to go into the geometries
-r_vals = np.array([r_center - 2 * h_ang, r_center - h_ang, r_center + h_ang, r_center + 2 * h_ang])
+        # displacement for atom i along coord j
+        _displacement[i, j] = delta_ang
 
-# coefficients to multply the energies at each bond length by
-coeffs = np.array([-1, 8, -8, 1]) / (12 * h_bohr)
+        # forward-displaced molecule string
+        _mol_string_f = calc.modify_geometry_string(original_mol_string, _displacement)
+        
+        # backward-displaced molecule string
+        _mol_string_b = calc.modify_geometry_string(original_mol_string, -1 * _displacement)
 
-# only ground state gradient for cqed-rhf by definition
-CQED_RHF_E_Array = np.zeros(4)
+        # CASSCF calculation at forward-displaced geometry
+        CAS_F = PFHamiltonianGenerator(_mol_string_f, options_dict, cavity_options)
 
-# all n_states for qed-casscf
-CQED_CASSCF_E_Array = np.zeros((n_states,4))
+        # CASSCF calculation at backward-displaced geometry
+        CAS_B = PFHamiltonianGenerator(_mol_string_b, options_dict, cavity_options)
 
-for idx, r in enumerate(r_vals):
-    mol_str = mol_tmpl.replace("**R**", f"{r:.6f}")
-    calc.molecule_string = mol_str
-    calc.calc_cqed_rhf_energy()
-    CQED_RHF_E_Array[idx] = calc.cqed_rhf_energy
-    CAS = PFHamiltonianGenerator(mol_str, psi4_options, cavity_options)
-    for i in range(n_states):
-        CQED_CASSCF_E_Array[i, idx] = CAS.CASSCFeigs[i]
+        # loop over states and compute gradient element for each one
+        for k in range(n_states):
+            cqed_cas_numeric_grad[k, i, j] = (CAS_F.CASSCFeigs[k] - CAS_B.CASSCFeigs[k]) / (2 * delta / BOHR_TO_ANGSTROM)
 
-cqed_rhf_numerical_grad = np.dot(CQED_RHF_E_Array, coeffs)
-cqed_cas_numerical_grad = np.dot(CQED_CASSCF_E_Array, coeffs)
 
-print("Analytical CQED-RHF Gradient Without Density Fitting:\n")
-print(cqed_rhf_grad1)
 
-print("Analytical CQED-RHF Gradient With Density Fitting:\n")
-print(cqed_rhf_grad1)
+print("Analytical CQED-RHF Gradient:\n")
+print(cqed_rhf_analytical_grad)
 
-print("Numerical Gradient Element at CQED-RHF Level:\n")
-print(cqed_rhf_numerical_grad)
+print("Numerical CQED-RHF Gradient:\n")
+print(cqed_cas_numeric_grad)
 
-### differences between different cqed-rhf gradient approximations to z-component of H atom
-error_g1g2 = cqed_rhf_grad1[0,2] - cqed_rhf_grad2[0,2]
-error_gng1 = cqed_rhf_grad1[0,2] - cqed_rhf_numerical_grad
-error_gng2 = cqed_rhf_grad2[0,2] - cqed_rhf_numerical_grad
+cqed_rhf_grad_norm = np.linalg.norm(cqed_rhf_analytical_grad-cqed_rhf_numerical_grad)
 
-print(F"Error between g1 and g2: {error_g1g2:.12e}")
-print(F"Error between gn and g1: {error_gng1:.12e}")
-print(F"Error between gn and g2: {error_gng2:.12e}")
-
+cqed_cas_norms = np.zeros(n_states)
 for i in range(n_states):
-    print(F"Analytical CQED-CASSCF Gradient for state {i}")
+    print(F"Analytical CQED-CASSCF Grad for State {i}:\n")
     print(cqed_cas_analytic_grad[i,:,:])
-    state_error = cqed_cas_analytic_grad[i,0,2] - cqed_cas_numerical_grad[i]
-    print(F"Numerical Gradient Element z for atom H")
-    print(cqed_cas_numerical_grad[i])
-    print("Error between Analytic and Numerical")
-    print(state_error)
 
+    print(F"Numeric CQED-CASSCF Grad for State {i}:\n")
+    print(cqed_cas_numeric_grad[i,:,:])
+
+    cqed_cas_norms[i] = np.linalg.norm(cqed_cas_analytic_grad[i,:,:] - cqed_cas_numeric_grad[i,:,:])
+
+
+print(F"Norm of CQED-RHF Error is {cqed_rhf_grad_norm}")
+for i in range(n_states):
+    print(F"Norm of CQED-CASSCF Error for state {i} is {cqed_cas_norms[i]}")
+
+    if np.isclose(cqed_cas_norms[i], cqed_rhf_grad_norm):
+        print("This error is acceptable")
+    else:
+        print("This error is not acceptable")
