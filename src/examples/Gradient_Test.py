@@ -2,6 +2,7 @@ from oo_cqed_rhf import CQEDRHFCalculator
 import numpy as np
 import psi4
 import sys
+import json
 sys.path.append("/home/jfoley19/Code/qed-ci/src/")
 from helper_PFCI import PFHamiltonianGenerator
 from helper_PFCI import Determinant
@@ -9,6 +10,25 @@ from helper_cqed_rhf import cqed_rhf
 from nuclear_grad import *
 np.set_printoptions(threshold=sys.maxsize)
 psi4.core.be_quiet()
+
+def generate_lih_geometries(
+    x_vals=[0.0], y_vals=[0.0], z_vals=[0.7, 0.8, 0.9, 1.0, 1.1, 1.2]
+):
+    """Generate a list of molecule geometry strings for LiH at different coordinates."""
+    molecules = []
+    for x in x_vals:
+        for y in y_vals:
+            for z in z_vals:
+                mol_str = f"""
+0 1
+Li 0.0 0.0 0.0
+H  {x:.3f} {y:.3f} {z:.3f}
+no_reorient
+nocom
+symmetry c1
+"""
+                molecules.append(mol_str.strip())
+    return molecules
 
 
 def run_gradient_test(original_mol_string, lambda_vector):
@@ -110,32 +130,20 @@ def run_gradient_test(original_mol_string, lambda_vector):
     }
 
 
-molecules = [
-    """
-    0 1
-    Li 0.0 0.0 0.0
-    H  0.0 0.0 1.2
-    no_reorient
-    nocom
-    symmetry c1
-    """,
-    """
-    0 1
-    Li 0.0 0.0 0.0
-    H 0.0 0.0 0.9
-    no_reorient
-    nocom
-    symmetry c1
-    """
-]
-
+molecules = generate_lih_geometries(x_vals=[0.0, 0.1], y_vals=[0.0, 0.1], z_vals=[0.7, 0.8, 0.9, 1.0, 1.1, 1.2, 1.3, 1.4, 1.5] )
 fields = [
     np.array([0, 0, 0.0]),
+    np.array([0, 0, 0.01]),
+    np.array([0, 0.01, 0]),
+    np.array([0.01, 0, 0]),
+    np.array([0.0, 0.01, 0.01]),
+    np.array([0.01, 0.0, 0.01]),
+    np.array([0.01, 0.01, 0.0]),
+    np.array([0.01, 0.01, 0.01]),
     np.array([0, 0, 0.05]),
-    np.array([0, 0, 0.1]),
+    np.array([0, 0.05, 0]),
+    np.array([0.05, 0, 0])
 ]
-
-import json
 
 results_all = []
 for mol in molecules:
