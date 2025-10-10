@@ -114,19 +114,23 @@ def run_gradient_test(original_mol_string, lambda_vector):
 
     cqed_rhf_grad_norm = np.linalg.norm(cqed_rhf_analytical_grad - cqed_rhf_numerical_grad)
     cqed_cas_norms = [np.linalg.norm(cqed_cas_analytic_grad[i] - cqed_cas_numeric_grad[i]) for i in range(n_states)]
+    cqed_cas_norm_pass = []
 
     print(f"\nResults for field {lambda_vector}:")
     print(f"CQED-RHF error norm: {cqed_rhf_grad_norm}")
     for i, norm in enumerate(cqed_cas_norms):
         print(f"  State {i} CASSCF error norm: {norm}")
-        if within_order_of_magnitude(norm, cqed_rhf_grad_norm, orders=2):
+        if within_order_of_magnitude(norm, 1e-6, orders=2):
             print("    ✅ Acceptable")
+            cqed_cas_norm_pass.append(True)
         else:
             print("    ❌ Not acceptable")
+            cqed_cas_norm_pass.append(False)
 
     return {
         "cqed_rhf_error": cqed_rhf_grad_norm,
-        "cqed_cas_errors": cqed_cas_norms
+        "cqed_cas_errors": cqed_cas_norms,
+        "cqed_cas_norm_pass": cqed_cas_norm_pass
     }
 
 
@@ -150,7 +154,7 @@ for mol in molecules:
     for field in fields:
         res = run_gradient_test(mol, field)
         results_all.append({
-            "molecule": mol.strip().split("\n")[2:],  # atoms only
+            "molecule": mol.strip().split("\n")[1:3],  # atoms only
             "lambda_vector": field.tolist(),
             **res
         })
