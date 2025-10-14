@@ -1105,6 +1105,7 @@ class nuclear_grad(PFHamiltonianGenerator):
         z_bar = z + z.T
         A_tilde_hf[:,:] = np.dot(fock_hf, z_bar)
         g_bar = np.einsum("mn, rqmn-> rq", z_bar, self.twoeint.reshape(self.nmo, self.nmo, self.nmo, self.nmo))
+        g_bar += -np.einsum("mn, rqmn-> rq", z_bar, self.d_spatial.reshape(self.nmo, self.nmo, self.nmo, self.nmo))
         g_bar += -0.5 * np.einsum("mn, rmqn-> rq", z_bar, self.twoeint.reshape(self.nmo, self.nmo, self.nmo, self.nmo))
         diagonal_values = np.concatenate([np.full(self.ndocc, 2), np.zeros(self.n_v_hf)])
         d_zero = np.diag(diagonal_values)
