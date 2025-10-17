@@ -645,22 +645,23 @@ class nuclear_grad(PFHamiltonianGenerator):
         """
         #self._reset()
         residual = self.reduced_state_gradient.copy()
-        #random guess
-        #dim00 = self.index_map_size + self.davidson_roots * self.H_dim
-        #trial_0 = np.random.rand(dim00)
+        if np.linalg.norm(residual < 1e-3):
+            #random guess
+            dim00 = self.index_map_size + self.davidson_roots * self.H_dim
+            trial_0 = np.random.rand(dim00)
 
-        #temp2 = trial_0[self.index_map_size:].reshape(self.davidson_roots, self.H_dim)
-        #temp2=self.project_out_all(temp2, self.eigenvecs)
-        #trial_0[self.index_map_size:] = temp2.flatten()[:]
-        #norm = np.linalg.norm(trial_0)
-        #if norm > 1e-12:
-        #    trial_0 /= norm
+            temp2 = trial_0[self.index_map_size:].reshape(self.davidson_roots, self.H_dim)
+            temp2=self.project_out_all(temp2, self.eigenvecs)
+            trial_0[self.index_map_size:] = temp2.flatten()[:]
+            norm = np.linalg.norm(trial_0)
+            if norm > 1e-12:
+                trial_0 /= norm
 
-        #sigma = matvec_product(trial_0, A, G1)
-        #temp3 = sigma[self.index_map_size:].reshape(self.davidson_roots, self.H_dim)
-        #temp3=self.project_out_all(temp3, self.eigenvecs)
-        #sigma[self.index_map_size:] = temp3.flatten()[:]
-        #residual = sigma + self.reduced_state_gradient 
+            sigma = matvec_product(trial_0, A, G1)
+            temp3 = sigma[self.index_map_size:].reshape(self.davidson_roots, self.H_dim)
+            temp3=self.project_out_all(temp3, self.eigenvecs)
+            sigma[self.index_map_size:] = temp3.flatten()[:]
+            residual = sigma + self.reduced_state_gradient 
 
         #print("initial guess", residual)
         #residual = self.apply_preconditioner(A, G1, z)
@@ -748,7 +749,7 @@ class nuclear_grad(PFHamiltonianGenerator):
             residual = solver_sym.update_subspace_and_extrapolate(trial_c, sigma)
             residual_new = copy.deepcopy(residual)
             error = residual_new - residual_old
-            if i > 0 and np.linalg.norm(error) < 1e-10:
+            if i > 0 and np.linalg.norm(error) < 1e-8:
                 print("\n--- Convergence Achieved (solution becomes self-consistent)---")
                 return solver_sym.get_solution()
 
@@ -1635,7 +1636,8 @@ class nuclear_grad(PFHamiltonianGenerator):
 
         #print(np.linalg.norm(total_gradient))
 
-                
+        #self.print_matrix_nice((self.twoeint-self.twoeint_hf).reshape(self.nmo*self.nmo, self.nmo *self.nmo), precision=10, width=14, cols_per_line=6)
+        self.twoeint = np.copy(self.twoeint_hf)        
         self.n_v_hf = self.nmo - self.ndocc
 
         self.fock_hf = copy.deepcopy(self.H_hf)
@@ -1717,6 +1719,19 @@ class nuclear_grad(PFHamiltonianGenerator):
         A_tilde_hf = np.zeros((self.nmo, self.nmo))
         self.build_Y_hf(state, Z_vector, z_vector, self.eigenvecs, Y_hf)
         self.build_A_tilde_hf(self.fock_hf, kappa, A_tilde_hf)
+        #A_tilde_hf2 = np.zeros((self.nmo, self.nmo))
+        #A_tilde_hf2[:,:self.ndocc] = np.dot(self.fock_hf[:,self.ndocc:], kappa.reshape(self.n_v_hf, self.ndocc))
+        #A_tilde_hf2[:,self.ndocc:] += np.dot(self.fock_hf[:,:self.ndocc], kappa.reshape(self.n_v_hf, self.ndocc).T)
+        #A_tilde_hf2[:,:self.ndocc] += 4.0 * np.einsum("aixy,ai->xy", self.twoeint.reshape(self.nmo, self.nmo, self.nmo, self.nmo)[self.ndocc:,:self.ndocc,:,:self.ndocc], 
+        #                                              kappa.reshape(self.n_v_hf, self.ndocc))
+        #A_tilde_hf2[:,:self.ndocc] += -np.einsum("ayxi,ai->xy", self.twoeint.reshape(self.nmo, self.nmo, self.nmo, self.nmo)[self.ndocc:,:self.ndocc,:,:self.ndocc], 
+        #                                              kappa.reshape(self.n_v_hf, self.ndocc))
+        #A_tilde_hf2[:,:self.ndocc] += -np.einsum("axyi,ai->xy", self.twoeint.reshape(self.nmo, self.nmo, self.nmo, self.nmo)[self.ndocc:,:,:self.ndocc,:self.ndocc], 
+        #                                              kappa.reshape(self.n_v_hf, self.ndocc))
+        #A_tilde_hf2[:,:self.ndocc] += -4.0 * np.einsum("aixy,ai->xy", self.d_spatial[self.ndocc:,:self.ndocc,:,:self.ndocc], 
+        #                                              kappa.reshape(self.n_v_hf, self.ndocc))
+        ##self.print_matrix_nice(A_tilde_hf, precision=10, width=14, cols_per_line=6)
+        #self.print_matrix_nice(A_tilde_hf2-A_tilde_hf, precision=10, width=14, cols_per_line=6)
         X_hf = 0.25 * (A_tilde_hf + Y_hf + A_tilde_hf.T + Y_hf.T)
         #self.print_matrix_nice(X_hf, precision=10, width=14, cols_per_line=6)
         self.update_effective_densities_ao(state, kappa, z_vector, self.eigenvecs, self.C_hf)

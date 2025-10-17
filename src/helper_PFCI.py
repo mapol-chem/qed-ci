@@ -4593,9 +4593,16 @@ class PFHamiltonianGenerator:
             self.cqed_reference_energy = cqed_rhf_dict["CQED-RHF ENERGY"]
             self.cqed_one_energy = cqed_rhf_dict["CQED-RHF ONE-ENERGY"]
 
+        self.C_hf = copy.deepcopy(self.C)
+
         # collect rhf wfn object as dictionary
         wfn_dict = psi4.core.Wavefunction.to_file(wfn)
-        ##print(self.C)
+        wfn_dict["matrix"]["Ca"] = self.C
+        wfn_dict["matrix"]["Cb"] = self.C
+        wfn = psi4.core.Wavefunction.from_file(wfn_dict)
+        self.Ca_hf = wfn.Ca()
+
+        ##random orbital guess
         #U = ortho_group.rvs(wfn.nmo())
         #new_C = np.einsum("pq,qr->pr", self.C, U)
 
@@ -4608,7 +4615,6 @@ class PFHamiltonianGenerator:
         # update wfn_dict with orbitals from CQED-RHF
         wfn_dict["matrix"]["Ca"] = self.C
         wfn_dict["matrix"]["Cb"] = self.C
-        self.C_hf = copy.deepcopy(self.C)
         # mints = psi4.core.MintsHelper(wfn.basisset())
         # overlap_matrix = mints.ao_overlap()
         # overlap_matrix = np.asarray(overlap_matrix)
@@ -4710,8 +4716,10 @@ class PFHamiltonianGenerator:
         # build H_spin
         # spatial part of 1-e integrals
         _H_spin = np.einsum("uj,vi,uv", self.C, self.C, self.H_1e_ao)
+        _H_spin_hf = np.einsum("uj,vi,uv", self.C_hf, self.C_hf, self.H_1e_ao)
         self.H_spatial = _H_spin
         self.H_spatial2 = np.ascontiguousarray(_H_spin)
+        self.H_hf = np.ascontiguousarray(_H_spin_hf)
         if self.full_diagonalization or self.test_mode or self.ci_level == "cis":
             _H_spin = np.repeat(_H_spin, 2, axis=0)
             _H_spin = np.repeat(_H_spin, 2, axis=1)
@@ -4719,7 +4727,7 @@ class PFHamiltonianGenerator:
             spin_ind = np.arange(_H_spin.shape[0], dtype=int) % 2
             # product of spatial and spin parts
             self.Hspin = _H_spin * (spin_ind.reshape(-1, 1) == spin_ind)
-        self.H_hf = copy.deepcopy(self.H_spatial2)
+        #self.H_hf = copy.deepcopy(self.H_spatial2)
 
     def build2DSO(self):
         """Will build the 2-electron arrays in the spin orbital basis
@@ -4743,9 +4751,13 @@ class PFHamiltonianGenerator:
         # self.d_spatial = np.einsum("ij,kl->ijkl", _d_spin, _d_spin)
         if self.ignore_dse_terms:
             self.twoeint = self.twoeint1
+            self.twoeint_hf = self.twoeint1_hf
         else:
             self.twoeint = self.twoeint1 + np.einsum(
                 "ij,kl->ijkl", self.d_cmo, self.d_cmo
+            )
+            self.twoeint_hf = self.twoeint1_hf + np.einsum(
+                "ij,kl->ijkl", self.d_hf, self.d_hf
             )
         self.twoeint1 = None
         del self.twoeint1
@@ -4753,7 +4765,12 @@ class PFHamiltonianGenerator:
         self.twoeint = np.reshape(
             self.twoeint, (self.nmo * self.nmo, self.nmo * self.nmo)
         )
-
+        self.twoeint1_hf = None
+        del self.twoeint1_hf
+        # self.contracted_twoeint = -0.5 * np.einsum("illj->ij", self.twoeint)
+        self.twoeint_hf = np.reshape(
+            self.twoeint_hf, (self.nmo * self.nmo, self.nmo * self.nmo)
+        )
     def buildGSO(self):
         """
         Will build the 1-electron arrays in the spin orbital basis
@@ -5281,6 +5298,7 @@ class PFHamiltonianGenerator:
             self.eri_so = np.asarray(mints.mo_spin_eri(self.Ca, self.Ca))
 
         self.twoeint1 = np.asarray(mints.mo_eri(self.Ca, self.Ca, self.Ca, self.Ca))
+        self.twoeint1_hf = np.asarray(mints.mo_eri(self.Ca_hf, self.Ca_hf, self.Ca_hf, self.Ca_hf))
         t_eri_end = time.time()
         print(f" Completed ERI Build in {t_eri_end - t_1H_end} seconds ")
 

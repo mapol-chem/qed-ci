@@ -15,7 +15,45 @@
 void matrix_product(double* A, double* B, double* C, int m, int n, int k) {
      cblas_dgemm(CblasRowMajor, CblasNoTrans, CblasNoTrans, m, n, k, 1.0, A, k, B, n, 0.0, C, n);
 }
-
+void print_matrix(double *S, int rows, int cols, int cols_per_line) {
+    if (cols_per_line <= 0 || cols_per_line > cols) {
+        cols_per_line = cols;  // Default to all columns if invalid
+    }
+    
+    int num_blocks = (cols + cols_per_line - 1) / cols_per_line;  // Ceiling division
+    
+    for (int block = 0; block < num_blocks; block++) {
+        int start_col = block * cols_per_line;
+        int end_col = (start_col + cols_per_line < cols) ? start_col + cols_per_line : cols;
+        
+        // Print column headers
+        printf("     ");  // Space for row index
+        for (int b = start_col; b < end_col; b++) {
+            printf("      Col %4d    ", b);
+        }
+        printf("\n");
+        
+        // Print separator
+        printf("     ");
+        for (int b = start_col; b < end_col; b++) {
+            printf("------------------");
+        }
+        printf("\n");
+        
+        // Print matrix rows
+        for (int a = 0; a < rows; a++) {
+            printf("%4d ", a);  // Row index
+            for (int b = start_col; b < end_col; b++) {
+                printf("%18.12lf", S[a * cols + b]);
+            }
+            printf("\n");
+        }
+        
+        if (block < num_blocks - 1) {
+            printf("\n");  // Blank line between blocks
+        }
+    }
+}
 int binomialCoeff(int n, int k)
 {
     int C[k + 1];
@@ -1367,13 +1405,13 @@ void davidson_spin(double* h1e, double* h2e, double* d_cmo, double* Hdiag, doubl
         memset(Gs, 0, L*L*sizeof(double));
 
   
-    //for (int a = 0; a < maxdim; a++) {
-    //    for (int b = 0; b < H_dim; b++) {
-    //    	printf("%d %d %20.12lf\n",a,b, S[a*H_dim +b]);
-    //    }
-    //    	printf("\n");
+        //for (int a = 0; a < maxdim; a++) {
+        //    for (int b = 0; b < H_dim; b++) {
+        //    	printf("%d %d %20.12lf\n",a,b, S[a*H_dim +b]);
+        //    }
+        //    	printf("\n");
 
-    //}
+        //}
         cblas_dgemm(CblasRowMajor, CblasNoTrans, CblasTrans, L, L, H_dim, 1.0, S, H_dim, Q, H_dim, 0.0, G, L);
  
         
@@ -1484,20 +1522,65 @@ void davidson_spin(double* h1e, double* h2e, double* d_cmo, double* Hdiag, doubl
     //int rows = num_alpha * (N_ac * (n_o_ac - N_ac) + N_ac + n_o_in);
     //int num_links = rows/num_alpha;
     //maxiter = 5; 
+    int L_prev = 0;
+    bool restarted = true;
+    //memset(S, 0, maxdim*H_dim*sizeof(double));
     for (int a = 0; a < maxiter; a++) {
         printf("\n"); 
                 
         printf("ITERATION%4d subspace size%4d\n", a+1, L);
-        memset(S, 0, maxdim*H_dim*sizeof(double));
         
 	double itime, ftime, exec_time;
         itime = omp_get_wtime();
-
-        build_sigma(h1e, h2e, d_cmo, Q, S, table, table_creation, table_annihilation, 
-                        N_ac, n_o_ac, n_o_in, nmo, L, N_p, Enuc, dc, omega, d_exp, E_core, break_degeneracy); 
-        //apply  spin penalty 
-        build_sigma_s_square(Q, S, Sdiag, b_array, table, num_links0, n_o_ac, num_alpha, L, N_p, 0.45);
-        //build_sigma_s_fourth_power(Q, S, Sdiag_projection, b_array, table, num_links0, n_o_ac, num_alpha, L, N_p, 0.1);
+        if (!restarted && L_prev > 0 && L > L_prev) {
+            // We're continuing - S still has old sigma vectors from last iteration
+            // Only compute NEW sigma vectors
+            int L_new = L - L_prev;
+            
+            // Allocate temporary arrays for NEW vectors only (much smaller!)
+            double* Q_new = (double*) malloc(L_new * H_dim * sizeof(double));
+            double* S_new = (double*) malloc(L_new * H_dim * sizeof(double));
+            memset(S_new, 0, L_new * H_dim * sizeof(double));
+            
+            // Copy new Q vectors to temporary array
+            for (int i = 0; i < L_new; i++) {
+                cblas_dcopy(H_dim, Q + (L_prev + i) * H_dim, 1, Q_new + i * H_dim, 1);
+            }
+            
+            // Compute sigma for new vectors only
+            build_sigma(h1e, h2e, d_cmo, Q_new, S_new, table, table_creation, table_annihilation, 
+                        N_ac, n_o_ac, n_o_in, nmo, L_new, N_p, Enuc, dc, omega, d_exp, E_core, break_degeneracy);
+            
+            // Apply spin penalty for new vectors only
+            build_sigma_s_square(Q_new, S_new, Sdiag, b_array, table, num_links0, n_o_ac, num_alpha, 
+                                L_new, N_p, 0.45);
+            
+            //build_sigma_s_fourth_power(Q_new, S_new, Sdiag_projection, b_array, table, num_links0, n_o_ac, num_alpha, L_new, N_p, 0.1);
+            // Copy new sigma vectors to S (starting at position L_prev)
+            for (int i = 0; i < L_new; i++) {
+                cblas_dcopy(H_dim, S_new + i * H_dim, 1, S + (L_prev + i) * H_dim, 1);
+            }
+            
+            free(Q_new);
+            free(S_new);
+        
+        } else {
+            // First iteration or after restart - compute all sigma vectors
+            // Only NOW do we clear S
+            memset(S, 0, maxdim*H_dim*sizeof(double));
+            
+            build_sigma(h1e, h2e, d_cmo, Q, S, table, table_creation, table_annihilation, 
+                        N_ac, n_o_ac, n_o_in, nmo, L, N_p, Enuc, dc, omega, d_exp, E_core, break_degeneracy);
+            
+            build_sigma_s_square(Q, S, Sdiag, b_array, table, num_links0, n_o_ac, num_alpha, 
+                                L, N_p, 0.45);
+            //build_sigma_s_fourth_power(Q, S, Sdiag_projection, b_array, table, num_links0, n_o_ac, num_alpha, L, N_p, 0.1);
+        }
+        ////////////build_sigma(h1e, h2e, d_cmo, Q, S, table, table_creation, table_annihilation, 
+        ////////////                N_ac, n_o_ac, n_o_in, nmo, L, N_p, Enuc, dc, omega, d_exp, E_core, break_degeneracy); 
+        //////////////apply  spin penalty 
+        ////////////build_sigma_s_square(Q, S, Sdiag, b_array, table, num_links0, n_o_ac, num_alpha, L, N_p, 0.45);
+        //////////////build_sigma_s_fourth_power(Q, S, Sdiag_projection, b_array, table, num_links0, n_o_ac, num_alpha, L, N_p, 0.1);
         ftime = omp_get_wtime();
         exec_time = ftime - itime;
         printf("build sigma took %f seconds to execute \n", exec_time);
@@ -1512,6 +1595,10 @@ void davidson_spin(double* h1e, double* h2e, double* d_cmo, double* Hdiag, doubl
     //    	printf("\n");
 
     //}
+        //print_matrix(S, maxdim, H_dim, 5);
+    	//fflush(stdout);
+        
+
         cblas_dgemm(CblasRowMajor, CblasNoTrans, CblasTrans, L, L, H_dim, 1.0, S, H_dim, Q, H_dim, 0.0, G, L);
         symmetric_eigenvalue_problem(G, L, theta);
         
@@ -1604,48 +1691,76 @@ void davidson_spin(double* h1e, double* h2e, double* d_cmo, double* Hdiag, doubl
 
 	for (int i = 0; i < unconv; i++) {
             for (int j = 0; j < H_dim; j++) {
-                //for (int k = 0; k < L; k++) {
                     double dum = theta[unconverged_idx[i]] - Hdiag[j];
-		    //if (i ==2) {
-		    ////printf("%20.12lf %20.12lf %20.12lf\n", dum, theta[unconverged_idx[i]], Hdiag[j]);
-		    //printf("%20.16lf %20.16lf %20.16lf\n", dum, w[unconverged_idx[i] * H_dim + j], w[unconverged_idx[i] * H_dim + j]/dum);
-		    //}
-                    if (fabs(dum) >1e-14) {
-                    //if (fabs(dum) >1e-16) {
+		    if (fabs(dum) >1e-14) {
 		        w2[i * H_dim + j] = w[unconverged_idx[i] * H_dim + j]/dum;
 		    }
 		    else {
 			w2[i * H_dim + j] = 0.0;
 		    }
-                //}
             }
 	    //printf("\n");
         }
 	
-		
+        // Update L_prev BEFORE modifying Q
+        L_prev = L;
+        
         if (Lmax-L < unconv) {
-           printf("maximum subspace reaches, restart!\n");		
-           memset(w, 0, nroots*H_dim*sizeof(double));
-           cblas_dgemm(CblasRowMajor, CblasTrans, CblasNoTrans, nroots, H_dim, L, 1.0, G, L, Q, H_dim, 0.0, w, H_dim);
-           memset(Q, 0, maxdim*H_dim*sizeof(double));
+            printf("maximum subspace reaches, restart!\n");		
+            memset(w, 0, nroots*H_dim*sizeof(double));
+            cblas_dgemm(CblasRowMajor, CblasTrans, CblasNoTrans, nroots, H_dim, L, 1.0, G, L, Q, H_dim, 0.0, w, H_dim);
+            memset(Q, 0, maxdim*H_dim*sizeof(double));
 
-           for (int i = 0; i < nroots; i++) {
-               cblas_dcopy(H_dim, w+i*H_dim, 1, Q+i*H_dim, 1);
-	   }
+            for (int i = 0; i < nroots; i++) {
+                cblas_dcopy(H_dim, w+i*H_dim, 1, Q+i*H_dim, 1);
+            }
 
-           for (int i = 0; i < unconv; i++) {
-               cblas_dcopy(H_dim, w2+i*H_dim, 1, Q+(i+nroots)*H_dim, 1);
-	   }
-           gram_schmidt_orthogonalization(Q, nroots+unconv, H_dim);
-	   L = nroots + unconv; 
-	}
-	else {
-           for (int i = 0; i < unconv; i++) {
-               cblas_dcopy(H_dim, w2+i*H_dim, 1, Q+(i+L)*H_dim, 1);
-	   }
-           gram_schmidt_add(Q, L, H_dim, unconv);
-           L += unconv;	   
-	}
+            for (int i = 0; i < unconv; i++) {
+                cblas_dcopy(H_dim, w2+i*H_dim, 1, Q+(i+nroots)*H_dim, 1);
+            }
+            gram_schmidt_orthogonalization(Q, nroots+unconv, H_dim);
+            L = nroots + unconv;
+            
+            restarted = true;
+            L_prev = 0;
+        }
+        else {
+            for (int i = 0; i < unconv; i++) {
+                cblas_dcopy(H_dim, w2+i*H_dim, 1, Q+(i+L)*H_dim, 1);
+            }
+            gram_schmidt_add(Q, L, H_dim, unconv);
+            L += unconv;
+            
+            restarted = false;
+            // L_prev stays as the old L value (set above)
+        }	
+
+
+
+
+        //////if (Lmax-L < unconv) {
+        //////   printf("maximum subspace reaches, restart!\n");		
+        //////   memset(w, 0, nroots*H_dim*sizeof(double));
+        //////   cblas_dgemm(CblasRowMajor, CblasTrans, CblasNoTrans, nroots, H_dim, L, 1.0, G, L, Q, H_dim, 0.0, w, H_dim);
+        //////   memset(Q, 0, maxdim*H_dim*sizeof(double));
+
+        //////   for (int i = 0; i < nroots; i++) {
+        //////       cblas_dcopy(H_dim, w+i*H_dim, 1, Q+i*H_dim, 1);
+	//////   }
+
+        //////   for (int i = 0; i < unconv; i++) {
+        //////       cblas_dcopy(H_dim, w2+i*H_dim, 1, Q+(i+nroots)*H_dim, 1);
+	//////   }
+        //////   gram_schmidt_orthogonalization(Q, nroots+unconv, H_dim);
+	//////   L = nroots + unconv; 
+	//////}
+	//////else {
+        //////   for (int i = 0; i < unconv; i++) {
+        //////       cblas_dcopy(H_dim, w2+i*H_dim, 1, Q+(i+L)*H_dim, 1);
+	//////   }
+        //////   gram_schmidt_add(Q, L, H_dim, unconv);
+        //////   L += unconv;	   
+	//////}
 
 
 
@@ -1743,19 +1858,56 @@ void davidson(double* h1e, double* h2e, double* d_cmo, double* Hdiag, double* ei
     int Lmax = maxdim;
     //int rows = num_alpha * (N_ac * (n_o_ac - N_ac) + N_ac + n_o_in);
     //int num_links = rows/num_alpha;
-    //maxiter = 5; 
+    //maxiter = 5;
+
+    int L_prev = 0;
+    bool restarted = true;
     for (int a = 0; a < maxiter; a++) {
         printf("\n"); 
                 
         printf("ITERATION%4d subspace size%4d\n", a+1, L);
         bool break_degeneracy = false;         
-        memset(S, 0, maxdim*H_dim*sizeof(double));
         
 	double itime, ftime, exec_time;
         itime = omp_get_wtime();
-
-        build_sigma(h1e, h2e, d_cmo, Q, S, table, table_creation, table_annihilation, 
-                        N_ac, n_o_ac, n_o_in, nmo, L, N_p, Enuc, dc, omega, d_exp, E_core, break_degeneracy); 
+        if (!restarted && L_prev > 0 && L > L_prev) {
+            // We're continuing - S still has old sigma vectors from last iteration
+            // Only compute NEW sigma vectors
+            int L_new = L - L_prev;
+            
+            // Allocate temporary arrays for NEW vectors only (much smaller!)
+            double* Q_new = (double*) malloc(L_new * H_dim * sizeof(double));
+            double* S_new = (double*) malloc(L_new * H_dim * sizeof(double));
+            memset(S_new, 0, L_new * H_dim * sizeof(double));
+            
+            // Copy new Q vectors to temporary array
+            for (int i = 0; i < L_new; i++) {
+                cblas_dcopy(H_dim, Q + (L_prev + i) * H_dim, 1, Q_new + i * H_dim, 1);
+            }
+            
+            // Compute sigma for new vectors only
+            build_sigma(h1e, h2e, d_cmo, Q_new, S_new, table, table_creation, table_annihilation, 
+                        N_ac, n_o_ac, n_o_in, nmo, L_new, N_p, Enuc, dc, omega, d_exp, E_core, break_degeneracy);
+            
+            // Copy new sigma vectors to S (starting at position L_prev)
+            for (int i = 0; i < L_new; i++) {
+                cblas_dcopy(H_dim, S_new + i * H_dim, 1, S + (L_prev + i) * H_dim, 1);
+            }
+            
+            free(Q_new);
+            free(S_new);
+        
+        } else {
+            // First iteration or after restart - compute all sigma vectors
+            // Only NOW do we clear S
+            memset(S, 0, maxdim*H_dim*sizeof(double));
+            
+            build_sigma(h1e, h2e, d_cmo, Q, S, table, table_creation, table_annihilation, 
+                        N_ac, n_o_ac, n_o_in, nmo, L, N_p, Enuc, dc, omega, d_exp, E_core, break_degeneracy);
+            
+        }
+        //build_sigma(h1e, h2e, d_cmo, Q, S, table, table_creation, table_annihilation, 
+        //                N_ac, n_o_ac, n_o_in, nmo, L, N_p, Enuc, dc, omega, d_exp, E_core, break_degeneracy); 
 
         ftime = omp_get_wtime();
         exec_time = ftime - itime;
@@ -1862,30 +2014,63 @@ void davidson(double* h1e, double* h2e, double* d_cmo, double* Hdiag, double* ei
 		}
             }
         }
-	
+	// Update L_prev BEFORE modifying Q
+        L_prev = L;
+        
         if (Lmax-L < unconv) {
-           printf("maximum subspace reaches, restart!\n");		
-           memset(w, 0, nroots*H_dim*sizeof(double));
-           cblas_dgemm(CblasRowMajor, CblasTrans, CblasNoTrans, nroots, H_dim, L, 1.0, G, L, Q, H_dim, 0.0, w, H_dim);
-           memset(Q, 0, maxdim*H_dim*sizeof(double));
+            printf("maximum subspace reaches, restart!\n");		
+            memset(w, 0, nroots*H_dim*sizeof(double));
+            cblas_dgemm(CblasRowMajor, CblasTrans, CblasNoTrans, nroots, H_dim, L, 1.0, G, L, Q, H_dim, 0.0, w, H_dim);
+            memset(Q, 0, maxdim*H_dim*sizeof(double));
 
-           for (int i = 0; i < nroots; i++) {
-               cblas_dcopy(H_dim, w+i*H_dim, 1, Q+i*H_dim, 1);
-	   }
+            for (int i = 0; i < nroots; i++) {
+                cblas_dcopy(H_dim, w+i*H_dim, 1, Q+i*H_dim, 1);
+            }
 
-           for (int i = 0; i < unconv; i++) {
-               cblas_dcopy(H_dim, w2+i*H_dim, 1, Q+(i+nroots)*H_dim, 1);
-	   }
-           gram_schmidt_orthogonalization(Q, nroots+unconv, H_dim);
-	   L = nroots + unconv; 
-	}
-	else {
-           for (int i = 0; i < unconv; i++) {
-               cblas_dcopy(H_dim, w2+i*H_dim, 1, Q+(i+L)*H_dim, 1);
-	   }
-           gram_schmidt_add(Q, L, H_dim, unconv);
-           L += unconv;	   
-	}
+            for (int i = 0; i < unconv; i++) {
+                cblas_dcopy(H_dim, w2+i*H_dim, 1, Q+(i+nroots)*H_dim, 1);
+            }
+            gram_schmidt_orthogonalization(Q, nroots+unconv, H_dim);
+            L = nroots + unconv;
+            
+            restarted = true;
+            L_prev = 0;
+        }
+        else {
+            for (int i = 0; i < unconv; i++) {
+                cblas_dcopy(H_dim, w2+i*H_dim, 1, Q+(i+L)*H_dim, 1);
+            }
+            gram_schmidt_add(Q, L, H_dim, unconv);
+            L += unconv;
+            
+            restarted = false;
+            // L_prev stays as the old L value (set above)
+        }	
+
+
+        //if (Lmax-L < unconv) {
+        //   printf("maximum subspace reaches, restart!\n");		
+        //   memset(w, 0, nroots*H_dim*sizeof(double));
+        //   cblas_dgemm(CblasRowMajor, CblasTrans, CblasNoTrans, nroots, H_dim, L, 1.0, G, L, Q, H_dim, 0.0, w, H_dim);
+        //   memset(Q, 0, maxdim*H_dim*sizeof(double));
+
+        //   for (int i = 0; i < nroots; i++) {
+        //       cblas_dcopy(H_dim, w+i*H_dim, 1, Q+i*H_dim, 1);
+	//   }
+
+        //   for (int i = 0; i < unconv; i++) {
+        //       cblas_dcopy(H_dim, w2+i*H_dim, 1, Q+(i+nroots)*H_dim, 1);
+	//   }
+        //   gram_schmidt_orthogonalization(Q, nroots+unconv, H_dim);
+	//   L = nroots + unconv; 
+	//}
+	//else {
+        //   for (int i = 0; i < unconv; i++) {
+        //       cblas_dcopy(H_dim, w2+i*H_dim, 1, Q+(i+L)*H_dim, 1);
+	//   }
+        //   gram_schmidt_add(Q, L, H_dim, unconv);
+        //   L += unconv;	   
+	//}
 
 
 
