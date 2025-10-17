@@ -4751,25 +4751,15 @@ class PFHamiltonianGenerator:
         # self.d_spatial = np.einsum("ij,kl->ijkl", _d_spin, _d_spin)
         if self.ignore_dse_terms:
             self.twoeint = self.twoeint1
-            self.twoeint_hf = self.twoeint1_hf
         else:
             self.twoeint = self.twoeint1 + np.einsum(
                 "ij,kl->ijkl", self.d_cmo, self.d_cmo
-            )
-            self.twoeint_hf = self.twoeint1_hf + np.einsum(
-                "ij,kl->ijkl", self.d_hf, self.d_hf
             )
         self.twoeint1 = None
         del self.twoeint1
         # self.contracted_twoeint = -0.5 * np.einsum("illj->ij", self.twoeint)
         self.twoeint = np.reshape(
             self.twoeint, (self.nmo * self.nmo, self.nmo * self.nmo)
-        )
-        self.twoeint1_hf = None
-        del self.twoeint1_hf
-        # self.contracted_twoeint = -0.5 * np.einsum("illj->ij", self.twoeint)
-        self.twoeint_hf = np.reshape(
-            self.twoeint_hf, (self.nmo * self.nmo, self.nmo * self.nmo)
         )
     def buildGSO(self):
         """
@@ -5298,7 +5288,6 @@ class PFHamiltonianGenerator:
             self.eri_so = np.asarray(mints.mo_spin_eri(self.Ca, self.Ca))
 
         self.twoeint1 = np.asarray(mints.mo_eri(self.Ca, self.Ca, self.Ca, self.Ca))
-        self.twoeint1_hf = np.asarray(mints.mo_eri(self.Ca_hf, self.Ca_hf, self.Ca_hf, self.Ca_hf))
         t_eri_end = time.time()
         print(f" Completed ERI Build in {t_eri_end - t_1H_end} seconds ")
 

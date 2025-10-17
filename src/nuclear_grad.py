@@ -1637,7 +1637,9 @@ class nuclear_grad(PFHamiltonianGenerator):
         #print(np.linalg.norm(total_gradient))
 
         #self.print_matrix_nice((self.twoeint-self.twoeint_hf).reshape(self.nmo*self.nmo, self.nmo *self.nmo), precision=10, width=14, cols_per_line=6)
-        self.twoeint = np.copy(self.twoeint_hf)        
+        self.twoeint = np.asarray(self.mints.mo_eri(self.Ca_hf, self.Ca_hf, self.Ca_hf, self.Ca_hf))
+        self.d_spatial = np.einsum("ij,kl-> ijkl", self.d_hf, self.d_hf)
+        self.twoeint += self.d_spatial
         self.n_v_hf = self.nmo - self.ndocc
 
         self.fock_hf = copy.deepcopy(self.H_hf)
@@ -1654,7 +1656,6 @@ class nuclear_grad(PFHamiltonianGenerator):
         eps_occ = fock_diag[:self.ndocc]      # ε_i (occupied)
         eps_virt = fock_diag[self.ndocc:]     # ε_a (virtual)
         energy_diff = eps_virt[:, np.newaxis] - eps_occ[np.newaxis, :]   
-        self.d_spatial = np.einsum("ij,kl-> ijkl", self.d_hf, self.d_hf)
         temp_aibj = np.zeros((self.n_v_hf, self.ndocc, self.n_v_hf, self.ndocc))
         for a in range(self.n_v_hf):
             for i in range(self.ndocc):
