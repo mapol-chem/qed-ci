@@ -645,7 +645,7 @@ class nuclear_grad(PFHamiltonianGenerator):
         """
         #self._reset()
         residual = self.reduced_state_gradient.copy()
-        if np.linalg.norm(residual < 1e-3):
+        if np.linalg.norm(residual) < 1e-3:
             #random guess
             dim00 = self.index_map_size + self.davidson_roots * self.H_dim
             trial_0 = np.random.rand(dim00)
