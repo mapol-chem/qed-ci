@@ -20,6 +20,7 @@ import sys
 
 # from memory_profiler import profile
 from helper_cqed_rhf import cqed_rhf
+from residual_minimization import *
 from itertools import combinations
 import math
 import time
@@ -38,7 +39,7 @@ from scipy.sparse.linalg import minres
 from scipy.sparse.linalg import LinearOperator
 from timeit import default_timer as timer
 import numba as nb
-
+import opt_einsum as oe
 script_dir = os.path.abspath(os.path.dirname(__file__))
 lib_path = os.path.join(script_dir, "cfunctions.so")
 
@@ -7027,6 +7028,7 @@ class PFHamiltonianGenerator:
 
         # print("trq", self.G3.T-self.G3)
         # print(self.G2-self.G)
+    
 
     def build_intermediates2(self, eigenvecs, A, G, full_space):
         if full_space == True:
@@ -8899,7 +8901,7 @@ class PFHamiltonianGenerator:
             # print(hessian_tilde_ai)
             mu1, w1 = np.linalg.eigh(hessian_tilde_ai)
             # print("eigenvalue of active-inactive hessian", mu1)
-            print("eigenvalue of the reduced hessian", mu1)
+            #print("eigenvalue of the reduced hessian", mu1)
             print(
                 "dot product of gradient and first eigenvector of hessian",
                 np.dot(gradient_tilde_ai, w1[:, 0]),
@@ -10106,6 +10108,34 @@ class PFHamiltonianGenerator:
                 r = self.index_map[j][0]
                 k = self.index_map[j][1]
                 sigma_reduced[i][j + pointer] = sigma_total[i][r][k]
+    def orbital_sigma3(
+        self, U, A_tilde, G_blocks, R_reduced, sigma_reduced, num_states, pointer
+    ):
+        nmo = self.nmo
+        index_map = self.index_map
+        index_map_size = self.index_map_size
+        n_occupied = self.n_occupied
+        n_inactive = self.n_in_a
+        n_active = self.n_act_orb
+        G_ij, G_ti, G_tu = G_blocks
+        return self.build_sigma_reduced7(
+            U,
+            A_tilde,
+            index_map,
+            G_ij,
+            G_ti,
+            G_tu,
+            R_reduced,
+            sigma_reduced,
+            num_states,
+            pointer,
+            nmo,
+            index_map_size,
+            n_occupied,
+            n_inactive,
+            n_active
+        )
+
 
     def orbital_sigma(
         self, U, A_tilde, G, R_reduced, sigma_reduced, num_states, pointer
@@ -10132,14 +10162,14 @@ class PFHamiltonianGenerator:
     # @nb.njit("""void(float64[:,::1], float64[:,::1], int64[:,::1], float64[:,::1], float64[:,:,:,::1], float64[:,::1], float64[:,::1],
     #        int64, int64, int64, int64, int64)""", fastmath = True, parallel = True)
     # def build_sigma_reduced6(U, A_tilde, index_map, G1, G, R_reduced, sigma_reduced, num_states, pointer, nmo, index_map_size, n_occupied):
-    @nb.jit(
-        """void(float64[:,::1], float64[:,::1], int64[:,::1], float64[:,::1], float64[:,::1], float64[:,::1],
-            int64, int64, int64, int64, int64)""",
-        nopython=True,
-        cache=True,
-        fastmath=True,
-        parallel=True,
-    )
+    #####@nb.jit(
+    #####    """void(float64[:,::1], float64[:,::1], int64[:,::1], float64[:,::1], float64[:,::1], float64[:,::1],
+    #####        int64, int64, int64, int64, int64)""",
+    #####    nopython=True,
+    #####    cache=True,
+    #####    fastmath=True,
+    #####    parallel=False,
+    #####)
     def build_sigma_reduced4(
         U,
         A_tilde,
@@ -10158,8 +10188,9 @@ class PFHamiltonianGenerator:
         assert G.shape == (nmo * n_occupied, nmo * n_occupied)
         assert A_tilde.shape == (nmo, nmo)
         R_total = np.zeros((num_states, nmo, n_occupied))
-        print("oivdpw", num_states)
-        for j in nb.prange(index_map_size):
+        print("num_states", num_states)
+        #for j in nb.prange(index_map_size):
+        for j in range(index_map_size):
             r = index_map[j][0]
             k = index_map[j][1]
             for i in range(num_states):
@@ -10204,14 +10235,15 @@ class PFHamiltonianGenerator:
         #            temp1[i,q,s] += a
         R1 = np.ascontiguousarray(temp1)
         R1 = np.reshape(R1, (num_states, nmo * n_occupied))
+        
         # R2 = np.zeros((num_states, nmo * n_occupied))
         ##for i in nb.prange(num_states):
         ##    for r in range(nmo):
         ##        for k in range(n_occupied):
         ##            a = R1[i][r*n_occupied+k] - temp1[i,r,k]
         ##            if np.abs(a) > 1e-14: print("LARGE error")
+        #G_tensor = G.reshape(nmo, n_occupied, nmo, n_occupied)
 
-        print(np.shape(R1))
         temp1 = np.dot(R1, G)
         # temp2 = temp1.reshape(num_states, nmo, n_occupied)
         # for r in nb.prange(nmo):
@@ -10235,6 +10267,7 @@ class PFHamiltonianGenerator:
         #######    R2[i,:] = R3
 
         temp2 = temp1.reshape(num_states, nmo, n_occupied)
+        #temp2 = oe.contract("irk,rksl->isl", R1, G_tensor, optimize = "optimal") 
         temp2 = temp2.transpose(0, 2, 1)
         temp2 = np.ascontiguousarray(temp2)
         temp2 = np.reshape(temp2, (num_states * n_occupied, nmo))
@@ -10305,11 +10338,175 @@ class PFHamiltonianGenerator:
         temp1 = temp2.reshape(num_states, n_occupied, nmo)
         sigma_total[:, :, :] += 0.5 * temp1.transpose(0, 2, 1)[:, :, :]
 
-        for j in nb.prange(index_map_size):
+        for j in range(index_map_size):
             r = index_map[j][0]
             k = index_map[j][1]
             for i in range(num_states):
                 sigma_reduced[i][j + pointer] = sigma_total[i][r][k]
+    @staticmethod
+    @nb.jit(
+        """void(float64[:,::1], float64[:,::1], int64[:,::1], float64[:,::1], float64[:,::1], float64[:,::1], float64[:,::1], float64[:,::1],
+            int64, int64, int64, int64, int64, int64, int64)""",
+        nopython=True,
+        cache=True,
+        fastmath=True,
+        parallel=False,
+    )
+    def build_sigma_reduced7(
+        U,
+        A_tilde,
+        index_map,
+        G_ij,
+        G_ti,
+        G_tu,
+        R_reduced,
+        sigma_reduced,
+        num_states,
+        pointer,
+        nmo,
+        index_map_size,
+        n_occupied,
+        n_inactive,
+        n_active
+    ):
+
+        assert U.shape == (nmo, nmo)
+        assert A_tilde.shape == (nmo, nmo)
+        R_total = np.zeros((num_states, nmo, n_occupied))
+        print("num_states", num_states)
+        #for j in nb.prange(index_map_size):
+        for j in range(index_map_size):
+            r = index_map[j][0]
+            k = index_map[j][1]
+            for i in range(num_states):
+                R_total[i][r][k] = R_reduced[i][j + pointer]
+
+        sigma_total = np.zeros((num_states, nmo, n_occupied))
+        temp1 = np.zeros((num_states, nmo, n_occupied))
+        temp2 = np.zeros((num_states, nmo, n_occupied))
+
+        R1 = R_total.transpose(1, 0, 2)
+        R1 = np.ascontiguousarray(R1)
+        R1 = np.reshape(R1, (nmo, num_states * n_occupied))
+        temp2 = np.dot(U, R1)
+        temp1 = temp2.reshape(nmo, num_states, n_occupied).transpose(1, 0, 2)
+        R1 = np.ascontiguousarray(R_total[:, :n_occupied, :].transpose(2, 0, 1))
+        # R_total1 = np.ascontiguousarray(R_total1)
+        R1 = np.reshape(R1, (n_occupied, num_states * n_occupied))
+        U1 = np.ascontiguousarray(U[:, :n_occupied])
+        temp2 = np.dot(U1, R1)
+        temp1 -= temp2.reshape(nmo, num_states, n_occupied).transpose(1, 0, 2)
+
+
+
+        # 1. Create views of the (num_states, nmo, n_occupied) tensor 'temp1'.
+        # Slicing on the last dimension is contiguous in memory and very fast (no copy).
+        R_i_tensor = temp1[:, :, :n_inactive]
+        R_a_tensor = temp1[:, :, n_inactive:]
+        
+        # 2. Reshape these tensors into 2D matrices for np.dot.
+        # This is also a fast, copy-free "view" operation.
+        # We assume the G-blocks are flattened with index (r,k) -> r * n_block_occ + k
+        
+        R1_i = R_i_tensor.copy().reshape(num_states, nmo * n_inactive)
+        R1_a = R_a_tensor.copy().reshape(num_states, nmo * n_active)
+
+
+        # 3. Perform the cache-friendly blocked matrix multiplication.
+        # We use the G_ij, G_ti, G_tu blocks you passed in.
+        # We use the symmetry G_it = G_ti.T
+        
+        # Calculate the inactive block of sigma: (num_states, nmo * n_inactive)
+        sigma_i = np.dot(R1_i, G_ij) + np.dot(R1_a, G_ti)
+        
+        # Calculate the active block of sigma: (num_states, nmo * n_active)
+        sigma_a = np.dot(R1_i, G_ti.T) + np.dot(R1_a, G_tu)
+
+        # 4. Assemble the result back into the 3D tensor 'temp2'.
+        # We allocate the output tensor 'temp2' (which you did in the original code).
+        temp2 = np.zeros((num_states, nmo, n_occupied)) # You already have this
+        temp2[:, :, :n_inactive] = sigma_i.reshape(num_states, nmo, n_inactive)
+        temp2[:, :, n_inactive:] = sigma_a.reshape(num_states, nmo, n_active)  
+
+
+
+        #temp2 = oe.contract("irk,rksl->isl", R1, G_tensor, optimize = "optimal") 
+        temp2 = temp2.transpose(0, 2, 1)
+        temp2 = np.ascontiguousarray(temp2)
+        temp2 = np.reshape(temp2, (num_states * n_occupied, nmo))
+        temp1 = np.dot(temp2, U)
+        temp2 = temp1.reshape(num_states, n_occupied, nmo)
+        sigma_total[:, :, :] = temp2.transpose(0, 2, 1)[:, :, :]
+        sigma_total[:, :n_occupied, :] -= temp2[:, :, :n_occupied]
+
+        A3_tilde = A_tilde + A_tilde.T
+        # temp1 = np.zeros((num_states, nmo, n_occupied))
+        # temp2 = np.zeros((num_states, nmo, n_occupied))
+
+        ##hessian_tilde -= 0.5 * np.einsum("kl,rs->klrs", np.eye(self.n_occupied), A3_tilde)
+        ##hessian_tilde[:,:,:self.n_occupied,:] += 0.5 * np.einsum("rl,ks->klrs", np.eye(self.n_occupied), A3_tilde[:self.n_occupied,:])
+        # for i in nb.prange(num_states):
+        #    for r in range(nmo):
+        #        for k in range(n_occupied):
+        #            a = np.float64(0)
+        #            for s in range(nmo):
+        #                a += A3_tilde[r,s] * R_total[i,s,k]
+        #            temp1[i,r,k] = a
+        #            sigma_total[i,r,k] -= 0.5 * a
+        #
+        # for i in nb.prange(num_states):
+        #    for r in range(n_occupied):
+        #        for k in range(n_occupied):
+        #            sigma_total[i,r,k] += 0.5 * temp1[i,k,r]
+        #
+        ##hessian_tilde -= 0.5 * np.einsum("rs,kl->klrs", np.eye(self.nmo), A3_tilde[:self.n_occupied,:self.n_occupied])
+        # for i in nb.prange(num_states):
+        #    for r in range(nmo):
+        #        for k in range(n_occupied):
+        #            a = np.float64(0)
+        #            for l in range(n_occupied):
+        #                a += A3_tilde[k,l] * R_total[i,r,l]
+        #            sigma_total[i,r,k] -= 0.5 * a
+
+        ##hessian_tilde[:,:,:,:self.n_occupied] += 0.5 * np.einsum("ks,rl->klrs", np.eye(self.n_occupied), A3_tilde[:,:self.n_occupied])
+        # for i in nb.prange(num_states):
+        #    for r in range(nmo):
+        #        for k in range(n_occupied):
+        #            a = np.float64(0)
+        #            for l in range(n_occupied):
+        #                a += A3_tilde[r,l] * R_total[i,k,l]
+        #            sigma_total[i,r,k] += 0.5 * a
+        R1 = R_total.transpose(1, 0, 2)
+        R1 = np.ascontiguousarray(R1)
+        R1 = np.reshape(R1, (nmo, num_states * n_occupied))
+        temp2 = np.dot(A3_tilde, R1)
+        temp1 = temp2.reshape(nmo, num_states, n_occupied).transpose(1, 0, 2)
+        sigma_total[:, :, :] -= 0.5 * temp1[:, :, :]
+        sigma_total[:, :n_occupied, :] += (
+            0.5 * temp1.transpose(0, 2, 1)[:, :, :n_occupied]
+        )
+        A3 = A3_tilde[:n_occupied, :n_occupied].T
+        A3 = np.ascontiguousarray(A3)
+        R1 = np.ascontiguousarray(R_total)
+        R1 = np.reshape(R1, (num_states * nmo, n_occupied))
+        temp2 = np.dot(R1, A3)
+        sigma_total[:, :, :] -= (
+            0.5 * temp2.reshape(num_states, nmo, n_occupied)[:, :, :]
+        )
+        A3 = A3_tilde[:, :n_occupied].T
+        A3 = np.ascontiguousarray(A3)
+        R1 = np.ascontiguousarray(R_total[:, :n_occupied, :])
+        R1 = np.reshape(R1, (num_states * n_occupied, n_occupied))
+        temp2 = np.dot(R1, A3)
+        temp1 = temp2.reshape(num_states, n_occupied, nmo)
+        sigma_total[:, :, :] += 0.5 * temp1.transpose(0, 2, 1)[:, :, :]
+
+        for j in range(index_map_size):
+            r = index_map[j][0]
+            k = index_map[j][1]
+            for i in range(num_states):
+                sigma_reduced[i][j + pointer] = sigma_total[i][r][k]
+
 
     def microiteration_ci_integrals_transform(
         self, U, eigenvecs, d_cmo, active_fock_core, active_twoeint
@@ -13725,6 +13922,7 @@ class PFHamiltonianGenerator:
             G[:, :, :, :] = 0.0
             start = timer()
             self.build_intermediates(eigenvecs, A, G, True)
+            #G_blocks = self.build_intermediates_with_blocks(eigenvecs, A, G, True)
             end = timer()
             print("build intermediates took", end - start)
             # A2[:,:] = 0.0
@@ -13763,7 +13961,21 @@ class PFHamiltonianGenerator:
             zero_energy += self.d_c
             print("zero energy", zero_energy, flush=True)
             start1 = timer()
-            G1 = G.transpose(3, 1, 2, 0).reshape(
+            #G1 = G.transpose(3, 1, 2, 0).reshape(
+            #    self.nmo * self.n_occupied, self.nmo * self.n_occupied
+            #)
+            G1 = G.transpose(3, 1, 2, 0)
+            G_ij = G1[:, :self.n_in_a, :, :self.n_in_a].reshape(
+                self.nmo * self.n_in_a, self.nmo * self.n_in_a    
+            )
+            G_ti = G1[:, self.n_in_a:, :, :self.n_in_a].reshape(
+                self.nmo * self.n_act_orb, self.nmo * self.n_in_a    
+            )
+            G_tu = G1[:, self.n_in_a:, :, self.n_in_a:].reshape(
+                self.nmo * self.n_act_orb, self.nmo * self.n_act_orb 
+            )
+            G_blocks = (G_ij, G_ti, G_tu)
+            G1 = G1.reshape(
                 self.nmo * self.n_occupied, self.nmo * self.n_occupied
             )
             end1 = timer()
@@ -14005,6 +14217,7 @@ class PFHamiltonianGenerator:
                         aug_hessian_eigenvecs = np.zeros((dim00, 2))
                         aug_hessian_eigenvals = np.zeros(2)
                         print("trust radius", trust_radius)
+                        self.collapse_subspace_check = False
                         while True:
                             print("****************************")
                             print("lstrs iteration", count10, "beta", beta)
@@ -14012,18 +14225,21 @@ class PFHamiltonianGenerator:
                             # mu9[:] = self.projection_step2(reduced_gradient, reduced_hessian, w9, beta, dim00)
                             # print("two roots", mu9[0], mu9[1], mu9[2])
                             if count10 == 0:
-                                Q = self.Davidson_augmented_hessian_solve3(
+                                alpha_range = np.abs(alpha_u - alpha_l)
+                                Q = self.Davidson_augmented_hessian_solve6(
                                     self.U2,
                                     A_tilde2,
                                     G,
-                                    G1,
+                                    G_blocks,
                                     self.reduced_hessian_diagonal,
                                     reduced_gradient,
                                     beta,
+                                    alpha_range,
+                                    trust_radius,
                                     aug_hessian_eigenvecs,
                                     aug_hessian_eigenvals,
                                     guess_vector,
-                                    restart=False,
+                                    restart=False
                                 )
                                 delta_l = aug_hessian_eigenvals[0]
                                 alpha_l = (
@@ -14031,19 +14247,22 @@ class PFHamiltonianGenerator:
                                     - np.linalg.norm(reduced_gradient) / trust_radius
                                 )
                             else:
+                                alpha_range = np.abs(alpha_u - alpha_l)
                                 guess_vector = Q
-                                Q = self.Davidson_augmented_hessian_solve3(
+                                Q = self.Davidson_augmented_hessian_solve6(
                                     self.U2,
                                     A_tilde2,
                                     G,
-                                    G1,
+                                    G_blocks,
                                     self.reduced_hessian_diagonal,
                                     reduced_gradient,
                                     beta,
+                                    alpha_range,
+                                    trust_radius,
                                     aug_hessian_eigenvecs,
                                     aug_hessian_eigenvals,
                                     guess_vector,
-                                    restart=True,
+                                    restart=True
                                 )
                             # print(aug_hessian_eigenvals)
                             # print(aug_hessian_eigenvecs)
@@ -14093,18 +14312,21 @@ class PFHamiltonianGenerator:
                                 # mu9[:] = self.projection_step2(reduced_gradient, reduced_hessian, w9, alpha, dim00)
                                 # print("two roots", mu9[0], mu9[1], mu9[2])
 
-                                Q = self.Davidson_augmented_hessian_solve3(
+                                alpha_range = np.abs(alpha_u - alpha_l)
+                                Q = self.Davidson_augmented_hessian_solve6(
                                     self.U2,
                                     A_tilde2,
                                     G,
-                                    G1,
+                                    G_blocks,
                                     self.reduced_hessian_diagonal,
                                     reduced_gradient,
                                     alpha,
+                                    alpha_range,
+                                    trust_radius,
                                     aug_hessian_eigenvecs,
                                     aug_hessian_eigenvals,
                                     Q,
-                                    restart=True,
+                                    restart=True
                                 )
                                 mu9[0] = aug_hessian_eigenvals[0]
                                 mu9[1] = aug_hessian_eigenvals[1]
@@ -14488,16 +14710,24 @@ class PFHamiltonianGenerator:
                             step = adjusted_step
 
                         if hard_case == 2:
-                            Q = np.zeros((1, self.index_map_size))
-                            H1_op = LinearOperator(
-                                (self.index_map_size, self.index_map_size),
-                                matvec=lambda Q: self.mv2(
-                                    self.U2, A_tilde2, G1, Q, 1, 0, 0
-                                ),
-                            )
-                            x, exitCode = minres(H1_op, -reduced_gradient, rtol=1e-6)
-                            print("exitcode", exitCode)
-                            step = x
+                            #Q = np.zeros((1, self.index_map_size))
+                            #H1_op = LinearOperator(
+                            #    (self.index_map_size, self.index_map_size),
+                            #    matvec=lambda Q: self.mv2(
+                            #        self.U2, A_tilde2, G1, Q, 1, 0, 0
+                            #    ),
+                            #)
+                            #x, exitCode = minres(H1_op, -reduced_gradient, rtol=1e-6)
+                            #print("exitcode", exitCode)
+                            #step = x
+                            denom = self.reduced_hessian_diagonal
+                            max_iter = 1000
+                            solution = self.linear_equation_solve(self.U2, A_tilde2, G1, reduced_gradient, denom, max_iter, conv_thresh=1e-6)
+
+                            #print("step norm2", np.linalg.norm(solution))
+                            hard_case = 2
+                            step = solution
+
 
                         if hard_case == 3:
                             step = x_tilde
@@ -14811,16 +15041,22 @@ class PFHamiltonianGenerator:
 
                 else:
                     print("gradient is small, use Newton step")
-                    Q = np.zeros((1, self.index_map_size))
-                    H1_op = LinearOperator(
-                        (self.index_map_size, self.index_map_size),
-                        matvec=lambda Q: self.mv2(self.U2, A_tilde2, G1, Q, 1, 0, 0),
-                    )
-                    x, exitCode = minres(H1_op, -reduced_gradient, rtol=1e-6)
-                    print("exitcode", exitCode)
+                    #Q = np.zeros((1, self.index_map_size))
+                    #H1_op = LinearOperator(
+                    #    (self.index_map_size, self.index_map_size),
+                    #    matvec=lambda Q: self.mv2(self.U2, A_tilde2, G1, Q, 1, 0, 0),
+                    #)
+                    #x, exitCode = minres(H1_op, -reduced_gradient, rtol=1e-6)
+                    #print("exitcode", exitCode)
+                    denom = self.reduced_hessian_diagonal
+                    max_iter = 1000
+                    solution = self.linear_equation_solve(self.U2, A_tilde2, G1, reduced_gradient, denom, max_iter, conv_thresh=1e-6)
+
+                    #print("step norm2", np.linalg.norm(solution))
                     hard_case = 2
-                    step = x
-                    # print(step)
+                    step = solution
+                    #print(step)
+                    #print(solution)
                 # w[:,0] = w[:,0]/scale
 
                 step_norm = np.linalg.norm(step)
@@ -14914,9 +15150,9 @@ class PFHamiltonianGenerator:
                     self.build_gradient(self.U2, A, G, gradient_tilde, A_tilde2, True)
                     end = timer()
                     # self.build_gradient2(self.U2, A, G, hessian_tilde, gradient_tilde, A_tilde2, True)
-                    G1 = G.transpose(3, 1, 2, 0).reshape(
-                        self.nmo * self.n_occupied, self.nmo * self.n_occupied
-                    )
+                    #G1 = G.transpose(3, 1, 2, 0).reshape(
+                    #    self.nmo * self.n_occupied, self.nmo * self.n_occupied
+                    #)
                     print("build gradient took", end - start)
 
                     # hessian_tilde3 = hessian_tilde.transpose(2,0,3,1)
@@ -15164,22 +15400,33 @@ class PFHamiltonianGenerator:
             #   "{:20.12f}".format(self.Enuc),
             #   flush = True
             #)
-            print("current gradient_norm and residual", gradient_norm, current_residual)
-            print("current convergence_threshold", convergence_threshold)
-            total_norm = np.sqrt(np.power(gradient_norm,2) + np.power(current_residual,2))
-            if total_norm < convergence_threshold:
-               print("total norm", total_norm, flush = True)
-               #self.U_total = np.einsum("pq,qs->ps", self.U_total, self.U2)
-               #temp8 = np.zeros((self.nmo, self.nmo))
-               #temp8 = np.einsum("pq,qs->ps", self.H_spatial2, self.U2)
-               #self.H_spatial2[:,:] = np.einsum("ps,pr->rs", temp8, self.U2)
-               #self.d_cmo[:,:] = d_cmo[:,:]
-               #print(eigenvecs)
-               #print("u2i",self.U2)
-               print("microiteration converged! (small total norm)", flush = True)
-               break
+            #print("current gradient_norm and residual", gradient_norm, current_residual)
+            #print("current convergence_threshold", convergence_threshold)
+            #total_norm = np.sqrt(np.power(gradient_norm,2) + np.power(current_residual,2))
+            #if total_norm < convergence_threshold:
+            #   print("total norm", total_norm, flush = True)
+            #   #self.U_total = np.einsum("pq,qs->ps", self.U_total, self.U2)
+            #   #temp8 = np.zeros((self.nmo, self.nmo))
+            #   #temp8 = np.einsum("pq,qs->ps", self.H_spatial2, self.U2)
+            #   #self.H_spatial2[:,:] = np.einsum("ps,pr->rs", temp8, self.U2)
+            #   #self.d_cmo[:,:] = d_cmo[:,:]
+            #   #print(eigenvecs)
+            #   #print("u2i",self.U2)
+            #   print("microiteration converged! (small total norm)", flush = True)
+            #   break
 
             microiteration += 1
+
+
+
+
+
+
+
+
+
+
+
 
 
     def ah_orbital_optimization(self, eigenvecs, c_get_roots):
@@ -18992,6 +19239,3066 @@ class PFHamiltonianGenerator:
                 end = timer()
 
         return Q
+    
+    def _get_preconditioned_w(self, w_unconv, theta_unconv, H_diag, full_eigvecs, converged_indices, U, A_tilde, G_blocks, reduced_gradient, alpha, reduced_hessian_diagonal):
+        
+        # 1. Run diagnostics to decide on strategy
+        n_negative = np.sum(reduced_hessian_diagonal < 0)
+        min_diag_pos = reduced_hessian_diagonal[reduced_hessian_diagonal > 0]
+        min_diag = np.min(min_diag_pos) if len(min_diag_pos) > 0 else 1.0
+        max_diag = np.max(reduced_hessian_diagonal)
+        condition_est = max_diag / abs(min_diag) if abs(min_diag) > 1e-10 else 1e12
+        ILL_CONDITION_THRESHOLD = 50000 
+        
+        preconditioned_w = np.zeros_like(w_unconv)
+        H_dim = H_diag.shape[0] # Get full H_dim
+        
+        if n_negative > 0 or condition_est > ILL_CONDITION_THRESHOLD:
+            # --- CASE 1: ILL-CONDITIONED ---
+            # Use the fast, cheap, and effective DIAGONAL preconditioner
+            # print("LSTRS: (Precond) Ill-conditioned, using DIAGONAL.") # Optional debug
+            precon_denom = theta_unconv.reshape(
+                len(theta_unconv), 1
+            ) - H_diag.reshape(1, H_dim)
+            
+            preconditioned_w = np.divide(
+                w_unconv,
+                precon_denom,
+                out=np.zeros_like(w_unconv),
+                where=precon_denom != 0,
+            )
+            
+        else:
+            # --- CASE 2: WELL-CONDITIONED (LSTRS HARD CASE) ---
+            # Use the robust, but more expensive, JACOBI-DAVIDSON (PCG) solver
+            # This will solve the 30+ iteration stall.
+            # print("LSTRS: (Precond) Well-conditioned, using JACOBI-DAVIDSON.") # Optional debug
+            
+            Q_conv = full_eigvecs[converged_indices, :]
+            
+            for i in range(len(theta_unconv)):
+                current_residual = w_unconv[i, :]
+                current_theta = theta_unconv[i]
+                
+                P_diag = H_diag - current_theta
+                # Add safety for zero diagonals
+                P_diag[np.abs(P_diag) < 1e-12] = 1.0
+            
+                v_corr = self.inner_solve_pcg(
+                    current_residual,
+                    current_theta,
+                    Q_conv,
+                    P_diag,
+                    U, A_tilde, G_blocks, reduced_gradient, alpha
+                )
+                preconditioned_w[i, :] = v_corr
+                
+        return preconditioned_w   
+
+
+
+    def inner_solve_pcg(self, residual_k, theta_k, Q_conv, P_diag,
+                    U, A_tilde, G_blocks, reduced_gradient, alpha):
+
+        H_dim = residual_k.shape[0]
+        n_conv = Q_conv.shape[0]
+
+        # Define a helper function to project a vector (or batch)
+        # This makes it orthogonal to the converged roots.
+        def project_out(vectors):
+            if n_conv == 0:
+                return vectors
+            # Use np.einsum for batch dot product, it's fast
+            # (N_vec, N_dim) @ (N_dim, N_conv) -> (N_vec, N_conv)
+            coeffs = np.dot(vectors, Q_conv.T)
+            # (N_vec, N_conv) @ (N_conv, N_dim) -> (N_vec, N_dim)
+            return vectors - np.dot(coeffs, Q_conv)
+
+        # Define a helper for the "A*p" matrix-vector product
+        # This is (H - theta*I) * p
+        def apply_H_minus_theta(vector, theta_k):
+            # We need a (1, H_dim) vector for your sigma function
+            p_vec = vector.reshape(1, H_dim)
+            Hp = np.zeros_like(p_vec)
+
+            # This is your expensive "H*p" product
+            # You must adapt this to use your existing functions
+
+            # 1. Apply the (H) part
+            # This is equivalent to your self.orbital_sigma(...)
+            # and the gradient/alpha parts
+            #self.orbital_sigma(U, A_tilde, G1, p_vec, Hp, 1, 1) # Assumes 'self' is available
+            #start = timer()
+            self.orbital_sigma3(U, A_tilde, G_blocks, p_vec, Hp, 1, 1) # Assumes 'self' is available
+            Hp[:, 1:] += np.einsum("p,q->qp", reduced_gradient, p_vec[:, 0])
+            Hp[:, 0] = alpha * p_vec[:, 0] + np.dot(p_vec[:, 1:], reduced_gradient)
+            #end = timer()
+            #print("build orbital sigma for precondition took", end - start)
+
+
+            # 2. Apply the (-theta*I) part
+            Hp -= theta_k * p_vec
+
+            return Hp.flatten() # Return a 1D vector
+
+        # === PCG Algorithm ===
+        max_inner_iter = 5 
+        v_corr = np.zeros(H_dim)    # Initial guess: 0
+        r = -residual_k             # RHS of (H - theta*I)v = -r
+
+        # 1. Apply preconditioner: z = P_inv * r
+        z = r / P_diag
+        # 2. Project!
+        z = project_out(z)
+
+        p = z                       # Initial search direction
+        rho = np.dot(r, z)
+
+        for _ in range(max_inner_iter):
+            # 1. Matrix-vector product: q = A * p
+            # Our "A" is the projected operator (I-Q_conv)(H-theta)(I-Q_conv)
+            # We apply it in steps:
+            p_proj = project_out(p) # This is (I-Q_conv)*p
+            q = apply_H_minus_theta(p_proj, theta_k) # This is (H-theta)*(I-Q_conv)*p
+            q = project_out(q) # This is (I-Q_conv)*(H-theta)*(I-Q_conv)*p
+
+            alpha = rho / np.dot(p_proj, q)
+
+            v_corr += alpha * p_proj
+            r -= alpha * q
+
+            # Check for convergence (optional but good)
+            # if np.linalg.norm(r) < 1e-3 * np.linalg.norm(residual_k):
+            #     break
+            # ⭐️ ADD THIS EARLY EXIT ⭐️
+            # Check if the *inner* residual is 10x smaller than the *outer* residual
+            if np.linalg.norm(r) < 0.1 * np.linalg.norm(residual_k):
+                break
+            # 2. Apply preconditioner: z = P_inv * r
+            z = r / P_diag
+            # 3. Project!
+            z = project_out(z)
+
+            rho_new = np.dot(r, z)
+            beta = rho_new / rho
+            rho = rho_new
+
+            p = z + beta * p # p is implicitly projected in the next loop
+
+        return v_corr
+
+    def Davidson_augmented_hessian_solve4(
+        self,
+        U,
+        A_tilde,
+        G,
+        G_blocks,
+        reduced_hessian_diagonal,
+        reduced_gradient,
+        alpha,
+        aug_hessian_eigenvecs,
+        aug_hessian_eigenvals,
+        guess_vector,
+        restart
+    ):
+
+        print("collapse subspace check", self.collapse_subspace_check)
+        threshold = 1e-7
+        count = 0
+        # start = timer()
+        print("restart", restart, "alpha", alpha)
+        for i in range(self.index_map_size):
+            if reduced_hessian_diagonal[i] <= 1e-14:
+                count += 1
+        if self.index_map_size > 600:
+            dim0 = 200
+        else:
+            dim0 = self.index_map_size // 2
+            #dim0 = self.index_map_size 
+        dim1 = max(count, dim0)
+        # print("eepp",reduced_hessian_diagonal)
+
+        dim2 = self.index_map_size + 1
+        H_dim = dim2
+        H_diag0 = copy.deepcopy(reduced_hessian_diagonal)
+        # print(H_diag)
+        H_diag = np.concatenate(([alpha], H_diag0))
+        #print("H_diag", H_diag)
+        indim = dim1 + 1
+        # maxdim = dim1 + 3
+        maxdim = min(H_dim, dim1 + min(dim1, 40))
+        self.project_augmented_hessian00 = np.zeros((maxdim, maxdim))
+        print("indim", indim, "maxdim", maxdim, "Hdim", H_dim)
+        H_pp = np.zeros((indim, indim))
+        unconverged_idx = []
+        nroots = 2
+        # end   = timer()
+        # print("guess1 took", end - start)
+
+        # start = timer()
+        if restart == False:
+            # start1 = timer()
+            out = np.empty(self.index_map_size)
+            out.fill(1e14)
+            d = np.divide(
+                    np.absolute(reduced_gradient),
+                    reduced_hessian_diagonal,
+                    out,
+                    where=reduced_hessian_diagonal > 1e-14,
+                    )
+            self.idx_hessian = (-d).argsort()[:dim1]
+            #print(d)
+            #print("order", self.idx_hessian)
+            self.guess_hessian = np.zeros((dim1, dim1))
+            self.guess_gradient = np.zeros(dim1)
+            sym_A_tilde = A_tilde + A_tilde.T
+            # end1   = timer()
+            # print("building orbital guess1 took1", end1 - start1, flush = True)
+
+            # start1 = timer()
+            # for i in range(dim1):
+            #    index1 = idx[i]
+            #    r = self.index_map[index1][0]
+            #    k = self.index_map[index1][1]
+            #    guess_gradient[i] = reduced_gradient[index1]
+            #    for j in range(dim1):
+            #        index2 = idx[j]
+            #        s = self.index_map[index2][0]
+            #        l = self.index_map[index2][1]
+            #        #print(r,k,s,l)
+            #        #b = self.build_orbital_hessian_element(U, sym_A_tilde, G, r,k,s,l)
+            #        guess_hessian[i][j] = self.build_orbital_hessian_element(U, sym_A_tilde, G, r,k,s,l)
+            #        #print(b, hessian_tilde[r*self.n_occupied+k][s*self.n_occupied+l])
+
+            print("davidson iteration", 1)
+            self.build_orbital_hessian_guess(
+                    U,
+                    sym_A_tilde,
+                    reduced_gradient,
+                    G,
+                    self.guess_hessian,
+                    self.guess_gradient,
+                    dim1,
+                    self.idx_hessian,
+                    )
+            # end1   = timer()
+            # print("building orbital guess2 took", end1 - start1, flush = True)
+
+            ##try to build orbital guess from sigma vector but it is much slower
+            # start1 = timer()
+            # guess_gradient2 = np.zeros(dim1)
+            # hq = np.zeros((dim1, self.index_map_size))
+            # QQ = np.zeros((dim1, self.index_map_size))
+            # for i in range(dim1):
+            #    index1 = self.idx_hessian[i]
+            #    r = self.index_map[index1][0]
+            #    k = self.index_map[index1][1]
+            #    guess_gradient2[i] = reduced_gradient[index1]
+            #    QQ[i][index1] = 1.0
+
+            # self.orbital_sigma(U, A_tilde, G1, QQ, hq, dim1, 0)
+            # guess_hessian2 = np.dot(hq,QQ.T)
+            # print(np.allclose(self.guess_hessian, guess_hessian2, rtol=1e-14,atol=1e-14))
+            # print(np.allclose(self.guess_gradient, guess_gradient2, rtol=1e-14,atol=1e-14))
+            # end1   = timer()
+            # print("building orbital guess3 took", end1 - start1, flush = True)
+            ####print("\n")
+            ####print("\n")
+
+            # start1 = timer()
+            # mu, w = np.linalg.eigh(guess_hessian)
+            # end1   = timer()
+            # print("building orbital guess3 took", end1 - start1, flush = True)
+            # start1 = timer()
+            # print(mu)
+            aug_eigvecs = np.zeros((dim1 + 1, dim1 + 1))
+            Lmax = maxdim
+            L = indim
+
+            H_pp[0, 0] = alpha
+            H_pp[0, 1:] = self.guess_gradient
+            H_pp[1:, 0] = self.guess_gradient.T
+            H_pp[1:, 1:] = self.guess_hessian
+            self.H_pp = copy.deepcopy(H_pp)
+            self.H_qp = np.zeros((0, indim))
+            self.sigma_total = np.zeros((maxdim, H_dim))
+            Q = np.zeros((indim, H_dim))
+            projected_step = np.zeros(dim1)
+            theta = self.projection_step2(
+                self.guess_gradient, self.guess_hessian, aug_eigvecs, alpha, dim1 + 1
+            )
+
+            # start1 = timer()
+            for i in range(dim1 + 1):
+                for j in range(dim1):
+                    index1 = self.idx_hessian[j]
+                    Q[i][0] = aug_eigvecs[0][i]
+                    Q[i][index1 + 1] = aug_eigvecs[j + 1][i]
+            # print(Q)
+            # Q2 = np.zeros((indim, H_dim))
+            # Q2[0,0] = 1
+            # Q2[1:,1:] = QQ
+            ##print(QQ)
+            ##print(Q2)
+            # guess_gradient3 = self.guess_gradient.reshape(1,dim1)
+            # cccc = np.block([[alpha, guess_gradient3],[guess_gradient3.T, self.guess_hessian]])
+            # hq2 = np.zeros((indim, H_dim))
+            # self.orbital_sigma(U, A_tilde, G1, Q2, hq2, dim1+1, 1)
+            # hq2[:,1:] += np.einsum("p,q->qp", reduced_gradient, Q2[:,0])
+            # hq2[:,0] = alpha * Q2[:,0] + np.dot(Q2[:,1:], reduced_gradient)
+            # dddd = np.dot(hq2,Q2.T)
+            # print(np.allclose(cccc, dddd, rtol=1e-14,atol=1e-14))
+
+            w = np.zeros((nroots, H_dim))
+            #self.orbital_sigma(U, A_tilde, G1, Q, w, nroots, 1)
+            self.orbital_sigma3(U, A_tilde, G_blocks, Q, w, nroots, 1)
+            # self.build_sigma_reduced2(U, A_tilde, G, Q, w, nroots, 1)
+            # c_build_sigma_reduced(U, A_tilde, self.index_map1, G1, Q, w, nroots, 1, self.nmo, self.index_map_size, self.n_occupied)
+            w[:, 1:] += np.einsum("p,q->qp", reduced_gradient, Q[:nroots, 0])
+            w[:, 0] = alpha * Q[:nroots, 0] + np.dot(Q[:nroots, 1:], reduced_gradient)
+            residual_norm = np.zeros((nroots))
+            unconverged_idx = []
+            convergence_check = np.zeros((nroots), dtype=str)
+            conv = 0
+            for j in range(nroots):
+                # Compute a residual vector "w" for each root we seek
+                # w[j, :] = np.dot(eigvecs[:, j].T, S) - theta[j] * np.dot(eigvecs[:, j].T, Q)
+                w[j, :] -= theta[j] * Q[j, :]
+                # residual_norm[j] = np.sqrt(np.dot(w[j, :], w[j, :].T))
+                residual_norm[j] = np.linalg.norm(w[j, :])
+                if residual_norm[j] < threshold:
+                    conv += 1
+                    convergence_check[j] = "Yes"
+                else:
+                    unconverged_idx.append(j)
+                    convergence_check[j] = "No"
+            print(unconverged_idx)
+
+            print("root", "AH residual norm", "Eigenvalue", "Convergence")
+            for j in range(nroots):
+                print(
+                    j + 1, residual_norm[j], theta[j], convergence_check[j], flush=True
+                )
+
+            if conv == nroots:
+                aug_hessian_eigenvecs[:, :] = Q[:nroots, :].T
+                aug_hessian_eigenvals[:] = theta[:nroots]
+                # self.projected_augmented_hessian = np.block([[0, self.guess_gradient], [self.guess_gradient.T, self.guess_hessian]])
+                self.projected_augmented_hessian = np.zeros((L, L))
+                self.projected_augmented_hessian[0, 0] = 0
+                self.projected_augmented_hessian[0, 1:] = self.guess_gradient
+                self.projected_augmented_hessian[1:, 0] = self.guess_gradient.T
+                self.projected_augmented_hessian[1:, 1:] = self.guess_hessian
+
+                print("converged from the first iteration!", flush=True)
+
+            # end1   = timer()
+            # print("building orbital guess7 took", end1 - start1, flush = True)
+            QQ = np.zeros((dim1, self.index_map_size))
+            for i in range(dim1):
+               index1 = self.idx_hessian[i]
+               r = self.index_map[index1][0]
+               k = self.index_map[index1][1]
+               #guess_gradient2[i] = reduced_gradient[index1]
+               QQ[i][index1] = 1.0
+            Q = np.zeros((indim, H_dim))
+            Q[0,0] = 1
+            Q[1:,1:] = QQ
+
+
+            # start1 = timer()
+            # preconditioned_w = np.zeros((len(unconverged_idx),H_dim))
+            if len(unconverged_idx) > 0:
+                preconditioned_w = np.zeros((len(unconverged_idx), H_dim))
+                preconditioned_w = theta[unconverged_idx].reshape(
+                    len(unconverged_idx), 1
+                ) - H_diag.reshape(1, H_dim)
+                # print(np.shape(preconditioned_w))
+                preconditioned_w = np.divide(
+                    w[unconverged_idx],
+                    preconditioned_w,
+                    out=np.zeros_like(w[unconverged_idx]),
+                    where=preconditioned_w != 0,
+                )
+
+                Q = np.concatenate((Q, preconditioned_w), axis=0)
+                c_gram_schmidt_add(Q, L, H_dim, len(preconditioned_w))
+                L = Q.shape[0]
+            # end1   = timer()
+            # print("building orbital guess8 took", end1 - start1, flush = True)
+            # QQ = np.einsum("pq,qr->pr", Q, Q.T)
+            # print("check orthogonality",QQ)
+            # print("current dimension", L, flush = True)
+
+        else:
+            print("restart from previous search space")
+            # if indim == maxdim:
+            #    maxdim +=1
+            print(H_dim, indim)
+            Q = copy.deepcopy(guess_vector)
+            Lmax = maxdim
+            L = Q.shape[0]
+            print("current dim", L)
+            if self.collapse_subspace_check == False:
+                if L == indim:
+                    self.projected_augmented_hessian[0, 0] = alpha
+                else:
+                    start1 = timer()
+                    b_dim = L - indim
+                    self.projected_augmented_hessian[0, 0] = alpha
+                    H_qp = np.zeros((b_dim, indim))
+                    Sq = np.zeros((b_dim, H_dim))
+                    Sq[:, 0] += alpha * Q[indim:, 0]
+                    self.sigma_total[indim:L,0] += Sq[:, 0]
+                    for i in range(b_dim):
+                        self.projected_augmented_hessian[indim + i][0] += Sq[i][0]
+                        self.projected_augmented_hessian[0][indim + i] += Sq[i][0]
+                        self.H_qp[i][0] += Sq[i][0]
+                        # for j in range(dim1):
+                        #    #index1 = self.idx_hessian[j]
+                        #    #H_qp[i][0] = Sq[i][0]
+                        #    #H_qp[i][j+1] = Sq[i][index1+1]
+                    self.H_pp[0, 0] = alpha
+                    H_qq = np.dot(Sq, Q[indim:, :].T)
+                    self.projected_augmented_hessian[indim:, indim:] += H_qq
+
+                    end1 = timer()
+                    print("restart took", end1 - start1)
+            else:
+                L_new = Q.shape[0]
+                Sq = np.zeros((L_new, H_dim))
+                Sq[:, 0] += alpha * Q[:, 0]
+                self.sigma_total[:L_new,0] += Sq[:,0]
+                self.projected_augmented_hessian = np.dot(self.sigma_total[:L_new,:], Q[:L_new, :].T)
+
+        if (len(unconverged_idx) > 0 and restart == False) or restart == True:
+            num_iter = 10000
+            # num_iter = 20
+            L_old = indim
+            collapse = True
+            for davidson_iteration in range(1, num_iter):
+                if davidson_iteration == num_iter - 1:
+                    print(
+                        "maximum iteration reaches but no converged roots have been found"
+                    )
+                    exit()
+                print("\n")
+                L_new = Q.shape[0]
+                L = Q.shape[0]
+                projected_step = np.zeros(L - 1)
+                full_eigvecs = np.zeros((nroots, H_dim))
+                full_eigvecs2 = np.zeros((nroots, H_dim))
+                projected_augmented_hessian = np.zeros((1, 1))
+                if restart == True:
+                    print("davidson iteration", davidson_iteration)
+                else:
+                    print("davidson iteration", davidson_iteration + 1)
+                if restart == True and davidson_iteration == 1:
+                    projected_augmented_hessian = self.projected_augmented_hessian
+                else:
+                    if self.collapse_subspace_check == False:   
+                        ######start = timer()
+                        ######b_dim = L - indim
+                        ######Sq0 = np.zeros((b_dim, H_dim))
+                        ####### self.build_sigma_reduced2(U, A_tilde, G, Q[indim:,:], Sq0, b_dim, 1)
+                        ####### c_build_sigma_reduced(U, A_tilde, self.index_map1, G1, Q[indim:,:], Sq0, b_dim, 1, self.nmo, self.index_map_size, self.n_occupied)
+                        ######self.orbital_sigma(U, A_tilde, G1, Q[indim:, :], Sq0, b_dim, 1)
+                        ######gradient1 = np.einsum("p,q->qp", reduced_gradient, Q[indim:, 0])
+                        ######gradient2 = np.dot(Q[indim:, 1:], reduced_gradient)
+                        ######end = timer()
+                        ######print("build orbital sigma for Q space took", end - start)
+                        ####### start = timer()
+
+                        ######H_pp[0, 0] = alpha
+                        ######H_pp[0, 1:] = self.guess_gradient
+                        ######H_pp[1:, 0] = self.guess_gradient.T
+                        ######H_pp[1:, 1:] = self.guess_hessian
+                        ######H_qp = np.zeros((b_dim, indim))
+                        ######Sq = copy.deepcopy(Sq0)
+                        ####### Sq[:,1:] += alpha * np.einsum("p,q->qp", reduced_gradient, Q[indim:,0])
+                        ######Sq[:, 1:] += gradient1
+                        ####### Sq[:,0] = alpha * np.einsum("p,rp->r", reduced_gradient, Q[indim:,1:] )
+                        ######Sq[:, 0] = alpha * Q[indim:, 0] + gradient2
+                        ######for i in range(b_dim):
+                        ######    for j in range(dim1):
+                        ######        index1 = self.idx_hessian[j]
+                        ######        H_qp[i][0] = Sq[i][0]
+                        ######        H_qp[i][j + 1] = Sq[i][index1 + 1]
+
+                        ######H_qq = np.dot(Sq, Q[indim:, :].T)
+                        ######H1 = np.concatenate((H_pp, H_qp), axis=0)
+                        ######H2 = np.concatenate((H_qp.T, H_qq), axis=0)
+                        ######projected_augmented_hessian = np.concatenate((H1, H2), axis=1)
+                        ######theta2, aug_eigvecs2 = np.linalg.eigh(projected_augmented_hessian)
+                        ######print("theta 2", theta2)
+
+                        start = timer()
+                        c_dim = L_new - L_old
+                        Sq1 = np.zeros((c_dim, H_dim))
+                        # self.build_sigma_reduced2(U, A_tilde, G, Q[indim:,:], Sq0, b_dim, 1)
+                        # c_build_sigma_reduced(U, A_tilde, self.index_map1, G1, Q[indim:,:], Sq0, b_dim, 1, self.nmo, self.index_map_size, self.n_occupied)
+                        #self.orbital_sigma(U, A_tilde, G1,  Q[L_old:, :], Sq1, c_dim, 1)
+                        self.orbital_sigma3(U, A_tilde, G_blocks,  Q[L_old:, :], Sq1, c_dim, 1)
+                        gradient1 = np.einsum("p,q->qp", reduced_gradient, Q[L_old:, 0])
+                        gradient2 = np.dot(Q[L_old:, 1:], reduced_gradient)
+                        print("c dim, L old, L new", c_dim, L_old, L_new) 
+                        end = timer()
+                        print("build orbital sigma for Q space took", end - start)
+                        Sq = copy.deepcopy(Sq1)
+                        # Sq[:,1:] += alpha * np.einsum("p,q->qp", reduced_gradient, Q[indim:,0])
+                        Sq[:, 1:] += gradient1
+                        # Sq[:,0] = alpha * np.einsum("p,rp->r", reduced_gradient, Q[indim:,1:] )
+                        Sq[:, 0] = alpha * Q[L_old:, 0] + gradient2
+                        self.sigma_total[L_old:L_new,:] = np.copy(Sq)
+                        H_qp = np.zeros((c_dim, indim))
+                        for i in range(c_dim):
+                            for j in range(dim1):
+                                index1 = self.idx_hessian[j]
+                                H_qp[i][0] = Sq[i][0]
+                                H_qp[i][j + 1] = Sq[i][index1 + 1]
+                        self.H_qp = np.vstack([self.H_qp, H_qp])
+                        H_qq = np.dot(self.sigma_total[indim:L_new,:], Q[indim:, :].T)
+                        print("dimension of sigma", np.shape(self.sigma_total))
+                        H1 = np.concatenate((self.H_pp, self.H_qp), axis=0)
+                        H2 = np.concatenate((self.H_qp.T, H_qq), axis=0)
+                        self.projected_augmented_hessian00 = np.concatenate((H1, H2), axis=1)
+                        projected_augmented_hessian = np.concatenate((H1, H2), axis=1)
+                    else:   
+                        print("collapse", collapse)
+                        if collapse == False:
+                            L_new = Q.shape[0]
+                            c_dim = L_new - L_old
+                            Sq1 = np.zeros((c_dim, H_dim))
+                            # self.build_sigma_reduced2(U, A_tilde, G, Q[indim:,:], Sq0, b_dim, 1)
+                            # c_build_sigma_reduced(U, A_tilde, self.index_map1, G1, Q[indim:,:], Sq0, b_dim, 1, self.nmo, self.index_map_size, self.n_occupied)
+                            start = timer()
+                            #self.orbital_sigma(U, A_tilde, G1,  Q[L_old:, :], Sq1, c_dim, 1)
+                            self.orbital_sigma3(U, A_tilde, G_blocks,  Q[L_old:, :], Sq1, c_dim, 1)
+                            end = timer()
+                            print("build orbital sigma for Q space took", end - start)
+
+                            gradient1 = np.einsum("p,q->qp", reduced_gradient, Q[L_old:, 0])
+                            gradient2 = np.dot(Q[L_old:, 1:], reduced_gradient)
+                            print("c dim, L old, L new", c_dim, L_old, L_new) 
+                            Sq = copy.deepcopy(Sq1)
+                            # Sq[:,1:] += alpha * np.einsum("p,q->qp", reduced_gradient, Q[indim:,0])
+                            Sq[:, 1:] += gradient1
+                            # Sq[:,0] = alpha * np.einsum("p,rp->r", reduced_gradient, Q[indim:,1:] )
+                            Sq[:, 0] = alpha * Q[L_old:, 0] + gradient2
+                            self.sigma_total[L_old:L_new,:] = np.copy(Sq)
+                            projected_augmented_hessian = np.dot(self.sigma_total[:L_new,:], Q[:L_new, :].T)
+                            L_old = Q.shape[0]
+                        else:
+                            L_new = Q.shape[0]
+                            self.sigma_total[:,:] = 0
+                            c_dim = L_new
+                            Sq1 = np.zeros((c_dim, H_dim))
+                            start = timer()
+                            #self.orbital_sigma(U, A_tilde, G1,  Q, Sq1, c_dim, 1)
+                            self.orbital_sigma3(U, A_tilde, G_blocks,  Q, Sq1, c_dim, 1)
+                            end = timer()
+                            print("build orbital sigma for Q space took", end - start)
+
+                            gradient1 = np.einsum("p,q->qp", reduced_gradient, Q[:, 0])
+                            gradient2 = np.dot(Q[:, 1:], reduced_gradient)
+                            print("c dim, L old, L new", c_dim, L_old, L_new) 
+                            Sq = copy.deepcopy(Sq1)
+                            # Sq[:,1:] += alpha * np.einsum("p,q->qp", reduced_gradient, Q[indim:,0])
+                            Sq[:, 1:] += gradient1
+                            # Sq[:,0] = alpha * np.einsum("p,rp->r", reduced_gradient, Q[indim:,1:] )
+                            Sq[:, 0] = alpha * Q[:, 0] + gradient2
+                            self.sigma_total[:L_new,:] = np.copy(Sq)
+                            projected_augmented_hessian = np.dot(self.sigma_total[:L_new,:], Q[:L_new, :].T)
+
+                theta, aug_eigvecs = np.linalg.eigh(projected_augmented_hessian)
+                #print("zopp",theta)
+                # print(np.shape(aug_eigvecs))
+                # print(aug_eigvecs.T[0,:])
+                full_eigvecs = np.dot(aug_eigvecs.T[:nroots, :], Q[:,])
+                full_eigvecs2 = copy.deepcopy(full_eigvecs)
+                # print("q component")
+                # print(full_eigvecs[0,:])
+
+                #for i in range(nroots):
+                #    for j in range(dim1):
+                #        index1 = self.idx_hessian[j]
+                #        full_eigvecs[i][0] = aug_eigvecs[0][i]
+                #        # full_eigvecs2[i][0] = aug_eigvecs[0][i]
+                #        full_eigvecs[i][index1 + 1] = aug_eigvecs[j + 1][i]
+                #        # full_eigvecs2[i][index1+1] = aug_eigvecs[j+1][i]
+                ## print("p component")
+                ## print(full_eigvecs2[0,:])
+
+                start = timer()
+                w = np.zeros((nroots, H_dim))
+                if self.collapse_subspace_check == True:   
+                    w = np.dot(aug_eigvecs.T[:nroots, :], self.sigma_total[:L_new,:])
+                else:
+                    # self.build_sigma_reduced2(U, A_tilde, G, full_eigvecs, w, nroots, 1)
+                    #self.orbital_sigma(U, A_tilde, G1, full_eigvecs, w, nroots, 1)
+                    self.orbital_sigma3(U, A_tilde, G_blocks, full_eigvecs, w, nroots, 1)
+                    # c_build_sigma_reduced(U, A_tilde, self.index_map1, G1, full_eigvecs, w, nroots, 1, self.nmo, self.index_map_size, self.n_occupied)
+                    w[:, 1:] += np.einsum("p,q->qp", reduced_gradient, full_eigvecs[:, 0])
+                    w[:, 0] = alpha * full_eigvecs[:, 0] + np.dot(
+                        full_eigvecs[:, 1:], reduced_gradient
+                    )
+                residual_norm = np.zeros((nroots))
+                unconverged_idx = []
+                convergence_check = np.zeros((nroots), dtype=str)
+                conv = 0
+                # print(np.shape(Q),np.shape(S), np.shape(aug_eigvecs) )
+                for j in range(nroots):
+                    # Compute a residual vector "w" for each root we seek
+                    w[j, :] -= theta[j] * full_eigvecs[j, :]
+                    # w[j, :] = np.dot(aug_eigvecs[:, j].T, S) - theta[j] * np.dot(aug_eigvecs[:, j].T, Q)
+                    # residual_norm[j] = np.sqrt(np.dot(w[j, :], w[j, :].T))
+                    residual_norm[j] = np.linalg.norm(w[j, :])
+                    if residual_norm[j] < threshold:
+                        conv += 1
+                        convergence_check[j] = "Yes"
+                    else:
+                        unconverged_idx.append(j)
+                        convergence_check[j] = "No"
+                print(unconverged_idx)
+
+                print("root", "AH residual norm", "Eigenvalue", "Convergence")
+                for j in range(nroots):
+                    print(
+                        j + 1,
+                        residual_norm[j],
+                        theta[j],
+                        convergence_check[j],
+                        flush=True,
+                    )
+               
+
+
+
+                if conv == nroots:
+                    if self.collapse_subspace_check == False:
+                        Q1 = full_eigvecs
+                        aug_hessian_eigenvecs[:, :] = full_eigvecs.T
+                        aug_hessian_eigenvals[:] = theta[:nroots]
+                        start1 = timer()
+                        b_dim = L - indim
+                        print("b_dim", b_dim)
+
+                        self.projected_augmented_hessian = copy.deepcopy(
+                            projected_augmented_hessian
+                        )
+                        self.projected_augmented_hessian[0, 0] = alpha
+                        if b_dim > 0:
+                            # H_qp = np.zeros((b_dim, indim))
+                            Sq = np.zeros((b_dim, H_dim))
+                            Sq[:, 0] = alpha * Q[indim:, 0]
+                            self.sigma_total[indim:L,0] -= Sq[:, 0]
+                            for i in range(b_dim):
+                                self.projected_augmented_hessian[indim + i][0] -= Sq[i][0]
+                                self.projected_augmented_hessian[0][indim + i] -= Sq[i][0]
+                                self.H_qp[i][0] -= Sq[i][0]
+                                # for j in range(dim1):
+                                #    #index1 = self.idx_hessian[j]
+                                #    #H_qp[i][0] = Sq[i][0]
+                                #    #H_qp[i][j+1] = Sq[i][index1+1]
+
+                            H_qq = np.dot(Sq, Q[indim:, :].T)
+                            self.projected_augmented_hessian[indim:, indim:] -= H_qq
+
+                        end1 = timer()
+                        print("initialize took", end1 - start1)
+                    else:
+                        aug_hessian_eigenvecs[:, :] = full_eigvecs.T
+                        aug_hessian_eigenvals[:] = theta[:nroots]
+                        Sq = np.zeros((L_new, H_dim))
+                        Sq[:, 0] = alpha * Q[:, 0]
+                        self.sigma_total[:L_new,0] -= Sq[:, 0]
+
+                    print("converged!", flush=True)
+                    break
+                
+                # --- NEW HYBRID LOGIC ---
+                preconditioned_w = np.zeros((len(unconverged_idx), H_dim))
+                converged_indices = [i for i in range(nroots) if i not in unconverged_idx]
+                
+                if not converged_indices:
+                    # preconditioned_w = np.zeros((len(unconverged_idx),H_dim))
+                    if len(unconverged_idx) > 0:
+                        preconditioned_w = np.zeros((len(unconverged_idx), H_dim))
+                        preconditioned_w = theta[unconverged_idx].reshape(
+                            len(unconverged_idx), 1
+                        ) - H_diag.reshape(1, H_dim)
+                        # print(np.shape(preconditioned_w))
+                        preconditioned_w = np.divide(
+                            w[unconverged_idx],
+                            preconditioned_w,
+                            out=np.zeros_like(w[unconverged_idx]),
+                            where=preconditioned_w != 0,
+                        )
+
+
+                    
+                
+                else:
+                    # === PHASE 2: At least one root is converged ===
+                    # NOW use the robust (but tuned-down) Jacobi-Davidson solver
+                    # to prevent the 70-iteration stall for Root 1.
+                    
+                    Q_conv = full_eigvecs2[converged_indices, :] 
+                
+                    for i in range(len(unconverged_idx)):
+                        idx = unconverged_idx[i]
+                        current_residual = w[idx, :]
+                        current_theta = theta[idx]
+                        P_diag = H_diag - current_theta
+                        # ... (handle P_diag safety) ...
+                        
+                        # Call the inner solver, but make sure its
+                        # max_inner_iter is set to a low number, like 3 or 5.
+                        v_corr = self.inner_solve_pcg(
+                            current_residual,
+                            current_theta,
+                            Q_conv,
+                            P_diag,
+                            U, A_tilde, G_blocks, reduced_gradient, alpha # Need to pass these through
+                        )
+                        
+                        preconditioned_w[i, :] = v_corr
+                # --- END HYBRID LOGIC ---
+
+
+                ## --- NEW JACOBI-DAVIDSON LOGIC ---
+                #preconditioned_w = np.zeros((len(unconverged_idx), H_dim))
+                #converged_indices = [i for i in range(nroots) if i not in unconverged_idx]
+                #Q_conv = full_eigvecs2[converged_indices, :] # Converged eigenvectors (N_conv, H_dim)
+                #
+                #for i in range(len(unconverged_idx)):
+                #    idx = unconverged_idx[i] # The root we are solving for
+                #    
+                #    # Get inputs for the inner solver
+                #    current_residual = w[idx, :]
+                #    current_theta = theta[idx]
+                #    
+                #    # This is your *diagonal* preconditioner. We still use it
+                #    # to precondition the *inner* solver.
+                #    P_diag = H_diag - current_theta
+                #    # (Handle divide by zero, e.g., set P_diag[P_diag == 0] = 1.0)
+                #    
+                #    # Call the inner solver to find the correction vector
+                #    v_corr = self.inner_solve_pcg(
+                #        current_residual,
+                #        current_theta,
+                #        Q_conv,
+                #        P_diag,
+                #        U, A_tilde, G1, reduced_gradient, alpha # Need to pass these through
+                #    )
+                #    
+                #    preconditioned_w[i, :] = v_corr        
+
+
+                
+                
+                ## preconditioned_w = np.zeros((len(unconverged_idx),H_dim))
+                #if len(unconverged_idx) > 0:
+                #    preconditioned_w = np.zeros((len(unconverged_idx), H_dim))
+                #    preconditioned_w = theta[unconverged_idx].reshape(
+                #        len(unconverged_idx), 1
+                #    ) - H_diag.reshape(1, H_dim)
+                #    # print(np.shape(preconditioned_w))
+                #    preconditioned_w = np.divide(
+                #        w[unconverged_idx],
+                #        preconditioned_w,
+                #        out=np.zeros_like(w[unconverged_idx]),
+                #        where=preconditioned_w != 0,
+                #    )
+
+                    
+               
+                end = timer()
+                print("residual took", end - start)
+                L_old = Q.shape[0]
+                start = timer()
+
+                if Lmax - L < len(unconverged_idx):
+                    num_restart_vecs = 40 
+                    print(f"Subspace limit reached. Performing soft restart from {L} to {num_restart_vecs} vectors.")
+                    t_collapsing_begin = time.time()
+                    
+                    # 1. Choose how many vectors to keep.
+                    # This is a tunable parameter. Let's say 40.
+
+                    # 2. 'aug_eigvecs' holds the (L, L) eigenvectors of the projected Hessian.
+                    # 'theta' holds the eigenvalues. You already have these from np.linalg.eigh.
+                    
+                    # 3. Get the k "best" projected eigenvectors (the first k columns)
+                    # Note: np.linalg.eigh already sorts them by eigenvalue.
+                    best_projected_vecs = aug_eigvecs[:, :num_restart_vecs] # Shape (L, k)
+
+                    # 4. Transform these k vectors back into the full H_dim space.
+                    # Q is (L, H_dim). We need to project it down.
+                    # (k, L) @ (L, H_dim) -> (k, H_dim)
+                    Q_restarted = np.dot(best_projected_vecs.T, Q) # Shape (k, H_dim)
+                    
+                    # 5. Add your new correction vectors to this restarted subspace
+                    Q = np.concatenate((Q_restarted, preconditioned_w), axis=0) # Shape (k + n_unconv, H_dim)
+
+                    # 6. Re-orthogonalize the new, smaller subspace
+                    c_gram_schmidt_orthogonalization(
+                       Q, Q.shape[0], H_dim
+                    )
+                    
+                    t_collapsing_end = time.time()
+                    print(
+                        "restart took", t_collapsing_end - t_collapsing_begin, "seconds"
+                    )
+                    
+                    # 7. IMPORTANT: You MUST tell your code to rebuild the projected Hessian
+                    # from this new Q, as it's not just an expansion.
+                    # Your existing logic handles this perfectly.
+                    self.collapse_subspace_check = True 
+                    collapse = True
+                    L_old = 0 # Tell the expansion logic the "old" size is 0 
+
+                else:
+                    t_expanding_begin = time.time()
+
+                    Q = np.concatenate((Q, preconditioned_w), axis=0)
+                    c_gram_schmidt_add(Q, L, H_dim, len(preconditioned_w))
+                    # gc.collect()
+                    t_expanding_end = time.time()
+                    print("expand took", t_expanding_end - t_expanding_begin, "seconds")
+                    collapse = False
+                    print("collapse subspace check", self.collapse_subspace_check)
+                    # print(Q)
+                end = timer()
+
+  
+
+
+                #end = timer()
+                #print("residual took", end - start)
+                #L_old = Q.shape[0]
+                #start = timer()
+                #if Lmax - L < len(unconverged_idx):
+                #    t_collapsing_begin = time.time()
+                #    # unconverged_w = np.zeros((len(unconverged_idx),H_dim))
+                #    Q = np.copy(full_eigvecs2)
+                #    Q = np.concatenate((Q, preconditioned_w), axis=0)
+                #    print(Q.shape)
+                #    # Q=np.column_stack(Qtup)
+                #    c_gram_schmidt_orthogonalization(
+                #       Q, nroots + len(unconverged_idx), H_dim
+                #    )
+                #    # gc.collect()
+                #    t_collapsing_end = time.time()
+                #    print(
+                #        "restart took", t_collapsing_end - t_collapsing_begin, "seconds"
+                #    )
+                #    self.collapse_subspace_check = True
+                #    collapse = True
+                #else:
+                #    t_expanding_begin = time.time()
+
+                #    Q = np.concatenate((Q, preconditioned_w), axis=0)
+                #    c_gram_schmidt_add(Q, L, H_dim, len(preconditioned_w))
+                #    # gc.collect()
+                #    t_expanding_end = time.time()
+                #    print("expand took", t_expanding_end - t_expanding_begin, "seconds")
+                #    collapse = False
+                #    print("collapse subspace check", self.collapse_subspace_check)
+                #    # print(Q)
+                #end = timer()
+
+        return Q
+
+    def check_root_0(self, aug_hessian_eigenvecs, aug_hessian_eigenvals, reduced_gradient, trust_radius):
+        epsilon_v = 1e-4
+        mu = aug_hessian_eigenvals
+        w = np.copy(aug_hessian_eigenvecs.T)
+        v1 = w[0, 0] / np.linalg.norm(w[:, 0])
+        u1 = w[1:, 0] / np.linalg.norm(w[:, 0])
+        aa1 = np.linalg.norm(reduced_gradient) * np.abs(v1)
+        bb1 = np.sqrt(1 - v1 * v1)
+        if (mu > -1e-8 and np.linalg.norm(
+            u1
+        ) < trust_radius * np.abs(v1)) or aa1 > epsilon_v * bb1:
+            print("use first root")
+            return True
+        else:
+            print("use second root")
+            return False
+
+
+
+    def Davidson_augmented_hessian_solve5(
+        self,
+        U,
+        A_tilde,
+        G,
+        G_blocks,
+        reduced_hessian_diagonal,
+        reduced_gradient,
+        alpha,
+        alpha_range,
+        trust_radius,
+        aug_hessian_eigenvecs,
+        aug_hessian_eigenvals,
+        guess_vector,
+        restart
+    ):
+
+        print("collapse subspace check", self.collapse_subspace_check)
+        threshold = 1e-7
+        count = 0
+        # start = timer()
+        print("restart", restart, "alpha", alpha)
+        for i in range(self.index_map_size):
+            if reduced_hessian_diagonal[i] <= 1e-14:
+                count += 1
+        if self.index_map_size > 600:
+            dim0 = 200
+        else:
+            dim0 = self.index_map_size // 2
+            #dim0 = self.index_map_size 
+        dim1 = max(count, dim0)
+        # print("eepp",reduced_hessian_diagonal)
+
+        dim2 = self.index_map_size + 1
+        H_dim = dim2
+        H_diag0 = copy.deepcopy(reduced_hessian_diagonal)
+        # print(H_diag)
+        H_diag = np.concatenate(([alpha], H_diag0))
+        #print("H_diag", H_diag)
+        indim = dim1 + 1
+        # maxdim = dim1 + 3
+        maxdim = min(H_dim, dim1 + min(dim1, 40))
+        self.project_augmented_hessian00 = np.zeros((maxdim, maxdim))
+        print("indim", indim, "maxdim", maxdim, "Hdim", H_dim)
+        H_pp = np.zeros((indim, indim))
+        unconverged_idx = []
+        if alpha_range > 1e-5:
+            nroots = 1
+            roots_to_check = [0]
+        else:
+            nroots = 2
+            roots_to_check = [0, 1]
+
+        nroots_target = 2
+        root_0_locked = False
+
+        # end   = timer()
+        # print("guess1 took", end - start)
+
+        # start = timer()
+        if restart == False:
+            # start1 = timer()
+            out = np.empty(self.index_map_size)
+            out.fill(1e14)
+            d = np.divide(
+                    np.absolute(reduced_gradient),
+                    reduced_hessian_diagonal,
+                    out,
+                    where=reduced_hessian_diagonal > 1e-14,
+                    )
+            self.idx_hessian = (-d).argsort()[:dim1]
+            #print(d)
+            #print("order", self.idx_hessian)
+            self.guess_hessian = np.zeros((dim1, dim1))
+            self.guess_gradient = np.zeros(dim1)
+            sym_A_tilde = A_tilde + A_tilde.T
+            # end1   = timer()
+            # print("building orbital guess1 took1", end1 - start1, flush = True)
+
+            # start1 = timer()
+            # for i in range(dim1):
+            #    index1 = idx[i]
+            #    r = self.index_map[index1][0]
+            #    k = self.index_map[index1][1]
+            #    guess_gradient[i] = reduced_gradient[index1]
+            #    for j in range(dim1):
+            #        index2 = idx[j]
+            #        s = self.index_map[index2][0]
+            #        l = self.index_map[index2][1]
+            #        #print(r,k,s,l)
+            #        #b = self.build_orbital_hessian_element(U, sym_A_tilde, G, r,k,s,l)
+            #        guess_hessian[i][j] = self.build_orbital_hessian_element(U, sym_A_tilde, G, r,k,s,l)
+            #        #print(b, hessian_tilde[r*self.n_occupied+k][s*self.n_occupied+l])
+
+            print("davidson iteration", 1)
+            self.build_orbital_hessian_guess(
+                    U,
+                    sym_A_tilde,
+                    reduced_gradient,
+                    G,
+                    self.guess_hessian,
+                    self.guess_gradient,
+                    dim1,
+                    self.idx_hessian,
+                    )
+            # end1   = timer()
+            # print("building orbital guess2 took", end1 - start1, flush = True)
+
+            ##try to build orbital guess from sigma vector but it is much slower
+            # start1 = timer()
+            # guess_gradient2 = np.zeros(dim1)
+            # hq = np.zeros((dim1, self.index_map_size))
+            # QQ = np.zeros((dim1, self.index_map_size))
+            # for i in range(dim1):
+            #    index1 = self.idx_hessian[i]
+            #    r = self.index_map[index1][0]
+            #    k = self.index_map[index1][1]
+            #    guess_gradient2[i] = reduced_gradient[index1]
+            #    QQ[i][index1] = 1.0
+
+            # self.orbital_sigma(U, A_tilde, G1, QQ, hq, dim1, 0)
+            # guess_hessian2 = np.dot(hq,QQ.T)
+            # print(np.allclose(self.guess_hessian, guess_hessian2, rtol=1e-14,atol=1e-14))
+            # print(np.allclose(self.guess_gradient, guess_gradient2, rtol=1e-14,atol=1e-14))
+            # end1   = timer()
+            # print("building orbital guess3 took", end1 - start1, flush = True)
+            ####print("\n")
+            ####print("\n")
+
+            # start1 = timer()
+            # mu, w = np.linalg.eigh(guess_hessian)
+            # end1   = timer()
+            # print("building orbital guess3 took", end1 - start1, flush = True)
+            # start1 = timer()
+            # print(mu)
+            aug_eigvecs = np.zeros((dim1 + 1, dim1 + 1))
+            Lmax = maxdim
+            L = indim
+
+            H_pp[0, 0] = alpha
+            H_pp[0, 1:] = self.guess_gradient
+            H_pp[1:, 0] = self.guess_gradient.T
+            H_pp[1:, 1:] = self.guess_hessian
+            self.H_pp = copy.deepcopy(H_pp)
+            self.H_qp = np.zeros((0, indim))
+            self.sigma_total = np.zeros((maxdim, H_dim))
+            Q = np.zeros((indim, H_dim))
+            projected_step = np.zeros(dim1)
+            theta = self.projection_step2(
+                self.guess_gradient, self.guess_hessian, aug_eigvecs, alpha, dim1 + 1
+            )
+
+            # start1 = timer()
+            for i in range(dim1 + 1):
+                for j in range(dim1):
+                    index1 = self.idx_hessian[j]
+                    Q[i][0] = aug_eigvecs[0][i]
+                    Q[i][index1 + 1] = aug_eigvecs[j + 1][i]
+            # print(Q)
+            # Q2 = np.zeros((indim, H_dim))
+            # Q2[0,0] = 1
+            # Q2[1:,1:] = QQ
+            ##print(QQ)
+            ##print(Q2)
+            # guess_gradient3 = self.guess_gradient.reshape(1,dim1)
+            # cccc = np.block([[alpha, guess_gradient3],[guess_gradient3.T, self.guess_hessian]])
+            # hq2 = np.zeros((indim, H_dim))
+            # self.orbital_sigma(U, A_tilde, G1, Q2, hq2, dim1+1, 1)
+            # hq2[:,1:] += np.einsum("p,q->qp", reduced_gradient, Q2[:,0])
+            # hq2[:,0] = alpha * Q2[:,0] + np.dot(Q2[:,1:], reduced_gradient)
+            # dddd = np.dot(hq2,Q2.T)
+            # print(np.allclose(cccc, dddd, rtol=1e-14,atol=1e-14))
+            
+            num_to_build = len(roots_to_check)
+            w_sigma = np.zeros((num_to_build, H_dim)) # Holds sigma vectors
+            # Build sigma only for active roots (e.g., [0] or [0, 1])
+            ##self.orbital_sigma(U, A_tilde, G1, Q, w, nroots, 1)
+            start = timer()
+            self.orbital_sigma3(U, A_tilde, G_blocks, Q[roots_to_check, :], w_sigma, num_to_build, 1)
+            end = timer()
+            print("build orbital sigma for w took", end - start)
+
+
+            w = np.zeros((nroots_target, H_dim)) # Full residual matrix
+            residual_norm = np.full(nroots_target, np.inf)
+            conv_status = [False] * nroots_target
+            
+            for i, root_idx in enumerate(roots_to_check):
+                vec = Q[root_idx, :]
+                w_vec = w_sigma[i, :] # Get the corresponding sigma
+                w_vec[1:] += reduced_gradient * vec[0]
+                w_vec[0] = alpha * vec[0] + np.dot(vec[1:], reduced_gradient)
+                
+                r_vec = w_vec - theta[root_idx] * vec
+                w[root_idx, :] = r_vec # Store the *residual*
+                residual_norm[root_idx] = np.linalg.norm(r_vec)
+                
+                if residual_norm[root_idx] < threshold:
+                    conv_status[root_idx] = True 
+
+
+
+
+
+
+
+
+
+            #w = np.zeros((nroots_target, H_dim))
+            ##self.orbital_sigma(U, A_tilde, G1, Q, w, nroots, 1)
+            #start = timer()
+            #self.orbital_sigma3(U, A_tilde, G_blocks, Q, w, nroots_target, 1)
+            ## self.build_sigma_reduced2(U, A_tilde, G, Q, w, nroots, 1)
+            ## c_build_sigma_reduced(U, A_tilde, self.index_map1, G1, Q, w, nroots, 1, self.nmo, self.index_map_size, self.n_occupied)
+            #w[:, 1:] += np.einsum("p,q->qp", reduced_gradient, Q[:nroots_target, 0])
+            #w[:, 0] = alpha * Q[:nroots_target, 0] + np.dot(Q[:nroots_target, 1:], reduced_gradient)
+            #end = timer()
+            #print("build orbital sigma for w took", end - start)
+
+
+            #residual_norm = np.zeros((nroots_target))
+            #convergence_check = np.zeros((nroots_target), dtype=str)
+            #conv = 0
+            #for j in range(nroots_target):
+            #    # Compute a residual vector "w" for each root we seek
+            #    # w[j, :] = np.dot(eigvecs[:, j].T, S) - theta[j] * np.dot(eigvecs[:, j].T, Q)
+            #    w[j, :] -= theta[j] * Q[j, :]
+            #    # residual_norm[j] = np.sqrt(np.dot(w[j, :], w[j, :].T))
+            #    residual_norm[j] = np.linalg.norm(w[j, :])
+            #    if residual_norm[j] < threshold:
+            #        conv += 1
+            #        convergence_check[j] = "Yes"
+            #    else:
+            #        convergence_check[j] = "No"
+            #
+            #is_root_0_conv = residual_norm[0] < threshold
+            #is_root_1_conv = residual_norm[1] < threshold
+            unconverged_idx = []
+            exit_solver = False
+
+            # --- NEW LSTRS CONVERGENCE CHECK (Initial Guess) ---
+            if nroots == 1:
+                if conv_status[0]: 
+                    # Root 0 is converged. Call the callback.
+                    if self.check_root_0(Q, theta[0], reduced_gradient, trust_radius):
+                        # === EASY CASE ===
+                        print("LSTRS (Initial Guess): Root 0 converged (Easy Case). Exiting.")
+                        aug_hessian_eigenvals[0] = theta[0]
+                        aug_hessian_eigenvecs[:, 0] = Q[0, :].T
+                        aug_hessian_eigenvals[1] = 1e10 # Fake root 1
+                        aug_hessian_eigenvecs[:, 1] = 0.0
+                        exit_solver = True
+                    else:
+                        # === HARD CASE ===
+                        print("LSTRS (Initial Guess): Root 0 converged (Hard Case). Checking Root 1.")
+                        root_0_locked = True
+                        roots_to_check = [1] # Now we only care about Root 1
+                        
+                        # We must check Root 1 *now*
+                        start1 = timer()
+                        w1_sigma = np.zeros((1, H_dim))
+                        self.orbital_sigma3(U, A_tilde, G_blocks, Q[1:2, :], w1_sigma, 1, 1)
+                        #w1_sigma[0, 1:] += np.einsum("p,q->qp", reduced_gradient, Q[1, 0])
+                        w1_sigma[0, 1:] += reduced_gradient * Q[1, 0] # Changed from einsum
+                        w1_sigma[0, 0] = alpha * Q[1, 0] + np.dot(Q[1, 1:], reduced_gradient)
+                        end1 = timer()
+                        print("build orbital sigma for w took", end1 - start1)
+
+           
+                        r_1 = w1_sigma[0, :] - theta[1] * Q[1, :]
+                        w[1, :] = r_1 # Store residual
+                        residual_norm[1] = np.linalg.norm(r_1)
+                        
+                        if residual_norm[1] < threshold:
+                            conv_status[1] = True
+                            print("LSTRS (Initial Guess): Root 1 also converged. Exiting.")
+                            exit_solver = True
+                            aug_hessian_eigenvals[0] = theta[0]
+                            aug_hessian_eigenvecs[:, 0] = Q[0, :].T
+                            aug_hessian_eigenvals[1] = theta[1]
+                            aug_hessian_eigenvecs[:, 1] = Q[1, :].T
+                        else:
+                            unconverged_idx = [1]
+
+                        #if is_root_1_conv:
+                        #    print("LSTRS (Initial Guess): Root 1 also converged. Exiting.")
+                        #    aug_hessian_eigenvals[0] = theta[0]
+                        #    aug_hessian_eigenvecs[:, 0] = Q[0, :].T
+                        #    aug_hessian_eigenvals[1] = theta[1]
+                        #    aug_hessian_eigenvecs[:, 1] = Q[1, :].T
+                        #    exit_solver = True
+                        #else:
+                        #    print("LSTRS (Initial Guess): Root 1 unconverged. Adding to search.")
+                        #    unconverged_idx = [1]
+                else:
+                    # Root 0 is not converged
+                    unconverged_idx = [0]
+            elif nroots == 2:
+                if conv_status[0] and conv_status[1]:
+                    # Both are converged
+                    print("LSTRS: Both roots converged. Exiting.")
+                    aug_hessian_eigenvals[:] = theta[:nroots_target]
+                    aug_hessian_eigenvecs[:, :] = full_eigvecs.T
+                    exit_solver = True
+                else:
+                    # Find whichever is not converged
+                    if not conv_status[0]: unconverged_idx.append(0)
+                    if not conv_status[1]: unconverged_idx.append(1)
+                    #if not is_root_0_conv:
+                    #    unconverged_idx.append(0)
+                    #if not is_root_1_conv:
+                    #    unconverged_idx.append(1)
+
+            print(unconverged_idx)
+            #print("root", "AH residual norm", "Eigenvalue", "Convergence")
+            #for j in range(nroots_target):
+            #    print(
+            #        j + 1, residual_norm[j], theta[j], convergence_check[j], flush=True
+            #    )
+            print("root", "AH residual norm", "Eigenvalue", "Convergence")
+            for j in range(nroots_target):
+                print(
+                    j + 1, residual_norm[j], theta[j], "Yes" if conv_status[j] else "No", flush=True
+                )
+
+            if exit_solver:
+                # self.projected_augmented_hessian = np.block([[0, self.guess_gradient], [self.guess_gradient.T, self.guess_hessian]])
+                self.projected_augmented_hessian = np.zeros((L, L))
+                self.projected_augmented_hessian[0, 0] = 0
+                self.projected_augmented_hessian[0, 1:] = self.guess_gradient
+                self.projected_augmented_hessian[1:, 0] = self.guess_gradient.T
+                self.projected_augmented_hessian[1:, 1:] = self.guess_hessian
+
+                print("converged from the first iteration!", flush=True)
+
+            # end1   = timer()
+            # print("building orbital guess7 took", end1 - start1, flush = True)
+            QQ = np.zeros((dim1, self.index_map_size))
+            for i in range(dim1):
+               index1 = self.idx_hessian[i]
+               r = self.index_map[index1][0]
+               k = self.index_map[index1][1]
+               #guess_gradient2[i] = reduced_gradient[index1]
+               QQ[i][index1] = 1.0
+            Q = np.zeros((indim, H_dim))
+            Q[0,0] = 1
+            Q[1:,1:] = QQ
+
+
+            # start1 = timer()
+            # preconditioned_w = np.zeros((len(unconverged_idx),H_dim))
+            if len(unconverged_idx) > 0:
+                preconditioned_w = np.zeros((len(unconverged_idx), H_dim))
+                preconditioned_w = theta[unconverged_idx].reshape(
+                    len(unconverged_idx), 1
+                ) - H_diag.reshape(1, H_dim)
+                # print(np.shape(preconditioned_w))
+                preconditioned_w = np.divide(
+                    w[unconverged_idx],
+                    preconditioned_w,
+                    out=np.zeros_like(w[unconverged_idx]),
+                    where=preconditioned_w != 0,
+                )
+
+                Q = np.concatenate((Q, preconditioned_w), axis=0)
+                c_gram_schmidt_add(Q, L, H_dim, len(preconditioned_w))
+                L = Q.shape[0]
+            # end1   = timer()
+            # print("building orbital guess8 took", end1 - start1, flush = True)
+            # QQ = np.einsum("pq,qr->pr", Q, Q.T)
+            # print("check orthogonality",QQ)
+            # print("current dimension", L, flush = True)
+
+        else:
+            print("restart from previous search space")
+            # if indim == maxdim:
+            #    maxdim +=1
+            print(H_dim, indim)
+            Q = copy.deepcopy(guess_vector)
+            Lmax = maxdim
+            L = Q.shape[0]
+            print("current dim", L)
+            if self.collapse_subspace_check == False:
+                if L == indim:
+                    self.projected_augmented_hessian[0, 0] = alpha
+                else:
+                    start1 = timer()
+                    b_dim = L - indim
+                    self.projected_augmented_hessian[0, 0] = alpha
+                    H_qp = np.zeros((b_dim, indim))
+                    Sq = np.zeros((b_dim, H_dim))
+                    Sq[:, 0] += alpha * Q[indim:, 0]
+                    self.sigma_total[indim:L,0] += Sq[:, 0]
+                    for i in range(b_dim):
+                        self.projected_augmented_hessian[indim + i][0] += Sq[i][0]
+                        self.projected_augmented_hessian[0][indim + i] += Sq[i][0]
+                        self.H_qp[i][0] += Sq[i][0]
+                        # for j in range(dim1):
+                        #    #index1 = self.idx_hessian[j]
+                        #    #H_qp[i][0] = Sq[i][0]
+                        #    #H_qp[i][j+1] = Sq[i][index1+1]
+                    self.H_pp[0, 0] = alpha
+                    H_qq = np.dot(Sq, Q[indim:, :].T)
+                    self.projected_augmented_hessian[indim:, indim:] += H_qq
+
+                    end1 = timer()
+                    print("restart took", end1 - start1)
+            else:
+                L_new = Q.shape[0]
+                Sq = np.zeros((L_new, H_dim))
+                Sq[:, 0] += alpha * Q[:, 0]
+                self.sigma_total[:L_new,0] += Sq[:,0]
+                self.projected_augmented_hessian = np.dot(self.sigma_total[:L_new,:], Q[:L_new, :].T)
+
+        if (len(unconverged_idx) > 0 and restart == False) or restart == True:
+            num_iter = 10000
+            # num_iter = 20
+            L_old = 0 
+            collapse = True
+            for davidson_iteration in range(1, num_iter):
+                if davidson_iteration == num_iter - 1:
+                    print(
+                        "maximum iteration reaches but no converged roots have been found"
+                    )
+                    exit()
+                print("\n")
+                L_new = Q.shape[0]
+                L = Q.shape[0]
+                projected_step = np.zeros(L - 1)
+                full_eigvecs = np.zeros((nroots, H_dim))
+                full_eigvecs2 = np.zeros((nroots, H_dim))
+                projected_augmented_hessian = np.zeros((1, 1))
+                if restart == True:
+                    print("davidson iteration", davidson_iteration)
+                else:
+                    print("davidson iteration", davidson_iteration + 1)
+                if restart == True and davidson_iteration == 1:
+                    projected_augmented_hessian = self.projected_augmented_hessian
+                else:
+                    if self.collapse_subspace_check == False:   
+                        ######start = timer()
+                        ######b_dim = L - indim
+                        ######Sq0 = np.zeros((b_dim, H_dim))
+                        ####### self.build_sigma_reduced2(U, A_tilde, G, Q[indim:,:], Sq0, b_dim, 1)
+                        ####### c_build_sigma_reduced(U, A_tilde, self.index_map1, G1, Q[indim:,:], Sq0, b_dim, 1, self.nmo, self.index_map_size, self.n_occupied)
+                        ######self.orbital_sigma(U, A_tilde, G1, Q[indim:, :], Sq0, b_dim, 1)
+                        ######gradient1 = np.einsum("p,q->qp", reduced_gradient, Q[indim:, 0])
+                        ######gradient2 = np.dot(Q[indim:, 1:], reduced_gradient)
+                        ######end = timer()
+                        ######print("build orbital sigma for Q space took", end - start)
+                        ####### start = timer()
+
+                        ######H_pp[0, 0] = alpha
+                        ######H_pp[0, 1:] = self.guess_gradient
+                        ######H_pp[1:, 0] = self.guess_gradient.T
+                        ######H_pp[1:, 1:] = self.guess_hessian
+                        ######H_qp = np.zeros((b_dim, indim))
+                        ######Sq = copy.deepcopy(Sq0)
+                        ####### Sq[:,1:] += alpha * np.einsum("p,q->qp", reduced_gradient, Q[indim:,0])
+                        ######Sq[:, 1:] += gradient1
+                        ####### Sq[:,0] = alpha * np.einsum("p,rp->r", reduced_gradient, Q[indim:,1:] )
+                        ######Sq[:, 0] = alpha * Q[indim:, 0] + gradient2
+                        ######for i in range(b_dim):
+                        ######    for j in range(dim1):
+                        ######        index1 = self.idx_hessian[j]
+                        ######        H_qp[i][0] = Sq[i][0]
+                        ######        H_qp[i][j + 1] = Sq[i][index1 + 1]
+
+                        ######H_qq = np.dot(Sq, Q[indim:, :].T)
+                        ######H1 = np.concatenate((H_pp, H_qp), axis=0)
+                        ######H2 = np.concatenate((H_qp.T, H_qq), axis=0)
+                        ######projected_augmented_hessian = np.concatenate((H1, H2), axis=1)
+                        ######theta2, aug_eigvecs2 = np.linalg.eigh(projected_augmented_hessian)
+                        ######print("theta 2", theta2)
+
+                        start = timer()
+                        c_dim = L_new - L_old
+                        Sq1 = np.zeros((c_dim, H_dim))
+                        # self.build_sigma_reduced2(U, A_tilde, G, Q[indim:,:], Sq0, b_dim, 1)
+                        # c_build_sigma_reduced(U, A_tilde, self.index_map1, G1, Q[indim:,:], Sq0, b_dim, 1, self.nmo, self.index_map_size, self.n_occupied)
+                        #self.orbital_sigma(U, A_tilde, G1,  Q[L_old:, :], Sq1, c_dim, 1)
+                        
+                        self.orbital_sigma3(U, A_tilde, G_blocks,  Q[L_old:, :], Sq1, c_dim, 1)
+                        
+                        gradient1 = np.einsum("p,q->qp", reduced_gradient, Q[L_old:, 0])
+                        gradient2 = np.dot(Q[L_old:, 1:], reduced_gradient)
+                        print("c dim, L old, L new", c_dim, L_old, L_new) 
+                        end = timer()
+                        print("build orbital sigma for Q space took", end - start)
+                        Sq = copy.deepcopy(Sq1)
+                        # Sq[:,1:] += alpha * np.einsum("p,q->qp", reduced_gradient, Q[indim:,0])
+                        Sq[:, 1:] += gradient1
+                        # Sq[:,0] = alpha * np.einsum("p,rp->r", reduced_gradient, Q[indim:,1:] )
+                        Sq[:, 0] = alpha * Q[L_old:, 0] + gradient2
+                        self.sigma_total[L_old:L_new,:] = np.copy(Sq)
+                        H_qp = np.zeros((c_dim, indim))
+                        for i in range(c_dim):
+                            for j in range(dim1):
+                                index1 = self.idx_hessian[j]
+                                H_qp[i][0] = Sq[i][0]
+                                H_qp[i][j + 1] = Sq[i][index1 + 1]
+                        self.H_qp = np.vstack([self.H_qp, H_qp])
+                        H_qq = np.dot(self.sigma_total[indim:L_new,:], Q[indim:, :].T)
+                        print("dimension of sigma", np.shape(self.sigma_total))
+                        H1 = np.concatenate((self.H_pp, self.H_qp), axis=0)
+                        H2 = np.concatenate((self.H_qp.T, H_qq), axis=0)
+                        self.projected_augmented_hessian00 = np.concatenate((H1, H2), axis=1)
+                        projected_augmented_hessian = np.concatenate((H1, H2), axis=1)
+                    else:   
+                        print("collapse", collapse)
+                        if collapse == False:
+                            L_new = Q.shape[0]
+                            c_dim = L_new - L_old
+                            Sq1 = np.zeros((c_dim, H_dim))
+                            # self.build_sigma_reduced2(U, A_tilde, G, Q[indim:,:], Sq0, b_dim, 1)
+                            # c_build_sigma_reduced(U, A_tilde, self.index_map1, G1, Q[indim:,:], Sq0, b_dim, 1, self.nmo, self.index_map_size, self.n_occupied)
+                            start = timer()
+                            #self.orbital_sigma(U, A_tilde, G1,  Q[L_old:, :], Sq1, c_dim, 1)
+                            self.orbital_sigma3(U, A_tilde, G_blocks,  Q[L_old:, :], Sq1, c_dim, 1)
+                            end = timer()
+                            print("build orbital sigma for Q space took", end - start)
+
+                            gradient1 = np.einsum("p,q->qp", reduced_gradient, Q[L_old:, 0])
+                            gradient2 = np.dot(Q[L_old:, 1:], reduced_gradient)
+                            print("c dim, L old, L new", c_dim, L_old, L_new) 
+                            Sq = copy.deepcopy(Sq1)
+                            # Sq[:,1:] += alpha * np.einsum("p,q->qp", reduced_gradient, Q[indim:,0])
+                            Sq[:, 1:] += gradient1
+                            # Sq[:,0] = alpha * np.einsum("p,rp->r", reduced_gradient, Q[indim:,1:] )
+                            Sq[:, 0] = alpha * Q[L_old:, 0] + gradient2
+                            self.sigma_total[L_old:L_new,:] = np.copy(Sq)
+                            projected_augmented_hessian = np.dot(self.sigma_total[:L_new,:], Q[:L_new, :].T)
+                            L_old = Q.shape[0]
+                        else:
+                            L_new = Q.shape[0]
+                            self.sigma_total[:,:] = 0
+                            c_dim = L_new
+                            Sq1 = np.zeros((c_dim, H_dim))
+                            start = timer()
+                            #self.orbital_sigma(U, A_tilde, G1,  Q, Sq1, c_dim, 1)
+                            self.orbital_sigma3(U, A_tilde, G_blocks,  Q, Sq1, c_dim, 1)
+                            end = timer()
+                            print("build orbital sigma for Q space took", end - start)
+
+                            gradient1 = np.einsum("p,q->qp", reduced_gradient, Q[:, 0])
+                            gradient2 = np.dot(Q[:, 1:], reduced_gradient)
+                            print("c dim, L old, L new", c_dim, L_old, L_new) 
+                            Sq = copy.deepcopy(Sq1)
+                            # Sq[:,1:] += alpha * np.einsum("p,q->qp", reduced_gradient, Q[indim:,0])
+                            Sq[:, 1:] += gradient1
+                            # Sq[:,0] = alpha * np.einsum("p,rp->r", reduced_gradient, Q[indim:,1:] )
+                            Sq[:, 0] = alpha * Q[:, 0] + gradient2
+                            self.sigma_total[:L_new,:] = np.copy(Sq)
+                            projected_augmented_hessian = np.dot(self.sigma_total[:L_new,:], Q[:L_new, :].T)
+
+                theta, aug_eigvecs = np.linalg.eigh(projected_augmented_hessian)
+                #print("zopp",theta)
+                # print(np.shape(aug_eigvecs))
+                # print(aug_eigvecs.T[0,:])
+                full_eigvecs = np.dot(aug_eigvecs.T[:nroots_target, :], Q[:,])
+                full_eigvecs2 = copy.deepcopy(full_eigvecs)
+                # print("q component")
+                # print(full_eigvecs[0,:])
+
+                #for i in range(nroots):
+                #    for j in range(dim1):
+                #        index1 = self.idx_hessian[j]
+                #        full_eigvecs[i][0] = aug_eigvecs[0][i]
+                #        # full_eigvecs2[i][0] = aug_eigvecs[0][i]
+                #        full_eigvecs[i][index1 + 1] = aug_eigvecs[j + 1][i]
+                #        # full_eigvecs2[i][index1+1] = aug_eigvecs[j+1][i]
+                ## print("p component")
+                ## print(full_eigvecs2[0,:])
+                  
+
+
+                start = timer()
+                roots_to_check = []
+                if nroots == 1 and not root_0_locked:
+                    roots_to_check = [0]
+                elif nroots == 1 and root_0_locked:
+                    roots_to_check = [1]
+                elif nroots == 2:
+                    roots_to_check = [0, 1]
+                
+                num_to_build = len(roots_to_check)
+                w = np.zeros((nroots_target, H_dim)) # Full residual matrix
+                residual_norm = np.full(nroots_target, np.inf)
+                conv_status = [False] * nroots_target
+                
+                if num_to_build > 0:
+                    w_sigma = np.zeros((num_to_build, H_dim)) # For sigma vectors
+                    
+                    # --- CORE BUG FIX ---
+                    if self.collapse_subspace_check == True:
+                        # sigma_total *already* has gradient/alpha terms from the rebuild
+                        w_sigma = np.dot(aug_eigvecs.T[roots_to_check, :], self.sigma_total[:L_new,:])
+                    else:
+                        # We must build sigma from scratch and add gradient/alpha terms
+                        self.orbital_sigma3(U, A_tilde, G_blocks, full_eigvecs[roots_to_check, :], w_sigma, num_to_build, 1)
+                        for i, root_idx in enumerate(roots_to_check):
+                            vec = full_eigvecs[root_idx, :]
+                            w_vec = w_sigma[i, :] # Get the corresponding sigma
+                            w_vec[1:] += reduced_gradient * vec[0] 
+                            w_vec[0] = alpha * vec[0] + np.dot(vec[1:], reduced_gradient)
+                    # --- END FIX ---
+
+                    # Now, calculate residuals using the correct w_sigma
+                    for i, root_idx in enumerate(roots_to_check):
+                        vec = full_eigvecs[root_idx, :]
+                        w_vec = w_sigma[i, :] # This is (H*y + G*y)
+                        r_vec = w_vec - theta[root_idx] * vec
+                        w[root_idx, :] = r_vec # Store the *residual*
+                        residual_norm[root_idx] = np.linalg.norm(r_vec)
+                        
+                        if residual_norm[root_idx] < threshold:
+                            conv_status[root_idx] = True
+
+                if root_0_locked:
+                    conv_status[0] = True # It's locked, so it's "converged"
+ 
+               
+
+                #start = timer()
+                #w = np.zeros((nroots_target, H_dim))
+                #if self.collapse_subspace_check == True:   
+                #    w = np.dot(aug_eigvecs.T[:nroots_target, :], self.sigma_total[:L_new,:])
+                #else:
+                #    # self.build_sigma_reduced2(U, A_tilde, G, full_eigvecs, w, nroots, 1)
+                #    #self.orbital_sigma(U, A_tilde, G1, full_eigvecs, w, nroots, 1)
+                #    start = timer()
+                #    self.orbital_sigma3(U, A_tilde, G_blocks, full_eigvecs, w, nroots_target, 1)
+                #    # c_build_sigma_reduced(U, A_tilde, self.index_map1, G1, full_eigvecs, w, nroots, 1, self.nmo, self.index_map_size, self.n_occupied)
+                #    w[:, 1:] += np.einsum("p,q->qp", reduced_gradient, full_eigvecs[:, 0])
+                #    w[:, 0] = alpha * full_eigvecs[:, 0] + np.dot(
+                #        full_eigvecs[:, 1:], reduced_gradient
+                #    )
+                #    end = timer()
+                #    print("build orbital sigma for w took", end - start)
+
+                #residual_norm = np.zeros((nroots_target))
+                #convergence_check = np.zeros((nroots_target), dtype=str)
+                #conv = 0
+                ## print(np.shape(Q),np.shape(S), np.shape(aug_eigvecs) )
+                #for j in range(nroots_target):
+                #    # Compute a residual vector "w" for each root we seek
+                #    w[j, :] -= theta[j] * full_eigvecs[j, :]
+                #    # w[j, :] = np.dot(aug_eigvecs[:, j].T, S) - theta[j] * np.dot(aug_eigvecs[:, j].T, Q)
+                #    # residual_norm[j] = np.sqrt(np.dot(w[j, :], w[j, :].T))
+                #    residual_norm[j] = np.linalg.norm(w[j, :])
+                #    if residual_norm[j] < threshold:
+                #        conv += 1
+                #        convergence_check[j] = "Yes"
+                #    else:
+                #        convergence_check[j] = "No"
+                #is_root_0_conv = residual_norm[0] < threshold
+                #is_root_1_conv = residual_norm[1] < threshold
+
+                unconverged_idx = []
+                exit_solver = False
+                # --- NEW LSTRS CONVERGENCE CHECK (Main Loop) ---
+                if nroots == 1:
+                    if conv_status[0] and not root_0_locked: # Root 0 *just* converged
+                    #if is_root_0_conv:
+                        if self.check_root_0(full_eigvecs, theta[0], reduced_gradient, trust_radius):
+                            # === EASY CASE ===
+                            print("LSTRS: Root 0 converged (Easy Case). Exiting.")
+                            aug_hessian_eigenvals[0] = theta[0]
+                            aug_hessian_eigenvecs[:, 0] = full_eigvecs[0, :].T
+                            aug_hessian_eigenvals[1] = 1e10 # Fake root 1
+                            aug_hessian_eigenvecs[:, 1] = 0.0
+                            exit_solver = True
+                        else:
+                            # === HARD CASE ===
+                            root_0_locked = True
+                            print("LSTRS: Root 0 converged (Hard Case). Checking Root 1.")
+                            # *Now* we must check Root 1 for the *first time*
+                            start1 = timer()
+                            w1_sigma = np.zeros((1, H_dim))
+                            # --- CORE BUG FIX (Hard Case Check) ---
+                            if self.collapse_subspace_check == True:
+                                # sigma_total *already* has gradient/alpha terms
+                                w1_sigma = np.dot(aug_eigvecs.T[1:2, :], self.sigma_total[:L_new,:])
+                            else:
+                                self.orbital_sigma3(U, A_tilde, G_blocks, full_eigvecs[1:2, :], w1_sigma, 1, 1) # <-- SLICE FIX
+                                w1_sigma[0, 1:] += reduced_gradient * full_eigvecs[1, 0] # Changed from einsum
+                                w1_sigma[0, 0] = alpha * full_eigvecs[1, 0] + np.dot(full_eigvecs[1, 1:], reduced_gradient)
+                            # --- END FIX ---
+                            
+                            r_1 = w1_sigma[0, :] - theta[1] * full_eigvecs[1, :]
+                            w[1, :] = r_1 # Store residual
+                            residual_norm[1] = np.linalg.norm(r_1)
+                            
+                            #if is_root_1_conv:
+                            if residual_norm[1] < threshold:
+                                conv_status[1] = True
+                                print("LSTRS: Root 1 also converged. Exiting.")
+                                aug_hessian_eigenvals[:] = theta[:nroots_target]
+                                aug_hessian_eigenvecs[:, :] = full_eigvecs.T
+                                exit_solver = True
+                            else:
+                                print("LSTRS: Root 1 unconverged. Adding to search.")
+                                unconverged_idx = [1]
+                    elif not conv_status[0]: # Root 0 still unconverged
+                        unconverged_idx = [0]    
+                    elif root_0_locked: # Root 0 is locked, check Root 1
+                        if not conv_status[1]:
+                            unconverged_idx = [1]
+                    #else:
+                    #    # Root 0 is not converged
+                    #    unconverged_idx = [0]
+
+                elif nroots == 2:
+                    #if is_root_0_conv and is_root_1_conv:
+                    #    # Both are converged
+                    #    print("LSTRS: Both roots converged. Exiting.")
+                    #    aug_hessian_eigenvals[:] = theta[:nroots_target]
+                    #    aug_hessian_eigenvecs[:, :] = full_eigvecs.T
+                    #    exit_solver = True
+                    #else:
+                    # Find whichever is not converged
+                    if not conv_status[0]: unconverged_idx.append(0)
+                    if not conv_status[1]: unconverged_idx.append(1)
+                    #if not is_root_0_conv:
+                    #    unconverged_idx.append(0)
+                    #if not is_root_1_conv:
+                    #    unconverged_idx.append(1)
+                # Check for final convergence
+                if (nroots == 2 and not unconverged_idx) or \
+                   (nroots == 1 and root_0_locked and not unconverged_idx):
+                    print("LSTRS: All required roots converged.")
+                    exit_solver = True
+                    aug_hessian_eigenvals[:] = theta[:nroots_target]
+                    aug_hessian_eigenvecs[:, :] = full_eigvecs.T
+        
+                # --- END NEW LOGIC ---
+                #print(unconverged_idx)
+                #print("root", "AH residual norm", "Eigenvalue", "Convergence")
+                #for j in range(nroots_target):
+                #    print(
+                #        j + 1,
+                #        residual_norm[j],
+                #        theta[j],
+                #        convergence_check[j],
+                #        flush=True,
+                #    )
+                print(unconverged_idx)
+                print("root", "AH residual norm", "Eigenvalue", "Convergence")
+                for j in range(nroots_target):
+                    print(
+                        j + 1, residual_norm[j], theta[j], "Yes" if conv_status[j] else "No", flush=True
+                    )
+                 
+
+
+
+                if exit_solver:
+                    aug_hessian_eigenvecs[:, :] = full_eigvecs.T
+                    aug_hessian_eigenvals[:] = theta[:nroots_target]
+                    if self.collapse_subspace_check == False:
+                        Q1 = full_eigvecs
+                        start1 = timer()
+                        b_dim = L - indim
+                        print("b_dim", b_dim)
+
+                        self.projected_augmented_hessian = copy.deepcopy(
+                            projected_augmented_hessian
+                        )
+                        self.projected_augmented_hessian[0, 0] = alpha
+                        if b_dim > 0:
+                            # H_qp = np.zeros((b_dim, indim))
+                            Sq = np.zeros((b_dim, H_dim))
+                            Sq[:, 0] = alpha * Q[indim:, 0]
+                            self.sigma_total[indim:L,0] -= Sq[:, 0]
+                            for i in range(b_dim):
+                                self.projected_augmented_hessian[indim + i][0] -= Sq[i][0]
+                                self.projected_augmented_hessian[0][indim + i] -= Sq[i][0]
+                                self.H_qp[i][0] -= Sq[i][0]
+                                # for j in range(dim1):
+                                #    #index1 = self.idx_hessian[j]
+                                #    #H_qp[i][0] = Sq[i][0]
+                                #    #H_qp[i][j+1] = Sq[i][index1+1]
+
+                            H_qq = np.dot(Sq, Q[indim:, :].T)
+                            self.projected_augmented_hessian[indim:, indim:] -= H_qq
+
+                        end1 = timer()
+                        print("initialize took", end1 - start1)
+                    else:
+                        Sq = np.zeros((L_new, H_dim))
+                        Sq[:, 0] = alpha * Q[:, 0]
+                        self.sigma_total[:L_new,0] -= Sq[:, 0]
+
+                    print("converged!", flush=True)
+                    break
+                
+                # --- NEW HYBRID LOGIC ---
+                preconditioned_w = np.zeros((len(unconverged_idx), H_dim))
+                converged_indices = [i for i in range(nroots) if i not in unconverged_idx]
+                
+                if not converged_indices:
+                    # preconditioned_w = np.zeros((len(unconverged_idx),H_dim))
+                    if len(unconverged_idx) > 0:
+                        preconditioned_w = np.zeros((len(unconverged_idx), H_dim))
+                        preconditioned_w = theta[unconverged_idx].reshape(
+                            len(unconverged_idx), 1
+                        ) - H_diag.reshape(1, H_dim)
+                        # print(np.shape(preconditioned_w))
+                        preconditioned_w = np.divide(
+                            w[unconverged_idx],
+                            preconditioned_w,
+                            out=np.zeros_like(w[unconverged_idx]),
+                            where=preconditioned_w != 0,
+                        )
+
+
+                    
+                
+                else:
+                    # === PHASE 2: At least one root is converged ===
+                    # NOW use the robust (but tuned-down) Jacobi-Davidson solver
+                    # to prevent the 70-iteration stall for Root 1.
+                    
+                    Q_conv = full_eigvecs2[converged_indices, :] 
+                
+                    for i in range(len(unconverged_idx)):
+                        idx = unconverged_idx[i]
+                        current_residual = w[idx, :]
+                        current_theta = theta[idx]
+                        P_diag = H_diag - current_theta
+                        # ... (handle P_diag safety) ...
+                        
+                        # Call the inner solver, but make sure its
+                        # max_inner_iter is set to a low number, like 3 or 5.
+                        v_corr = self.inner_solve_pcg(
+                            current_residual,
+                            current_theta,
+                            Q_conv,
+                            P_diag,
+                            U, A_tilde, G_blocks, reduced_gradient, alpha # Need to pass these through
+                        )
+                        
+                        preconditioned_w[i, :] = v_corr
+                # --- END HYBRID LOGIC ---
+
+
+                ## --- NEW JACOBI-DAVIDSON LOGIC ---
+                #preconditioned_w = np.zeros((len(unconverged_idx), H_dim))
+                #converged_indices = [i for i in range(nroots) if i not in unconverged_idx]
+                #Q_conv = full_eigvecs2[converged_indices, :] # Converged eigenvectors (N_conv, H_dim)
+                #
+                #for i in range(len(unconverged_idx)):
+                #    idx = unconverged_idx[i] # The root we are solving for
+                #    
+                #    # Get inputs for the inner solver
+                #    current_residual = w[idx, :]
+                #    current_theta = theta[idx]
+                #    
+                #    # This is your *diagonal* preconditioner. We still use it
+                #    # to precondition the *inner* solver.
+                #    P_diag = H_diag - current_theta
+                #    # (Handle divide by zero, e.g., set P_diag[P_diag == 0] = 1.0)
+                #    
+                #    # Call the inner solver to find the correction vector
+                #    v_corr = self.inner_solve_pcg(
+                #        current_residual,
+                #        current_theta,
+                #        Q_conv,
+                #        P_diag,
+                #        U, A_tilde, G1, reduced_gradient, alpha # Need to pass these through
+                #    )
+                #    
+                #    preconditioned_w[i, :] = v_corr        
+
+
+                
+                
+                ## preconditioned_w = np.zeros((len(unconverged_idx),H_dim))
+                #if len(unconverged_idx) > 0:
+                #    preconditioned_w = np.zeros((len(unconverged_idx), H_dim))
+                #    preconditioned_w = theta[unconverged_idx].reshape(
+                #        len(unconverged_idx), 1
+                #    ) - H_diag.reshape(1, H_dim)
+                #    # print(np.shape(preconditioned_w))
+                #    preconditioned_w = np.divide(
+                #        w[unconverged_idx],
+                #        preconditioned_w,
+                #        out=np.zeros_like(w[unconverged_idx]),
+                #        where=preconditioned_w != 0,
+                #    )
+
+                    
+               
+                end = timer()
+                print("residual took", end - start)
+                L_old = Q.shape[0]
+                start = timer()
+
+                if Lmax - L < len(unconverged_idx):
+                    num_restart_vecs = 40 
+                    print(f"Subspace limit reached. Performing soft restart from {L} to {num_restart_vecs} vectors.")
+                    t_collapsing_begin = time.time()
+                    
+                    # 1. Choose how many vectors to keep.
+                    # This is a tunable parameter. Let's say 40.
+
+                    # 2. 'aug_eigvecs' holds the (L, L) eigenvectors of the projected Hessian.
+                    # 'theta' holds the eigenvalues. You already have these from np.linalg.eigh.
+                    
+                    # 3. Get the k "best" projected eigenvectors (the first k columns)
+                    # Note: np.linalg.eigh already sorts them by eigenvalue.
+                    best_projected_vecs = aug_eigvecs[:, :num_restart_vecs] # Shape (L, k)
+
+                    # 4. Transform these k vectors back into the full H_dim space.
+                    # Q is (L, H_dim). We need to project it down.
+                    # (k, L) @ (L, H_dim) -> (k, H_dim)
+                    Q_restarted = np.dot(best_projected_vecs.T, Q) # Shape (k, H_dim)
+                    
+                    # 5. Add your new correction vectors to this restarted subspace
+                    Q = np.concatenate((Q_restarted, preconditioned_w), axis=0) # Shape (k + n_unconv, H_dim)
+
+                    # 6. Re-orthogonalize the new, smaller subspace
+                    c_gram_schmidt_orthogonalization(
+                       Q, Q.shape[0], H_dim
+                    )
+                    
+                    t_collapsing_end = time.time()
+                    print(
+                        "restart took", t_collapsing_end - t_collapsing_begin, "seconds"
+                    )
+                    
+                    # 7. IMPORTANT: You MUST tell your code to rebuild the projected Hessian
+                    # from this new Q, as it's not just an expansion.
+                    # Your existing logic handles this perfectly.
+                    self.collapse_subspace_check = True 
+                    collapse = True
+                    L_old = 0 # Tell the expansion logic the "old" size is 0 
+
+                else:
+                    t_expanding_begin = time.time()
+
+                    Q = np.concatenate((Q, preconditioned_w), axis=0)
+                    c_gram_schmidt_add(Q, L, H_dim, len(preconditioned_w))
+                    # gc.collect()
+                    t_expanding_end = time.time()
+                    print("expand took", t_expanding_end - t_expanding_begin, "seconds")
+                    collapse = False
+                    print("collapse subspace check", self.collapse_subspace_check)
+                    # print(Q)
+                end = timer()
+
+  
+
+
+                #end = timer()
+                #print("residual took", end - start)
+                #L_old = Q.shape[0]
+                #start = timer()
+                #if Lmax - L < len(unconverged_idx):
+                #    t_collapsing_begin = time.time()
+                #    # unconverged_w = np.zeros((len(unconverged_idx),H_dim))
+                #    Q = np.copy(full_eigvecs2)
+                #    Q = np.concatenate((Q, preconditioned_w), axis=0)
+                #    print(Q.shape)
+                #    # Q=np.column_stack(Qtup)
+                #    c_gram_schmidt_orthogonalization(
+                #       Q, nroots + len(unconverged_idx), H_dim
+                #    )
+                #    # gc.collect()
+                #    t_collapsing_end = time.time()
+                #    print(
+                #        "restart took", t_collapsing_end - t_collapsing_begin, "seconds"
+                #    )
+                #    self.collapse_subspace_check = True
+                #    collapse = True
+                #else:
+                #    t_expanding_begin = time.time()
+
+                #    Q = np.concatenate((Q, preconditioned_w), axis=0)
+                #    c_gram_schmidt_add(Q, L, H_dim, len(preconditioned_w))
+                #    # gc.collect()
+                #    t_expanding_end = time.time()
+                #    print("expand took", t_expanding_end - t_expanding_begin, "seconds")
+                #    collapse = False
+                #    print("collapse subspace check", self.collapse_subspace_check)
+                #    # print(Q)
+                #end = timer()
+
+        return Q
+
+
+    def Davidson_augmented_hessian_solve6(
+        self,
+        U,
+        A_tilde,
+        G,
+        G_blocks,
+        reduced_hessian_diagonal,
+        reduced_gradient,
+        alpha,
+        alpha_range,
+        trust_radius,
+        aug_hessian_eigenvecs,
+        aug_hessian_eigenvals,
+        guess_vector,
+        restart
+    ):
+        # Analyze problem structure
+        n_negative = np.sum(reduced_hessian_diagonal < 0)
+        min_diag = np.min(reduced_hessian_diagonal)
+        max_diag = np.max(reduced_hessian_diagonal)
+        grad_norm = np.linalg.norm(reduced_gradient)
+        
+        print(f"Problem structure:")
+        print(f"  Negative curvature directions: {n_negative}/{self.index_map_size}")
+        print(f"  H_diag range: [{min_diag:.2e}, {max_diag:.2e}]")
+        print(f"  ||gradient||: {grad_norm:.2e}")
+        print(f"  Condition estimate: {max_diag/abs(min_diag) if min_diag != 0 else 'inf'}") 
+        print("collapse subspace check", self.collapse_subspace_check)
+        threshold = 1e-7
+        count = 0
+        # start = timer()
+        print("restart", restart, "alpha", alpha)
+        for i in range(self.index_map_size):
+            if reduced_hessian_diagonal[i] <= 1e-14:
+                count += 1
+        if self.index_map_size > 600:
+            dim0 = 200
+        else:
+            dim0 = self.index_map_size // 2
+            #dim0 = self.index_map_size 
+        dim1 = max(count, dim0)
+        # print("eepp",reduced_hessian_diagonal)
+
+        dim2 = self.index_map_size + 1
+        H_dim = dim2
+        H_diag0 = copy.deepcopy(reduced_hessian_diagonal)
+        # print(H_diag)
+        H_diag = np.concatenate(([alpha], H_diag0))
+        #print("H_diag", H_diag)
+        indim = dim1 + 1
+        # maxdim = dim1 + 3
+        maxdim = min(H_dim, dim1 + min(dim1, 40))
+        self.project_augmented_hessian00 = np.zeros((maxdim, maxdim))
+        print("indim", indim, "maxdim", maxdim, "Hdim", H_dim)
+        H_pp = np.zeros((indim, indim))
+        unconverged_idx = []
+        if alpha_range > 1e-5:
+            nroots = 1
+            roots_to_check = [0]
+        else:
+            nroots = 2
+            roots_to_check = [0, 1]
+
+        nroots_target = 2
+        root_0_locked = False
+
+        # end   = timer()
+        # print("guess1 took", end - start)
+
+        # start = timer()
+        if restart == False:
+            # start1 = timer()
+            out = np.empty(self.index_map_size)
+            out.fill(1e14)
+            d = np.divide(
+                    np.absolute(reduced_gradient),
+                    reduced_hessian_diagonal,
+                    out,
+                    where=reduced_hessian_diagonal > 1e-14,
+                    )
+            
+
+
+
+
+
+            self.idx_hessian = (-d).argsort()[:dim1]
+
+            self.indim = indim
+
+
+            #print(d)
+            #print("order", self.idx_hessian)
+            self.guess_hessian = np.zeros((dim1, dim1))
+            self.guess_gradient = np.zeros(dim1)
+            sym_A_tilde = A_tilde + A_tilde.T
+            # end1   = timer()
+            # print("building orbital guess1 took1", end1 - start1, flush = True)
+
+            # start1 = timer()
+            # for i in range(dim1):
+            #    index1 = idx[i]
+            #    r = self.index_map[index1][0]
+            #    k = self.index_map[index1][1]
+            #    guess_gradient[i] = reduced_gradient[index1]
+            #    for j in range(dim1):
+            #        index2 = idx[j]
+            #        s = self.index_map[index2][0]
+            #        l = self.index_map[index2][1]
+            #        #print(r,k,s,l)
+            #        #b = self.build_orbital_hessian_element(U, sym_A_tilde, G, r,k,s,l)
+            #        guess_hessian[i][j] = self.build_orbital_hessian_element(U, sym_A_tilde, G, r,k,s,l)
+            #        #print(b, hessian_tilde[r*self.n_occupied+k][s*self.n_occupied+l])
+
+            print("davidson iteration", 1)
+            self.build_orbital_hessian_guess(
+                    U,
+                    sym_A_tilde,
+                    reduced_gradient,
+                    G,
+                    self.guess_hessian,
+                    self.guess_gradient,
+                    dim1,
+                    self.idx_hessian,
+                    )
+            # end1   = timer()
+            # print("building orbital guess2 took", end1 - start1, flush = True)
+
+            ##try to build orbital guess from sigma vector but it is much slower
+            # start1 = timer()
+            # guess_gradient2 = np.zeros(dim1)
+            # hq = np.zeros((dim1, self.index_map_size))
+            # QQ = np.zeros((dim1, self.index_map_size))
+            # for i in range(dim1):
+            #    index1 = self.idx_hessian[i]
+            #    r = self.index_map[index1][0]
+            #    k = self.index_map[index1][1]
+            #    guess_gradient2[i] = reduced_gradient[index1]
+            #    QQ[i][index1] = 1.0
+
+            # self.orbital_sigma(U, A_tilde, G1, QQ, hq, dim1, 0)
+            # guess_hessian2 = np.dot(hq,QQ.T)
+            # print(np.allclose(self.guess_hessian, guess_hessian2, rtol=1e-14,atol=1e-14))
+            # print(np.allclose(self.guess_gradient, guess_gradient2, rtol=1e-14,atol=1e-14))
+            # end1   = timer()
+            # print("building orbital guess3 took", end1 - start1, flush = True)
+            ####print("\n")
+            ####print("\n")
+
+            # start1 = timer()
+            # mu, w = np.linalg.eigh(guess_hessian)
+            # end1   = timer()
+            # print("building orbital guess3 took", end1 - start1, flush = True)
+            # start1 = timer()
+            # print(mu)
+            aug_eigvecs = np.zeros((dim1 + 1, dim1 + 1))
+            Lmax = maxdim
+            L = indim
+
+            H_pp = np.zeros((indim, indim))
+            H_pp[0, 0] = alpha
+            H_pp[0, 1:] = self.guess_gradient
+            H_pp[1:, 0] = self.guess_gradient.T
+            H_pp[1:, 1:] = self.guess_hessian
+            self.H_pp = copy.deepcopy(H_pp)
+            self.H_qp = np.zeros((0, indim))
+            self.sigma_total = np.zeros((maxdim, H_dim))
+            Q = np.zeros((indim, H_dim))
+            projected_step = np.zeros(dim1)
+            theta = self.projection_step2(
+                self.guess_gradient, self.guess_hessian, aug_eigvecs, alpha, dim1 + 1
+            )
+
+            # start1 = timer()
+            for i in range(dim1 + 1):
+                for j in range(dim1):
+                    index1 = self.idx_hessian[j]
+                    Q[i][0] = aug_eigvecs[0][i]
+                    Q[i][index1 + 1] = aug_eigvecs[j + 1][i]
+            # print(Q)
+            # Q2 = np.zeros((indim, H_dim))
+            # Q2[0,0] = 1
+            # Q2[1:,1:] = QQ
+            ##print(QQ)
+            ##print(Q2)
+            # guess_gradient3 = self.guess_gradient.reshape(1,dim1)
+            # cccc = np.block([[alpha, guess_gradient3],[guess_gradient3.T, self.guess_hessian]])
+            # hq2 = np.zeros((indim, H_dim))
+            # self.orbital_sigma(U, A_tilde, G1, Q2, hq2, dim1+1, 1)
+            # hq2[:,1:] += np.einsum("p,q->qp", reduced_gradient, Q2[:,0])
+            # hq2[:,0] = alpha * Q2[:,0] + np.dot(Q2[:,1:], reduced_gradient)
+            # dddd = np.dot(hq2,Q2.T)
+            # print(np.allclose(cccc, dddd, rtol=1e-14,atol=1e-14))
+            
+            num_to_build = len(roots_to_check)
+            w_sigma = np.zeros((num_to_build, H_dim)) # Holds sigma vectors
+            # Build sigma only for active roots (e.g., [0] or [0, 1])
+            ##self.orbital_sigma(U, A_tilde, G1, Q, w, nroots, 1)
+            start = timer()
+            self.orbital_sigma3(U, A_tilde, G_blocks, Q[roots_to_check, :], w_sigma, num_to_build, 1)
+            end = timer()
+            print("build orbital sigma for w took", end - start)
+
+
+            w = np.zeros((nroots_target, H_dim)) # Full residual matrix
+            residual_norm = np.full(nroots_target, np.inf)
+            conv_status = [False] * nroots_target
+            
+            for i, root_idx in enumerate(roots_to_check):
+                vec = Q[root_idx, :]
+                w_vec = w_sigma[i, :] # Get the corresponding sigma
+                w_vec[1:] += reduced_gradient * vec[0]
+                w_vec[0] = alpha * vec[0] + np.dot(vec[1:], reduced_gradient)
+                
+                r_vec = w_vec - theta[root_idx] * vec
+                w[root_idx, :] = r_vec # Store the *residual*
+                residual_norm[root_idx] = np.linalg.norm(r_vec)
+                
+                if residual_norm[root_idx] < threshold:
+                    conv_status[root_idx] = True 
+
+
+
+
+
+
+
+
+
+            #w = np.zeros((nroots_target, H_dim))
+            ##self.orbital_sigma(U, A_tilde, G1, Q, w, nroots, 1)
+            #start = timer()
+            #self.orbital_sigma3(U, A_tilde, G_blocks, Q, w, nroots_target, 1)
+            ## self.build_sigma_reduced2(U, A_tilde, G, Q, w, nroots, 1)
+            ## c_build_sigma_reduced(U, A_tilde, self.index_map1, G1, Q, w, nroots, 1, self.nmo, self.index_map_size, self.n_occupied)
+            #w[:, 1:] += np.einsum("p,q->qp", reduced_gradient, Q[:nroots_target, 0])
+            #w[:, 0] = alpha * Q[:nroots_target, 0] + np.dot(Q[:nroots_target, 1:], reduced_gradient)
+            #end = timer()
+            #print("build orbital sigma for w took", end - start)
+
+
+            #residual_norm = np.zeros((nroots_target))
+            #convergence_check = np.zeros((nroots_target), dtype=str)
+            #conv = 0
+            #for j in range(nroots_target):
+            #    # Compute a residual vector "w" for each root we seek
+            #    # w[j, :] = np.dot(eigvecs[:, j].T, S) - theta[j] * np.dot(eigvecs[:, j].T, Q)
+            #    w[j, :] -= theta[j] * Q[j, :]
+            #    # residual_norm[j] = np.sqrt(np.dot(w[j, :], w[j, :].T))
+            #    residual_norm[j] = np.linalg.norm(w[j, :])
+            #    if residual_norm[j] < threshold:
+            #        conv += 1
+            #        convergence_check[j] = "Yes"
+            #    else:
+            #        convergence_check[j] = "No"
+            #
+            #is_root_0_conv = residual_norm[0] < threshold
+            #is_root_1_conv = residual_norm[1] < threshold
+            unconverged_idx = []
+            exit_solver = False
+            converged_indices = []
+            # --- NEW LSTRS CONVERGENCE CHECK (Initial Guess) ---
+            if nroots == 1:
+                if conv_status[0]:
+                    converged_indices.append(0)
+                    # Root 0 is converged. Call the callback.
+                    if self.check_root_0(Q, theta[0], reduced_gradient, trust_radius):
+                        # === EASY CASE ===
+                        print("LSTRS (Initial Guess): Root 0 converged (Easy Case). Exiting.")
+                        aug_hessian_eigenvals[0] = theta[0]
+                        aug_hessian_eigenvecs[:, 0] = Q[0, :].T
+                        aug_hessian_eigenvals[1] = 1e10 # Fake root 1
+                        aug_hessian_eigenvecs[:, 1] = 0.0
+                        exit_solver = True
+                    else:
+                        # === HARD CASE ===
+                        print("LSTRS (Initial Guess): Root 0 converged (Hard Case). Checking Root 1.")
+                        root_0_locked = True
+                        roots_to_check = [1] # Now we only care about Root 1
+                        
+                        # We must check Root 1 *now*
+                        start1 = timer()
+                        w1_sigma = np.zeros((1, H_dim))
+                        self.orbital_sigma3(U, A_tilde, G_blocks, Q[1:2, :], w1_sigma, 1, 1)
+                        #w1_sigma[0, 1:] += np.einsum("p,q->qp", reduced_gradient, Q[1, 0])
+                        w1_sigma[0, 1:] += reduced_gradient * Q[1, 0] # Changed from einsum
+                        w1_sigma[0, 0] = alpha * Q[1, 0] + np.dot(Q[1, 1:], reduced_gradient)
+                        end1 = timer()
+                        print("build orbital sigma for w took", end1 - start1)
+
+           
+                        r_1 = w1_sigma[0, :] - theta[1] * Q[1, :]
+                        w[1, :] = r_1 # Store residual
+                        residual_norm[1] = np.linalg.norm(r_1)
+                        
+                        if residual_norm[1] < threshold:
+                            converged_indices.append(1)
+                            conv_status[1] = True
+                            print("LSTRS (Initial Guess): Root 1 also converged. Exiting.")
+                            exit_solver = True
+                            aug_hessian_eigenvals[0] = theta[0]
+                            aug_hessian_eigenvecs[:, 0] = Q[0, :].T
+                            aug_hessian_eigenvals[1] = theta[1]
+                            aug_hessian_eigenvecs[:, 1] = Q[1, :].T
+                        else:
+                            unconverged_idx = [1]
+
+                        #if is_root_1_conv:
+                        #    print("LSTRS (Initial Guess): Root 1 also converged. Exiting.")
+                        #    aug_hessian_eigenvals[0] = theta[0]
+                        #    aug_hessian_eigenvecs[:, 0] = Q[0, :].T
+                        #    aug_hessian_eigenvals[1] = theta[1]
+                        #    aug_hessian_eigenvecs[:, 1] = Q[1, :].T
+                        #    exit_solver = True
+                        #else:
+                        #    print("LSTRS (Initial Guess): Root 1 unconverged. Adding to search.")
+                        #    unconverged_idx = [1]
+                else:
+                    # Root 0 is not converged
+                    unconverged_idx = [0]
+            elif nroots == 2:
+                if conv_status[0] and conv_status[1]:
+                    if conv_status[0]: converged_indices.append(0)
+                    if conv_status[1]: converged_indices.append(1)
+                    # Both are converged
+                    print("LSTRS: Both roots converged. Exiting.")
+                    aug_hessian_eigenvals[:] = theta[:nroots_target]
+                    aug_hessian_eigenvecs[:, :] = full_eigvecs.T
+                    exit_solver = True
+                else:
+                    # Find whichever is not converged
+                    if not conv_status[0]: unconverged_idx.append(0)
+                    if not conv_status[1]: unconverged_idx.append(1)
+                    #if not is_root_0_conv:
+                    #    unconverged_idx.append(0)
+                    #if not is_root_1_conv:
+                    #    unconverged_idx.append(1)
+
+            print(unconverged_idx)
+            #print("root", "AH residual norm", "Eigenvalue", "Convergence")
+            #for j in range(nroots_target):
+            #    print(
+            #        j + 1, residual_norm[j], theta[j], convergence_check[j], flush=True
+            #    )
+            print("root", "AH residual norm", "Eigenvalue", "Convergence")
+            for j in range(nroots_target):
+                print(
+                    j + 1, residual_norm[j], theta[j], "Yes" if conv_status[j] else "No", flush=True
+                )
+
+            if exit_solver:
+                # self.projected_augmented_hessian = np.block([[0, self.guess_gradient], [self.guess_gradient.T, self.guess_hessian]])
+                self.projected_augmented_hessian = np.zeros((L, L))
+                self.projected_augmented_hessian[0, 0] = 0
+                self.projected_augmented_hessian[0, 1:] = self.guess_gradient
+                self.projected_augmented_hessian[1:, 0] = self.guess_gradient.T
+                self.projected_augmented_hessian[1:, 1:] = self.guess_hessian
+
+                print("converged from the first iteration!", flush=True)
+
+            # end1   = timer()
+            # print("building orbital guess7 took", end1 - start1, flush = True)
+            QQ = np.zeros((dim1, self.index_map_size))
+            for i in range(dim1):
+               index1 = self.idx_hessian[i]
+               r = self.index_map[index1][0]
+               k = self.index_map[index1][1]
+               #guess_gradient2[i] = reduced_gradient[index1]
+               QQ[i][index1] = 1.0
+            Q = np.zeros((indim, H_dim))
+            Q[0,0] = 1
+            Q[1:,1:] = QQ
+
+            preconditioned_w = np.zeros((0, H_dim)) # Initialize empty
+            if len(unconverged_idx) > 0:
+                w_unconv = w[unconverged_idx, :]
+                precon_denom = theta[unconverged_idx].reshape(
+                    len(unconverged_idx), 1
+                ) - H_diag.reshape(1, H_dim)
+                preconditioned_w = np.divide(
+                    w_unconv, 
+                    precon_denom,
+                    out=np.zeros_like(w_unconv),
+                    where=precon_denom != 0,
+                )
+                # ... (Your Jacobi-Davidson logic would go here) ...
+           
+            ## --- MODIFIED: Use the Adaptive Preconditioner ---
+            #preconditioned_w = np.zeros((0, H_dim)) # Initialize empty
+            #if len(unconverged_idx) > 0:
+            #    w_unconv = w[unconverged_idx, :]
+            #    theta_unconv = theta[unconverged_idx]
+            #    
+            #    preconditioned_w = self._get_preconditioned_w(
+            #        w_unconv, theta_unconv, H_diag, 
+            #        Q[:nroots_target, :], # Pass the initial eigenvectors
+            #        converged_indices,
+            #        U, A_tilde, G_blocks, reduced_gradient, alpha,
+            #        reduced_hessian_diagonal # Pass diag of H for diagnostics
+            #    )
+
+
+            ## --- *** NEW AUGMENTED GUESS *** ---
+            ## --- This is the fix for the 30-iteration stall ---
+            #print("LSTRS: Augmenting P-space with randomized Krylov vectors for Hard Case.")
+            #Q_k_rand = np.zeros((2, H_dim)) # Add 2 random vectors
+            #
+            ## Vector 1: A normalized random vector in the 'x' part
+            #rand_vec = np.random.rand(H_dim - 1)
+            #Q_k_rand[0, 1:] = rand_vec / np.linalg.norm(rand_vec)
+            #
+            ## Vector 2: A*v_rand
+            #w_sigma_k = np.zeros((1, H_dim))
+            #self.orbital_sigma3(U, A_tilde, G_blocks, Q_k_rand[0:1, :], w_sigma_k, 1, 1) # Cost = 1 H*v
+            #
+            #v2_unnorm = np.zeros(H_dim)
+            #v2_unnorm[0] = np.dot(Q_k_rand[0, 1:], reduced_gradient) # g.T * x
+            #v2_unnorm[1:] = w_sigma_k[0, 1:]                   # H * x
+            #Q_k_rand[1, :] = v2_unnorm # Store unnormalized, c_gram_schmidt_add will handle it
+            #
+            #
+
+            ## 3. Combine all new vectors
+            #new_vectors_to_add = np.concatenate((preconditioned_w, Q_k_rand), axis=0)
+            #print(f"Augmenting P-space with {len(unconverged_idx)} residuals and {Q_k_rand.shape[0]} Krylov vectors.")
+
+            ## 4. Add them to the Q-subspace using c_gram_schmidt_add
+            #Q = np.concatenate((Q, new_vectors_to_add), axis=0)
+            #c_gram_schmidt_add(Q, L, H_dim, len(new_vectors_to_add))
+            Q = np.concatenate((Q, preconditioned_w), axis=0)
+            c_gram_schmidt_add(Q, L, H_dim, len(preconditioned_w))
+            L = Q.shape[0]
+            print("current dimension", L, flush = True)
+            
+
+        else:
+            print("restart from previous search space")
+            # if indim == maxdim:
+            #    maxdim +=1
+            #print(H_dim, indim)
+            Q = copy.deepcopy(guess_vector)
+            Lmax = maxdim
+            L = Q.shape[0]
+            indim = self.indim
+            print("current dim", L)
+            if self.collapse_subspace_check == False:
+                if L == indim:
+                    self.projected_augmented_hessian[0, 0] = alpha
+                else:
+                    start1 = timer()
+                    b_dim = L - indim
+                    self.projected_augmented_hessian[0, 0] = alpha
+                    H_qp = np.zeros((b_dim, indim))
+                    Sq = np.zeros((b_dim, H_dim))
+                    Sq[:, 0] += alpha * Q[indim:, 0]
+                    self.sigma_total[indim:L,0] += Sq[:, 0]
+                    for i in range(b_dim):
+                        self.projected_augmented_hessian[indim + i][0] += Sq[i][0]
+                        self.projected_augmented_hessian[0][indim + i] += Sq[i][0]
+                        self.H_qp[i][0] += Sq[i][0]
+                        # for j in range(dim1):
+                        #    #index1 = self.idx_hessian[j]
+                        #    #H_qp[i][0] = Sq[i][0]
+                        #    #H_qp[i][j+1] = Sq[i][index1+1]
+                    self.H_pp[0, 0] = alpha
+                    H_qq = np.dot(Sq, Q[indim:, :].T)
+                    self.projected_augmented_hessian[indim:, indim:] += H_qq
+
+                    end1 = timer()
+                    print("restart took", end1 - start1)
+            else:
+                L_new = Q.shape[0]
+                Sq = np.zeros((L_new, H_dim))
+                Sq[:, 0] += alpha * Q[:, 0]
+                self.sigma_total[:L_new,0] += Sq[:,0]
+                self.projected_augmented_hessian = np.dot(self.sigma_total[:L_new,:], Q[:L_new, :].T)
+                             
+                # Set unconverged indices based on current LSTRS state
+                if nroots == 1 and not root_0_locked:
+                    unconverged_idx = [0]
+                elif nroots == 1 and root_0_locked:
+                    unconverged_idx = [1]
+                elif nroots == 2:
+                    unconverged_idx = [0, 1]
+                # --- END MODIFIED RESTART=TRUE BLOCK ---
+        if (len(unconverged_idx) > 0 and restart == False) or restart == True:
+            num_iter = 10000
+            # num_iter = 20
+            L_old = indim
+            collapse = True
+            for davidson_iteration in range(1, num_iter):
+                if davidson_iteration == num_iter - 1:
+                    print(
+                        "maximum iteration reaches but no converged roots have been found"
+                    )
+                    exit()
+                print("\n")
+                L_new = Q.shape[0]
+                L = Q.shape[0]
+                projected_step = np.zeros(L - 1)
+                full_eigvecs = np.zeros((nroots, H_dim))
+                full_eigvecs2 = np.zeros((nroots, H_dim))
+                projected_augmented_hessian = np.zeros((1, 1))
+                if restart == True:
+                    print("davidson iteration", davidson_iteration)
+                else:
+                    print("davidson iteration", davidson_iteration + 1)
+                if restart == True and davidson_iteration == 1:
+                    projected_augmented_hessian = self.projected_augmented_hessian
+                else:
+                    if self.collapse_subspace_check == False:   
+                        ######start = timer()
+                        ######b_dim = L - indim
+                        ######Sq0 = np.zeros((b_dim, H_dim))
+                        ####### self.build_sigma_reduced2(U, A_tilde, G, Q[indim:,:], Sq0, b_dim, 1)
+                        ####### c_build_sigma_reduced(U, A_tilde, self.index_map1, G1, Q[indim:,:], Sq0, b_dim, 1, self.nmo, self.index_map_size, self.n_occupied)
+                        ######self.orbital_sigma(U, A_tilde, G1, Q[indim:, :], Sq0, b_dim, 1)
+                        ######gradient1 = np.einsum("p,q->qp", reduced_gradient, Q[indim:, 0])
+                        ######gradient2 = np.dot(Q[indim:, 1:], reduced_gradient)
+                        ######end = timer()
+                        ######print("build orbital sigma for Q space took", end - start)
+                        ####### start = timer()
+
+                        ######H_pp[0, 0] = alpha
+                        ######H_pp[0, 1:] = self.guess_gradient
+                        ######H_pp[1:, 0] = self.guess_gradient.T
+                        ######H_pp[1:, 1:] = self.guess_hessian
+                        ######H_qp = np.zeros((b_dim, indim))
+                        ######Sq = copy.deepcopy(Sq0)
+                        ####### Sq[:,1:] += alpha * np.einsum("p,q->qp", reduced_gradient, Q[indim:,0])
+                        ######Sq[:, 1:] += gradient1
+                        ####### Sq[:,0] = alpha * np.einsum("p,rp->r", reduced_gradient, Q[indim:,1:] )
+                        ######Sq[:, 0] = alpha * Q[indim:, 0] + gradient2
+                        ######for i in range(b_dim):
+                        ######    for j in range(dim1):
+                        ######        index1 = self.idx_hessian[j]
+                        ######        H_qp[i][0] = Sq[i][0]
+                        ######        H_qp[i][j + 1] = Sq[i][index1 + 1]
+
+                        ######H_qq = np.dot(Sq, Q[indim:, :].T)
+                        ######H1 = np.concatenate((H_pp, H_qp), axis=0)
+                        ######H2 = np.concatenate((H_qp.T, H_qq), axis=0)
+                        ######projected_augmented_hessian = np.concatenate((H1, H2), axis=1)
+                        ######theta2, aug_eigvecs2 = np.linalg.eigh(projected_augmented_hessian)
+                        ######print("theta 2", theta2)
+
+                        start = timer()
+                        c_dim = L_new - L_old
+                        Sq1 = np.zeros((c_dim, H_dim))
+                        # self.build_sigma_reduced2(U, A_tilde, G, Q[indim:,:], Sq0, b_dim, 1)
+                        # c_build_sigma_reduced(U, A_tilde, self.index_map1, G1, Q[indim:,:], Sq0, b_dim, 1, self.nmo, self.index_map_size, self.n_occupied)
+                        #self.orbital_sigma(U, A_tilde, G1,  Q[L_old:, :], Sq1, c_dim, 1)
+                        
+                        self.orbital_sigma3(U, A_tilde, G_blocks,  Q[L_old:, :], Sq1, c_dim, 1)
+                        
+                        gradient1 = np.einsum("p,q->qp", reduced_gradient, Q[L_old:, 0])
+                        gradient2 = np.dot(Q[L_old:, 1:], reduced_gradient)
+                        print("c dim, L old, L new", c_dim, L_old, L_new) 
+                        end = timer()
+                        print("build orbital sigma for Q space took", end - start)
+                        Sq = copy.deepcopy(Sq1)
+                        # Sq[:,1:] += alpha * np.einsum("p,q->qp", reduced_gradient, Q[indim:,0])
+                        Sq[:, 1:] += gradient1
+                        # Sq[:,0] = alpha * np.einsum("p,rp->r", reduced_gradient, Q[indim:,1:] )
+                        Sq[:, 0] = alpha * Q[L_old:, 0] + gradient2
+                        self.sigma_total[L_old:L_new,:] = np.copy(Sq)
+                        H_qp = np.zeros((c_dim, indim))
+                        for i in range(c_dim):
+                            for j in range(dim1):
+                                index1 = self.idx_hessian[j]
+                                H_qp[i][0] = Sq[i][0]
+                                H_qp[i][j + 1] = Sq[i][index1 + 1]
+                        self.H_qp = np.vstack([self.H_qp, H_qp])
+                        H_qq = np.dot(self.sigma_total[indim:L_new,:], Q[indim:, :].T)
+                        print("dimension of sigma", np.shape(self.sigma_total))
+                        H1 = np.concatenate((self.H_pp, self.H_qp), axis=0)
+                        H2 = np.concatenate((self.H_qp.T, H_qq), axis=0)
+                        self.projected_augmented_hessian00 = np.concatenate((H1, H2), axis=1)
+                        projected_augmented_hessian = np.concatenate((H1, H2), axis=1)
+                    else:   
+                        print("collapse", collapse)
+                        if collapse == False:
+                            L_new = Q.shape[0]
+                            c_dim = L_new - L_old
+                            Sq1 = np.zeros((c_dim, H_dim))
+                            # self.build_sigma_reduced2(U, A_tilde, G, Q[indim:,:], Sq0, b_dim, 1)
+                            # c_build_sigma_reduced(U, A_tilde, self.index_map1, G1, Q[indim:,:], Sq0, b_dim, 1, self.nmo, self.index_map_size, self.n_occupied)
+                            start = timer()
+                            #self.orbital_sigma(U, A_tilde, G1,  Q[L_old:, :], Sq1, c_dim, 1)
+                            self.orbital_sigma3(U, A_tilde, G_blocks,  Q[L_old:, :], Sq1, c_dim, 1)
+                            end = timer()
+                            print("build orbital sigma for Q space took", end - start)
+
+                            gradient1 = np.einsum("p,q->qp", reduced_gradient, Q[L_old:, 0])
+                            gradient2 = np.dot(Q[L_old:, 1:], reduced_gradient)
+                            print("c dim, L old, L new", c_dim, L_old, L_new) 
+                            Sq = copy.deepcopy(Sq1)
+                            # Sq[:,1:] += alpha * np.einsum("p,q->qp", reduced_gradient, Q[indim:,0])
+                            Sq[:, 1:] += gradient1
+                            # Sq[:,0] = alpha * np.einsum("p,rp->r", reduced_gradient, Q[indim:,1:] )
+                            Sq[:, 0] = alpha * Q[L_old:, 0] + gradient2
+                            self.sigma_total[L_old:L_new,:] = np.copy(Sq)
+                            projected_augmented_hessian = np.dot(self.sigma_total[:L_new,:], Q[:L_new, :].T)
+                            L_old = Q.shape[0]
+                        else:
+                            L_new = Q.shape[0]
+                            self.sigma_total[:,:] = 0
+                            c_dim = L_new
+                            Sq1 = np.zeros((c_dim, H_dim))
+                            start = timer()
+                            #self.orbital_sigma(U, A_tilde, G1,  Q, Sq1, c_dim, 1)
+                            self.orbital_sigma3(U, A_tilde, G_blocks,  Q, Sq1, c_dim, 1)
+                            end = timer()
+                            print("build orbital sigma for Q space took", end - start)
+
+                            gradient1 = np.einsum("p,q->qp", reduced_gradient, Q[:, 0])
+                            gradient2 = np.dot(Q[:, 1:], reduced_gradient)
+                            print("c dim, L old, L new", c_dim, L_old, L_new) 
+                            Sq = copy.deepcopy(Sq1)
+                            # Sq[:,1:] += alpha * np.einsum("p,q->qp", reduced_gradient, Q[indim:,0])
+                            Sq[:, 1:] += gradient1
+                            # Sq[:,0] = alpha * np.einsum("p,rp->r", reduced_gradient, Q[indim:,1:] )
+                            Sq[:, 0] = alpha * Q[:, 0] + gradient2
+                            self.sigma_total[:L_new,:] = np.copy(Sq)
+                            projected_augmented_hessian = np.dot(self.sigma_total[:L_new,:], Q[:L_new, :].T)
+
+                theta, aug_eigvecs = np.linalg.eigh(projected_augmented_hessian)
+                #print("zopp",theta)
+                # print(np.shape(aug_eigvecs))
+                # print(aug_eigvecs.T[0,:])
+                full_eigvecs = np.dot(aug_eigvecs.T[:nroots_target, :], Q[:,])
+                full_eigvecs2 = copy.deepcopy(full_eigvecs)
+                # print("q component")
+                # print(full_eigvecs[0,:])
+
+                #for i in range(nroots):
+                #    for j in range(dim1):
+                #        index1 = self.idx_hessian[j]
+                #        full_eigvecs[i][0] = aug_eigvecs[0][i]
+                #        # full_eigvecs2[i][0] = aug_eigvecs[0][i]
+                #        full_eigvecs[i][index1 + 1] = aug_eigvecs[j + 1][i]
+                #        # full_eigvecs2[i][index1+1] = aug_eigvecs[j+1][i]
+                ## print("p component")
+                ## print(full_eigvecs2[0,:])
+                  
+
+
+                start = timer()
+                roots_to_check = []
+                if nroots == 1 and not root_0_locked:
+                    roots_to_check = [0]
+                elif nroots == 1 and root_0_locked:
+                    roots_to_check = [1]
+                elif nroots == 2:
+                    roots_to_check = [0, 1]
+                
+                num_to_build = len(roots_to_check)
+                w = np.zeros((nroots_target, H_dim)) # Full residual matrix
+                residual_norm = np.full(nroots_target, np.inf)
+                conv_status = [False] * nroots_target
+                
+                if num_to_build > 0:
+                    w_sigma = np.zeros((num_to_build, H_dim)) # For sigma vectors
+                    
+                    # --- CORE BUG FIX ---
+                    if self.collapse_subspace_check == True:
+                        # sigma_total *already* has gradient/alpha terms from the rebuild
+                        w_sigma = np.dot(aug_eigvecs.T[roots_to_check, :], self.sigma_total[:L_new,:])
+                    else:
+                        # We must build sigma from scratch and add gradient/alpha terms
+                        self.orbital_sigma3(U, A_tilde, G_blocks, full_eigvecs[roots_to_check, :], w_sigma, num_to_build, 1)
+                        for i, root_idx in enumerate(roots_to_check):
+                            vec = full_eigvecs[root_idx, :]
+                            w_vec = w_sigma[i, :] # Get the corresponding sigma
+                            w_vec[1:] += reduced_gradient * vec[0] 
+                            w_vec[0] = alpha * vec[0] + np.dot(vec[1:], reduced_gradient)
+                    # --- END FIX ---
+
+                    # Now, calculate residuals using the correct w_sigma
+                    for i, root_idx in enumerate(roots_to_check):
+                        vec = full_eigvecs[root_idx, :]
+                        w_vec = w_sigma[i, :] # This is (H*y + G*y)
+                        r_vec = w_vec - theta[root_idx] * vec
+                        w[root_idx, :] = r_vec # Store the *residual*
+                        residual_norm[root_idx] = np.linalg.norm(r_vec)
+                        
+                        if residual_norm[root_idx] < threshold:
+                            conv_status[root_idx] = True
+
+                if root_0_locked:
+                    conv_status[0] = True # It's locked, so it's "converged"
+ 
+               
+
+                #start = timer()
+                #w = np.zeros((nroots_target, H_dim))
+                #if self.collapse_subspace_check == True:   
+                #    w = np.dot(aug_eigvecs.T[:nroots_target, :], self.sigma_total[:L_new,:])
+                #else:
+                #    # self.build_sigma_reduced2(U, A_tilde, G, full_eigvecs, w, nroots, 1)
+                #    #self.orbital_sigma(U, A_tilde, G1, full_eigvecs, w, nroots, 1)
+                #    start = timer()
+                #    self.orbital_sigma3(U, A_tilde, G_blocks, full_eigvecs, w, nroots_target, 1)
+                #    # c_build_sigma_reduced(U, A_tilde, self.index_map1, G1, full_eigvecs, w, nroots, 1, self.nmo, self.index_map_size, self.n_occupied)
+                #    w[:, 1:] += np.einsum("p,q->qp", reduced_gradient, full_eigvecs[:, 0])
+                #    w[:, 0] = alpha * full_eigvecs[:, 0] + np.dot(
+                #        full_eigvecs[:, 1:], reduced_gradient
+                #    )
+                #    end = timer()
+                #    print("build orbital sigma for w took", end - start)
+
+                #residual_norm = np.zeros((nroots_target))
+                #convergence_check = np.zeros((nroots_target), dtype=str)
+                #conv = 0
+                ## print(np.shape(Q),np.shape(S), np.shape(aug_eigvecs) )
+                #for j in range(nroots_target):
+                #    # Compute a residual vector "w" for each root we seek
+                #    w[j, :] -= theta[j] * full_eigvecs[j, :]
+                #    # w[j, :] = np.dot(aug_eigvecs[:, j].T, S) - theta[j] * np.dot(aug_eigvecs[:, j].T, Q)
+                #    # residual_norm[j] = np.sqrt(np.dot(w[j, :], w[j, :].T))
+                #    residual_norm[j] = np.linalg.norm(w[j, :])
+                #    if residual_norm[j] < threshold:
+                #        conv += 1
+                #        convergence_check[j] = "Yes"
+                #    else:
+                #        convergence_check[j] = "No"
+                #is_root_0_conv = residual_norm[0] < threshold
+                #is_root_1_conv = residual_norm[1] < threshold
+
+                unconverged_idx = []
+                exit_solver = False
+                # --- NEW LSTRS CONVERGENCE CHECK (Main Loop) ---
+                if nroots == 1:
+                    if conv_status[0] and not root_0_locked: # Root 0 *just* converged
+                    #if is_root_0_conv:
+                        if self.check_root_0(full_eigvecs, theta[0], reduced_gradient, trust_radius):
+                            # === EASY CASE ===
+                            print("LSTRS: Root 0 converged (Easy Case). Exiting.")
+                            aug_hessian_eigenvals[0] = theta[0]
+                            aug_hessian_eigenvecs[:, 0] = full_eigvecs[0, :].T
+                            aug_hessian_eigenvals[1] = 1e10 # Fake root 1
+                            aug_hessian_eigenvecs[:, 1] = 0.0
+                            exit_solver = True
+                        else:
+                            # === HARD CASE ===
+                            root_0_locked = True
+                            print("LSTRS: Root 0 converged (Hard Case). Checking Root 1.")
+                            # *Now* we must check Root 1 for the *first time*
+                            start1 = timer()
+                            w1_sigma = np.zeros((1, H_dim))
+                            # --- CORE BUG FIX (Hard Case Check) ---
+                            if self.collapse_subspace_check == True:
+                                # sigma_total *already* has gradient/alpha terms
+                                w1_sigma = np.dot(aug_eigvecs.T[1:2, :], self.sigma_total[:L_new,:])
+                            else:
+                                self.orbital_sigma3(U, A_tilde, G_blocks, full_eigvecs[1:2, :], w1_sigma, 1, 1) # <-- SLICE FIX
+                                w1_sigma[0, 1:] += reduced_gradient * full_eigvecs[1, 0] # Changed from einsum
+                                w1_sigma[0, 0] = alpha * full_eigvecs[1, 0] + np.dot(full_eigvecs[1, 1:], reduced_gradient)
+                            # --- END FIX ---
+                            
+                            r_1 = w1_sigma[0, :] - theta[1] * full_eigvecs[1, :]
+                            w[1, :] = r_1 # Store residual
+                            residual_norm[1] = np.linalg.norm(r_1)
+                            
+                            #if is_root_1_conv:
+                            if residual_norm[1] < threshold:
+                                conv_status[1] = True
+                                print("LSTRS: Root 1 also converged. Exiting.")
+                                aug_hessian_eigenvals[:] = theta[:nroots_target]
+                                aug_hessian_eigenvecs[:, :] = full_eigvecs.T
+                                exit_solver = True
+                            else:
+                                print("LSTRS: Root 1 unconverged. Adding to search.")
+                                unconverged_idx = [1]
+                    elif not conv_status[0]: # Root 0 still unconverged
+                        unconverged_idx = [0]    
+                    elif root_0_locked: # Root 0 is locked, check Root 1
+                        if not conv_status[1]:
+                            unconverged_idx = [1]
+                    #else:
+                    #    # Root 0 is not converged
+                    #    unconverged_idx = [0]
+
+                elif nroots == 2:
+                    #if is_root_0_conv and is_root_1_conv:
+                    #    # Both are converged
+                    #    print("LSTRS: Both roots converged. Exiting.")
+                    #    aug_hessian_eigenvals[:] = theta[:nroots_target]
+                    #    aug_hessian_eigenvecs[:, :] = full_eigvecs.T
+                    #    exit_solver = True
+                    #else:
+                    # Find whichever is not converged
+                    if not conv_status[0]: unconverged_idx.append(0)
+                    if not conv_status[1]: unconverged_idx.append(1)
+                    #if not is_root_0_conv:
+                    #    unconverged_idx.append(0)
+                    #if not is_root_1_conv:
+                    #    unconverged_idx.append(1)
+                # Check for final convergence
+                if (nroots == 2 and not unconverged_idx) or \
+                   (nroots == 1 and root_0_locked and not unconverged_idx):
+                    print("LSTRS: All required roots converged.")
+                    exit_solver = True
+                    aug_hessian_eigenvals[:] = theta[:nroots_target]
+                    aug_hessian_eigenvecs[:, :] = full_eigvecs.T
+        
+                # --- END NEW LOGIC ---
+                #print(unconverged_idx)
+                #print("root", "AH residual norm", "Eigenvalue", "Convergence")
+                #for j in range(nroots_target):
+                #    print(
+                #        j + 1,
+                #        residual_norm[j],
+                #        theta[j],
+                #        convergence_check[j],
+                #        flush=True,
+                #    )
+                print(unconverged_idx)
+                print("root", "AH residual norm", "Eigenvalue", "Convergence")
+                for j in range(nroots_target):
+                    print(
+                        j + 1, residual_norm[j], theta[j], "Yes" if conv_status[j] else "No", flush=True
+                    )
+                 
+
+
+
+                if exit_solver:
+                    aug_hessian_eigenvecs[:, :] = full_eigvecs.T
+                    aug_hessian_eigenvals[:] = theta[:nroots_target]
+                    if self.collapse_subspace_check == False:
+                        Q1 = full_eigvecs
+                        start1 = timer()
+                        b_dim = L - indim
+                        print("b_dim", b_dim)
+
+                        self.projected_augmented_hessian = copy.deepcopy(
+                            projected_augmented_hessian
+                        )
+                        self.projected_augmented_hessian[0, 0] = alpha
+                        if b_dim > 0:
+                            # H_qp = np.zeros((b_dim, indim))
+                            Sq = np.zeros((b_dim, H_dim))
+                            Sq[:, 0] = alpha * Q[indim:, 0]
+                            self.sigma_total[indim:L,0] -= Sq[:, 0]
+                            for i in range(b_dim):
+                                self.projected_augmented_hessian[indim + i][0] -= Sq[i][0]
+                                self.projected_augmented_hessian[0][indim + i] -= Sq[i][0]
+                                self.H_qp[i][0] -= Sq[i][0]
+                                # for j in range(dim1):
+                                #    #index1 = self.idx_hessian[j]
+                                #    #H_qp[i][0] = Sq[i][0]
+                                #    #H_qp[i][j+1] = Sq[i][index1+1]
+
+                            H_qq = np.dot(Sq, Q[indim:, :].T)
+                            self.projected_augmented_hessian[indim:, indim:] -= H_qq
+
+                        end1 = timer()
+                        print("initialize took", end1 - start1)
+                    else:
+                        Sq = np.zeros((L_new, H_dim))
+                        Sq[:, 0] = alpha * Q[:, 0]
+                        self.sigma_total[:L_new,0] -= Sq[:, 0]
+
+                    print("converged!", flush=True)
+                    break
+                
+                # --- NEW HYBRID LOGIC ---
+                preconditioned_w = np.zeros((len(unconverged_idx), H_dim))
+                converged_indices = [i for i in range(nroots) if i not in unconverged_idx]
+                
+                if not converged_indices:
+                    # preconditioned_w = np.zeros((len(unconverged_idx),H_dim))
+                    if len(unconverged_idx) > 0:
+                        preconditioned_w = np.zeros((len(unconverged_idx), H_dim))
+                        preconditioned_w = theta[unconverged_idx].reshape(
+                            len(unconverged_idx), 1
+                        ) - H_diag.reshape(1, H_dim)
+                        # print(np.shape(preconditioned_w))
+                        preconditioned_w = np.divide(
+                            w[unconverged_idx],
+                            preconditioned_w,
+                            out=np.zeros_like(w[unconverged_idx]),
+                            where=preconditioned_w != 0,
+                        )
+
+
+                    
+                
+                else:
+                    # === PHASE 2: At least one root is converged ===
+                    # NOW use the robust (but tuned-down) Jacobi-Davidson solver
+                    # to prevent the 70-iteration stall for Root 1.
+                    
+                    Q_conv = full_eigvecs2[converged_indices, :] 
+                
+                    for i in range(len(unconverged_idx)):
+                        idx = unconverged_idx[i]
+                        current_residual = w[idx, :]
+                        current_theta = theta[idx]
+                        P_diag = H_diag - current_theta
+                        # ... (handle P_diag safety) ...
+                        
+                        # Call the inner solver, but make sure its
+                        # max_inner_iter is set to a low number, like 3 or 5.
+                        v_corr = self.inner_solve_pcg(
+                            current_residual,
+                            current_theta,
+                            Q_conv,
+                            P_diag,
+                            U, A_tilde, G_blocks, reduced_gradient, alpha # Need to pass these through
+                        )
+                        
+                        preconditioned_w[i, :] = v_corr
+                # --- END HYBRID LOGIC ---
+
+
+                ## --- NEW JACOBI-DAVIDSON LOGIC ---
+                #preconditioned_w = np.zeros((len(unconverged_idx), H_dim))
+                #converged_indices = [i for i in range(nroots) if i not in unconverged_idx]
+                #Q_conv = full_eigvecs2[converged_indices, :] # Converged eigenvectors (N_conv, H_dim)
+                #
+                #for i in range(len(unconverged_idx)):
+                #    idx = unconverged_idx[i] # The root we are solving for
+                #    
+                #    # Get inputs for the inner solver
+                #    current_residual = w[idx, :]
+                #    current_theta = theta[idx]
+                #    
+                #    # This is your *diagonal* preconditioner. We still use it
+                #    # to precondition the *inner* solver.
+                #    P_diag = H_diag - current_theta
+                #    # (Handle divide by zero, e.g., set P_diag[P_diag == 0] = 1.0)
+                #    
+                #    # Call the inner solver to find the correction vector
+                #    v_corr = self.inner_solve_pcg(
+                #        current_residual,
+                #        current_theta,
+                #        Q_conv,
+                #        P_diag,
+                #        U, A_tilde, G1, reduced_gradient, alpha # Need to pass these through
+                #    )
+                #    
+                #    preconditioned_w[i, :] = v_corr        
+
+
+                
+                
+                ## preconditioned_w = np.zeros((len(unconverged_idx),H_dim))
+                #if len(unconverged_idx) > 0:
+                #    preconditioned_w = np.zeros((len(unconverged_idx), H_dim))
+                #    preconditioned_w = theta[unconverged_idx].reshape(
+                #        len(unconverged_idx), 1
+                #    ) - H_diag.reshape(1, H_dim)
+                #    # print(np.shape(preconditioned_w))
+                #    preconditioned_w = np.divide(
+                #        w[unconverged_idx],
+                #        preconditioned_w,
+                #        out=np.zeros_like(w[unconverged_idx]),
+                #        where=preconditioned_w != 0,
+                #    )
+
+                    
+               
+                end = timer()
+                print("residual took", end - start)
+                L_old = Q.shape[0]
+                start = timer()
+
+                if Lmax - L < len(unconverged_idx):
+                    num_restart_vecs = 40 
+                    print(f"Subspace limit reached. Performing soft restart from {L} to {num_restart_vecs} vectors.")
+                    t_collapsing_begin = time.time()
+                    
+                    # 1. Choose how many vectors to keep.
+                    # This is a tunable parameter. Let's say 40.
+
+                    # 2. 'aug_eigvecs' holds the (L, L) eigenvectors of the projected Hessian.
+                    # 'theta' holds the eigenvalues. You already have these from np.linalg.eigh.
+                    
+                    # 3. Get the k "best" projected eigenvectors (the first k columns)
+                    # Note: np.linalg.eigh already sorts them by eigenvalue.
+                    best_projected_vecs = aug_eigvecs[:, :num_restart_vecs] # Shape (L, k)
+
+                    # 4. Transform these k vectors back into the full H_dim space.
+                    # Q is (L, H_dim). We need to project it down.
+                    # (k, L) @ (L, H_dim) -> (k, H_dim)
+                    Q_restarted = np.dot(best_projected_vecs.T, Q) # Shape (k, H_dim)
+                    
+                    # 5. Add your new correction vectors to this restarted subspace
+                    Q = np.concatenate((Q_restarted, preconditioned_w), axis=0) # Shape (k + n_unconv, H_dim)
+
+                    # 6. Re-orthogonalize the new, smaller subspace
+                    c_gram_schmidt_orthogonalization(
+                       Q, Q.shape[0], H_dim
+                    )
+                    
+                    t_collapsing_end = time.time()
+                    print(
+                        "restart took", t_collapsing_end - t_collapsing_begin, "seconds"
+                    )
+                    
+                    # 7. IMPORTANT: You MUST tell your code to rebuild the projected Hessian
+                    # from this new Q, as it's not just an expansion.
+                    # Your existing logic handles this perfectly.
+                    self.collapse_subspace_check = True 
+                    collapse = True
+                    L_old = 0 # Tell the expansion logic the "old" size is 0 
+
+                else:
+                    t_expanding_begin = time.time()
+
+                    Q = np.concatenate((Q, preconditioned_w), axis=0)
+                    c_gram_schmidt_add(Q, L, H_dim, len(preconditioned_w))
+                    # gc.collect()
+                    t_expanding_end = time.time()
+                    print("expand took", t_expanding_end - t_expanding_begin, "seconds")
+                    collapse = False
+                    print("collapse subspace check", self.collapse_subspace_check)
+                    # print(Q)
+                end = timer()
+
+  
+
+
+                #end = timer()
+                #print("residual took", end - start)
+                #L_old = Q.shape[0]
+                #start = timer()
+                #if Lmax - L < len(unconverged_idx):
+                #    t_collapsing_begin = time.time()
+                #    # unconverged_w = np.zeros((len(unconverged_idx),H_dim))
+                #    Q = np.copy(full_eigvecs2)
+                #    Q = np.concatenate((Q, preconditioned_w), axis=0)
+                #    print(Q.shape)
+                #    # Q=np.column_stack(Qtup)
+                #    c_gram_schmidt_orthogonalization(
+                #       Q, nroots + len(unconverged_idx), H_dim
+                #    )
+                #    # gc.collect()
+                #    t_collapsing_end = time.time()
+                #    print(
+                #        "restart took", t_collapsing_end - t_collapsing_begin, "seconds"
+                #    )
+                #    self.collapse_subspace_check = True
+                #    collapse = True
+                #else:
+                #    t_expanding_begin = time.time()
+
+                #    Q = np.concatenate((Q, preconditioned_w), axis=0)
+                #    c_gram_schmidt_add(Q, L, H_dim, len(preconditioned_w))
+                #    # gc.collect()
+                #    t_expanding_end = time.time()
+                #    print("expand took", t_expanding_end - t_expanding_begin, "seconds")
+                #    collapse = False
+                #    print("collapse subspace check", self.collapse_subspace_check)
+                #    # print(Q)
+                #end = timer()
+
+        return Q
+
+
+
+    def linear_equation_solve(self, U, A_tilde, G1, reduced_gradient, denom, max_iter, conv_thresh=1e-6):
+        """
+        Main driver loop to solve the linear system Ax + b = 0.
+        """
+        #self._reset()
+        residual = reduced_gradient.copy()
+        if np.linalg.norm(residual) < 1e-3:
+            #random guess
+            dim00 = self.index_map_size 
+            trial_0 = np.random.rand(dim00)
+
+            norm = np.linalg.norm(trial_0)
+            if norm > 1e-12:
+                trial_0 /= norm
+
+            sigma = self.mv2(U, A_tilde, G1, trial_0, 1, 0, 0)
+            residual = sigma + reduced_gradient 
+
+        #print("initial guess", residual)
+        #residual = self.apply_preconditioner(A, G1, z)
+        #residual /= np.linalg.norm(residual)
+        solver_sym = LinearRMSolver(b_vector=reduced_gradient, max_subspace=max_iter)
+        #solution_sym = solver_sym.solve(matvec_prod_sym, precond_sym, max_iter=100, conv_thresh=1e-7)
+        #print(denom[:self.index_map_size])
+        print("--------------------------------------------")
+        print("--- Start solving Hx=-g equations ---")
+        print("--------------------------------------------")
+        for i in range(max_iter):
+            #sigma0 = matvec_product(residual, A, G1)
+            #residual0 = sigma0 + self.total_gradient
+            #print("zzz", np.linalg.norm(residual0))
+            residual_norm = np.linalg.norm(residual)
+            print(f"Iter: {i+1:3d}   Residual Norm: {residual_norm:.4e}")
+
+            if residual_norm < conv_thresh:
+                print("\n--- Convergence Achieved ---")
+                print("total iteration", i+1)
+                return solver_sym.get_solution()
+
+            trial_c = residual/denom
+            #trial_c = np.zeros_like(residual)
+            #Q = np.zeros(self.index_map_size)
+            #H1_op = LinearOperator(
+            #            (self.index_map_size, self.index_map_size),
+            #            matvec=lambda Q: self.mv3(A, G1, Q),
+            #        )
+            #residual_slice1 = copy.deepcopy(residual[:self.index_map_size])
+            #residual_slice2 = copy.deepcopy(residual[self.index_map_size:])
+            #delta_Z, exitCode = minres(H1_op,residual_slice1, rtol=1e-6)
+            #print("exit code", exitCode)
+            #trial_c[:self.index_map_size] = copy.deepcopy(delta_Z)
+            #trial_c[self.index_map_size:] = residual_slice2/denom[self.index_map_size:] 
+
+
+
+
+            #z_vector, Z_vector = self.unpack_solution(trial_c)
+            #for i in range(self.davidson_roots):
+            #    print("check dot product", np.dot(z_vector[i], self.eigenvecs[i]))
+            #print(trial_c[:self.index_map_size])
+            #self.print_matrix_nice(trial_c[self.index_map_size:].reshape(self.davidson_roots,self.H_dim)[0].reshape(self.num_alpha,self.num_alpha), precision=10, width=14, cols_per_line=6)
+            #self.print_matrix_nice(trial_c[self.index_map_size:].reshape(self.davidson_roots,self.H_dim)[1].reshape(self.num_alpha,self.num_alpha), precision=10, width=14, cols_per_line=6)
+
+            #self.projection(trial_c[self.index_map_size:])
+            #z_vector, Z_vector = self.unpack_solution(trial_c)
+            #for i in range(self.davidson_roots):
+            #    print("check dot product after", np.dot(z_vector[i], self.eigenvecs[i]))
+
+
+            #print("trial_c", trial_c)
+            norm = np.linalg.norm(trial_c)
+            if norm > 1e-12:
+                trial_c /= norm
+
+            sigma = self.mv2(U, A_tilde, G1, trial_c, 1, 0, 0)
+            #print("sigma before projection")
+            #print(sigma[:self.index_map_size])
+            #self.print_matrix_nice(sigma[self.index_map_size:].reshape(2,self.H_dim)[0].reshape(4,4), precision=10, width=14, cols_per_line=6)
+            #self.print_matrix_nice(sigma[self.index_map_size:].reshape(2,self.H_dim)[1].reshape(4,4), precision=10, width=14, cols_per_line=6)
+
+
+            #z_vector, Z_vector = self.unpack_solution(sigma)
+            #for i in range(self.davidson_roots):
+            #    print("check dot product0", np.dot(z_vector[i], self.eigenvecs[i]))
+
+            #self.projection(sigma[self.index_map_size:])
+            #z_vector, Z_vector = self.unpack_solution(trial_c)
+            #for i in range(self.davidson_roots):
+            #    print("check dot product after0", np.dot(z_vector[i], self.eigenvecs[i]))
+
+
+            #print("sigma", sigma)
+            residual_old =copy.deepcopy(residual)
+            residual = solver_sym.update_subspace_and_extrapolate(trial_c, sigma)
+            residual_new = copy.deepcopy(residual)
+            error = residual_new - residual_old
+            if i > 0 and np.linalg.norm(error) < 1e-8:
+                print("\n--- Convergence Achieved (solution becomes self-consistent)---")
+                print("total iteration", i+1)
+                return solver_sym.get_solution()
+
+
+        print("\n--- Solver did not converge within max iterations ---")
+        #return solver_sym.get_solution()
+
+
+
+
+
+
+
+
+
+
+
+
 
     def Davidson_linear_matrix_equation_solve(
         self,
@@ -19506,7 +22813,7 @@ class PFHamiltonianGenerator:
         nopython=True,
         cache=True,
         fastmath=True,
-        parallel=True,
+        parallel=False,
     )
     def build_sigma_reduced5(
         U,
@@ -19526,7 +22833,7 @@ class PFHamiltonianGenerator:
         assert G.shape == (nmo * n_occupied, nmo * n_occupied)
         sigma_reduced = np.zeros((1, index_map_size))
         R_total = np.zeros((num_states, nmo, n_occupied))
-        print("oivdpw", num_states)
+        #print("oivdpw", num_states)
         for i in range(num_states):
             for j in range(index_map_size):
                 r = index_map[j][0]
