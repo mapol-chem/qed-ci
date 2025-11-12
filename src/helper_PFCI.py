@@ -14720,9 +14720,30 @@ class PFHamiltonianGenerator:
                             #print("exitcode", exitCode)
                             #step = x
                             denom = self.reduced_hessian_diagonal
-                            max_iter = 1000
-                            solution = self.linear_equation_solve(self.U2, A_tilde2, G1, reduced_gradient, denom, max_iter, conv_thresh=1e-6)
-
+                            max_iter = 20  
+                            solution, converged = self.linear_equation_solve(self.U2, A_tilde2, G1, reduced_gradient, denom, max_iter, conv_thresh=1e-6)
+                            if not converged:
+                                print("\n--- Falling back to MINRES solver ---")
+                                iteration_count = [0]
+                                def callback(xk):
+                                    """Callback function called at each iteration"""
+                                    iteration_count[0] += 1
+                                    absolute_residual = np.linalg.norm(H1_op.matvec(xk) + reduced_gradient)
+                                    relative_residual = absolute_residual / np.linalg.norm(reduced_gradient)
+                                    print(f"MINRES Iter: {iteration_count[0]:3d}   "
+                                    f"Abs Residual: {absolute_residual:.4e}   "
+                                    f"Rel Residual: {relative_residual:.4e}")
+                                H1_op = LinearOperator(
+                                    (self.index_map_size, self.index_map_size),
+                                    matvec=lambda Q: self.mv2(self.U2, A_tilde2, G1, Q, 1, 0, 0),
+                                )
+                                solution, exitCode = minres(H1_op, -reduced_gradient, rtol=1e-6, callback=callback)
+                                print(f"MINRES exit code: {exitCode}")
+                                
+                                if exitCode == 0:
+                                    print("MINRES converged successfully")
+                                else:
+                                    print(f"MINRES warning: exit code {exitCode}")
                             #print("step norm2", np.linalg.norm(solution))
                             hard_case = 2
                             step = solution
@@ -15048,9 +15069,32 @@ class PFHamiltonianGenerator:
                     #x, exitCode = minres(H1_op, -reduced_gradient, rtol=1e-6)
                     #print("exitcode", exitCode)
                     denom = self.reduced_hessian_diagonal
-                    max_iter = 1000
-                    solution = self.linear_equation_solve(self.U2, A_tilde2, G1, reduced_gradient, denom, max_iter, conv_thresh=1e-6)
-
+                    max_iter = 20  
+                    solution,converged = self.linear_equation_solve(self.U2, A_tilde2, G1, reduced_gradient, denom, max_iter, conv_thresh=1e-6)
+                    if not converged:
+                        print("\n--- Falling back to MINRES solver ---")
+                        iteration_count = [0]
+                        def callback(xk):
+                            """Callback function called at each iteration"""
+                            iteration_count[0] += 1
+                            absolute_residual = np.linalg.norm(H1_op.matvec(xk) + reduced_gradient)
+                            residual = np.linalg.norm(H1_op.matvec(xk) + reduced_gradient)
+                            relative_residual = absolute_residual / np.linalg.norm(reduced_gradient)
+                            print(f"MINRES Iter: {iteration_count[0]:3d}   "
+                            f"Abs Residual: {absolute_residual:.4e}   "
+                            f"Rel Residual: {relative_residual:.4e}")
+   
+                        H1_op = LinearOperator(
+                            (self.index_map_size, self.index_map_size),
+                            matvec=lambda Q: self.mv2(self.U2, A_tilde2, G1, Q, 1, 0, 0),
+                        )
+                        solution, exitCode = minres(H1_op, -reduced_gradient, rtol=1e-6, callback=callback)
+                        print(f"MINRES exit code: {exitCode}")
+                        
+                        if exitCode == 0:
+                            print("MINRES converged successfully")
+                        else:
+                            print(f"MINRES warning: exit code {exitCode}")
                     #print("step norm2", np.linalg.norm(solution))
                     hard_case = 2
                     step = solution
@@ -22219,7 +22263,7 @@ class PFHamiltonianGenerator:
             if residual_norm < conv_thresh:
                 print("\n--- Convergence Achieved ---")
                 print("total iteration", i+1)
-                return solver_sym.get_solution()
+                return solver_sym.get_solution(), True
 
             trial_c = residual/denom
             #trial_c = np.zeros_like(residual)
@@ -22281,11 +22325,11 @@ class PFHamiltonianGenerator:
             if i > 0 and np.linalg.norm(error) < 1e-8:
                 print("\n--- Convergence Achieved (solution becomes self-consistent)---")
                 print("total iteration", i+1)
-                return solver_sym.get_solution()
+                return solver_sym.get_solution(), True
 
 
         print("\n--- Solver did not converge within max iterations ---")
-        #return solver_sym.get_solution()
+        return solver_sym.get_solution(), False
 
 
 
