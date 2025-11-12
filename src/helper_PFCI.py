@@ -39,7 +39,6 @@ from scipy.sparse.linalg import minres
 from scipy.sparse.linalg import LinearOperator
 from timeit import default_timer as timer
 import numba as nb
-import opt_einsum as oe
 script_dir = os.path.abspath(os.path.dirname(__file__))
 lib_path = os.path.join(script_dir, "cfunctions.so")
 
