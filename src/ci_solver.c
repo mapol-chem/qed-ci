@@ -3,7 +3,7 @@
 #include "ci_solver.h"
 #include <string.h>
 #include <math.h>
-#include <cblas.h>
+#include <mkl.h>
 #include<omp.h>
 #include<time.h>
 #include "mkl_lapacke.h"

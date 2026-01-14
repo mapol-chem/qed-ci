@@ -22,6 +22,7 @@ import sys
 from helper_cqed_rhf import cqed_rhf
 from helper_PFCI import *
 from residual_minimization import *
+from gmres import *
 from itertools import combinations
 import math
 import time
@@ -757,6 +758,33 @@ class nuclear_grad(PFHamiltonianGenerator):
         print("\n--- Solver did not converge within max iterations ---")
         #return solver_sym.get_solution()
 
+    def solve3(self, A, G1, matvec_product, denom, max_iter, conv_thresh=1e-7):
+        """
+        Main driver loop to solve the linear system Ax + b = 0.
+        """
+        print("--------------------------------------------")
+        print("--- Start solving CP-SA-CASSCF equations ---")
+        print("--------------------------------------------")
+        
+        # Initialize GMRES with your RHS (b vector)
+        # Note: we use max_subspace=20 (standard), increase if convergence is jagged
+        gmres = GMRESSolver(b_vector=-self.reduced_state_gradient, max_subspace=20)
+        
+        # Run the solver
+        # We pass the wrapper methods we defined above
+        final_solution_x = gmres.solve(
+            matvec_product=self.my_matvec_wrapper,
+            preconditioner=self.my_preconditioner_wrapper,
+            max_iter=100,      # Max number of restarts
+            conv_thresh=1e-7
+        )
+        
+        return final_solution_x
+
+        print("\n--- Solver did not converge within max iterations ---")
+        #return solver_sym.get_solution()
+
+
 
 
     def pack_solution(self, x_Z, x_z):
@@ -1231,6 +1259,44 @@ class nuclear_grad(PFHamiltonianGenerator):
 
         return projected_sigma 
 
+    def my_preconditioner_wrapper(self, vector):
+        """
+        Replaces: trial_c = residual / denom
+        And handles the projection of the trial vector.
+        """
+        # 1. Division by denom (Safe division)
+        safe_denom = np.where(np.abs(self.denom) < 1e-12, 1.0, self.denom)
+        trial_c = vector / safe_denom
+
+        # 2. Project out orbital rotation redundancies (Your code logic)
+        # Ensure this matches your array shapes exactly
+        start = self.index_map_size
+        end = start + self.davidson_roots * self.H_dim
+        
+        if len(trial_c) > start:
+            temp2 = trial_c[start:].reshape(self.davidson_roots, self.H_dim)
+            temp2 = self.project_out_all(temp2, self.eigenvecs)
+            trial_c[start:] = temp2.flatten()
+            
+        return trial_c
+
+    def my_matvec_wrapper(self, x):
+        """
+        Replaces: sigma = matvec_product(trial_c, A, G1)
+        And handles the projection of the sigma vector.
+        """
+        # 1. Actual Matrix-Vector Product
+        sigma = self.matvec_product(x, self.A, self.G1)
+
+        # 2. Project out redundancies from sigma (Your code logic)
+        start = self.index_map_size
+        
+        if len(sigma) > start:
+            temp3 = sigma[start:].reshape(self.davidson_roots, self.H_dim)
+            temp3 = self.project_out_all(temp3, self.eigenvecs)
+            sigma[start:] = temp3.flatten()
+
+        return sigma
 
 
     def compute_grad(self, state):
@@ -1382,7 +1448,11 @@ class nuclear_grad(PFHamiltonianGenerator):
         for i in range(self.davidson_roots):
             for j in range(self.H_dim):
                 denom0[self.index_map_size + i * self.H_dim + j] = self.H_diag3[j] - self.eigenvals[i]
-        solution = self.solve2(A, G1, self.matvec_product, denom0, max_iter=2000, conv_thresh=1e-7)
+        self.A = A
+        self.G1 = G1
+        self.denom = denom0
+        #solution = self.solve2(A, G1, self.matvec_product, denom0, max_iter=2000, conv_thresh=1e-7)
+        solution = self.solve3(A, G1, self.matvec_product, denom0, max_iter=2000, conv_thresh=1e-7)
 
 
 
