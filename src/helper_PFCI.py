@@ -3281,7 +3281,6 @@ class PFHamiltonianGenerator:
 
                 # self.build_unitary_matrix(Rai, Rvi, Rva)
                 ####print("U_delta", self.U_delta)
-
                 self.index_map_pq = np.zeros(
                     (self.nmo * (self.nmo + 1) // 2, 2), dtype=np.int32
                 )
@@ -10120,6 +10119,10 @@ class PFHamiltonianGenerator:
         n_inactive = self.n_in_a
         n_active = self.n_act_orb
         G_ij, G_ti, G_tu = G_blocks
+        G_ij = np.ascontiguousarray(G_ij)
+        G_ti = np.ascontiguousarray(G_ti)
+        G_tu = np.ascontiguousarray(G_tu)
+
         return self.build_sigma_reduced7(
             U,
             A_tilde,
@@ -13982,6 +13985,7 @@ class PFHamiltonianGenerator:
             G1 = G1.reshape(
                 self.nmo * self.n_occupied, self.nmo * self.n_occupied
             )
+
             end1 = timer()
             print("transpose matrix G took", end1 - start1)
             start1 = timer()
@@ -24193,7 +24197,8 @@ class PFHamiltonianGenerator:
             # Build sigma only for active roots (e.g., [0] or [0, 1])
             ##self.orbital_sigma(U, A_tilde, G1, Q, w, nroots, 1)
             start = timer()
-            self.orbital_sigma3(U, A_tilde, G_blocks, Q[roots_to_check, :], w_sigma, num_to_build, 1)
+            Q_slice = np.ascontiguousarray(Q[roots_to_check, :])
+            self.orbital_sigma3(U, A_tilde, G_blocks, Q_slice, w_sigma, num_to_build, 1)
             end = timer()
             print("build orbital sigma for w took", end - start)
 
