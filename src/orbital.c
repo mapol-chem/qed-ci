@@ -10,338 +10,340 @@
 
 
 void full_transformation_macroiteration(double* U, double* h2e, double* J, double *K, int* index_map_pq, int* index_map_kl, int nmo, int n_occupied) {
-    double* h2e_half = (double*) malloc(nmo *(nmo+1)/2 * nmo * nmo * sizeof(double));
-    memset(h2e_half, 0, nmo *(nmo+1)/2 * nmo * nmo * sizeof(double));
-    double* temp1 = (double*) malloc(nmo *(nmo+1)/2 * nmo * n_occupied * sizeof(double));
-    memset(temp1, 0, nmo *(nmo+1)/2 * nmo * n_occupied * sizeof(double));
-    double* temp2 = (double*) malloc(nmo *(nmo+1)/2 * nmo * n_occupied * sizeof(double));
-    memset(temp2, 0, nmo *(nmo+1)/2 * nmo * n_occupied * sizeof(double));
-    //for (int pq_up = 0; pq_up < nmo*(nmo+1)/2; pq_up++) {
-    //    int stride = pq_up * 2;
-    //    int p = index_map_pq[stride];
-    //    int q = index_map_pq[stride+1];
-    //    int pq = p * nmo + q;
-    //    printf("%4d%4d%4d\n", pq_up, p , q);
+    size_t nmo_t = (size_t) nmo;
+    size_t n_occupied_t = (size_t) n_occupied;
+    double* h2e_half = (double*) malloc((size_t) nmo_t *(nmo_t+1)/2 * nmo_t * nmo_t * sizeof(double));
+    memset(h2e_half, 0, nmo_t *(nmo_t+1)/2 * nmo_t * nmo_t * sizeof(double));
+    double* temp1 = (double*) malloc((size_t) nmo_t *(nmo_t+1)/2 * nmo_t * n_occupied_t * sizeof(double));
+    memset(temp1, 0, nmo_t *(nmo_t+1)/2 * nmo_t * n_occupied_t * sizeof(double));
+    double* temp2 = (double*) malloc((size_t) nmo_t *(nmo_t+1)/2 * nmo_t * n_occupied_t * sizeof(double));
+    memset(temp2, 0, nmo_t *(nmo_t+1)/2 * nmo_t * n_occupied_t * sizeof(double));
+    //for (size_t pq_up = 0; pq_up < nmo_t*(nmo_t+1)/2; pq_up++) {
+    //    size_t stride = pq_up * 2;
+    //    size_t p = index_map_pq[stride];
+    //    size_t q = index_map_pq[stride+1];
+    //    size_t pq = p * nmo_t + q;
+    //    print("%4d%4d%4d\n", pq_up, p , q);
     //}
 
 
     #pragma omp parallel for num_threads(16)
-    for (int pq_up = 0; pq_up < nmo*(nmo+1)/2; pq_up++) {
-	int stride = pq_up * 2;
-        int p = index_map_pq[stride];
-        int q = index_map_pq[stride+1];
-	//int pq = p * nmo + q;
-	//printf("%4d%4d%4d\n", pq_up, p , q);
-        for (int r = 0; r < nmo; r++) {
-            for (int s = 0; s < nmo; s++) {
-		int rs = r * nmo + s;
-		int pr = p * nmo + r;
-		int qs = q * nmo + s;
-	        h2e_half[pq_up * nmo * nmo + rs] = h2e[pr * nmo * nmo + qs];
+    for (size_t pq_up = 0; pq_up < nmo_t*(nmo_t+1)/2; pq_up++) {
+	size_t stride = pq_up * 2;
+        size_t p = index_map_pq[stride];
+        size_t q = index_map_pq[stride+1];
+	//size_t pq = p * nmo_t + q;
+	//print("%4d%4d%4d\n", pq_up, p , q);
+        for (size_t r = 0; r < nmo_t; r++) {
+            for (size_t s = 0; s < nmo_t; s++) {
+		size_t rs = r * nmo_t + s;
+		size_t pr = p * nmo_t + r;
+		size_t qs = q * nmo_t + s;
+	        h2e_half[pq_up * nmo_t * nmo_t + rs] = h2e[pr * nmo_t * nmo_t + qs];
 	    }
 	}
     }
     #pragma omp parallel for num_threads(16)
-    for (int pq_up = 0; pq_up < nmo*(nmo+1)/2; pq_up++) {
-        int stride = pq_up * 2;
-        int p = index_map_pq[stride];
-        int q = index_map_pq[stride+1];
-	int pq = p * nmo + q;
+    for (size_t pq_up = 0; pq_up < nmo_t*(nmo_t+1)/2; pq_up++) {
+        size_t stride = pq_up * 2;
+        size_t p = index_map_pq[stride];
+        size_t q = index_map_pq[stride+1];
+	size_t pq = p * nmo_t + q;
 
-        cblas_dgemm(CblasRowMajor, CblasNoTrans, CblasNoTrans, nmo, n_occupied, nmo, 1.0, h2e+pq*nmo*nmo,
-                  nmo, U, nmo, 0.0,
-                  temp1+pq_up*nmo*n_occupied, n_occupied);
+        cblas_dgemm(CblasRowMajor, CblasNoTrans, CblasNoTrans, nmo_t, n_occupied_t, nmo_t, 1.0, h2e+pq*nmo_t*nmo_t,
+                  nmo_t, U, nmo_t, 0.0,
+                  temp1+pq_up*nmo_t*n_occupied_t, n_occupied_t);
     }
 
-    //for (int pq_up = 0; pq_up < nmo*(nmo+1)/2; pq_up++) {
-    //    int stride = pq_up * 2;
-    //    int p = index_map_pq[stride];
-    //    int q = index_map_pq[stride+1];
-    //    int pq = p * nmo + q;
-    //    for (int r = 0; r < nmo; r++) {
-    //        for (int l = 0; l < n_occupied; l++) {
+    //for (size_t pq_up = 0; pq_up < nmo_t*(nmo_t+1)/2; pq_up++) {
+    //    size_t stride = pq_up * 2;
+    //    size_t p = index_map_pq[stride];
+    //    size_t q = index_map_pq[stride+1];
+    //    size_t pq = p * nmo_t + q;
+    //    for (size_t r = 0; r < nmo_t; r++) {
+    //        for (size_t l = 0; l < n_occupied_t; l++) {
     //    	double a = 0.0;
-    //            for (int s = 0; s < nmo; s++) {
-    //                int rs = r * nmo + s;
-    //    	    a += h2e[pq * nmo * nmo + rs] * U[s * nmo + l];
+    //            for (size_t s = 0; s < nmo_t; s++) {
+    //                size_t rs = r * nmo_t + s;
+    //    	    a += h2e[pq * nmo_t * nmo_t + rs] * U[s * nmo_t + l];
     //            }
-    //    	temp2[pq_up * nmo * n_occupied + r * n_occupied + l] = a;
+    //    	temp2[pq_up * nmo_t * n_occupied_t + r * n_occupied_t + l] = a;
     //        }
     //    }
     //}
-    //for (int pq_up = 0; pq_up < nmo*(nmo+1)/2; pq_up++) {
-    //    for (int r = 0; r < nmo; r++) {
-    //        for (int l = 0; l < n_occupied; l++) {
-    //            //printf("%20.12lf %20.12lf\n", temp2[pq_up * nmo * n_occupied + r * n_occupied + l], temp1[pq_up * nmo * n_occupied + r * n_occupied + l]);
-    //            printf("%20.12lf \n", temp2[pq_up * nmo * n_occupied + r * n_occupied + l] - temp1[pq_up * nmo * n_occupied + r * n_occupied + l]);
+    //for (size_t pq_up = 0; pq_up < nmo_t*(nmo_t+1)/2; pq_up++) {
+    //    for (size_t r = 0; r < nmo_t; r++) {
+    //        for (size_t l = 0; l < n_occupied_t; l++) {
+    //            //print("%20.12lf %20.12lf\n", temp2[pq_up * nmo_t * n_occupied_t + r * n_occupied_t + l], temp1[pq_up * nmo_t * n_occupied_t + r * n_occupied_t + l]);
+    //            print("%20.12lf \n", temp2[pq_up * nmo_t * n_occupied_t + r * n_occupied_t + l] - temp1[pq_up * nmo_t * n_occupied_t + r * n_occupied_t + l]);
     //        }
     //    }
     //}
 
 
-    double* temp3 = (double*) malloc(nmo *(nmo+1)/2 * n_occupied * n_occupied * sizeof(double));
-    memset(temp3, 0, nmo *(nmo+1)/2 * n_occupied * n_occupied * sizeof(double));
-    //double* temp4 = (double*) malloc(nmo *(nmo+1)/2 * n_occupied * n_occupied * sizeof(double));
-    //memset(temp4, 0, nmo *(nmo+1)/2 * n_occupied * n_occupied * sizeof(double));
+    double* temp3 = (double*) malloc((size_t) nmo_t *(nmo_t+1)/2 * n_occupied_t * n_occupied_t * sizeof(double));
+    memset(temp3, 0, nmo_t *(nmo_t+1)/2 * n_occupied_t * n_occupied_t * sizeof(double));
+    //double* temp4 = (double*) malloc(nmo_t *(nmo_t+1)/2 * n_occupied_t * n_occupied_t * sizeof(double));
+    //memset(temp4, 0, nmo_t *(nmo_t+1)/2 * n_occupied_t * n_occupied_t * sizeof(double));
     // when matrix is transposed, in cblas_dgemm, m,n,k are the physical size of transposed matrix
     // but lda,ldb are leading dimensions (strides to next row) of original matrices (number of columns)
     #pragma omp parallel for num_threads(16)
-    for (int pq_up = 0; pq_up < nmo*(nmo+1)/2; pq_up++) {
-        //int stride = pq_up * 2;
-        //int p = index_map_pq[stride];
-        //int q = index_map_pq[stride+1];
-	//int pq = p * nmo + q;
+    for (size_t pq_up = 0; pq_up < nmo_t*(nmo_t+1)/2; pq_up++) {
+        //size_t stride = pq_up * 2;
+        //size_t p = index_map_pq[stride];
+        //size_t q = index_map_pq[stride+1];
+	//size_t pq = p * nmo_t + q;
 
-        cblas_dgemm(CblasRowMajor, CblasTrans, CblasNoTrans, n_occupied, n_occupied, nmo, 1.0, U,
-                  nmo, temp1+pq_up*nmo*n_occupied, n_occupied, 0.0,
-                  temp3+pq_up*n_occupied*n_occupied, n_occupied);
+        cblas_dgemm(CblasRowMajor, CblasTrans, CblasNoTrans, n_occupied_t, n_occupied_t, nmo_t, 1.0, U,
+                  nmo_t, temp1+pq_up*nmo_t*n_occupied_t, n_occupied_t, 0.0,
+                  temp3+pq_up*n_occupied_t*n_occupied_t, n_occupied_t);
     }
 
-    //for (int pq_up = 0; pq_up < nmo*(nmo+1)/2; pq_up++) {
-    //    int stride = pq_up * 2;
-    //    int p = index_map_pq[stride];
-    //    int q = index_map_pq[stride+1];
-    //    int pq = p * nmo + q;
-    //    for (int k = 0; k < n_occupied; k++) {
-    //        for (int l = 0; l < n_occupied; l++) {
+    //for (size_t pq_up = 0; pq_up < nmo_t*(nmo_t+1)/2; pq_up++) {
+    //    size_t stride = pq_up * 2;
+    //    size_t p = index_map_pq[stride];
+    //    size_t q = index_map_pq[stride+1];
+    //    size_t pq = p * nmo_t + q;
+    //    for (size_t k = 0; k < n_occupied_t; k++) {
+    //        for (size_t l = 0; l < n_occupied_t; l++) {
     //    	double a = 0.0;
-    //            for (int r = 0; r < nmo; r++) {
-    //                int rl = r * n_occupied + l;
-    //    	    a += temp1[pq_up * nmo * n_occupied + rl] * U[r * nmo + k];
+    //            for (size_t r = 0; r < nmo_t; r++) {
+    //                size_t rl = r * n_occupied_t + l;
+    //    	    a += temp1[pq_up * nmo_t * n_occupied_t + rl] * U[r * nmo_t + k];
     //            }
-    //    	temp4[pq_up * n_occupied * n_occupied + k * n_occupied + l] = a;
+    //    	temp4[pq_up * n_occupied_t * n_occupied_t + k * n_occupied_t + l] = a;
     //        }
     //    }
     //}
 
-    //for (int pq_up = 0; pq_up < nmo*(nmo+1)/2; pq_up++) {
-    //    for (int k = 0; k < n_occupied; k++) {
-    //        for (int l = 0; l < n_occupied; l++) {
-    //            //printf("%20.12lf %20.12lf\n", temp4[pq_up * n_occupied * n_occupied + k * n_occupied + l], temp3[pq_up * n_occupied * n_occupied + k * n_occupied + l]);
-    //            printf("%20.12lf \n", temp4[pq_up * n_occupied * n_occupied + k * n_occupied + l]- temp3[pq_up * n_occupied * n_occupied + k * n_occupied + l]);
+    //for (size_t pq_up = 0; pq_up < nmo_t*(nmo_t+1)/2; pq_up++) {
+    //    for (size_t k = 0; k < n_occupied_t; k++) {
+    //        for (size_t l = 0; l < n_occupied_t; l++) {
+    //            //print("%20.12lf %20.12lf\n", temp4[pq_up * n_occupied_t * n_occupied_t + k * n_occupied_t + l], temp3[pq_up * n_occupied_t * n_occupied_t + k * n_occupied_t + l]);
+    //            print("%20.12lf \n", temp4[pq_up * n_occupied_t * n_occupied_t + k * n_occupied_t + l]- temp3[pq_up * n_occupied_t * n_occupied_t + k * n_occupied_t + l]);
     //        }	
     //    }
     //}
-    double* temp5 = (double*) malloc(n_occupied *(n_occupied+1)/2 * nmo * nmo * sizeof(double));
-    memset(temp5, 0, n_occupied *(n_occupied+1)/2 * nmo * nmo * sizeof(double));
-    double* temp6 = (double*) malloc(n_occupied *(n_occupied+1)/2 * nmo * nmo * sizeof(double));
-    memset(temp6, 0, n_occupied *(n_occupied+1)/2 * nmo * nmo * sizeof(double));
+    double* temp5 = (double*) malloc((size_t)n_occupied_t *(n_occupied_t+1)/2 * nmo_t * nmo_t * sizeof(double));
+    memset(temp5, 0, n_occupied_t *(n_occupied_t+1)/2 * nmo_t * nmo_t * sizeof(double));
+    double* temp6 = (double*) malloc((size_t)n_occupied_t *(n_occupied_t+1)/2 * nmo_t * nmo_t * sizeof(double));
+    memset(temp6, 0, n_occupied_t *(n_occupied_t+1)/2 * nmo_t * nmo_t * sizeof(double));
     
     #pragma omp parallel for num_threads(16)
-    for (int kl_up = 0; kl_up < n_occupied*(n_occupied+1)/2; kl_up++) {
-	int stride = kl_up * 2;
-        int k = index_map_kl[stride];
-        int l = index_map_kl[stride+1];
-	int kl = k * n_occupied + l;
-        for (int pq_up = 0; pq_up < nmo*(nmo+1)/2; pq_up++) {
-            int stride1 = pq_up * 2;
-            int p = index_map_pq[stride1];
-            int q = index_map_pq[stride1+1];
-	    int pq = p * nmo + q;
-	    int qp = q * nmo + p;
-	    temp5[kl_up * nmo * nmo + pq] = temp3[pq_up * n_occupied * n_occupied + kl];
-	    temp5[kl_up * nmo * nmo + qp] = temp5[kl_up * nmo * nmo + pq];
+    for (size_t kl_up = 0; kl_up < n_occupied_t*(n_occupied_t+1)/2; kl_up++) {
+	size_t stride = kl_up * 2;
+        size_t k = index_map_kl[stride];
+        size_t l = index_map_kl[stride+1];
+	size_t kl = k * n_occupied_t + l;
+        for (size_t pq_up = 0; pq_up < nmo_t*(nmo_t+1)/2; pq_up++) {
+            size_t stride1 = pq_up * 2;
+            size_t p = index_map_pq[stride1];
+            size_t q = index_map_pq[stride1+1];
+	    size_t pq = p * nmo_t + q;
+	    size_t qp = q * nmo_t + p;
+	    temp5[kl_up * nmo_t * nmo_t + pq] = temp3[pq_up * n_occupied_t * n_occupied_t + kl];
+	    temp5[kl_up * nmo_t * nmo_t + qp] = temp5[kl_up * nmo_t * nmo_t + pq];
 	}
     }
     #pragma omp parallel for num_threads(16)
-    for (int kl_up = 0; kl_up < n_occupied*(n_occupied+1)/2; kl_up++) {
-	//int stride = kl_up * 2;
-        //int k = index_map_kl[stride];
-        //int l = index_map_kl[stride+1];
-	//int kl = k * n_occupied + l;
+    for (size_t kl_up = 0; kl_up < n_occupied_t*(n_occupied_t+1)/2; kl_up++) {
+	//size_t stride = kl_up * 2;
+        //size_t k = index_map_kl[stride];
+        //size_t l = index_map_kl[stride+1];
+	//size_t kl = k * n_occupied_t + l;
 
-        cblas_dgemm(CblasRowMajor, CblasNoTrans, CblasNoTrans, nmo, nmo, nmo, 1.0, temp5+kl_up*nmo*nmo,
-                  nmo, U, nmo, 0.0,
-                  temp6+kl_up*nmo*nmo, nmo);
+        cblas_dgemm(CblasRowMajor, CblasNoTrans, CblasNoTrans, nmo_t, nmo_t, nmo_t, 1.0, temp5+kl_up*nmo_t*nmo_t,
+                  nmo_t, U, nmo_t, 0.0,
+                  temp6+kl_up*nmo_t*nmo_t, nmo_t);
     }
-    //double* temp7 = (double*) malloc(n_occupied *(n_occupied+1)/2 * nmo * nmo * sizeof(double));
-    //memset(temp7, 0, n_occupied *(n_occupied+1)/2 * nmo * nmo * sizeof(double));
-    //for (int kl_up = 0; kl_up < n_occupied*(n_occupied+1)/2; kl_up++) {
-    //    int stride = kl_up * 2;
-    //    int k = index_map_kl[stride];
-    //    int l = index_map_kl[stride+1];
-    //    int kl = k * n_occupied + l;
-    //    for (int p = 0; p < nmo; p++) {
-    //        for (int s = 0; s < nmo; s++) {
+    //double* temp7 = (double*) malloc(n_occupied_t *(n_occupied_t+1)/2 * nmo_t * nmo_t * sizeof(double));
+    //memset(temp7, 0, n_occupied_t *(n_occupied_t+1)/2 * nmo_t * nmo_t * sizeof(double));
+    //for (size_t kl_up = 0; kl_up < n_occupied_t*(n_occupied_t+1)/2; kl_up++) {
+    //    size_t stride = kl_up * 2;
+    //    size_t k = index_map_kl[stride];
+    //    size_t l = index_map_kl[stride+1];
+    //    size_t kl = k * n_occupied_t + l;
+    //    for (size_t p = 0; p < nmo_t; p++) {
+    //        for (size_t s = 0; s < nmo_t; s++) {
     //    	double a = 0.0;
-    //            for (int q = 0; q < nmo; q++) {
-    //                int pq = p * nmo + q;
-    //    	    a += temp5[kl_up * nmo * nmo + pq] * U[q * nmo + s];
+    //            for (size_t q = 0; q < nmo_t; q++) {
+    //                size_t pq = p * nmo_t + q;
+    //    	    a += temp5[kl_up * nmo_t * nmo_t + pq] * U[q * nmo_t + s];
     //            }
-    //    	temp7[kl_up * nmo * nmo + p * nmo + s] = a;
+    //    	temp7[kl_up * nmo_t * nmo_t + p * nmo_t + s] = a;
     //        }
     //    }
     //}
-    //for (int kl_up = 0; kl_up < n_occupied*(n_occupied+1)/2; kl_up++) {
-    //    int stride = kl_up * 2;
-    //    int k = index_map_kl[stride];
-    //    int l = index_map_kl[stride+1];
-    //    int kl = k * n_occupied + l;
-    //    for (int p = 0; p < nmo; p++) {
-    //        for (int s = 0; s < nmo; s++) {
-    //            //printf("%20.12lf %20.12lf\n", temp7[kl_up * nmo * nmo + p * nmo + s], temp6[kl_up * nmo * nmo + p * nmo + s]);
-    //            printf("%20.12lf \n", temp7[kl_up * nmo * nmo + p * nmo + s] - temp6[kl_up * nmo * nmo + p * nmo + s]);
+    //for (size_t kl_up = 0; kl_up < n_occupied_t*(n_occupied_t+1)/2; kl_up++) {
+    //    size_t stride = kl_up * 2;
+    //    size_t k = index_map_kl[stride];
+    //    size_t l = index_map_kl[stride+1];
+    //    size_t kl = k * n_occupied_t + l;
+    //    for (size_t p = 0; p < nmo_t; p++) {
+    //        for (size_t s = 0; s < nmo_t; s++) {
+    //            //print("%20.12lf %20.12lf\n", temp7[kl_up * nmo_t * nmo_t + p * nmo_t + s], temp6[kl_up * nmo_t * nmo_t + p * nmo_t + s]);
+    //            print("%20.12lf \n", temp7[kl_up * nmo_t * nmo_t + p * nmo_t + s] - temp6[kl_up * nmo_t * nmo_t + p * nmo_t + s]);
     //        }
     //    }
     //}
-    double* temp8 = (double*) malloc(n_occupied *(n_occupied+1)/2 * nmo * nmo * sizeof(double));
-    memset(temp8, 0, n_occupied *(n_occupied+1)/2 * nmo * nmo * sizeof(double));
-    //double* temp9 = (double*) malloc(n_occupied *(n_occupied+1)/2 * nmo * nmo * sizeof(double));
-    //memset(temp9, 0, n_occupied *(n_occupied+1)/2 * nmo * nmo * sizeof(double));
+    double* temp8 = (double*) malloc((size_t)n_occupied_t *(n_occupied_t+1)/2 * nmo_t * nmo_t * sizeof(double));
+    memset(temp8, 0, n_occupied_t *(n_occupied_t+1)/2 * nmo_t * nmo_t * sizeof(double));
+    //double* temp9 = (double*) malloc(n_occupied_t *(n_occupied_t+1)/2 * nmo_t * nmo_t * sizeof(double));
+    //memset(temp9, 0, n_occupied_t *(n_occupied_t+1)/2 * nmo_t * nmo_t * sizeof(double));
     #pragma omp parallel for num_threads(16)
-    for (int kl_up = 0; kl_up < n_occupied*(n_occupied+1)/2; kl_up++) {
-	//int stride = kl_up * 2;
-        //int k = index_map_kl[stride];
-        //int l = index_map_kl[stride+1];
-	//int kl = k * n_occupied + l;
+    for (size_t kl_up = 0; kl_up < n_occupied_t*(n_occupied_t+1)/2; kl_up++) {
+	//size_t stride = kl_up * 2;
+        //size_t k = index_map_kl[stride];
+        //size_t l = index_map_kl[stride+1];
+	//size_t kl = k * n_occupied_t + l;
 
-        cblas_dgemm(CblasRowMajor, CblasTrans, CblasNoTrans, nmo, nmo, nmo, 1.0, U,
-                  nmo, temp6+kl_up*nmo*nmo, nmo, 0.0,
-                  temp8+kl_up*nmo*nmo, nmo);
+        cblas_dgemm(CblasRowMajor, CblasTrans, CblasNoTrans, nmo_t, nmo_t, nmo_t, 1.0, U,
+                  nmo_t, temp6+kl_up*nmo_t*nmo_t, nmo_t, 0.0,
+                  temp8+kl_up*nmo_t*nmo_t, nmo_t);
     }
-    //for (int kl_up = 0; kl_up < n_occupied*(n_occupied+1)/2; kl_up++) {
-    //    int stride = kl_up * 2;
-    //    int k = index_map_kl[stride];
-    //    int l = index_map_kl[stride+1];
-    //    int kl = k * n_occupied + l;
-    //    for (int r = 0; r < nmo; r++) {
-    //        for (int s = 0; s < nmo; s++) {
+    //for (size_t kl_up = 0; kl_up < n_occupied_t*(n_occupied_t+1)/2; kl_up++) {
+    //    size_t stride = kl_up * 2;
+    //    size_t k = index_map_kl[stride];
+    //    size_t l = index_map_kl[stride+1];
+    //    size_t kl = k * n_occupied_t + l;
+    //    for (size_t r = 0; r < nmo_t; r++) {
+    //        for (size_t s = 0; s < nmo_t; s++) {
     //    	double a = 0.0;
-    //            for (int p = 0; p < nmo; p++) {
-    //                int ps = p * nmo + s;
-    //    	    a += temp6[kl_up * nmo * nmo + ps] * U[p * nmo + r];
+    //            for (size_t p = 0; p < nmo_t; p++) {
+    //                size_t ps = p * nmo_t + s;
+    //    	    a += temp6[kl_up * nmo_t * nmo_t + ps] * U[p * nmo_t + r];
     //            }
-    //    	temp9[kl_up * nmo * nmo + r * nmo + s] = a;
+    //    	temp9[kl_up * nmo_t * nmo_t + r * nmo_t + s] = a;
     //        }
     //    }
     //}
-    //for (int kl_up = 0; kl_up < n_occupied*(n_occupied+1)/2; kl_up++) {
-    //    int stride = kl_up * 2;
-    //    int k = index_map_kl[stride];
-    //    int l = index_map_kl[stride+1];
-    //    int kl = k * n_occupied + l;
-    //    for (int r = 0; r < nmo; r++) {
-    //        for (int s = 0; s < nmo; s++) {
-    //            //printf("%20.12lf %20.12lf\n", temp9[kl_up * nmo * nmo + r * nmo + s], temp8[kl_up * nmo * nmo + r * nmo + s]);
-    //            printf("%20.12lf \n", temp9[kl_up * nmo * nmo + r * nmo + s] - temp8[kl_up * nmo * nmo + r * nmo + s]);
+    //for (size_t kl_up = 0; kl_up < n_occupied_t*(n_occupied_t+1)/2; kl_up++) {
+    //    size_t stride = kl_up * 2;
+    //    size_t k = index_map_kl[stride];
+    //    size_t l = index_map_kl[stride+1];
+    //    size_t kl = k * n_occupied_t + l;
+    //    for (size_t r = 0; r < nmo_t; r++) {
+    //        for (size_t s = 0; s < nmo_t; s++) {
+    //            //print("%20.12lf %20.12lf\n", temp9[kl_up * nmo_t * nmo_t + r * nmo_t + s], temp8[kl_up * nmo_t * nmo_t + r * nmo_t + s]);
+    //            print("%20.12lf \n", temp9[kl_up * nmo_t * nmo_t + r * nmo_t + s] - temp8[kl_up * nmo_t * nmo_t + r * nmo_t + s]);
     //        }
     //    }
     //}
-    //double* temp10 = (double*) malloc(nmo * nmo * nmo * n_occupied* sizeof(double));
-    //memset(temp10, 0,  nmo * nmo * nmo * n_occupied * sizeof(double));
-    //double* temp11 = (double*) malloc( nmo * nmo * n_occupied * n_occupied* sizeof(double));
-    //memset(temp11, 0, nmo * nmo * n_occupied * n_occupied * sizeof(double));
-    //double* temp12 = (double*) malloc( nmo * nmo * n_occupied * n_occupied* sizeof(double));
-    //memset(temp12, 0, nmo * nmo * n_occupied * n_occupied * sizeof(double));
-    //double* temp13 = (double*) malloc( nmo * nmo * n_occupied * n_occupied* sizeof(double));
-    //memset(temp13, 0, nmo * nmo * n_occupied * n_occupied * sizeof(double));
+    //double* temp10 = (double*) malloc(nmo_t * nmo_t * nmo_t * n_occupied_t* sizeof(double));
+    //memset(temp10, 0,  nmo_t * nmo_t * nmo_t * n_occupied_t * sizeof(double));
+    //double* temp11 = (double*) malloc( nmo_t * nmo_t * n_occupied_t * n_occupied_t* sizeof(double));
+    //memset(temp11, 0, nmo_t * nmo_t * n_occupied_t * n_occupied_t * sizeof(double));
+    //double* temp12 = (double*) malloc( nmo_t * nmo_t * n_occupied_t * n_occupied_t* sizeof(double));
+    //memset(temp12, 0, nmo_t * nmo_t * n_occupied_t * n_occupied_t * sizeof(double));
+    //double* temp13 = (double*) malloc( nmo_t * nmo_t * n_occupied_t * n_occupied_t* sizeof(double));
+    //memset(temp13, 0, nmo_t * nmo_t * n_occupied_t * n_occupied_t * sizeof(double));
     //fflush(stdout);
  
 
     #pragma omp parallel for num_threads(16)
-    for (int kl_up = 0; kl_up < n_occupied*(n_occupied+1)/2; kl_up++) {
-	int stride = kl_up * 2;
-        int k = index_map_kl[stride];
-        int l = index_map_kl[stride+1];
-	int kl = k * n_occupied + l;
-	int lk = l * n_occupied + k;
-        for (int pq_up = 0; pq_up < nmo*(nmo+1)/2; pq_up++) {
-            int stride1 = pq_up * 2;
-            int p = index_map_pq[stride1];
-            int q = index_map_pq[stride1+1];
-	    int pq = p * nmo + q;
-	    int qp = q * nmo + p;
-	    J[kl * nmo * nmo + pq] = temp8[kl_up * nmo * nmo + pq];
-	    J[kl * nmo * nmo + qp] = J[kl * nmo * nmo + pq];
-	    J[lk * nmo * nmo + pq] = J[kl * nmo * nmo + pq];
-	    J[lk * nmo * nmo + qp] = J[kl * nmo * nmo + pq];
+    for (size_t kl_up = 0; kl_up < n_occupied_t*(n_occupied_t+1)/2; kl_up++) {
+	size_t stride = kl_up * 2;
+        size_t k = index_map_kl[stride];
+        size_t l = index_map_kl[stride+1];
+	size_t kl = k * n_occupied_t + l;
+	size_t lk = l * n_occupied_t + k;
+        for (size_t pq_up = 0; pq_up < nmo_t*(nmo_t+1)/2; pq_up++) {
+            size_t stride1 = pq_up * 2;
+            size_t p = index_map_pq[stride1];
+            size_t q = index_map_pq[stride1+1];
+	    size_t pq = p * nmo_t + q;
+	    size_t qp = q * nmo_t + p;
+	    J[kl * nmo_t * nmo_t + pq] = temp8[kl_up * nmo_t * nmo_t + pq];
+	    J[kl * nmo_t * nmo_t + qp] = J[kl * nmo_t * nmo_t + pq];
+	    J[lk * nmo_t * nmo_t + pq] = J[kl * nmo_t * nmo_t + pq];
+	    J[lk * nmo_t * nmo_t + qp] = J[kl * nmo_t * nmo_t + pq];
 	}
     }
-    //printf("test full transformation\n");
-    //for (int p = 0; p < nmo; p++) {
-    //    for (int q = 0; q < nmo; q++) {
-    //        int pq = p * nmo + q;
-    //        for (int r = 0; r < nmo; r++) {
-    //            for (int l = 0; l < n_occupied; l++) {
+    //print("test full transformation\n");
+    //for (size_t p = 0; p < nmo_t; p++) {
+    //    for (size_t q = 0; q < nmo_t; q++) {
+    //        size_t pq = p * nmo_t + q;
+    //        for (size_t r = 0; r < nmo_t; r++) {
+    //            for (size_t l = 0; l < n_occupied_t; l++) {
     //    	    double a = 0.0;
-    //                for (int s = 0; s < nmo; s++) {
-    //    	        int rs = r * nmo + s;
-    //                    a += h2e[pq * nmo * nmo + rs] * U[s * nmo + l];
+    //                for (size_t s = 0; s < nmo_t; s++) {
+    //    	        size_t rs = r * nmo_t + s;
+    //                    a += h2e[pq * nmo_t * nmo_t + rs] * U[s * nmo_t + l];
     //    	    }	
-    //                temp10[pq * nmo * n_occupied + r * n_occupied + l] = a;
+    //                temp10[pq * nmo_t * n_occupied_t + r * n_occupied_t + l] = a;
     //    	}
     //        }
     //    }
     //}
-    //for (int p = 0; p < nmo; p++) {
-    //    for (int q = 0; q < nmo; q++) {
-    //        int pq = p * nmo + q;
-    //        for (int k = 0; k < n_occupied; k++) {
-    //            for (int l = 0; l < n_occupied; l++) {
+    //for (size_t p = 0; p < nmo_t; p++) {
+    //    for (size_t q = 0; q < nmo_t; q++) {
+    //        size_t pq = p * nmo_t + q;
+    //        for (size_t k = 0; k < n_occupied_t; k++) {
+    //            for (size_t l = 0; l < n_occupied_t; l++) {
     //    	    double a = 0.0;
-    //                for (int r = 0; r < nmo; r++) {
-    //    	        int rl = r * n_occupied + l;
-    //                    a += temp10[pq * nmo * n_occupied + rl] * U[r * nmo + k];
+    //                for (size_t r = 0; r < nmo_t; r++) {
+    //    	        size_t rl = r * n_occupied_t + l;
+    //                    a += temp10[pq * nmo_t * n_occupied_t + rl] * U[r * nmo_t + k];
     //    	    }	
-    //                temp11[pq * n_occupied * n_occupied + k * n_occupied + l] = a;
+    //                temp11[pq * n_occupied_t * n_occupied_t + k * n_occupied_t + l] = a;
     //    	}
     //        }
     //    }
     //}
-    //for (int p = 0; p < nmo; p++) {
-    //    for (int s = 0; s < nmo; s++) {
-    //        int ps = p * nmo + s;
-    //        for (int k = 0; k < n_occupied; k++) {
-    //            for (int l = 0; l < n_occupied; l++) {
-    //    	    int kl = k * n_occupied + l;
+    //for (size_t p = 0; p < nmo_t; p++) {
+    //    for (size_t s = 0; s < nmo_t; s++) {
+    //        size_t ps = p * nmo_t + s;
+    //        for (size_t k = 0; k < n_occupied_t; k++) {
+    //            for (size_t l = 0; l < n_occupied_t; l++) {
+    //    	    size_t kl = k * n_occupied_t + l;
     //    	    double a = 0.0;
-    //                for (int q = 0; q < nmo; q++) {
-    //    	        int pq = p * nmo + q;
-    //                    a += temp11[pq * n_occupied * n_occupied + kl] * U[q * nmo + s];
+    //                for (size_t q = 0; q < nmo_t; q++) {
+    //    	        size_t pq = p * nmo_t + q;
+    //                    a += temp11[pq * n_occupied_t * n_occupied_t + kl] * U[q * nmo_t + s];
     //    	    }	
-    //                temp12[ps * n_occupied * n_occupied + k * n_occupied + l] = a;
+    //                temp12[ps * n_occupied_t * n_occupied_t + k * n_occupied_t + l] = a;
     //    	}
     //        }
     //    }
     //}
 
-    //for (int r = 0; r < nmo; r++) {
-    //    for (int s = 0; s < nmo; s++) {
-    //        int rs = r * nmo + s;
-    //        for (int k = 0; k < n_occupied; k++) {
-    //            for (int l = 0; l < n_occupied; l++) {
-    //    	    int kl = k * n_occupied + l;
+    //for (size_t r = 0; r < nmo_t; r++) {
+    //    for (size_t s = 0; s < nmo_t; s++) {
+    //        size_t rs = r * nmo_t + s;
+    //        for (size_t k = 0; k < n_occupied_t; k++) {
+    //            for (size_t l = 0; l < n_occupied_t; l++) {
+    //    	    size_t kl = k * n_occupied_t + l;
     //    	    double a = 0.0;
-    //                for (int p = 0; p < nmo; p++) {
-    //    	        int ps = p * nmo + s;
-    //                    a += temp12[ps * n_occupied * n_occupied + kl] * U[p * nmo + r];
+    //                for (size_t p = 0; p < nmo_t; p++) {
+    //    	        size_t ps = p * nmo_t + s;
+    //                    a += temp12[ps * n_occupied_t * n_occupied_t + kl] * U[p * nmo_t + r];
     //    	    }	
-    //                temp13[rs * n_occupied * n_occupied + k * n_occupied + l] = a;
+    //                temp13[rs * n_occupied_t * n_occupied_t + k * n_occupied_t + l] = a;
     //    	}
     //        }
     //    }
     //}
     //
-    //double* temp14 = (double*) malloc(n_occupied * n_occupied * nmo * nmo * sizeof(double));
-    //memset(temp14, 0,n_occupied * n_occupied *  nmo * nmo * sizeof(double));
-    //double* temp15 = (double*) malloc(n_occupied * n_occupied * nmo * nmo * sizeof(double));
-    //memset(temp15, 0,n_occupied * n_occupied *  nmo * nmo * sizeof(double));
+    //double* temp14 = (double*) malloc(n_occupied_t * n_occupied_t * nmo_t * nmo_t * sizeof(double));
+    //memset(temp14, 0,n_occupied_t * n_occupied_t *  nmo_t * nmo_t * sizeof(double));
+    //double* temp15 = (double*) malloc(n_occupied_t * n_occupied_t * nmo_t * nmo_t * sizeof(double));
+    //memset(temp15, 0,n_occupied_t * n_occupied_t *  nmo_t * nmo_t * sizeof(double));
  
 
 
  
-    //for (int k_p = 0; k_p < n_occupied; k_p++) {
-    //    for (int l_p = 0; l_p < n_occupied; l_p++) {
-    //        for (int r_p = 0; r_p < nmo; r_p++) {
-    //            for (int s_p = 0; s_p < nmo; s_p++) {
-    //                for (int p = 0; p < nmo; p++) {
-    //                    for (int q = 0; q < nmo; q++) {
-    //                        for (int r = 0; r < nmo; r++) {
-    //                            for (int s = 0; s < nmo; s++) {
-    //    			    temp14[k_p * n_occupied * nmo * nmo +l_p *nmo * nmo + r_p * nmo + s_p] +=
-    //    			    U[p * nmo + k_p] * U[q * nmo + l_p] * U[r * nmo + r_p] * U[s * nmo + s_p] * h2e[p * nmo * nmo * nmo + q * nmo * nmo + r * nmo +s];	   
-    //                                temp15[k_p * n_occupied * nmo * nmo +l_p *nmo * nmo + r_p * nmo + s_p] +=
-    //    			    U[p * nmo + k_p] * U[q * nmo + l_p] * U[r * nmo + r_p] * U[s * nmo + s_p] * h2e[r * nmo * nmo * nmo + p * nmo * nmo + s * nmo +q];	  
+    //for (size_t k_p = 0; k_p < n_occupied_t; k_p++) {
+    //    for (size_t l_p = 0; l_p < n_occupied_t; l_p++) {
+    //        for (size_t r_p = 0; r_p < nmo_t; r_p++) {
+    //            for (size_t s_p = 0; s_p < nmo_t; s_p++) {
+    //                for (size_t p = 0; p < nmo_t; p++) {
+    //                    for (size_t q = 0; q < nmo_t; q++) {
+    //                        for (size_t r = 0; r < nmo_t; r++) {
+    //                            for (size_t s = 0; s < nmo_t; s++) {
+    //    			    temp14[k_p * n_occupied_t * nmo_t * nmo_t +l_p *nmo_t * nmo_t + r_p * nmo_t + s_p] +=
+    //    			    U[p * nmo_t + k_p] * U[q * nmo_t + l_p] * U[r * nmo_t + r_p] * U[s * nmo_t + s_p] * h2e[p * nmo_t * nmo_t * nmo_t + q * nmo_t * nmo_t + r * nmo_t +s];	   
+    //                                temp15[k_p * n_occupied_t * nmo_t * nmo_t +l_p *nmo_t * nmo_t + r_p * nmo_t + s_p] +=
+    //    			    U[p * nmo_t + k_p] * U[q * nmo_t + l_p] * U[r * nmo_t + r_p] * U[s * nmo_t + s_p] * h2e[r * nmo_t * nmo_t * nmo_t + p * nmo_t * nmo_t + s * nmo_t +q];	  
     //    			}
     //    		    }
     //    		}
@@ -350,15 +352,15 @@ void full_transformation_macroiteration(double* U, double* h2e, double* J, doubl
     //        }
     //    }
     //}
-    //for (int k = 0; k < n_occupied; k++) {
-    //    for (int l = 0; l < n_occupied; l++) {
-    //        int kl = k * n_occupied + l;
-    //        for (int r = 0; r < nmo; r++) {
-    //            for (int s = 0; s < nmo; s++) {
-    //                int rs = r * nmo + s;
-    //                //printf("%20.12lf %20.12lf %20.12lf\n", temp14[kl * nmo * nmo + rs], temp13[rs * n_occupied * n_occupied + k * n_occupied + l], J[kl * nmo * nmo + rs]);
-    //                printf("%20.12lf\n", temp14[kl * nmo * nmo + rs] -  J[kl * nmo * nmo + rs]);
-    //    	    //J[kl * nmo * nmo + rs] = temp13[rs * n_occupied * n_occupied + k * n_occupied + l];
+    //for (size_t k = 0; k < n_occupied_t; k++) {
+    //    for (size_t l = 0; l < n_occupied_t; l++) {
+    //        size_t kl = k * n_occupied_t + l;
+    //        for (size_t r = 0; r < nmo_t; r++) {
+    //            for (size_t s = 0; s < nmo_t; s++) {
+    //                size_t rs = r * nmo_t + s;
+    //                //print("%20.12lf %20.12lf %20.12lf\n", temp14[kl * nmo_t * nmo_t + rs], temp13[rs * n_occupied_t * n_occupied_t + k * n_occupied_t + l], J[kl * nmo_t * nmo_t + rs]);
+    //                print("%20.12lf\n", temp14[kl * nmo_t * nmo_t + rs] -  J[kl * nmo_t * nmo_t + rs]);
+    //    	    //J[kl * nmo_t * nmo_t + rs] = temp13[rs * n_occupied_t * n_occupied_t + k * n_occupied_t + l];
     //    	}
     //        }
     //    }
@@ -369,202 +371,202 @@ void full_transformation_macroiteration(double* U, double* h2e, double* J, doubl
 
     //build K
     #pragma omp parallel for num_threads(16)
-    for (int pq_up = 0; pq_up < nmo*(nmo+1)/2; pq_up++) {
-        //int stride = pq_up * 2;
-        //int p = index_map_pq[stride];
-        //int q = index_map_pq[stride+1];
-	//int pq = p * nmo + q;
+    for (size_t pq_up = 0; pq_up < nmo_t*(nmo_t+1)/2; pq_up++) {
+        //size_t stride = pq_up * 2;
+        //size_t p = index_map_pq[stride];
+        //size_t q = index_map_pq[stride+1];
+	//size_t pq = p * nmo_t + q;
 
-        cblas_dgemm(CblasRowMajor, CblasNoTrans, CblasNoTrans, nmo, n_occupied, nmo, 1.0, h2e_half+pq_up*nmo*nmo,
-                  nmo, U, nmo, 0.0,
-                  temp1+pq_up*nmo*n_occupied, n_occupied);
+        cblas_dgemm(CblasRowMajor, CblasNoTrans, CblasNoTrans, nmo_t, n_occupied_t, nmo_t, 1.0, h2e_half+pq_up*nmo_t*nmo_t,
+                  nmo_t, U, nmo_t, 0.0,
+                  temp1+pq_up*nmo_t*n_occupied_t, n_occupied_t);
     }
 
-    //for (int pq_up = 0; pq_up < nmo*(nmo+1)/2; pq_up++) {
-    //    int stride = pq_up * 2;
-    //    int p = index_map_pq[stride];
-    //    int q = index_map_pq[stride+1];
-    //    int pq = p * nmo + q;
-    //    for (int r = 0; r < nmo; r++) {
-    //        for (int l = 0; l < n_occupied; l++) {
+    //for (size_t pq_up = 0; pq_up < nmo_t*(nmo_t+1)/2; pq_up++) {
+    //    size_t stride = pq_up * 2;
+    //    size_t p = index_map_pq[stride];
+    //    size_t q = index_map_pq[stride+1];
+    //    size_t pq = p * nmo_t + q;
+    //    for (size_t r = 0; r < nmo_t; r++) {
+    //        for (size_t l = 0; l < n_occupied_t; l++) {
     //    	double a = 0.0;
-    //            for (int s = 0; s < nmo; s++) {
-    //                int rs = r * nmo + s;
-    //    	    a += h2e_half[pq_up * nmo * nmo + rs] * U[s * nmo + l];
+    //            for (size_t s = 0; s < nmo_t; s++) {
+    //                size_t rs = r * nmo_t + s;
+    //    	    a += h2e_half[pq_up * nmo_t * nmo_t + rs] * U[s * nmo_t + l];
     //            }
-    //    	temp2[pq_up * nmo * n_occupied + r * n_occupied + l] = a;
+    //    	temp2[pq_up * nmo_t * n_occupied_t + r * n_occupied_t + l] = a;
     //        }
     //    }
     //}
-    //for (int pq_up = 0; pq_up < nmo*(nmo+1)/2; pq_up++) {
-    //    for (int r = 0; r < nmo; r++) {
-    //        for (int l = 0; l < n_occupied; l++) {
-    //            //printf("%20.12lf %20.12lf\n", temp2[pq_up * nmo * n_occupied + r * n_occupied + l], temp1[pq_up * nmo * n_occupied + r * n_occupied + l]);
-    //            printf("%20.12lf \n", temp2[pq_up * nmo * n_occupied + r * n_occupied + l] - temp1[pq_up * nmo * n_occupied + r * n_occupied + l]);
+    //for (size_t pq_up = 0; pq_up < nmo_t*(nmo_t+1)/2; pq_up++) {
+    //    for (size_t r = 0; r < nmo_t; r++) {
+    //        for (size_t l = 0; l < n_occupied_t; l++) {
+    //            //print("%20.12lf %20.12lf\n", temp2[pq_up * nmo_t * n_occupied_t + r * n_occupied_t + l], temp1[pq_up * nmo_t * n_occupied_t + r * n_occupied_t + l]);
+    //            print("%20.12lf \n", temp2[pq_up * nmo_t * n_occupied_t + r * n_occupied_t + l] - temp1[pq_up * nmo_t * n_occupied_t + r * n_occupied_t + l]);
     //        }
     //    }
     //}
 
-    for (int pq_up = 0; pq_up < nmo*(nmo+1)/2; pq_up++) {
-        //int stride = pq_up * 2;
-        //int p = index_map_pq[stride];
-        //int q = index_map_pq[stride+1];
-	//int pq = p * nmo + q;
+    for (size_t pq_up = 0; pq_up < nmo_t*(nmo_t+1)/2; pq_up++) {
+        //size_t stride = pq_up * 2;
+        //size_t p = index_map_pq[stride];
+        //size_t q = index_map_pq[stride+1];
+	//size_t pq = p * nmo_t + q;
 
-        cblas_dgemm(CblasRowMajor, CblasTrans, CblasNoTrans, n_occupied, n_occupied, nmo, 1.0, U,
-                  nmo, temp1+pq_up*nmo*n_occupied, n_occupied, 0.0,
-                  temp3+pq_up*n_occupied*n_occupied, n_occupied);
+        cblas_dgemm(CblasRowMajor, CblasTrans, CblasNoTrans, n_occupied_t, n_occupied_t, nmo_t, 1.0, U,
+                  nmo_t, temp1+pq_up*nmo_t*n_occupied_t, n_occupied_t, 0.0,
+                  temp3+pq_up*n_occupied_t*n_occupied_t, n_occupied_t);
     }
 
-    //for (int pq_up = 0; pq_up < nmo*(nmo+1)/2; pq_up++) {
-    //    int stride = pq_up * 2;
-    //    int p = index_map_pq[stride];
-    //    int q = index_map_pq[stride+1];
-    //    int pq = p * nmo + q;
-    //    for (int k = 0; k < n_occupied; k++) {
-    //        for (int l = 0; l < n_occupied; l++) {
+    //for (size_t pq_up = 0; pq_up < nmo_t*(nmo_t+1)/2; pq_up++) {
+    //    size_t stride = pq_up * 2;
+    //    size_t p = index_map_pq[stride];
+    //    size_t q = index_map_pq[stride+1];
+    //    size_t pq = p * nmo_t + q;
+    //    for (size_t k = 0; k < n_occupied_t; k++) {
+    //        for (size_t l = 0; l < n_occupied_t; l++) {
     //    	double a = 0.0;
-    //            for (int r = 0; r < nmo; r++) {
-    //                int rl = r * n_occupied + l;
-    //    	    a += temp1[pq_up * nmo * n_occupied + rl] * U[r * nmo + k];
+    //            for (size_t r = 0; r < nmo_t; r++) {
+    //                size_t rl = r * n_occupied_t + l;
+    //    	    a += temp1[pq_up * nmo_t * n_occupied_t + rl] * U[r * nmo_t + k];
     //            }
-    //    	temp4[pq_up * n_occupied * n_occupied + k * n_occupied + l] = a;
+    //    	temp4[pq_up * n_occupied_t * n_occupied_t + k * n_occupied_t + l] = a;
     //        }
     //    }
     //}
 
-    //for (int pq_up = 0; pq_up < nmo*(nmo+1)/2; pq_up++) {
-    //    for (int k = 0; k < n_occupied; k++) {
-    //        for (int l = 0; l < n_occupied; l++) {
-    //            //printf("%20.12lf %20.12lf\n", temp4[pq_up * n_occupied * n_occupied + k * n_occupied + l], temp3[pq_up * n_occupied * n_occupied + k * n_occupied + l]);
-    //            printf("%20.12lf \n", temp4[pq_up * n_occupied * n_occupied + k * n_occupied + l]- temp3[pq_up * n_occupied * n_occupied + k * n_occupied + l]);
+    //for (size_t pq_up = 0; pq_up < nmo_t*(nmo_t+1)/2; pq_up++) {
+    //    for (size_t k = 0; k < n_occupied_t; k++) {
+    //        for (size_t l = 0; l < n_occupied_t; l++) {
+    //            //print("%20.12lf %20.12lf\n", temp4[pq_up * n_occupied_t * n_occupied_t + k * n_occupied_t + l], temp3[pq_up * n_occupied_t * n_occupied_t + k * n_occupied_t + l]);
+    //            print("%20.12lf \n", temp4[pq_up * n_occupied_t * n_occupied_t + k * n_occupied_t + l]- temp3[pq_up * n_occupied_t * n_occupied_t + k * n_occupied_t + l]);
     //        }	
     //    }
     //}
 
     #pragma omp parallel for num_threads(16)
-    for (int kl_up = 0; kl_up < n_occupied*(n_occupied+1)/2; kl_up++) {
-	int stride = kl_up * 2;
-        int k = index_map_kl[stride];
-        int l = index_map_kl[stride+1];
-	int kl = k * n_occupied + l;
-	int lk = l * n_occupied + k;
-        for (int pq_up = 0; pq_up < nmo*(nmo+1)/2; pq_up++) {
-            int stride1 = pq_up * 2;
-            int p = index_map_pq[stride1];
-            int q = index_map_pq[stride1+1];
-	    int pq = p * nmo + q;
-	    int qp = q * nmo + p;
-	    temp5[kl_up * nmo * nmo + pq] = temp3[pq_up * n_occupied * n_occupied + kl];
-	    temp5[kl_up * nmo * nmo + qp] = temp3[pq_up * n_occupied * n_occupied + lk];
+    for (size_t kl_up = 0; kl_up < n_occupied_t*(n_occupied_t+1)/2; kl_up++) {
+	size_t stride = kl_up * 2;
+        size_t k = index_map_kl[stride];
+        size_t l = index_map_kl[stride+1];
+	size_t kl = k * n_occupied_t + l;
+	size_t lk = l * n_occupied_t + k;
+        for (size_t pq_up = 0; pq_up < nmo_t*(nmo_t+1)/2; pq_up++) {
+            size_t stride1 = pq_up * 2;
+            size_t p = index_map_pq[stride1];
+            size_t q = index_map_pq[stride1+1];
+	    size_t pq = p * nmo_t + q;
+	    size_t qp = q * nmo_t + p;
+	    temp5[kl_up * nmo_t * nmo_t + pq] = temp3[pq_up * n_occupied_t * n_occupied_t + kl];
+	    temp5[kl_up * nmo_t * nmo_t + qp] = temp3[pq_up * n_occupied_t * n_occupied_t + lk];
 	}
     }
     #pragma omp parallel for num_threads(16)
-    for (int kl_up = 0; kl_up < n_occupied*(n_occupied+1)/2; kl_up++) {
-	//int stride = kl_up * 2;
-        //int k = index_map_kl[stride];
-        //int l = index_map_kl[stride+1];
-	//int kl = k * n_occupied + l;
+    for (size_t kl_up = 0; kl_up < n_occupied_t*(n_occupied_t+1)/2; kl_up++) {
+	//size_t stride = kl_up * 2;
+        //size_t k = index_map_kl[stride];
+        //size_t l = index_map_kl[stride+1];
+	//size_t kl = k * n_occupied_t + l;
 
-        cblas_dgemm(CblasRowMajor, CblasNoTrans, CblasNoTrans, nmo, nmo, nmo, 1.0, temp5+kl_up*nmo*nmo,
-                  nmo, U, nmo, 0.0,
-                  temp6+kl_up*nmo*nmo, nmo);
+        cblas_dgemm(CblasRowMajor, CblasNoTrans, CblasNoTrans, nmo_t, nmo_t, nmo_t, 1.0, temp5+kl_up*nmo_t*nmo_t,
+                  nmo_t, U, nmo_t, 0.0,
+                  temp6+kl_up*nmo_t*nmo_t, nmo_t);
     }
-    //for (int kl_up = 0; kl_up < n_occupied*(n_occupied+1)/2; kl_up++) {
-    //    int stride = kl_up * 2;
-    //    int k = index_map_kl[stride];
-    //    int l = index_map_kl[stride+1];
-    //    int kl = k * n_occupied + l;
-    //    for (int p = 0; p < nmo; p++) {
-    //        for (int s = 0; s < nmo; s++) {
+    //for (size_t kl_up = 0; kl_up < n_occupied_t*(n_occupied_t+1)/2; kl_up++) {
+    //    size_t stride = kl_up * 2;
+    //    size_t k = index_map_kl[stride];
+    //    size_t l = index_map_kl[stride+1];
+    //    size_t kl = k * n_occupied_t + l;
+    //    for (size_t p = 0; p < nmo_t; p++) {
+    //        for (size_t s = 0; s < nmo_t; s++) {
     //    	double a = 0.0;
-    //            for (int q = 0; q < nmo; q++) {
-    //                int pq = p * nmo + q;
-    //    	    a += temp5[kl_up * nmo * nmo + pq] * U[q * nmo + s];
+    //            for (size_t q = 0; q < nmo_t; q++) {
+    //                size_t pq = p * nmo_t + q;
+    //    	    a += temp5[kl_up * nmo_t * nmo_t + pq] * U[q * nmo_t + s];
     //            }
-    //    	temp7[kl_up * nmo * nmo + p * nmo + s] = a;
+    //    	temp7[kl_up * nmo_t * nmo_t + p * nmo_t + s] = a;
     //        }
     //    }
     //}
-    //for (int kl_up = 0; kl_up < n_occupied*(n_occupied+1)/2; kl_up++) {
-    //    int stride = kl_up * 2;
-    //    int k = index_map_kl[stride];
-    //    int l = index_map_kl[stride+1];
-    //    int kl = k * n_occupied + l;
-    //    for (int p = 0; p < nmo; p++) {
-    //        for (int s = 0; s < nmo; s++) {
-    //            //printf("%20.12lf %20.12lf\n", temp7[kl_up * nmo * nmo + p * nmo + s], temp6[kl_up * nmo * nmo + p * nmo + s]);
-    //            printf("%20.12lf \n", temp7[kl_up * nmo * nmo + p * nmo + s] - temp6[kl_up * nmo * nmo + p * nmo + s]);
+    //for (size_t kl_up = 0; kl_up < n_occupied_t*(n_occupied_t+1)/2; kl_up++) {
+    //    size_t stride = kl_up * 2;
+    //    size_t k = index_map_kl[stride];
+    //    size_t l = index_map_kl[stride+1];
+    //    size_t kl = k * n_occupied_t + l;
+    //    for (size_t p = 0; p < nmo_t; p++) {
+    //        for (size_t s = 0; s < nmo_t; s++) {
+    //            //print("%20.12lf %20.12lf\n", temp7[kl_up * nmo_t * nmo_t + p * nmo_t + s], temp6[kl_up * nmo_t * nmo_t + p * nmo_t + s]);
+    //            print("%20.12lf \n", temp7[kl_up * nmo_t * nmo_t + p * nmo_t + s] - temp6[kl_up * nmo_t * nmo_t + p * nmo_t + s]);
     //        }
     //    }
     //}
     #pragma omp parallel for num_threads(16)
-    for (int kl_up = 0; kl_up < n_occupied*(n_occupied+1)/2; kl_up++) {
-	//int stride = kl_up * 2;
-        //int k = index_map_kl[stride];
-        //int l = index_map_kl[stride+1];
-	//int kl = k * n_occupied + l;
+    for (size_t kl_up = 0; kl_up < n_occupied_t*(n_occupied_t+1)/2; kl_up++) {
+	//size_t stride = kl_up * 2;
+        //size_t k = index_map_kl[stride];
+        //size_t l = index_map_kl[stride+1];
+	//size_t kl = k * n_occupied_t + l;
 
-        cblas_dgemm(CblasRowMajor, CblasTrans, CblasNoTrans, nmo, nmo, nmo, 1.0, U,
-                  nmo, temp6+kl_up*nmo*nmo, nmo, 0.0,
-                  temp8+kl_up*nmo*nmo, nmo);
+        cblas_dgemm(CblasRowMajor, CblasTrans, CblasNoTrans, nmo_t, nmo_t, nmo_t, 1.0, U,
+                  nmo_t, temp6+kl_up*nmo_t*nmo_t, nmo_t, 0.0,
+                  temp8+kl_up*nmo_t*nmo_t, nmo_t);
     }
-    //for (int kl_up = 0; kl_up < n_occupied*(n_occupied+1)/2; kl_up++) {
-    //    int stride = kl_up * 2;
-    //    int k = index_map_kl[stride];
-    //    int l = index_map_kl[stride+1];
-    //    int kl = k * n_occupied + l;
-    //    for (int r = 0; r < nmo; r++) {
-    //        for (int s = 0; s < nmo; s++) {
+    //for (size_t kl_up = 0; kl_up < n_occupied_t*(n_occupied_t+1)/2; kl_up++) {
+    //    size_t stride = kl_up * 2;
+    //    size_t k = index_map_kl[stride];
+    //    size_t l = index_map_kl[stride+1];
+    //    size_t kl = k * n_occupied_t + l;
+    //    for (size_t r = 0; r < nmo_t; r++) {
+    //        for (size_t s = 0; s < nmo_t; s++) {
     //    	double a = 0.0;
-    //            for (int p = 0; p < nmo; p++) {
-    //                int ps = p * nmo + s;
-    //    	    a += temp6[kl_up * nmo * nmo + ps] * U[p * nmo + r];
+    //            for (size_t p = 0; p < nmo_t; p++) {
+    //                size_t ps = p * nmo_t + s;
+    //    	    a += temp6[kl_up * nmo_t * nmo_t + ps] * U[p * nmo_t + r];
     //            }
-    //    	temp9[kl_up * nmo * nmo + r * nmo + s] = a;
+    //    	temp9[kl_up * nmo_t * nmo_t + r * nmo_t + s] = a;
     //        }
     //    }
     //}
 
-    //for (int kl_up = 0; kl_up < n_occupied*(n_occupied+1)/2; kl_up++) {
-    //    int stride = kl_up * 2;
-    //    int k = index_map_kl[stride];
-    //    int l = index_map_kl[stride+1];
-    //    int kl = k * n_occupied + l;
-    //    for (int r = 0; r < nmo; r++) {
-    //        for (int s = 0; s < nmo; s++) {
-    //            //printf("%20.12lf %20.12lf\n", temp9[kl_up * nmo * nmo + r * nmo + s], temp8[kl_up * nmo * nmo + r * nmo + s]);
-    //            printf("%20.12lf \n", temp9[kl_up * nmo * nmo + r * nmo + s] - temp8[kl_up * nmo * nmo + r * nmo + s]);
+    //for (size_t kl_up = 0; kl_up < n_occupied_t*(n_occupied_t+1)/2; kl_up++) {
+    //    size_t stride = kl_up * 2;
+    //    size_t k = index_map_kl[stride];
+    //    size_t l = index_map_kl[stride+1];
+    //    size_t kl = k * n_occupied_t + l;
+    //    for (size_t r = 0; r < nmo_t; r++) {
+    //        for (size_t s = 0; s < nmo_t; s++) {
+    //            //print("%20.12lf %20.12lf\n", temp9[kl_up * nmo_t * nmo_t + r * nmo_t + s], temp8[kl_up * nmo_t * nmo_t + r * nmo_t + s]);
+    //            print("%20.12lf \n", temp9[kl_up * nmo_t * nmo_t + r * nmo_t + s] - temp8[kl_up * nmo_t * nmo_t + r * nmo_t + s]);
     //        }
     //    }
     //}
     #pragma omp parallel for num_threads(16)
-    for (int kl_up = 0; kl_up < n_occupied*(n_occupied+1)/2; kl_up++) {
-	int stride = kl_up * 2;
-        int k = index_map_kl[stride];
-        int l = index_map_kl[stride+1];
-	int kl = k * n_occupied + l;
-	int lk = l * n_occupied + k;
-        for (int pq_up = 0; pq_up < nmo*(nmo+1)/2; pq_up++) {
-            int stride1 = pq_up * 2;
-            int p = index_map_pq[stride1];
-            int q = index_map_pq[stride1+1];
-	    int pq = p * nmo + q;
-	    int qp = q * nmo + p;
-	    K[kl * nmo * nmo + pq] = temp8[kl_up * nmo * nmo + pq];
-	    K[lk * nmo * nmo + pq] = temp8[kl_up * nmo * nmo + qp];
-	    K[kl * nmo * nmo + qp] = K[lk * nmo * nmo + pq];
-	    K[lk * nmo * nmo + qp] = K[kl * nmo * nmo + pq];
+    for (size_t kl_up = 0; kl_up < n_occupied_t*(n_occupied_t+1)/2; kl_up++) {
+	size_t stride = kl_up * 2;
+        size_t k = index_map_kl[stride];
+        size_t l = index_map_kl[stride+1];
+	size_t kl = k * n_occupied_t + l;
+	size_t lk = l * n_occupied_t + k;
+        for (size_t pq_up = 0; pq_up < nmo_t*(nmo_t+1)/2; pq_up++) {
+            size_t stride1 = pq_up * 2;
+            size_t p = index_map_pq[stride1];
+            size_t q = index_map_pq[stride1+1];
+	    size_t pq = p * nmo_t + q;
+	    size_t qp = q * nmo_t + p;
+	    K[kl * nmo_t * nmo_t + pq] = temp8[kl_up * nmo_t * nmo_t + pq];
+	    K[lk * nmo_t * nmo_t + pq] = temp8[kl_up * nmo_t * nmo_t + qp];
+	    K[kl * nmo_t * nmo_t + qp] = K[lk * nmo_t * nmo_t + pq];
+	    K[lk * nmo_t * nmo_t + qp] = K[kl * nmo_t * nmo_t + pq];
 	}
     }
-    //for (int k = 0; k < n_occupied; k++) {
-    //    for (int l = 0; l < n_occupied; l++) {
-    //        int kl = k * n_occupied + l;
-    //        for (int r = 0; r < nmo; r++) {
-    //            for (int s = 0; s < nmo; s++) {
-    //                int rs = r * nmo + s;
-    //                //printf("%20.12lf %20.12lf %20.12lf\n", temp14[kl * nmo * nmo + rs], temp13[rs * n_occupied * n_occupied + k * n_occupied + l], J[kl * nmo * nmo + rs]);
-    //                printf("%20.12lf\n", temp15[kl * nmo * nmo + rs] -  K[kl * nmo * nmo + rs]);
+    //for (size_t k = 0; k < n_occupied_t; k++) {
+    //    for (size_t l = 0; l < n_occupied_t; l++) {
+    //        size_t kl = k * n_occupied_t + l;
+    //        for (size_t r = 0; r < nmo_t; r++) {
+    //            for (size_t s = 0; s < nmo_t; s++) {
+    //                size_t rs = r * nmo_t + s;
+    //                //print("%20.12lf %20.12lf %20.12lf\n", temp14[kl * nmo_t * nmo_t + rs], temp13[rs * n_occupied_t * n_occupied_t + k * n_occupied_t + l], J[kl * nmo_t * nmo_t + rs]);
+    //                print("%20.12lf\n", temp15[kl * nmo_t * nmo_t + rs] -  K[kl * nmo_t * nmo_t + rs]);
     //    	}
     //        }
     //    }
@@ -592,231 +594,233 @@ void full_transformation_macroiteration(double* U, double* h2e, double* J, doubl
 
 void full_transformation_internal_optimization(double* U, double* J, double *K, double* h, double *d_cmo, 
 		double* J1, double* K1, double* h1, double *d_cmo1, int* index_map_ab, int* index_map_kl, int nmo, int n_occupied) {
+    size_t nmo_t = (size_t) nmo;
+    size_t n_occupied_t = (size_t) n_occupied;
 
-    int n_virtual = nmo - n_occupied;
-    double* J_half = (double*) malloc(n_virtual *(n_virtual+1)/2 * n_occupied *  n_occupied * sizeof(double));
-    memset(J_half, 0, n_virtual *(n_virtual+1)/2 *  n_occupied *  n_occupied * sizeof(double));
-    double* temp1 = (double*) malloc(n_virtual *(n_virtual+1)/2 * n_occupied *  n_occupied * sizeof(double));
-    memset(temp1, 0, n_virtual *(n_virtual+1)/2 *  n_occupied *  n_occupied * sizeof(double));
-    double* temp2 = (double*) malloc(n_virtual *(n_virtual+1)/2 * n_occupied *  n_occupied * sizeof(double));
-    memset(temp2, 0, n_virtual *(n_virtual+1)/2 *  n_occupied *  n_occupied * sizeof(double));
+    size_t n_virtual_t = nmo_t - n_occupied_t;
+    double* J_half = (double*) malloc((size_t)n_virtual_t *(n_virtual_t+1)/2 * n_occupied_t *  n_occupied_t * sizeof(double));
+    memset(J_half, 0, n_virtual_t *(n_virtual_t+1)/2 *  n_occupied_t *  n_occupied_t * sizeof(double));
+    double* temp1 = (double*) malloc((size_t)n_virtual_t *(n_virtual_t+1)/2 * n_occupied_t *  n_occupied_t * sizeof(double));
+    memset(temp1, 0, n_virtual_t *(n_virtual_t+1)/2 *  n_occupied_t *  n_occupied_t * sizeof(double));
+    double* temp2 = (double*) malloc((size_t)n_virtual_t *(n_virtual_t+1)/2 * n_occupied_t *  n_occupied_t * sizeof(double));
+    memset(temp2, 0, n_virtual_t *(n_virtual_t+1)/2 *  n_occupied_t *  n_occupied_t * sizeof(double));
 
-    //for (int ab_up = 0; ab_up < n_virtual*(n_virtual+1)/2; ab_up++) {
-    //    int stride = ab_up * 2;
-    //    int a = index_map_ab[stride];
-    //    int b = index_map_ab[stride+1];
-    //    int ab = a * n_virtual + b;
-    //    printf("%4d%4d%4d\n", ab_up, a , b);
+    //for (size_t ab_up = 0; ab_up < n_virtual_t*(n_virtual_t+1)/2; ab_up++) {
+    //    size_t stride = ab_up * 2;
+    //    size_t a = index_map_ab[stride];
+    //    size_t b = index_map_ab[stride+1];
+    //    size_t ab = a * n_virtual_t + b;
+    //    print("%4d%4d%4d\n", ab_up, a , b);
     //}
 
 
     #pragma omp parallel for num_threads(16)
-    for (int ab_up = 0; ab_up < n_virtual*(n_virtual+1)/2; ab_up++) {
-	int stride = ab_up * 2;
-        int a = index_map_ab[stride];
-        int b = index_map_ab[stride+1];
-	//int pq = p * nmo + q;
-	//printf("%4d%4d%4d\n", pq_up, p , q);
-        for (int k = 0; k < n_occupied; k++) {
-            for (int l = 0; l < n_occupied; l++) {
-		int kl = k * n_occupied + l;
-	        J_half[ab_up * n_occupied * n_occupied + kl] = J[kl * nmo * nmo + (a + n_occupied) * nmo + b + n_occupied];
+    for (size_t ab_up = 0; ab_up < n_virtual_t*(n_virtual_t+1)/2; ab_up++) {
+	size_t stride = ab_up * 2;
+        size_t a = index_map_ab[stride];
+        size_t b = index_map_ab[stride+1];
+	//size_t pq = p * nmo_t + q;
+	//print("%4d%4d%4d\n", pq_up, p , q);
+        for (size_t k = 0; k < n_occupied_t; k++) {
+            for (size_t l = 0; l < n_occupied_t; l++) {
+		size_t kl = k * n_occupied_t + l;
+	        J_half[ab_up * n_occupied_t * n_occupied_t + kl] = J[kl * nmo_t * nmo_t + (a + n_occupied_t) * nmo_t + b + n_occupied_t];
 	    }
 	}
     }
     #pragma omp parallel for num_threads(16)
-    for (int ab_up = 0; ab_up < n_virtual*(n_virtual+1)/2; ab_up++) {
-	int stride = ab_up * 2;
-        int a = index_map_ab[stride];
-        int b = index_map_ab[stride+1];
+    for (size_t ab_up = 0; ab_up < n_virtual_t*(n_virtual_t+1)/2; ab_up++) {
+	size_t stride = ab_up * 2;
+        size_t a = index_map_ab[stride];
+        size_t b = index_map_ab[stride+1];
 
-        cblas_dgemm(CblasRowMajor, CblasNoTrans, CblasNoTrans, n_occupied, n_occupied, n_occupied, 1.0, J_half+ab_up*n_occupied*n_occupied,
-                  n_occupied, U, nmo, 0.0,
-                  temp1+ab_up*n_occupied*n_occupied, n_occupied);
+        cblas_dgemm(CblasRowMajor, CblasNoTrans, CblasNoTrans, n_occupied_t, n_occupied_t, n_occupied_t, 1.0, J_half+ab_up*n_occupied_t*n_occupied_t,
+                  n_occupied_t, U, nmo_t, 0.0,
+                  temp1+ab_up*n_occupied_t*n_occupied_t, n_occupied_t);
     }
 
     #pragma omp parallel for num_threads(16)
-    for (int ab_up = 0; ab_up < n_virtual*(n_virtual+1)/2; ab_up++) {
-	int stride = ab_up * 2;
-        int a = index_map_ab[stride];
-        int b = index_map_ab[stride+1];
+    for (size_t ab_up = 0; ab_up < n_virtual_t*(n_virtual_t+1)/2; ab_up++) {
+	size_t stride = ab_up * 2;
+        size_t a = index_map_ab[stride];
+        size_t b = index_map_ab[stride+1];
 
-        cblas_dgemm(CblasRowMajor, CblasTrans, CblasNoTrans, n_occupied, n_occupied, n_occupied, 1.0, U,
-                  nmo, temp1+ab_up*n_occupied*n_occupied, n_occupied, 0.0,
-                  temp2+ab_up*n_occupied*n_occupied, n_occupied);
+        cblas_dgemm(CblasRowMajor, CblasTrans, CblasNoTrans, n_occupied_t, n_occupied_t, n_occupied_t, 1.0, U,
+                  nmo_t, temp1+ab_up*n_occupied_t*n_occupied_t, n_occupied_t, 0.0,
+                  temp2+ab_up*n_occupied_t*n_occupied_t, n_occupied_t);
     }
     #pragma omp parallel for num_threads(16)
-    for (int ab_up = 0; ab_up < n_virtual*(n_virtual+1)/2; ab_up++) {
-	int stride1 = ab_up * 2;
-        int a = index_map_ab[stride1];
-        int b = index_map_ab[stride1+1];
-        for (int kl_up = 0; kl_up < n_occupied*(n_occupied+1)/2; kl_up++) {
-            int stride2 = kl_up * 2;
-            int k = index_map_kl[stride2];
-            int l = index_map_kl[stride2+1];
-	    int kl = k * n_occupied + l;
-	    int lk = l * n_occupied + k;
-	    J1[kl * nmo * nmo + (a + n_occupied) * nmo + b + n_occupied] = temp2[ab_up * n_occupied * n_occupied + kl];
-	    J1[lk * nmo * nmo + (a + n_occupied) * nmo + b + n_occupied] = temp2[ab_up * n_occupied * n_occupied + kl];
-	    J1[kl * nmo * nmo + (b + n_occupied) * nmo + a + n_occupied] = temp2[ab_up * n_occupied * n_occupied + kl];
-	    J1[lk * nmo * nmo + (b + n_occupied) * nmo + a + n_occupied] = temp2[ab_up * n_occupied * n_occupied + kl];
+    for (size_t ab_up = 0; ab_up < n_virtual_t*(n_virtual_t+1)/2; ab_up++) {
+	size_t stride1 = ab_up * 2;
+        size_t a = index_map_ab[stride1];
+        size_t b = index_map_ab[stride1+1];
+        for (size_t kl_up = 0; kl_up < n_occupied_t*(n_occupied_t+1)/2; kl_up++) {
+            size_t stride2 = kl_up * 2;
+            size_t k = index_map_kl[stride2];
+            size_t l = index_map_kl[stride2+1];
+	    size_t kl = k * n_occupied_t + l;
+	    size_t lk = l * n_occupied_t + k;
+	    J1[kl * nmo_t * nmo_t + (a + n_occupied_t) * nmo_t + b + n_occupied_t] = temp2[ab_up * n_occupied_t * n_occupied_t + kl];
+	    J1[lk * nmo_t * nmo_t + (a + n_occupied_t) * nmo_t + b + n_occupied_t] = temp2[ab_up * n_occupied_t * n_occupied_t + kl];
+	    J1[kl * nmo_t * nmo_t + (b + n_occupied_t) * nmo_t + a + n_occupied_t] = temp2[ab_up * n_occupied_t * n_occupied_t + kl];
+	    J1[lk * nmo_t * nmo_t + (b + n_occupied_t) * nmo_t + a + n_occupied_t] = temp2[ab_up * n_occupied_t * n_occupied_t + kl];
 	}
 
     }
-    double* temp3 = (double*) malloc(nmo * n_occupied * n_occupied *  n_occupied * sizeof(double));
-    memset(temp3, 0, nmo * n_occupied *  n_occupied *  n_occupied * sizeof(double));
-    double* temp4 = (double*) malloc(nmo * n_occupied * n_occupied *  n_occupied * sizeof(double));
-    memset(temp4, 0, nmo * n_occupied *  n_occupied *  n_occupied * sizeof(double));
+    double* temp3 = (double*) malloc((size_t)nmo_t * n_occupied_t * n_occupied_t *  n_occupied_t * sizeof(double));
+    memset(temp3, 0, nmo_t * n_occupied_t *  n_occupied_t *  n_occupied_t * sizeof(double));
+    double* temp4 = (double*) malloc((size_t)nmo_t * n_occupied_t * n_occupied_t *  n_occupied_t * sizeof(double));
+    memset(temp4, 0, nmo_t * n_occupied_t *  n_occupied_t *  n_occupied_t * sizeof(double));
     #pragma omp parallel for num_threads(16)
-    for (int p = 0; p < nmo; p++) {
-        for (int m = 0; m < n_occupied; m++) {
-            int pm = p * n_occupied + m;
-            for (int k = 0; k < n_occupied; k++) {
-                for (int l = 0; l < n_occupied; l++) {
-                    int kl = k * n_occupied + l;
-                    temp3[pm * n_occupied * n_occupied + kl] = J[kl * nmo * nmo + p * nmo + m];
+    for (size_t p = 0; p < nmo_t; p++) {
+        for (size_t m = 0; m < n_occupied_t; m++) {
+            size_t pm = p * n_occupied_t + m;
+            for (size_t k = 0; k < n_occupied_t; k++) {
+                for (size_t l = 0; l < n_occupied_t; l++) {
+                    size_t kl = k * n_occupied_t + l;
+                    temp3[pm * n_occupied_t * n_occupied_t + kl] = J[kl * nmo_t * nmo_t + p * nmo_t + m];
 		}
 	    }
 	}
     }
     #pragma omp parallel for num_threads(16)
-    for (int pm = 0; pm < nmo * n_occupied; pm++) {
-        cblas_dgemm(CblasRowMajor, CblasNoTrans, CblasNoTrans, n_occupied, n_occupied, n_occupied, 1.0, temp3+pm*n_occupied*n_occupied,
-                  n_occupied, U, nmo, 0.0,
-                  temp4+pm*n_occupied*n_occupied, n_occupied);
+    for (size_t pm = 0; pm < nmo_t * n_occupied_t; pm++) {
+        cblas_dgemm(CblasRowMajor, CblasNoTrans, CblasNoTrans, n_occupied_t, n_occupied_t, n_occupied_t, 1.0, temp3+pm*n_occupied_t*n_occupied_t,
+                  n_occupied_t, U, nmo_t, 0.0,
+                  temp4+pm*n_occupied_t*n_occupied_t, n_occupied_t);
     }
     #pragma omp parallel for num_threads(16)
-    for (int pm = 0; pm < nmo * n_occupied; pm++) {
-        cblas_dgemm(CblasRowMajor, CblasTrans, CblasNoTrans, n_occupied, n_occupied, n_occupied, 1.0, U,
-                  nmo, temp4+pm*n_occupied*n_occupied, n_occupied, 0.0,
-                  temp3+pm*n_occupied*n_occupied, n_occupied);
+    for (size_t pm = 0; pm < nmo_t * n_occupied_t; pm++) {
+        cblas_dgemm(CblasRowMajor, CblasTrans, CblasNoTrans, n_occupied_t, n_occupied_t, n_occupied_t, 1.0, U,
+                  nmo_t, temp4+pm*n_occupied_t*n_occupied_t, n_occupied_t, 0.0,
+                  temp3+pm*n_occupied_t*n_occupied_t, n_occupied_t);
     }
     
-    double* temp5 = (double*) malloc(nmo * n_occupied * n_occupied * (n_occupied+1)/2 * sizeof(double));
-    memset(temp5, 0, nmo * n_occupied * n_occupied * (n_occupied+1)/2 * sizeof(double));
-    double* temp6 = (double*) malloc(nmo * n_occupied * n_occupied * (n_occupied+1)/2 * sizeof(double));
-    memset(temp6, 0, nmo * n_occupied * n_occupied * (n_occupied+1)/2 * sizeof(double));   
+    double* temp5 = (double*) malloc((size_t)nmo_t * n_occupied_t * n_occupied_t * (n_occupied_t+1)/2 * sizeof(double));
+    memset(temp5, 0, nmo_t * n_occupied_t * n_occupied_t * (n_occupied_t+1)/2 * sizeof(double));
+    double* temp6 = (double*) malloc((size_t)nmo_t * n_occupied_t * n_occupied_t * (n_occupied_t+1)/2 * sizeof(double));
+    memset(temp6, 0, nmo_t * n_occupied_t * n_occupied_t * (n_occupied_t+1)/2 * sizeof(double));   
     #pragma omp parallel for num_threads(16)
-    for (int kl_up = 0; kl_up < n_occupied*(n_occupied+1)/2; kl_up++) {
-        int stride2 = kl_up * 2;
-        int k = index_map_kl[stride2];
-        int l = index_map_kl[stride2+1];
-        int kl = k * n_occupied + l;
-        int lk = l * n_occupied + k;
-        for (int pm = 0; pm < nmo * n_occupied; pm++) {
-            temp5[kl_up * nmo * n_occupied + pm] = temp3[pm * n_occupied * n_occupied + kl];
+    for (size_t kl_up = 0; kl_up < n_occupied_t*(n_occupied_t+1)/2; kl_up++) {
+        size_t stride2 = kl_up * 2;
+        size_t k = index_map_kl[stride2];
+        size_t l = index_map_kl[stride2+1];
+        size_t kl = k * n_occupied_t + l;
+        size_t lk = l * n_occupied_t + k;
+        for (size_t pm = 0; pm < nmo_t * n_occupied_t; pm++) {
+            temp5[kl_up * nmo_t * n_occupied_t + pm] = temp3[pm * n_occupied_t * n_occupied_t + kl];
 	}
     }
     #pragma omp parallel for num_threads(16)
-    for (int kl_up = 0; kl_up < n_occupied*(n_occupied+1)/2; kl_up++) {
-        cblas_dgemm(CblasRowMajor, CblasNoTrans, CblasNoTrans, nmo, n_occupied, n_occupied, 1.0, temp5+kl_up*nmo*n_occupied,
-                  n_occupied, U, nmo, 0.0,
-                  temp6+kl_up*nmo*n_occupied, n_occupied);
+    for (size_t kl_up = 0; kl_up < n_occupied_t*(n_occupied_t+1)/2; kl_up++) {
+        cblas_dgemm(CblasRowMajor, CblasNoTrans, CblasNoTrans, nmo_t, n_occupied_t, n_occupied_t, 1.0, temp5+kl_up*nmo_t*n_occupied_t,
+                  n_occupied_t, U, nmo_t, 0.0,
+                  temp6+kl_up*nmo_t*n_occupied_t, n_occupied_t);
     }
-    cblas_dcopy( nmo * n_occupied * n_occupied * (n_occupied+1)/2,temp6,1,temp5,1);
+    cblas_dcopy( (size_t)nmo_t * n_occupied_t * n_occupied_t * (n_occupied_t+1)/2,temp6,1,temp5,1);
     #pragma omp parallel for num_threads(16)
-    for (int kl_up = 0; kl_up < n_occupied*(n_occupied+1)/2; kl_up++) {
-        cblas_dgemm(CblasRowMajor, CblasTrans, CblasNoTrans, n_occupied, n_occupied, n_occupied, 1.0, U,
-                  nmo, temp5+kl_up*nmo*n_occupied, n_occupied, 0.0,
-                  temp6+kl_up*nmo*n_occupied, n_occupied);
+    for (size_t kl_up = 0; kl_up < n_occupied_t*(n_occupied_t+1)/2; kl_up++) {
+        cblas_dgemm(CblasRowMajor, CblasTrans, CblasNoTrans, n_occupied_t, n_occupied_t, n_occupied_t, 1.0, U,
+                  nmo_t, temp5+kl_up*nmo_t*n_occupied_t, n_occupied_t, 0.0,
+                  temp6+kl_up*nmo_t*n_occupied_t, n_occupied_t);
     }
     #pragma omp parallel for num_threads(16)
-    for (int kl_up = 0; kl_up < n_occupied*(n_occupied+1)/2; kl_up++) {
-        int stride2 = kl_up * 2;
-        int k = index_map_kl[stride2];
-        int l = index_map_kl[stride2+1];
-	int kl = k * n_occupied + l;
-	int lk = l * n_occupied + k;
-        for (int p = 0; p < nmo; p++) {
-            for (int m = 0; m < n_occupied; m++) {
-		int lm = l * n_occupied + m;
-		int ml = m * n_occupied + l;
-		int km = k * n_occupied + m;
-		int mk = m * n_occupied + k;
-	        J1[kl * nmo * nmo + p * nmo + m] = temp6[kl_up * nmo * n_occupied + p * n_occupied + m];
-	        J1[lk * nmo * nmo + p * nmo + m] = temp6[kl_up * nmo * n_occupied + p * n_occupied + m];
-	        J1[kl * nmo * nmo + m * nmo + p] = temp6[kl_up * nmo * n_occupied + p * n_occupied + m];
-	        J1[lk * nmo * nmo + m * nmo + p] = temp6[kl_up * nmo * n_occupied + p * n_occupied + m];
-	        K1[lm * nmo * nmo + k * nmo + p] = temp6[kl_up * nmo * n_occupied + p * n_occupied + m];
-	        K1[km * nmo * nmo + l * nmo + p] = temp6[kl_up * nmo * n_occupied + p * n_occupied + m];
-	        K1[ml * nmo * nmo + p * nmo + k] = temp6[kl_up * nmo * n_occupied + p * n_occupied + m];
-	        K1[mk * nmo * nmo + p * nmo + l] = temp6[kl_up * nmo * n_occupied + p * n_occupied + m];
+    for (size_t kl_up = 0; kl_up < n_occupied_t*(n_occupied_t+1)/2; kl_up++) {
+        size_t stride2 = kl_up * 2;
+        size_t k = index_map_kl[stride2];
+        size_t l = index_map_kl[stride2+1];
+	size_t kl = k * n_occupied_t + l;
+	size_t lk = l * n_occupied_t + k;
+        for (size_t p = 0; p < nmo_t; p++) {
+            for (size_t m = 0; m < n_occupied_t; m++) {
+		size_t lm = l * n_occupied_t + m;
+		size_t ml = m * n_occupied_t + l;
+		size_t km = k * n_occupied_t + m;
+		size_t mk = m * n_occupied_t + k;
+	        J1[kl * nmo_t * nmo_t + p * nmo_t + m] = temp6[kl_up * nmo_t * n_occupied_t + p * n_occupied_t + m];
+	        J1[lk * nmo_t * nmo_t + p * nmo_t + m] = temp6[kl_up * nmo_t * n_occupied_t + p * n_occupied_t + m];
+	        J1[kl * nmo_t * nmo_t + m * nmo_t + p] = temp6[kl_up * nmo_t * n_occupied_t + p * n_occupied_t + m];
+	        J1[lk * nmo_t * nmo_t + m * nmo_t + p] = temp6[kl_up * nmo_t * n_occupied_t + p * n_occupied_t + m];
+	        K1[lm * nmo_t * nmo_t + k * nmo_t + p] = temp6[kl_up * nmo_t * n_occupied_t + p * n_occupied_t + m];
+	        K1[km * nmo_t * nmo_t + l * nmo_t + p] = temp6[kl_up * nmo_t * n_occupied_t + p * n_occupied_t + m];
+	        K1[ml * nmo_t * nmo_t + p * nmo_t + k] = temp6[kl_up * nmo_t * n_occupied_t + p * n_occupied_t + m];
+	        K1[mk * nmo_t * nmo_t + p * nmo_t + l] = temp6[kl_up * nmo_t * n_occupied_t + p * n_occupied_t + m];
 	    }
 	}
     }
     #pragma omp parallel for num_threads(16)
-    for (int ab_up = 0; ab_up < n_virtual*(n_virtual+1)/2; ab_up++) {
-	int stride = ab_up * 2;
-        int a = index_map_ab[stride];
-        int b = index_map_ab[stride+1];
-	//int pq = p * nmo + q;
-	//printf("%4d%4d%4d\n", pq_up, p , q);
-        for (int k = 0; k < n_occupied; k++) {
-            for (int l = 0; l < n_occupied; l++) {
-		int kl = k * n_occupied + l;
-	        J_half[ab_up * n_occupied * n_occupied + kl] = K[kl * nmo * nmo + (a + n_occupied) * nmo + b + n_occupied];
+    for (size_t ab_up = 0; ab_up < n_virtual_t*(n_virtual_t+1)/2; ab_up++) {
+	size_t stride = ab_up * 2;
+        size_t a = index_map_ab[stride];
+        size_t b = index_map_ab[stride+1];
+	//size_t pq = p * nmo_t + q;
+	//print("%4d%4d%4d\n", pq_up, p , q);
+        for (size_t k = 0; k < n_occupied_t; k++) {
+            for (size_t l = 0; l < n_occupied_t; l++) {
+		size_t kl = k * n_occupied_t + l;
+	        J_half[ab_up * n_occupied_t * n_occupied_t + kl] = K[kl * nmo_t * nmo_t + (a + n_occupied_t) * nmo_t + b + n_occupied_t];
 	    }
 	}
     }
     #pragma omp parallel for num_threads(16)
-    for (int ab_up = 0; ab_up < n_virtual*(n_virtual+1)/2; ab_up++) {
-	int stride = ab_up * 2;
-        int a = index_map_ab[stride];
-        int b = index_map_ab[stride+1];
+    for (size_t ab_up = 0; ab_up < n_virtual_t*(n_virtual_t+1)/2; ab_up++) {
+	size_t stride = ab_up * 2;
+        size_t a = index_map_ab[stride];
+        size_t b = index_map_ab[stride+1];
 
-        cblas_dgemm(CblasRowMajor, CblasNoTrans, CblasNoTrans, n_occupied, n_occupied, n_occupied, 1.0, J_half+ab_up*n_occupied*n_occupied,
-                  n_occupied, U, nmo, 0.0,
-                  temp1+ab_up*n_occupied*n_occupied, n_occupied);
+        cblas_dgemm(CblasRowMajor, CblasNoTrans, CblasNoTrans, n_occupied_t, n_occupied_t, n_occupied_t, 1.0, J_half+ab_up*n_occupied_t*n_occupied_t,
+                  n_occupied_t, U, nmo_t, 0.0,
+                  temp1+ab_up*n_occupied_t*n_occupied_t, n_occupied_t);
     }
 
     #pragma omp parallel for num_threads(16)
-    for (int ab_up = 0; ab_up < n_virtual*(n_virtual+1)/2; ab_up++) {
-	int stride = ab_up * 2;
-        int a = index_map_ab[stride];
-        int b = index_map_ab[stride+1];
+    for (size_t ab_up = 0; ab_up < n_virtual_t*(n_virtual_t+1)/2; ab_up++) {
+	size_t stride = ab_up * 2;
+        size_t a = index_map_ab[stride];
+        size_t b = index_map_ab[stride+1];
 
-        cblas_dgemm(CblasRowMajor, CblasTrans, CblasNoTrans, n_occupied, n_occupied, n_occupied, 1.0, U,
-                  nmo, temp1+ab_up*n_occupied*n_occupied, n_occupied, 0.0,
-                  temp2+ab_up*n_occupied*n_occupied, n_occupied);
+        cblas_dgemm(CblasRowMajor, CblasTrans, CblasNoTrans, n_occupied_t, n_occupied_t, n_occupied_t, 1.0, U,
+                  nmo_t, temp1+ab_up*n_occupied_t*n_occupied_t, n_occupied_t, 0.0,
+                  temp2+ab_up*n_occupied_t*n_occupied_t, n_occupied_t);
     }
     #pragma omp parallel for num_threads(16)
-    for (int ab_up = 0; ab_up < n_virtual*(n_virtual+1)/2; ab_up++) {
-	int stride1 = ab_up * 2;
-        int a = index_map_ab[stride1];
-        int b = index_map_ab[stride1+1];
-        for (int kl_up = 0; kl_up < n_occupied*(n_occupied+1)/2; kl_up++) {
-            int stride2 = kl_up * 2;
-            int k = index_map_kl[stride2];
-            int l = index_map_kl[stride2+1];
-	    int kl = k * n_occupied + l;
-	    int lk = l * n_occupied + k;
-	    K1[kl * nmo * nmo + (a + n_occupied) * nmo + b + n_occupied] = temp2[ab_up * n_occupied * n_occupied + kl];
-	    K1[lk * nmo * nmo + (a + n_occupied) * nmo + b + n_occupied] = temp2[ab_up * n_occupied * n_occupied + lk];
-	    K1[kl * nmo * nmo + (b + n_occupied) * nmo + a + n_occupied] = temp2[ab_up * n_occupied * n_occupied + lk];
-	    K1[lk * nmo * nmo + (b + n_occupied) * nmo + a + n_occupied] = temp2[ab_up * n_occupied * n_occupied + kl];
+    for (size_t ab_up = 0; ab_up < n_virtual_t*(n_virtual_t+1)/2; ab_up++) {
+	size_t stride1 = ab_up * 2;
+        size_t a = index_map_ab[stride1];
+        size_t b = index_map_ab[stride1+1];
+        for (size_t kl_up = 0; kl_up < n_occupied_t*(n_occupied_t+1)/2; kl_up++) {
+            size_t stride2 = kl_up * 2;
+            size_t k = index_map_kl[stride2];
+            size_t l = index_map_kl[stride2+1];
+	    size_t kl = k * n_occupied_t + l;
+	    size_t lk = l * n_occupied_t + k;
+	    K1[kl * nmo_t * nmo_t + (a + n_occupied_t) * nmo_t + b + n_occupied_t] = temp2[ab_up * n_occupied_t * n_occupied_t + kl];
+	    K1[lk * nmo_t * nmo_t + (a + n_occupied_t) * nmo_t + b + n_occupied_t] = temp2[ab_up * n_occupied_t * n_occupied_t + lk];
+	    K1[kl * nmo_t * nmo_t + (b + n_occupied_t) * nmo_t + a + n_occupied_t] = temp2[ab_up * n_occupied_t * n_occupied_t + lk];
+	    K1[lk * nmo_t * nmo_t + (b + n_occupied_t) * nmo_t + a + n_occupied_t] = temp2[ab_up * n_occupied_t * n_occupied_t + kl];
 	}
     }
 
-    //double* temp14 = (double*) malloc(n_occupied * n_occupied * nmo * nmo * sizeof(double));
-    //memset(temp14, 0,n_occupied * n_occupied *  nmo * nmo * sizeof(double));
-    //double* temp15 = (double*) malloc(n_occupied * n_occupied * nmo * nmo * sizeof(double));
-    //memset(temp15, 0,n_occupied * n_occupied *  nmo * nmo * sizeof(double));
+    //double* temp14 = (double*) malloc(n_occupied_t * n_occupied_t * nmo_t * nmo_t * sizeof(double));
+    //memset(temp14, 0,n_occupied_t * n_occupied_t *  nmo_t * nmo_t * sizeof(double));
+    //double* temp15 = (double*) malloc(n_occupied_t * n_occupied_t * nmo_t * nmo_t * sizeof(double));
+    //memset(temp15, 0,n_occupied_t * n_occupied_t *  nmo_t * nmo_t * sizeof(double));
  
 
  
  
-    //for (int k_p = 0; k_p < n_occupied; k_p++) {
-    //    for (int l_p = 0; l_p < n_occupied; l_p++) {
-    //        for (int r_p = 0; r_p < nmo; r_p++) {
-    //            for (int s_p = 0; s_p < nmo; s_p++) {
-    //                for (int k = 0; k < n_occupied; k++) {
-    //                    for (int l = 0; l < n_occupied; l++) {
-    //                        for (int r = 0; r < nmo; r++) {
-    //                            for (int s = 0; s < nmo; s++) {
-    //    			    temp14[k_p * n_occupied * nmo * nmo +l_p *nmo * nmo + r_p * nmo + s_p] +=
-    //    			    U[k * nmo + k_p] * U[l * nmo + l_p] * U[r * nmo + r_p] * U[s * nmo + s_p] * J[k * n_occupied * nmo * nmo + l * nmo * nmo + r * nmo +s];	   
-    //    			    temp15[k_p * n_occupied * nmo * nmo +l_p *nmo * nmo + r_p * nmo + s_p] +=
-    //    			    U[k * nmo + k_p] * U[l * nmo + l_p] * U[r * nmo + r_p] * U[s * nmo + s_p] * K[k * n_occupied * nmo * nmo + l * nmo * nmo + r * nmo +s];	   
+    //for (size_t k_p = 0; k_p < n_occupied_t; k_p++) {
+    //    for (size_t l_p = 0; l_p < n_occupied_t; l_p++) {
+    //        for (size_t r_p = 0; r_p < nmo_t; r_p++) {
+    //            for (size_t s_p = 0; s_p < nmo_t; s_p++) {
+    //                for (size_t k = 0; k < n_occupied_t; k++) {
+    //                    for (size_t l = 0; l < n_occupied_t; l++) {
+    //                        for (size_t r = 0; r < nmo_t; r++) {
+    //                            for (size_t s = 0; s < nmo_t; s++) {
+    //    			    temp14[k_p * n_occupied_t * nmo_t * nmo_t +l_p *nmo_t * nmo_t + r_p * nmo_t + s_p] +=
+    //    			    U[k * nmo_t + k_p] * U[l * nmo_t + l_p] * U[r * nmo_t + r_p] * U[s * nmo_t + s_p] * J[k * n_occupied_t * nmo_t * nmo_t + l * nmo_t * nmo_t + r * nmo_t +s];	   
+    //    			    temp15[k_p * n_occupied_t * nmo_t * nmo_t +l_p *nmo_t * nmo_t + r_p * nmo_t + s_p] +=
+    //    			    U[k * nmo_t + k_p] * U[l * nmo_t + l_p] * U[r * nmo_t + r_p] * U[s * nmo_t + s_p] * K[k * n_occupied_t * nmo_t * nmo_t + l * nmo_t * nmo_t + r * nmo_t +s];	   
     //    			}
     //    		    }
     //    		}
@@ -825,56 +829,56 @@ void full_transformation_internal_optimization(double* U, double* J, double *K, 
     //        }
     //    }
     //}
-    ////for (int k = 0; k < n_occupied; k++) {
-    ////    for (int l = 0; l < n_occupied; l++) {
-    ////        int kl = k * n_occupied + l;
-    ////        for (int r = 0; r < nmo; r++) {
-    ////            for (int s = 0; s < nmo; s++) {
-    ////                int rs = r * nmo + s;
-    ////                //printf("%20.12lf\n", temp14[kl * nmo * nmo + rs] -  J1[kl * nmo * nmo + rs]);
-    ////                printf("%20.12lf %20.12lf%20.12lf\n", temp14[kl * nmo * nmo + rs],  J1[kl * nmo * nmo + rs], temp14[kl * nmo * nmo + rs]-  J1[kl * nmo * nmo + rs]);
+    ////for (size_t k = 0; k < n_occupied_t; k++) {
+    ////    for (size_t l = 0; l < n_occupied_t; l++) {
+    ////        size_t kl = k * n_occupied_t + l;
+    ////        for (size_t r = 0; r < nmo_t; r++) {
+    ////            for (size_t s = 0; s < nmo_t; s++) {
+    ////                size_t rs = r * nmo_t + s;
+    ////                //print("%20.12lf\n", temp14[kl * nmo_t * nmo_t + rs] -  J1[kl * nmo_t * nmo_t + rs]);
+    ////                print("%20.12lf %20.12lf%20.12lf\n", temp14[kl * nmo_t * nmo_t + rs],  J1[kl * nmo_t * nmo_t + rs], temp14[kl * nmo_t * nmo_t + rs]-  J1[kl * nmo_t * nmo_t + rs]);
     ////    	}
     ////        }
     ////    }
     ////}
-    //for (int k = 0; k < n_occupied; k++) {
-    //    for (int l = 0; l < n_occupied; l++) {
-    //        int kl = k * n_occupied + l;
-    //        for (int r = 0; r < nmo; r++) {
-    //            for (int s = 0; s < nmo; s++) {
-    //                int rs = r * nmo + s;
-    //                //printf("%20.12lf\n", temp14[kl * nmo * nmo + rs] -  J1[kl * nmo * nmo + rs]);
-    //                printf("%20.12lf %20.12lf%20.12lf\n", temp15[kl * nmo * nmo + rs],  K1[kl * nmo * nmo + rs], temp15[kl * nmo * nmo + rs]-  K1[kl * nmo * nmo + rs]);
+    //for (size_t k = 0; k < n_occupied_t; k++) {
+    //    for (size_t l = 0; l < n_occupied_t; l++) {
+    //        size_t kl = k * n_occupied_t + l;
+    //        for (size_t r = 0; r < nmo_t; r++) {
+    //            for (size_t s = 0; s < nmo_t; s++) {
+    //                size_t rs = r * nmo_t + s;
+    //                //print("%20.12lf\n", temp14[kl * nmo_t * nmo_t + rs] -  J1[kl * nmo_t * nmo_t + rs]);
+    //                print("%20.12lf %20.12lf%20.12lf\n", temp15[kl * nmo_t * nmo_t + rs],  K1[kl * nmo_t * nmo_t + rs], temp15[kl * nmo_t * nmo_t + rs]-  K1[kl * nmo_t * nmo_t + rs]);
     //    	}
     //        }
     //    }
     //}
-    //for (int k = 0; k < n_occupied; k++) {
-    //    for (int l = 0; l < n_occupied; l++) {
-    //        int kl = k * n_occupied + l;
-    //        for (int a = 0; a < n_virtual; a++) {
-    //            for (int b = 0; b < n_virtual; b++) {
-    //                int ab = (a +n_occupied)* nmo + b+n_occupied;
-    //                //printf("%20.12lf\n", temp14[kl * nmo * nmo + rs] -  J1[kl * nmo * nmo + rs]);
-    //                printf("%20.12lf %20.12lf%20.12lf\n", temp14[kl * nmo * nmo + ab],  J1[kl * nmo * nmo + ab], temp14[kl * nmo * nmo + ab]-  J1[kl * nmo * nmo + ab]);
+    //for (size_t k = 0; k < n_occupied_t; k++) {
+    //    for (size_t l = 0; l < n_occupied_t; l++) {
+    //        size_t kl = k * n_occupied_t + l;
+    //        for (size_t a = 0; a < n_virtual_t; a++) {
+    //            for (size_t b = 0; b < n_virtual_t; b++) {
+    //                size_t ab = (a +n_occupied_t)* nmo_t + b+n_occupied_t;
+    //                //print("%20.12lf\n", temp14[kl * nmo_t * nmo_t + rs] -  J1[kl * nmo_t * nmo_t + rs]);
+    //                print("%20.12lf %20.12lf%20.12lf\n", temp14[kl * nmo_t * nmo_t + ab],  J1[kl * nmo_t * nmo_t + ab], temp14[kl * nmo_t * nmo_t + ab]-  J1[kl * nmo_t * nmo_t + ab]);
     //    	}
     //        }
     //    }
     //}
-    double* temp7 = (double*) malloc(nmo * nmo * sizeof(double));
-    memset(temp7, 0, nmo * nmo * sizeof(double));
-    cblas_dgemm(CblasRowMajor, CblasNoTrans, CblasNoTrans, nmo, nmo, nmo, 1.0, h,
-                  nmo, U, nmo, 0.0,
-                  temp7, nmo);
-    cblas_dgemm(CblasRowMajor, CblasTrans, CblasNoTrans, nmo, nmo, nmo, 1.0, U,
-                  nmo, temp7, nmo, 0.0,
-                  h1, nmo);
-    cblas_dgemm(CblasRowMajor, CblasNoTrans, CblasNoTrans, nmo, nmo, nmo, 1.0, d_cmo,
-                  nmo, U, nmo, 0.0,
-                  temp7, nmo);
-    cblas_dgemm(CblasRowMajor, CblasTrans, CblasNoTrans, nmo, nmo, nmo, 1.0, U,
-                  nmo, temp7, nmo, 0.0,
-                  d_cmo1, nmo);
+    double* temp7 = (double*) malloc(nmo_t * nmo_t * sizeof(double));
+    memset(temp7, 0, nmo_t * nmo_t * sizeof(double));
+    cblas_dgemm(CblasRowMajor, CblasNoTrans, CblasNoTrans, nmo_t, nmo_t, nmo_t, 1.0, h,
+                  nmo_t, U, nmo_t, 0.0,
+                  temp7, nmo_t);
+    cblas_dgemm(CblasRowMajor, CblasTrans, CblasNoTrans, nmo_t, nmo_t, nmo_t, 1.0, U,
+                  nmo_t, temp7, nmo_t, 0.0,
+                  h1, nmo_t);
+    cblas_dgemm(CblasRowMajor, CblasNoTrans, CblasNoTrans, nmo_t, nmo_t, nmo_t, 1.0, d_cmo,
+                  nmo_t, U, nmo_t, 0.0,
+                  temp7, nmo_t);
+    cblas_dgemm(CblasRowMajor, CblasTrans, CblasNoTrans, nmo_t, nmo_t, nmo_t, 1.0, U,
+                  nmo_t, temp7, nmo_t, 0.0,
+                  d_cmo1, nmo_t);
     //fflush(stdout);
     free(temp1);  
     free(temp2);  
@@ -891,213 +895,216 @@ void full_transformation_internal_optimization(double* U, double* J, double *K, 
 
 
 
-void build_sigma_reduced(double* U, double* A_tilde, int* index_map, double* G, double* R_reduced, double* sigma_reduced, int num_states, int pointer, int nmo, int index_map_size, int n_occupied){
-    double* R_total = (double*) malloc(num_states * nmo * n_occupied * sizeof(double));
-    memset(R_total, 0, num_states * nmo * n_occupied * sizeof(double));
-    double* sigma_total = (double*) malloc(num_states * nmo * n_occupied * sizeof(double));
-    memset(sigma_total, 0, num_states * nmo * n_occupied * sizeof(double));
-    //printf("num state %d\n",num_states); 
-    //printf("index_map_size %d\n",index_map_size); 
-    double* A3 = (double*) malloc(nmo * nmo * sizeof(double));
-    memset(A3, 0, nmo * nmo * sizeof(double));
+void build_sigma_reduced(double* U, double* A_tilde, int* index_map, double* G, double* R_reduced, double* sigma_reduced, int    num_states, int    pointer, int    nmo, int    index_map_size, int    n_occupied){
+    size_t nmo_t = (size_t) nmo;
+    size_t n_occupied_t = (size_t) n_occupied;
+
+    double* R_total = (double*) malloc(num_states * nmo_t * n_occupied_t * sizeof(double));
+    memset(R_total, 0, num_states * nmo_t * n_occupied_t * sizeof(double));
+    double* sigma_total = (double*) malloc(num_states * nmo_t * n_occupied_t * sizeof(double));
+    memset(sigma_total, 0, num_states * nmo_t * n_occupied_t * sizeof(double));
+    //print("num state %d\n",num_states); 
+    //print("index_map_size %d\n",index_map_size); 
+    double* A3 = (double*) malloc(nmo_t * nmo_t * sizeof(double));
+    memset(A3, 0, nmo_t * nmo_t * sizeof(double));
     #pragma omp parallel for num_threads(16)
-    for (int p = 0; p < nmo; p++) {
-        for (int q = 0; q < nmo; q++) {
-	    A3[p * nmo + q] = A_tilde[p * nmo + q] + A_tilde[q * nmo + p];
+    for (size_t p = 0; p < nmo_t; p++) {
+        for (size_t q = 0; q < nmo_t; q++) {
+	    A3[p * nmo_t + q] = A_tilde[p * nmo_t + q] + A_tilde[q * nmo_t + p];
 	}
     }
     
     #pragma omp parallel for num_threads(16)
-    for (int j = 0; j < index_map_size; j++) {
-        int r = index_map[j * 2 + 0]; 
-        int k = index_map[j * 2 + 1];
-        //printf("%4d  %4d %4d\n",j,r,k);	
-        for (int i = 0; i < num_states; i++) {
-            R_total[i * nmo * n_occupied + r * n_occupied + k] = R_reduced[i * (index_map_size + pointer) + j+pointer];
+    for (size_t j = 0; j < index_map_size; j++) {
+        size_t r = index_map[j * 2 + 0]; 
+        size_t k = index_map[j * 2 + 1];
+        //print("%4d  %4d %4d\n",j,r,k);	
+        for (size_t i = 0; i < num_states; i++) {
+            R_total[i * nmo_t * n_occupied_t + r * n_occupied_t + k] = R_reduced[i * (index_map_size + pointer) + j+pointer];
         }
     } 
      
     
     #pragma omp parallel for num_threads(16)
-    for (int i = 0; i < num_states; i++) {
-        double* R = (double*) malloc(nmo * n_occupied * sizeof(double));
-        memset(R, 0, nmo * n_occupied * sizeof(double));
-        double* sigma = (double*) malloc(nmo * n_occupied * sizeof(double));
-        memset(sigma, 0, nmo * n_occupied * sizeof(double));
-        double* temp1 = (double*) malloc(nmo * n_occupied * sizeof(double));
-        memset(temp1, 0, nmo * n_occupied * sizeof(double));
-        //double* temp2  = (double*) malloc(nmo * n_occupied * sizeof(double));
-        //memset(temp2, 0, nmo * n_occupied * sizeof(double));
-        //double* temp3  = (double*) malloc(nmo * n_occupied * sizeof(double));
-        //memset(temp3, 0, nmo * n_occupied * sizeof(double));
-        //double* temp4 = (double*) malloc(nmo * n_occupied * sizeof(double));
-        //memset(temp4 , 0, nmo * n_occupied * sizeof(double));
-        //double* temp5  = (double*) malloc(nmo * n_occupied * sizeof(double));
-        //memset(temp5, 0, nmo * n_occupied * sizeof(double));
-        //double* temp6  = (double*) malloc(nmo * n_occupied * sizeof(double));
-        //memset(temp6, 0, nmo * n_occupied * sizeof(double));
-        //double* temp7  = (double*) malloc(nmo * n_occupied * sizeof(double));
-        //memset(temp7, 0, nmo * n_occupied * sizeof(double));
-	//double* sigma2= (double*) malloc(nmo * n_occupied * sizeof(double));
-        //memset(sigma2, 0, nmo * n_occupied * sizeof(double));
+    for (size_t i = 0; i < num_states; i++) {
+        double* R = (double*) malloc(nmo_t * n_occupied_t * sizeof(double));
+        memset(R, 0, nmo_t * n_occupied_t * sizeof(double));
+        double* sigma = (double*) malloc(nmo_t * n_occupied_t * sizeof(double));
+        memset(sigma, 0, nmo_t * n_occupied_t * sizeof(double));
+        double* temp1 = (double*) malloc(nmo_t * n_occupied_t * sizeof(double));
+        memset(temp1, 0, nmo_t * n_occupied_t * sizeof(double));
+        //double* temp2  = (double*) malloc(nmo_t * n_occupied_t * sizeof(double));
+        //memset(temp2, 0, nmo_t * n_occupied_t * sizeof(double));
+        //double* temp3  = (double*) malloc(nmo_t * n_occupied_t * sizeof(double));
+        //memset(temp3, 0, nmo_t * n_occupied_t * sizeof(double));
+        //double* temp4 = (double*) malloc(nmo_t * n_occupied_t * sizeof(double));
+        //memset(temp4 , 0, nmo_t * n_occupied_t * sizeof(double));
+        //double* temp5  = (double*) malloc(nmo_t * n_occupied_t * sizeof(double));
+        //memset(temp5, 0, nmo_t * n_occupied_t * sizeof(double));
+        //double* temp6  = (double*) malloc(nmo_t * n_occupied_t * sizeof(double));
+        //memset(temp6, 0, nmo_t * n_occupied_t * sizeof(double));
+        //double* temp7  = (double*) malloc(nmo_t * n_occupied_t * sizeof(double));
+        //memset(temp7, 0, nmo_t * n_occupied_t * sizeof(double));
+	//double* sigma2= (double*) malloc(nmo_t * n_occupied_t * sizeof(double));
+        //memset(sigma2, 0, nmo_t * n_occupied_t * sizeof(double));
 
 
 
-        cblas_dcopy(nmo * n_occupied, R_total + i*nmo*n_occupied,1,R,1);
-        cblas_dgemm(CblasRowMajor, CblasNoTrans, CblasNoTrans, nmo, n_occupied, nmo, 1.0, U,
-                 nmo, R, n_occupied, 0.0,
-                 temp1, n_occupied);
-        cblas_dgemm(CblasRowMajor, CblasNoTrans, CblasTrans, nmo, n_occupied, n_occupied, -1.0, U,
-                 nmo, R, n_occupied, 1.0,
-                 temp1, n_occupied);
+        cblas_dcopy(nmo_t * n_occupied_t, R_total + i*nmo_t*n_occupied_t,1,R,1);
+        cblas_dgemm(CblasRowMajor, CblasNoTrans, CblasNoTrans, nmo_t, n_occupied_t, nmo_t, 1.0, U,
+                 nmo_t, R, n_occupied_t, 0.0,
+                 temp1, n_occupied_t);
+        cblas_dgemm(CblasRowMajor, CblasNoTrans, CblasTrans, nmo_t, n_occupied_t, n_occupied_t, -1.0, U,
+                 nmo_t, R, n_occupied_t, 1.0,
+                 temp1, n_occupied_t);
         
-        //for (int q = 0; q < nmo; q++) {
-        //    for (int l = 0; l < n_occupied; l++) {
+        //for (size_t q = 0; q < nmo_t; q++) {
+        //    for (size_t l = 0; l < n_occupied_t; l++) {
 	//	double a = 0.0;    
-        //        for (int s = 0; s < nmo; s++) {
-        //            a += U[q * nmo + s] * R[s * n_occupied +l]; 
+        //        for (size_t s = 0; s < nmo_t; s++) {
+        //            a += U[q * nmo_t + s] * R[s * n_occupied_t +l]; 
 	//	}
-        //            temp2[q * n_occupied + l] = a; 
+        //            temp2[q * n_occupied_t + l] = a; 
 	//    }
 	//}	
-        //for (int q = 0; q < nmo; q++) {
-        //    for (int s = 0; s < n_occupied; s++) {
+        //for (size_t q = 0; q < nmo_t; q++) {
+        //    for (size_t s = 0; s < n_occupied_t; s++) {
 	//	double a = 0.0;    
-        //        for (int l = 0; l < n_occupied; l++) {
-        //            a += U[q * nmo + l] * R[s * n_occupied +l]; 
+        //        for (size_t l = 0; l < n_occupied_t; l++) {
+        //            a += U[q * nmo_t + l] * R[s * n_occupied_t +l]; 
 	//	}
-        //            temp2[q * n_occupied + s] -= a; 
+        //            temp2[q * n_occupied_t + s] -= a; 
 	//    }
 	//}
-        //for (int q = 0; q < nmo; q++) {
-        //    for (int l = 0; l < n_occupied; l++) {
-        //        printf("%20.12lf %20.12lf%20.12lf\n", temp2[q * n_occupied + l],  temp1[q * n_occupied + l], temp2[q * n_occupied + l]-  temp1[q * n_occupied + l]);
+        //for (size_t q = 0; q < nmo_t; q++) {
+        //    for (size_t l = 0; l < n_occupied_t; l++) {
+        //        print("%20.12lf %20.12lf%20.12lf\n", temp2[q * n_occupied_t + l],  temp1[q * n_occupied_t + l], temp2[q * n_occupied_t + l]-  temp1[q * n_occupied_t + l]);
 	//	    
 	//    }
 	//}
-        //for (int p = 0; p < nmo; p++) {
-        //    for (int k = 0; k < n_occupied; k++) {
-	//	int pk = p * n_occupied +k;
+        //for (size_t p = 0; p < nmo_t; p++) {
+        //    for (size_t k = 0; k < n_occupied_t; k++) {
+	//	size_t pk = p * n_occupied_t +k;
 	//	double a = 0.0;    
-        //        for (int q = 0; q < nmo; q++) {
-        //            for (int l = 0; l < n_occupied; l++) {
-	//	        int ql = q * n_occupied +l;
-        //                a += temp1[q * n_occupied + l] * G[ql * nmo * n_occupied +pk]; 
+        //        for (size_t q = 0; q < nmo_t; q++) {
+        //            for (size_t l = 0; l < n_occupied_t; l++) {
+	//	        size_t ql = q * n_occupied_t +l;
+        //                a += temp1[q * n_occupied_t + l] * G[ql * nmo_t * n_occupied_t +pk]; 
 	//	    }
 	//	}
-        //            temp3[p * n_occupied + k] = a; 
+        //            temp3[p * n_occupied_t + k] = a; 
 	//    }
 	//}
-	cblas_dgemm(CblasRowMajor, CblasNoTrans, CblasNoTrans, 1, nmo * n_occupied, nmo * n_occupied, 1.0, temp1,
-                 nmo * n_occupied, G, nmo * n_occupied, 0.0,
-                 sigma, nmo * n_occupied);
-        //for (int q = 0; q < nmo; q++) {
-        //    for (int l = 0; l < n_occupied; l++) {
-        //        printf("%20.12lf %20.12lf%20.12lf\n", temp3[q * n_occupied + l],  sigma[q * n_occupied + l], temp3[q * n_occupied + l]-  sigma[q * n_occupied + l]);
+	cblas_dgemm(CblasRowMajor, CblasNoTrans, CblasNoTrans, 1, nmo_t * n_occupied_t, nmo_t * n_occupied_t, 1.0, temp1,
+                 nmo_t * n_occupied_t, G, nmo_t * n_occupied_t, 0.0,
+                 sigma, nmo_t * n_occupied_t);
+        //for (size_t q = 0; q < nmo_t; q++) {
+        //    for (size_t l = 0; l < n_occupied_t; l++) {
+        //        print("%20.12lf %20.12lf%20.12lf\n", temp3[q * n_occupied_t + l],  sigma[q * n_occupied_t + l], temp3[q * n_occupied_t + l]-  sigma[q * n_occupied_t + l]);
 	//	    
 	//    }
 	//}
-        cblas_dgemm(CblasRowMajor, CblasTrans, CblasNoTrans, nmo, n_occupied, nmo, 1.0, U,
-                 nmo, sigma, n_occupied, 0.0,
-                 temp1, n_occupied);
-	cblas_dcopy(nmo * n_occupied, temp1,1,sigma,1);
-        //for (int r = 0; r < nmo; r++) {
-        //    for (int k = 0; k < n_occupied; k++) {
+        cblas_dgemm(CblasRowMajor, CblasTrans, CblasNoTrans, nmo_t, n_occupied_t, nmo_t, 1.0, U,
+                 nmo_t, sigma, n_occupied_t, 0.0,
+                 temp1, n_occupied_t);
+	cblas_dcopy(nmo_t * n_occupied_t, temp1,1,sigma,1);
+        //for (size_t r = 0; r < nmo_t; r++) {
+        //    for (size_t k = 0; k < n_occupied_t; k++) {
 	//	double a = 0.0;    
-        //        for (int p = 0; p < nmo; p++) {
-        //            a += temp3[p * n_occupied + k] * U[p * nmo +r]; 
+        //        for (size_t p = 0; p < nmo_t; p++) {
+        //            a += temp3[p * n_occupied_t + k] * U[p * nmo_t +r]; 
 	//	}
-        //            temp4[r * n_occupied + k] = a; 
+        //            temp4[r * n_occupied_t + k] = a; 
 	//    }
 	//}
-	//for (int r = 0; r < nmo; r++) {
-        //    for (int k = 0; k < n_occupied; k++) {
-        //        sigma2[r * n_occupied + k] = temp4[r * n_occupied + k]; 
+	//for (size_t r = 0; r < nmo_t; r++) {
+        //    for (size_t k = 0; k < n_occupied_t; k++) {
+        //        sigma2[r * n_occupied_t + k] = temp4[r * n_occupied_t + k]; 
 	//    }
 	//}
-        //for (int r = 0; r < n_occupied; r++) {
-        //    for (int k = 0; k < n_occupied; k++) {
-        //        sigma2[r * n_occupied + k] -= temp4[k * n_occupied + r]; 
+        //for (size_t r = 0; r < n_occupied_t; r++) {
+        //    for (size_t k = 0; k < n_occupied_t; k++) {
+        //        sigma2[r * n_occupied_t + k] -= temp4[k * n_occupied_t + r]; 
 	//    }
 	//}
-	for (int r = 0; r < n_occupied; r++) {
-            for (int k = 0; k < n_occupied; k++) {
-                sigma[r * n_occupied + k] -= temp1[k * n_occupied + r]; 
+	for (size_t r = 0; r < n_occupied_t; r++) {
+            for (size_t k = 0; k < n_occupied_t; k++) {
+                sigma[r * n_occupied_t + k] -= temp1[k * n_occupied_t + r]; 
 	    }
 	}
-        //for (int q = 0; q < nmo; q++) {
-        //    for (int l = 0; l < n_occupied; l++) {
-        //        printf("%20.12lf %20.12lf%20.12lf\n", sigma[q * n_occupied + l],  sigma2[q * n_occupied + l], sigma[q * n_occupied + l]-  sigma2[q * n_occupied + l]);
+        //for (size_t q = 0; q < nmo_t; q++) {
+        //    for (size_t l = 0; l < n_occupied_t; l++) {
+        //        print("%20.12lf %20.12lf%20.12lf\n", sigma[q * n_occupied_t + l],  sigma2[q * n_occupied_t + l], sigma[q * n_occupied_t + l]-  sigma2[q * n_occupied_t + l]);
 	//	    
 	//    }
 	//}
-        cblas_dgemm(CblasRowMajor, CblasNoTrans, CblasNoTrans, nmo, n_occupied, nmo, -0.5, A3,
-                 nmo, R, n_occupied, 0.0,
-                 temp1, n_occupied);
-        cblas_daxpy(nmo * n_occupied, 1.0, temp1, 1, sigma, 1);
-        //for (int r = 0; r < nmo; r++) {
-        //    for (int k = 0; k < n_occupied; k++) {
+        cblas_dgemm(CblasRowMajor, CblasNoTrans, CblasNoTrans, nmo_t, n_occupied_t, nmo_t, -0.5, A3,
+                 nmo_t, R, n_occupied_t, 0.0,
+                 temp1, n_occupied_t);
+        cblas_daxpy(nmo_t * n_occupied_t, 1.0, temp1, 1, sigma, 1);
+        //for (size_t r = 0; r < nmo_t; r++) {
+        //    for (size_t k = 0; k < n_occupied_t; k++) {
 	//	double a = 0.0;    
-        //        for (int s = 0; s < nmo; s++) {
-        //            a += R[s * n_occupied + k] * A3[r * nmo +s]; 
+        //        for (size_t s = 0; s < nmo_t; s++) {
+        //            a += R[s * n_occupied_t + k] * A3[r * nmo_t +s]; 
 	//	}
-        //            temp5[r * n_occupied + k] = a; 
+        //            temp5[r * n_occupied_t + k] = a; 
 	//    }
 	//}
-        //for (int r = 0; r < nmo; r++) {
-        //    for (int k = 0; k < n_occupied; k++) {
-        //        sigma2[r * n_occupied + k] -= 0.5 * temp5[r * n_occupied + k]; 
+        //for (size_t r = 0; r < nmo_t; r++) {
+        //    for (size_t k = 0; k < n_occupied_t; k++) {
+        //        sigma2[r * n_occupied_t + k] -= 0.5 * temp5[r * n_occupied_t + k]; 
 	//    }
 	//}
-        //for (int r = 0; r < n_occupied; r++) {
-        //    for (int k = 0; k < n_occupied; k++) {
-        //        sigma2[r * n_occupied + k] += 0.5 * temp5[k * n_occupied + r]; 
+        //for (size_t r = 0; r < n_occupied_t; r++) {
+        //    for (size_t k = 0; k < n_occupied_t; k++) {
+        //        sigma2[r * n_occupied_t + k] += 0.5 * temp5[k * n_occupied_t + r]; 
 	//    }
 	//}
         
 
-	for (int r = 0; r < n_occupied; r++) {
-            for (int k = 0; k < n_occupied; k++) {
-                sigma[r * n_occupied + k] -= temp1[k * n_occupied + r]; 
+	for (size_t r = 0; r < n_occupied_t; r++) {
+            for (size_t k = 0; k < n_occupied_t; k++) {
+                sigma[r * n_occupied_t + k] -= temp1[k * n_occupied_t + r]; 
 	    }
 	}
-        //for (int q = 0; q < nmo; q++) {
-        //    for (int l = 0; l < n_occupied; l++) {
-        //        printf("%20.12lf %20.12lf%20.12lf\n", sigma[q * n_occupied + l],  sigma2[q * n_occupied + l], sigma[q * n_occupied + l]-  sigma2[q * n_occupied + l]);
+        //for (size_t q = 0; q < nmo_t; q++) {
+        //    for (size_t l = 0; l < n_occupied_t; l++) {
+        //        print("%20.12lf %20.12lf%20.12lf\n", sigma[q * n_occupied_t + l],  sigma2[q * n_occupied_t + l], sigma[q * n_occupied_t + l]-  sigma2[q * n_occupied_t + l]);
 	//	    
 	//    }
 	//}
-        cblas_dgemm(CblasRowMajor, CblasNoTrans, CblasTrans, nmo, n_occupied, n_occupied, 0.5, A3,
-                 nmo, R, n_occupied, 1.0,
-                 sigma, n_occupied);
-        //for (int r = 0; r < nmo; r++) {
-        //    for (int k = 0; k < n_occupied; k++) {
+        cblas_dgemm(CblasRowMajor, CblasNoTrans, CblasTrans, nmo_t, n_occupied_t, n_occupied_t, 0.5, A3,
+                 nmo_t, R, n_occupied_t, 1.0,
+                 sigma, n_occupied_t);
+        //for (size_t r = 0; r < nmo_t; r++) {
+        //    for (size_t k = 0; k < n_occupied_t; k++) {
 	//	double a = 0.0;    
-        //        for (int l = 0; l < n_occupied; l++) {
-        //            a += R[k * n_occupied + l] * A3[r * nmo +l]; 
+        //        for (size_t l = 0; l < n_occupied_t; l++) {
+        //            a += R[k * n_occupied_t + l] * A3[r * nmo_t +l]; 
 	//	}
-        //            sigma2[r * n_occupied + k] += 0.5 * a; 
+        //            sigma2[r * n_occupied_t + k] += 0.5 * a; 
 	//    }
 	//}
-	cblas_dgemm(CblasRowMajor, CblasNoTrans, CblasTrans, nmo, n_occupied, n_occupied, -0.5, R,
-                 n_occupied, A3, nmo, 1.0,
-                 sigma, n_occupied);
-        //for (int r = 0; r < nmo; r++) {
-        //    for (int k = 0; k < n_occupied; k++) {
+	cblas_dgemm(CblasRowMajor, CblasNoTrans, CblasTrans, nmo_t, n_occupied_t, n_occupied_t, -0.5, R,
+                 n_occupied_t, A3, nmo_t, 1.0,
+                 sigma, n_occupied_t);
+        //for (size_t r = 0; r < nmo_t; r++) {
+        //    for (size_t k = 0; k < n_occupied_t; k++) {
 	//	double a = 0.0;    
-        //        for (int l = 0; l < n_occupied; l++) {
-        //            a += R[r * n_occupied + l] * A3[k * nmo +l]; 
+        //        for (size_t l = 0; l < n_occupied_t; l++) {
+        //            a += R[r * n_occupied_t + l] * A3[k * nmo_t +l]; 
 	//	}
-        //            sigma2[r * n_occupied + k] -= 0.5 * a; 
+        //            sigma2[r * n_occupied_t + k] -= 0.5 * a; 
 	//    }
 	//}
-        //for (int q = 0; q < nmo; q++) {
-        //    for (int l = 0; l < n_occupied; l++) {
-        //        printf("%20.12lf %20.12lf%20.12lf\n", sigma[q * n_occupied + l],  sigma2[q * n_occupied + l], sigma[q * n_occupied + l]-  sigma2[q * n_occupied + l]);
+        //for (size_t q = 0; q < nmo_t; q++) {
+        //    for (size_t l = 0; l < n_occupied_t; l++) {
+        //        print("%20.12lf %20.12lf%20.12lf\n", sigma[q * n_occupied_t + l],  sigma2[q * n_occupied_t + l], sigma[q * n_occupied_t + l]-  sigma2[q * n_occupied_t + l]);
 	//	    
 	//    }
 	//}
-	cblas_dcopy(nmo * n_occupied, sigma,1,sigma_total + i*nmo*n_occupied,1);
+	cblas_dcopy(nmo_t * n_occupied_t, sigma,1,sigma_total + i*nmo_t*n_occupied_t,1);
         free(R);
         free(sigma);
         free(temp1);
@@ -1111,11 +1118,11 @@ void build_sigma_reduced(double* U, double* A_tilde, int* index_map, double* G, 
     } 
    
     #pragma omp parallel for num_threads(16)
-    for (int j = 0; j < index_map_size; j++) {
-        int r = index_map[j * 2 + 0]; 
-        int k = index_map[j * 2 + 1]; 
-        for (int i = 0; i < num_states; i++) {
-            sigma_reduced[i * (index_map_size + pointer) + j+pointer] = sigma_total[i * nmo * n_occupied + r * n_occupied + k];
+    for (size_t j = 0; j < index_map_size; j++) {
+        size_t r = index_map[j * 2 + 0]; 
+        size_t k = index_map[j * 2 + 1]; 
+        for (size_t i = 0; i < num_states; i++) {
+            sigma_reduced[i * (index_map_size + pointer) + j+pointer] = sigma_total[i * nmo_t * n_occupied_t + r * n_occupied_t + k];
         }
     } 
      

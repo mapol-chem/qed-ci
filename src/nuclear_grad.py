@@ -34,6 +34,7 @@ import psutil
 import copy
 import scipy.sparse
 import ortho_script
+import gc
 from ortho_script import ortho_orbs
 from scipy.stats import ortho_group
 from scipy.sparse.linalg import lsmr
@@ -44,6 +45,11 @@ from typing import List, Tuple, Optional, Union
 from timeit import default_timer as timer
 import numba as nb
 from numba import objmode
+def get_memory_usage():
+    """Return current process memory usage in MB"""
+    process = psutil.Process(os.getpid())
+    mem_info = process.memory_info()
+    return mem_info.rss / 1024**2  # Convert to MB
 
 
 class nuclear_grad(PFHamiltonianGenerator):
@@ -292,8 +298,9 @@ class nuclear_grad(PFHamiltonianGenerator):
         )
         two_rdm_hf[:,:,:self.n_occupied, :self.n_occupied] = two_rdm_avg.reshape(self.n_occupied, self.n_occupied,
                                                                self.n_occupied, self.n_occupied)[:,:,:,:].transpose(1,3,0,2)
-        self.two_rdm_eff_mo[:,:,:,:] +=  np.einsum("pr, klrq->qlpk", Z_vector, two_rdm_hf)
-        self.two_rdm_eff_mo[:,:,:,:] +=  np.einsum("klpr, qr->qlpk", two_rdm_hf, Z_vector)
+        self.two_rdm_eff_mo[:,:,:,:] +=  np.einsum("pr, klrq->qlpk", Z_vector, two_rdm_hf, optimize = "optimal")
+        self.two_rdm_eff_mo[:,:,:,:] +=  np.einsum("klpr, qr->qlpk", two_rdm_hf, Z_vector, optimize = "optimal")
+        del two_rdm_hf
 
     def update_effective_densities_ao(self, state, kappa, z_vector, eigenvecs, C):
         kappa_matrix = kappa.reshape(self.n_v_hf, self.ndocc)
@@ -323,10 +330,13 @@ class nuclear_grad(PFHamiltonianGenerator):
         #self.one_rdm_pe_eff_ao2 = scale_factor2 * one_rdm_hf
 
     def transform_effective_densities(self, C):
-        two_rdm_1 = np.einsum("slpk,ms->mlpk", self.two_rdm_eff_mo, C)
-        two_rdm_2 = np.einsum("mlpk,xp->mlxk", two_rdm_1, C)
-        two_rdm_3 = np.einsum("mlxk,nl->mnxk", two_rdm_2, C[:,:self.n_occupied])
-        self.two_rdm_eff_ao = np.einsum("mnxk,yk->mnxy", two_rdm_3, C[:,:self.n_occupied])
+        two_rdm_1 = np.einsum("slpk,ms->mlpk", self.two_rdm_eff_mo, C, optimize = "optimal")
+        two_rdm_2 = np.einsum("mlpk,xp->mlxk", two_rdm_1, C, optimize = "optimal")
+        del two_rdm_1
+        two_rdm_3 = np.einsum("mlxk,nl->mnxk", two_rdm_2, C[:,:self.n_occupied], optimize = "optimal")
+        del two_rdm_2
+        self.two_rdm_eff_ao = np.einsum("mnxk,yk->mnxy", two_rdm_3, C[:,:self.n_occupied], optimize = "optimal")
+        del two_rdm_3
 
         one_rdm_mj = np.einsum("rs,mr->ms", self.one_rdm_eff_mo, C)
         self.one_rdm_eff_ao = np.einsum("ms,ns->mn", one_rdm_mj, C)
@@ -763,7 +773,7 @@ class nuclear_grad(PFHamiltonianGenerator):
         Main driver loop to solve the linear system Ax + b = 0.
         """
         print("--------------------------------------------")
-        print("--- Start solving CP-SA-CASSCF equations ---")
+        print("--- Start solving CP-SA-CASSCF equations ---", flush = True)
         print("--------------------------------------------")
         
         # Initialize GMRES with your RHS (b vector)
@@ -781,7 +791,7 @@ class nuclear_grad(PFHamiltonianGenerator):
         
         return final_solution_x
 
-        print("\n--- Solver did not converge within max iterations ---")
+        print("\n--- Solver did not converge within max iterations ---", flush = True)
         #return solver_sym.get_solution()
 
 
@@ -1265,8 +1275,9 @@ class nuclear_grad(PFHamiltonianGenerator):
         And handles the projection of the trial vector.
         """
         # 1. Division by denom (Safe division)
-        safe_denom = np.where(np.abs(self.denom) < 1e-12, 1.0, self.denom)
-        trial_c = vector / safe_denom
+        safe_denom = np.where(np.abs(self.denom) < 1e-12, 1e-12, self.denom)
+        level_shift = 1e-4
+        trial_c = vector / (safe_denom+level_shift)
 
         # 2. Project out orbital rotation redundancies (Your code logic)
         # Ensure this matches your array shapes exactly
@@ -1452,10 +1463,11 @@ class nuclear_grad(PFHamiltonianGenerator):
         self.G1 = G1
         self.denom = denom0
         #solution = self.solve2(A, G1, self.matvec_product, denom0, max_iter=2000, conv_thresh=1e-7)
+        print(f"Current memory: {get_memory_usage():.2f} MB", flush = True)
         solution = self.solve3(A, G1, self.matvec_product, denom0, max_iter=2000, conv_thresh=1e-7)
 
 
-
+        print(f"Current memory1: {get_memory_usage():.2f} MB", flush = True)
 
 
         ####print(self.reduced_hessian_diagonal)
@@ -1649,7 +1661,7 @@ class nuclear_grad(PFHamiltonianGenerator):
         self.overlap_deriv_matrix_ao = np.zeros((3 * n_atoms, n_orbitals, n_orbitals))
         self.potential_deriv_matrix_ao = np.zeros((3 * n_atoms, n_orbitals, n_orbitals))
         self.kinetic_deriv_matrix_ao = np.zeros((3 * n_atoms, n_orbitals, n_orbitals))
-        self.eri_deriv_matrix_ao = np.zeros((3 * n_atoms, n_orbitals, n_orbitals, n_orbitals, n_orbitals))
+        #self.eri_deriv_matrix_ao = np.zeros((3 * n_atoms, n_orbitals, n_orbitals, n_orbitals, n_orbitals))
 
         # initialize the gradient arrays
         self.pulay_force = np.zeros(3 * n_atoms)
@@ -1706,10 +1718,12 @@ class nuclear_grad(PFHamiltonianGenerator):
 
         #print(np.linalg.norm(total_gradient))
 
+        print(f"Current memory2: {get_memory_usage():.2f} MB", flush = True)
         #self.print_matrix_nice((self.twoeint-self.twoeint_hf).reshape(self.nmo*self.nmo, self.nmo *self.nmo), precision=10, width=14, cols_per_line=6)
         self.twoeint = np.asarray(self.mints.mo_eri(self.Ca_hf, self.Ca_hf, self.Ca_hf, self.Ca_hf))
         self.d_spatial = np.einsum("ij,kl-> ijkl", self.d_hf, self.d_hf)
-        self.twoeint += self.d_spatial
+        #self.twoeint += self.d_spatial
+        np.add(self.twoeint, self.d_spatial, out=self.twoeint)
         self.n_v_hf = self.nmo - self.ndocc
 
         self.fock_hf = copy.deepcopy(self.H_hf)
@@ -1739,6 +1753,7 @@ class nuclear_grad(PFHamiltonianGenerator):
         self.build_Y_hf(state, Z_vector, z_vector, self.eigenvecs, Y_hf)
         grad_hf = Y_hf - Y_hf.T
         grad_hf_ai = grad_hf[self.ndocc:, :self.ndocc].flatten()
+        print(f"Current memory3: {get_memory_usage():.2f} MB", flush = True)
 
 
 
@@ -1758,14 +1773,14 @@ class nuclear_grad(PFHamiltonianGenerator):
 
             solver_sym3 = LinearRMSolver(b_vector=residual, max_subspace=2000)
             print("---------------------------------------------")
-            print("------- Start solving CP-HF equations -------")
+            print("------- Start solving CP-HF equations -------.", flush = True)
             print("---------------------------------------------")
             for i in range(max_iter):
                 residual_norm = np.linalg.norm(residual)
-                print(f"Iter: {i+1:3d}   Residual Norm: {residual_norm:.4e}")
+                print(f"Iter: {i+1:3d}   Residual Norm: {residual_norm:.4e}", flush = True)
 
                 if residual_norm < conv_thresh and i > 0:
-                    print("\n--- Convergence Achieved ---")
+                    print("\n--- Convergence Achieved ---", flush = True)
                     self.cp_hf_solution = solver_sym3.get_solution()
                     break
                 trial_c = np.zeros(self.n_v_hf * self.ndocc)
@@ -1783,6 +1798,7 @@ class nuclear_grad(PFHamiltonianGenerator):
             kappa[:] = self.cp_hf_solution
         else:
             kappa[:] = 0.0 
+        print(f"Current memory4: {get_memory_usage():.2f} MB", flush = True)
         #print("kappa", kappa)        
         Z_vector = Z_final
         z_vector = z_final
@@ -1790,6 +1806,10 @@ class nuclear_grad(PFHamiltonianGenerator):
         A_tilde_hf = np.zeros((self.nmo, self.nmo))
         self.build_Y_hf(state, Z_vector, z_vector, self.eigenvecs, Y_hf)
         self.build_A_tilde_hf(self.fock_hf, kappa, A_tilde_hf)
+        del(self.d_spatial)
+        del(self.twoeint)
+        gc.collect()
+        print(f"Current memory5: {get_memory_usage():.2f} MB", flush = True)
         #A_tilde_hf2 = np.zeros((self.nmo, self.nmo))
         #A_tilde_hf2[:,:self.ndocc] = np.dot(self.fock_hf[:,self.ndocc:], kappa.reshape(self.n_v_hf, self.ndocc))
         #A_tilde_hf2[:,self.ndocc:] += np.dot(self.fock_hf[:,:self.ndocc], kappa.reshape(self.n_v_hf, self.ndocc).T)
@@ -1808,16 +1828,24 @@ class nuclear_grad(PFHamiltonianGenerator):
         self.update_effective_densities_ao(state, kappa, z_vector, self.eigenvecs, self.C_hf)
         
         #symmetrize effective density
-        temp_rdm = self.two_rdm_eff_ao.reshape(self.nmo * self.nmo, self.nmo * self.nmo)
+        #temp_rdm = self.two_rdm_eff_ao.reshape(self.nmo * self.nmo, self.nmo * self.nmo)
+        #temp_sum  = (temp_rdm + temp_rdm.T)
+        #temp_rdm[:] = 0.5 * temp_sum
+        #del temp_sum
+        ####temp_rdm2 = 0.5 * (temp_rdm + temp_rdm.T)
+        ####temp_rdm3 = temp_rdm2
+        ####self.two_rdm_eff_ao = temp_rdm3.reshape(self.nmo, self.nmo, self.nmo, self.nmo)
+        
+        print(f"Current memory6: {get_memory_usage():.2f} MB", flush = True)
+        self.two_rdm_eff_ao += self.two_rdm_eff_ao.transpose(2, 3, 0, 1)
+        self.two_rdm_eff_ao *= 0.5
+
+
+
+        temp_rdm= self.one_rdm_eff_ao.reshape(self.nmo, self.nmo)
         temp_rdm2 = 0.5 * (temp_rdm + temp_rdm.T)
         temp_rdm3 = temp_rdm2
-        self.two_rdm_eff_ao = temp_rdm3.reshape(self.nmo, self.nmo, self.nmo, self.nmo)
-
-        temp_rdm = self.one_rdm_eff_ao.reshape(self.nmo, self.nmo)
-        temp_rdm2 = 0.5 * (temp_rdm + temp_rdm.T)
-        temp_rdm3 = temp_rdm2
-        self.one_rdm_eff_ao = temp_rdm3
-
+        self.one_rdm_eff_ao = temp_rdm2
 
         #update 1rdm_pe_eff with contributions from 1rdm_eff and 2rdm_eff
         self.one_rdm_pe_eff_ao += 2.0 *np.einsum("mn, pqmn", self.d_ao, self.two_rdm_eff_ao)
@@ -1831,16 +1859,18 @@ class nuclear_grad(PFHamiltonianGenerator):
         temp_rdm3 = temp_rdm2
         self.one_rdm_pe_eff_ao = temp_rdm3
 
-
+        print(f"Current memory7: {get_memory_usage():.2f} MB", flush = True)
         self.Ca_hf = psi4.core.Matrix.from_array(self.C_hf)
 
         self.overlap_deriv_matrix_ao2 = np.zeros((3 * n_atoms, n_orbitals, n_orbitals))
         self.total_gradient = np.zeros(3 * n_atoms)
 
         self.pulay_force2 = np.zeros(3 * n_atoms)
+        print(f"Current memory8: {get_memory_usage():.2f} MB", flush = True)
         # loop over the atoms
         for i in range(self.n_atoms):
             # loop over the cartesian coordinates
+            #derivs_for_atom_i = self.mints.ao_tei_deriv1(i)
             for j in range(3):
                 # define the derivative index
                 deriv_index = 3 * i + j
@@ -1855,11 +1885,20 @@ class nuclear_grad(PFHamiltonianGenerator):
                 self.kinetic_deriv_matrix_ao[deriv_index] = np.asarray(self.mints.ao_oei_deriv1("KINETIC", i)[j])
 
                 # get the two-electron integral derivatives
-                self.eri_deriv_matrix_ao[deriv_index] = np.asarray(self.mints.ao_tei_deriv1(i)[j])
-
+                # self.eri_deriv_matrix_ao[deriv_index] = np.asarray(self.mints.ao_tei_deriv1(i)[j])
+                #tmp_eri_deriv = np.asarray(derivs_for_atom_i[j])
+                tmp_eri_deriv = np.asarray(self.mints.ao_tei_deriv1(i)[j], copy = False)
                 # compute the J and K derivetives
-                self.repulsion_gradient[deriv_index] = np.einsum("mnxy,mnxy->", self.eri_deriv_matrix_ao[deriv_index, :, :, :, :], self.two_rdm_eff_ao)
-
+                #self.repulsion_gradient[deriv_index] = np.einsum("mnxy,mnxy->", self.eri_deriv_matrix_ao[deriv_index, :, :, :, :], self.two_rdm_eff_ao)
+                #self.repulsion_gradient[deriv_index] = np.einsum("mnxy,mnxy->", tmp_eri_deriv, self.two_rdm_eff_ao, optimize = "optimal")
+                self.repulsion_gradient[deriv_index] = np.tensordot(
+                   tmp_eri_deriv, self.two_rdm_eff_ao, axes=([0,1,2,3], [0,1,2,3])
+                )
+                print(f"Current memory00: {get_memory_usage():.2f} MB", flush = True)
+                tmp_eri_deriv = None
+                del tmp_eri_deriv   
+                gc.collect()
+                print(f"Current memory0: {get_memory_usage():.2f} MB", flush = True)
 
                 # now contract each of the derivatives with the density matrix to get the respective gradient components
                 # Pulay force first
@@ -1871,12 +1910,13 @@ class nuclear_grad(PFHamiltonianGenerator):
 
                 # potential gradient
                 self.potential_gradient[deriv_index] = np.einsum("uv,uv->", self.one_rdm_eff_ao, self.potential_deriv_matrix_ao[deriv_index, :, :])
-
-
+            #del derivs_for_atom_i
+            # Periodically force garbage collection if RAM is still critical
+        print(f"Current memory9: {get_memory_usage():.2f} MB", flush = True)
                                                                     
 
         self.total_gradient = self.nuclear_energy_gradient + self.pulay_force + self.kinetic_gradient + self.potential_gradient + self.repulsion_gradient 
-        print("Nuclear energy gradient")
+        print("Nuclear energy gradient", flush = True)
         self.print_matrix_nice(self.nuclear_energy_gradient.reshape(self.n_atoms, 3), precision=10, width=14, cols_per_line=6)
         print("Pulay force")
         self.print_matrix_nice(self.pulay_force.reshape(self.n_atoms, 3), precision=10, width=14, cols_per_line=6)
@@ -1964,7 +2004,7 @@ class nuclear_grad(PFHamiltonianGenerator):
         print("Total gradient")
         self.print_matrix_nice(self.total_gradient.reshape(self.n_atoms, 3), precision=10, width=14, cols_per_line=6)
         print(self.total_gradient)
-        print("gradient norm", np.linalg.norm(self.total_gradient))
+        print("nuclear gradient norm", np.linalg.norm(self.total_gradient), flush = True)
 
 
 
