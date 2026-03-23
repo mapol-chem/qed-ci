@@ -45,6 +45,7 @@ from typing import List, Tuple, Optional, Union
 from timeit import default_timer as timer
 import numba as nb
 from numba import objmode
+
 def get_memory_usage():
     """Return current process memory usage in MB"""
     process = psutil.Process(os.getpid())
@@ -231,7 +232,13 @@ class nuclear_grad(PFHamiltonianGenerator):
         #one_rdm_avg = self.one_rdm_avg.reshape(self.n_occupied, self.n_occupied)
         #one_rdm_pe_avg = self.one_rdm_pe_avg.reshape(self.n_occupied, self.n_occupied)
         #two_rdm_avg = self.two_rdm_avg.reshape(self.n_occupied, self.n_occupied, self.n_occupied, self.n_occupied)
-    def build_effective_densities_mo(self, Z_vector, z_vector, eigenvecs, state):
+    def build_effective_densities_mo(self, Z_vector, z_vector, eigenvecs, state1, state2):
+        if state1 == state2:
+            state = state1
+            derivative_coupling = False
+        else:
+            derivative_coupling = True
+
         self.one_rdm_eff_mo = np.zeros((self.nmo, self.nmo))
         self.one_rdm_pe_eff_mo= np.zeros((self.nmo, self.nmo))
         self.two_rdm_eff_mo = np.zeros(
@@ -253,8 +260,12 @@ class nuclear_grad(PFHamiltonianGenerator):
             )
         )
         weight = np.zeros_like(self.weight)
-        weight[state] = 1.0
-        self.build_occupied_rdm(eigenvecs, eigenvecs, one_rdm_avg, two_rdm_avg, one_rdm_pe_avg, weight, False)
+        if derivative_coupling == False:
+            weight[state] = 1.0
+            self.build_occupied_rdm(eigenvecs, eigenvecs, one_rdm_avg, two_rdm_avg, one_rdm_pe_avg, weight, False)
+        else:
+            weight[0] = 1.0
+            self.build_occupied_rdm(self.eigenvec1, self.eigenvec2, one_rdm_avg, two_rdm_avg, one_rdm_pe_avg, weight, True)
         self.one_rdm_eff_mo[:self.n_occupied,:self.n_occupied] = one_rdm_avg.reshape(self.n_occupied, self.n_occupied)[:,:]
         self.one_rdm_pe_eff_mo[:self.n_occupied,:self.n_occupied] = one_rdm_pe_avg.reshape(self.n_occupied, self.n_occupied)[:,:]
         self.two_rdm_eff_mo[:self.n_occupied,:,:self.n_occupied,:] = 0.5 * two_rdm_avg.reshape(self.n_occupied, self.n_occupied,
@@ -302,7 +313,7 @@ class nuclear_grad(PFHamiltonianGenerator):
         self.two_rdm_eff_mo[:,:,:,:] +=  np.einsum("klpr, qr->qlpk", two_rdm_hf, Z_vector, optimize = "optimal")
         del two_rdm_hf
 
-    def update_effective_densities_ao(self, state, kappa, z_vector, eigenvecs, C):
+    def update_effective_densities_ao(self, state1, state2, kappa, z_vector, eigenvecs, C):
         kappa_matrix = kappa.reshape(self.n_v_hf, self.ndocc)
         kappa_full = np.zeros((self.nmo, self.nmo))
         kappa_full[self.ndocc:,:self.ndocc] = kappa_matrix[:,:]
@@ -316,11 +327,14 @@ class nuclear_grad(PFHamiltonianGenerator):
         self.two_rdm_eff_ao += np.einsum("mn,pq->mnpq", one_rdm_kappa, one_rdm_hf)
         self.two_rdm_eff_ao -= 0.5 * np.einsum("mp,nq->mnpq", one_rdm_kappa, one_rdm_hf)
       
+        if state1 == state2:
+            off_diagonal_constant_state = self.calculate_off_diagonal_photon_constant_z(eigenvecs, eigenvecs, state1)
+        else:
+            off_diagonal_constant_state = self.calculate_off_diagonal_photon_constant_z(self.eigenvec1, self.eigenvec2, 0)
 
-        off_diagonal_constant_state = self.calculate_off_diagonal_photon_constant_z(eigenvecs, eigenvecs, state)
         off_diagonal_constant_z = self.calculate_off_diagonal_photon_constant_z(z_vector, eigenvecs, -1)
         constant_hf = np.einsum("ai,ai->", kappa_matrix, self.d_hf[self.ndocc:,:self.ndocc])
-        scale_factor = -self.E_d_state + self.d_exp - self.E_d_Z - self.E_d_z + off_diagonal_constant_state + off_diagonal_constant_z - constant_hf
+        scale_factor = -self.E_d_state + self.d_exp * (state1 == state2) - self.E_d_Z - self.E_d_z + off_diagonal_constant_state + off_diagonal_constant_z - constant_hf
 
         #self.one_rdm_pe_eff_ao3 = self.one_rdm_pe_eff_ao + (off_diagonal_constant_state + off_diagonal_constant_z) * one_rdm_hf
         self.one_rdm_pe_eff_ao += scale_factor * one_rdm_hf
@@ -340,7 +354,7 @@ class nuclear_grad(PFHamiltonianGenerator):
 
         one_rdm_mj = np.einsum("rs,mr->ms", self.one_rdm_eff_mo, C)
         self.one_rdm_eff_ao = np.einsum("ms,ns->mn", one_rdm_mj, C)
-        #print("effective one-rdm in ao basis") 
+        #print("effective one-rdm in ao basis")
         #self.print_matrix_nice(self.one_rdm_eff_ao, precision=10, width=14, cols_per_line=6)
 
         one_rdm_pe_mj = np.einsum("rs,mr->ms", self.one_rdm_pe_eff_mo, C)
@@ -567,7 +581,7 @@ class nuclear_grad(PFHamiltonianGenerator):
     def matvec_product(self, x, A, G1):
         z_vector, Z_vector = self.unpack_solution(x)
         #print("Z_Vector", Z_vector, "z_vector", z_vector, flush = True)
-        z_vector=self.project_out_all(z_vector, self.eigenvecs) 
+        #z_vector=self.project_out_all(z_vector, self.eigenvecs) 
         self.build_state_average_rdms_z(z_vector, self.eigenvecs)
         B_t = np.zeros_like(self.eigenvecs)
         B_b = np.zeros_like(self.eigenvecs)
@@ -631,7 +645,7 @@ class nuclear_grad(PFHamiltonianGenerator):
 
 
 
-    def build_total_gradient(self, Y):
+    def build_total_gradient(self, Y, state1, state2):
         
         Y_asym = 0.5 * (Y-Y.T)
         print("gradient norm of state:", np.linalg.norm(Y_asym.flatten()))
@@ -648,6 +662,15 @@ class nuclear_grad(PFHamiltonianGenerator):
             #Y_zero[k][r] = -Y_asym[r][k]
         #print("Y_zero", Y_zero)
         Y_z = np.zeros_like(self.eigenvecs)
+        if state1 != state2:
+            Y_z[state1] = -(self.eigenvals[state2] - self.Enuc)/self.weight[state1] * self.eigenvecs[state2]
+            Y_z[state2] = -(self.eigenvals[state1] - self.Enuc)/self.weight[state2] * self.eigenvecs[state1]
+        #print(Y_z[state1])
+        #print(self.eigenvals[state2], self.Enuc)
+        #print(np.dot(Y_z[state1], self.eigenvecs[state1]))
+        temp3 = self.project_out_all(Y_z, self.eigenvecs)
+        Y_z = np.copy(temp3)
+
         y = self.pack_solution(Y_Z,Y_z)
         return y
     def solve2(self, A, G1, matvec_product, denom, max_iter, conv_thresh=1e-7):
@@ -661,17 +684,20 @@ class nuclear_grad(PFHamiltonianGenerator):
             dim00 = self.index_map_size + self.davidson_roots * self.H_dim
             trial_0 = np.random.rand(dim00)
 
-            temp2 = trial_0[self.index_map_size:].reshape(self.davidson_roots, self.H_dim)
-            temp2=self.project_out_all(temp2, self.eigenvecs)
-            trial_0[self.index_map_size:] = temp2.flatten()[:]
+            #temp2 = trial_0[self.index_map_size:].reshape(self.davidson_roots, self.H_dim)
+            #temp2=self.project_out_all(temp2, self.eigenvecs)
+            #trial_0[self.index_map_size:] = temp2.flatten()[:]
+            self.projection(trial_0[self.index_map_size:])
+
             norm = np.linalg.norm(trial_0)
             if norm > 1e-12:
                 trial_0 /= norm
 
             sigma = matvec_product(trial_0, A, G1)
-            temp3 = sigma[self.index_map_size:].reshape(self.davidson_roots, self.H_dim)
-            temp3=self.project_out_all(temp3, self.eigenvecs)
-            sigma[self.index_map_size:] = temp3.flatten()[:]
+            #temp3 = sigma[self.index_map_size:].reshape(self.davidson_roots, self.H_dim)
+            #temp3=self.project_out_all(temp3, self.eigenvecs)
+            #sigma[self.index_map_size:] = temp3.flatten()[:]
+            self.projection(sigma[self.index_map_size:])
             residual = sigma + self.reduced_state_gradient 
 
         #print("initial guess", residual)
@@ -681,17 +707,17 @@ class nuclear_grad(PFHamiltonianGenerator):
         #solution_sym = solver_sym.solve(matvec_prod_sym, precond_sym, max_iter=100, conv_thresh=1e-7)
         #print(denom[:self.index_map_size])
         print("--------------------------------------------")
-        print("--- Start solving CP-SA-CASSCF equations ---")
+        print("--- Start solving CP-SA-CASSCF equations ---", flush = True)
         print("--------------------------------------------")
         for i in range(max_iter):
             #sigma0 = matvec_product(residual, A, G1)
             #residual0 = sigma0 + self.total_gradient
             #print("zzz", np.linalg.norm(residual0))
             residual_norm = np.linalg.norm(residual)
-            print(f"Iter: {i+1:3d}   Residual Norm: {residual_norm:.4e}")
+            print(f"Iter: {i+1:3d}   Residual Norm: {residual_norm:.4e}", flush = True)
 
             if residual_norm < conv_thresh:
-                print("\n--- Convergence Achieved ---")
+                print("\n--- Convergence Achieved ---", flush = True)
                 return solver_sym.get_solution()
 
             trial_c = residual/denom
@@ -719,11 +745,11 @@ class nuclear_grad(PFHamiltonianGenerator):
             #self.print_matrix_nice(trial_c[self.index_map_size:].reshape(self.davidson_roots,self.H_dim)[1].reshape(self.num_alpha,self.num_alpha), precision=10, width=14, cols_per_line=6)
 
 
-            temp2 = trial_c[self.index_map_size:].reshape(self.davidson_roots, self.H_dim)
+            #temp2 = trial_c[self.index_map_size:].reshape(self.davidson_roots, self.H_dim)
+            #temp2=self.project_out_all(temp2, self.eigenvecs)
+            #trial_c[self.index_map_size:] = temp2.flatten()[:]
+            self.projection(trial_c[self.index_map_size:])
             
-            temp2=self.project_out_all(temp2, self.eigenvecs)
-            trial_c[self.index_map_size:] = temp2.flatten()[:]
-            #self.projection(trial_c[self.index_map_size:])
             #z_vector, Z_vector = self.unpack_solution(trial_c)
             #for i in range(self.davidson_roots):
             #    print("check dot product after", np.dot(z_vector[i], self.eigenvecs[i]))
@@ -745,11 +771,11 @@ class nuclear_grad(PFHamiltonianGenerator):
             #for i in range(self.davidson_roots):
             #    print("check dot product0", np.dot(z_vector[i], self.eigenvecs[i]))
 
-            temp3 = sigma[self.index_map_size:].reshape(self.davidson_roots, self.H_dim)
-            temp3=self.project_out_all(temp3, self.eigenvecs)
-            sigma[self.index_map_size:] = temp3.flatten()[:]
+            #temp3 = sigma[self.index_map_size:].reshape(self.davidson_roots, self.H_dim)
+            #temp3=self.project_out_all(temp3, self.eigenvecs)
+            #sigma[self.index_map_size:] = temp3.flatten()[:]
+            self.projection(sigma[self.index_map_size:])
 
-            #self.projection(sigma[self.index_map_size:])
             #z_vector, Z_vector = self.unpack_solution(trial_c)
             #for i in range(self.davidson_roots):
             #    print("check dot product after0", np.dot(z_vector[i], self.eigenvecs[i]))
@@ -761,7 +787,7 @@ class nuclear_grad(PFHamiltonianGenerator):
             residual_new = copy.deepcopy(residual)
             error = residual_new - residual_old
             if i > 0 and np.linalg.norm(error) < 1e-8:
-                print("\n--- Convergence Achieved (solution becomes self-consistent)---")
+                print("\n--- Convergence Achieved (solution becomes self-consistent)---", flush = True)
                 return solver_sym.get_solution()
 
 
@@ -778,14 +804,14 @@ class nuclear_grad(PFHamiltonianGenerator):
         
         # Initialize GMRES with your RHS (b vector)
         # Note: we use max_subspace=20 (standard), increase if convergence is jagged
-        gmres = GMRESSolver(b_vector=-self.reduced_state_gradient, max_subspace=20)
+        gmres = GMRESSolver(b_vector=-self.reduced_state_gradient, max_subspace=60)
         
         # Run the solver
         # We pass the wrapper methods we defined above
         final_solution_x = gmres.solve(
             matvec_product=self.my_matvec_wrapper,
             preconditioner=self.my_preconditioner_wrapper,
-            max_iter=100,      # Max number of restarts
+            max_iter=2000,      # Max number of restarts
             conv_thresh=1e-7
         )
         
@@ -832,18 +858,18 @@ class nuclear_grad(PFHamiltonianGenerator):
             
         return A_t_asym
 
-    #def projection(self, z):
-    #    d, n = self.davidson_roots, self.H_dim          # for brevity
-    #    for i in range(d):
-    #        # slice that corresponds to the i-th row
-    #        start, stop = i * n, (i + 1) * n
-    #        row_z = z[start:stop]
-    #    
-    #        # projection coefficient
-    #        coeff = np.dot(row_z, self.eigenvecs[i])
-    #    
-    #        # subtract the projection from that slice
-    #        z[start:stop] -= coeff * self.eigenvecs[i]
+    def projection(self, z):
+        d, n = self.davidson_roots, self.H_dim          # for brevity
+        for i in range(d):
+            # slice that corresponds to the i-th row
+            start, stop = i * n, (i + 1) * n
+            row_z = z[start:stop]
+        
+            # projection coefficient
+            coeff = np.dot(row_z, self.eigenvecs[i])
+        
+            # subtract the projection from that slice
+            z[start:stop] -= coeff * self.eigenvecs[i]
 
 
 
@@ -991,40 +1017,79 @@ class nuclear_grad(PFHamiltonianGenerator):
         )
        
 
-    def build_Y(self, state, eigenvecs, Y):
+    def build_Y(self, state1, state2, eigenvecs, Y, deriv_type):
+        if state1 == state2:
+            derivative_coupling = False
+            state = state1
+        else:
+            derivative_coupling = True
+            self.eigenvec1 = np.zeros_like(eigenvecs)
+            self.eigenvec2 = np.zeros_like(eigenvecs)
+            self.eigenvec1[0] = np.copy(eigenvecs[state1])
+            self.eigenvec2[0] = np.copy(eigenvecs[state2])
         Y[:,:] = 0.0
         self.D_tu_n = np.zeros((self.n_act_orb * self.n_act_orb))
         self.Dpe_tu_n = np.zeros((self.n_act_orb * self.n_act_orb))
         self.D_tuvw_n = np.zeros(
             (self.n_act_orb * self.n_act_orb * self.n_act_orb * self.n_act_orb)
         )
-
         np1 = self.N_p + 1
-        for i in range(self.davidson_roots):
-            if state != i: continue
-            c_build_active_rdm(
-                eigenvecs,
-                self.D_tu_n,
-                self.D_tuvw_n,
-                self.table,
-                self.n_act_a,
-                self.n_act_orb,
-                np1,
-                i,
-                i,
-                1.0,
-            )
-            c_build_active_photon_electron_one_rdm(
-                eigenvecs,
-                self.Dpe_tu_n,
-                self.table,
-                self.n_act_a,
-                self.n_act_orb,
-                np1,
-                i,
-                i,
-                1.0,
-            )
+        if derivative_coupling == True:
+            for i in range(1):
+                c_build_active_rdm_z(
+                    self.eigenvec1,
+                    self.eigenvec2,
+                    self.D_tu_n,
+                    self.D_tuvw_n,
+                    self.table,
+                    self.n_act_a,
+                    self.n_act_orb,
+                    np1,
+                    i,
+                    i,
+                    1.0
+                )
+                c_build_active_photon_electron_one_rdm_z(
+                    self.eigenvec1,
+                    self.eigenvec2,
+                    self.Dpe_tu_n,
+                    self.table,
+                    self.n_act_a,
+                    self.n_act_orb,
+                    np1,
+                    i,
+                    i,
+                    1.0,
+                )
+        else:
+            for i in range(self.davidson_roots):
+                if state != i: continue
+                c_build_active_rdm(
+                    eigenvecs,
+                    self.D_tu_n,
+                    self.D_tuvw_n,
+                    self.table,
+                    self.n_act_a,
+                    self.n_act_orb,
+                    np1,
+                    i,
+                    i,
+                    1.0,
+                )
+                c_build_active_photon_electron_one_rdm(
+                    eigenvecs,
+                    self.Dpe_tu_n,
+                    self.table,
+                    self.n_act_a,
+                    self.n_act_orb,
+                    np1,
+                    i,
+                    i,
+                    1.0,
+                )
+
+        self.tran_D_tu_full = np.zeros((self.nmo, self.nmo))
+        self.tran_D_tu_full[self.n_in_a:self.n_occupied, self.n_in_a:self.n_occupied] = np.copy(self.D_tu_n.reshape((self.n_act_orb, self.n_act_orb))) 
 
         ###symmetrize rdm
         for t in range(self.n_act_orb):
@@ -1077,11 +1142,14 @@ class nuclear_grad(PFHamiltonianGenerator):
             ]
         )
         # start = timer()
-        fock_general += self.fock_core[:rot_dim, :rot_dim] + np.einsum(
+        fock_general += self.fock_core[:rot_dim, :rot_dim] * (state1 == state2) + np.einsum(
             "tu,turs->rs", D_tu_n, temp1, optimize="optimal"
         )
         
-        off_diagonal_constant = self.calculate_off_diagonal_photon_constant_z(eigenvecs, eigenvecs, state)
+        if derivative_coupling == True:
+            off_diagonal_constant = self.calculate_off_diagonal_photon_constant_z(self.eigenvec1, self.eigenvec2, 0)
+        else:
+            off_diagonal_constant = self.calculate_off_diagonal_photon_constant_z(eigenvecs, eigenvecs, state)
         Y[:, : self.n_in_a] = 4.0 * (
             fock_general[:, : self.n_in_a]
             - self.d_cmo[:rot_dim, : self.n_in_a] * off_diagonal_constant
@@ -1118,10 +1186,17 @@ class nuclear_grad(PFHamiltonianGenerator):
             Dpe_tu_n,
             optimize="optimal",
         )
+        if deriv_type == "full":
+            egap = self.eigenvals[state1] - self.eigenvals[state2]
+            Y[:,:] += egap * self.tran_D_tu_full[:,:] 
     
-    def build_Y_hf(self, state, Z_vector, z_vector, eigenvecs, Y_hf):
+    def build_Y_hf(self, state1, state2, Z_vector, z_vector, eigenvecs, Y_hf):
         Y_hf[:,:] = 0.0
-        off_diagonal_constant_state = self.calculate_off_diagonal_photon_constant_z(eigenvecs, eigenvecs, state)
+        if state1 == state2:
+            off_diagonal_constant_state = self.calculate_off_diagonal_photon_constant_z(eigenvecs, eigenvecs, state1)
+        else:
+            off_diagonal_constant_state = self.calculate_off_diagonal_photon_constant_z(self.eigenvec1, self.eigenvec2, 0)
+
         off_diagonal_constant_z = self.calculate_off_diagonal_photon_constant_z(z_vector, eigenvecs, -1)
         #print(self.d_exp)
         #print(self.E_d_state)
@@ -1129,7 +1204,7 @@ class nuclear_grad(PFHamiltonianGenerator):
         #print(self.E_d_z)
         #print(off_diagonal_constant_state)
         #print(off_diagonal_constant_z)
-        scale_factor = -self.E_d_state + off_diagonal_constant_state + self.d_exp - self.E_d_Z - self.E_d_z + off_diagonal_constant_z
+        scale_factor = -self.E_d_state + off_diagonal_constant_state + self.d_exp * (state1 == state2) - self.E_d_Z - self.E_d_z + off_diagonal_constant_z
         Y_hf[:,:self.ndocc] = 4.0 * scale_factor * self.d_hf[:,:self.ndocc]
     
     def build_sigma_hf(self, energy_diff, kappa, temp_aibj):
@@ -1289,6 +1364,7 @@ class nuclear_grad(PFHamiltonianGenerator):
             temp2 = self.project_out_all(temp2, self.eigenvecs)
             trial_c[start:] = temp2.flatten()
             
+        #self.projection(trial_c[self.index_map_size:])
         return trial_c
 
     def my_matvec_wrapper(self, x):
@@ -1306,30 +1382,93 @@ class nuclear_grad(PFHamiltonianGenerator):
             temp3 = sigma[start:].reshape(self.davidson_roots, self.H_dim)
             temp3 = self.project_out_all(temp3, self.eigenvecs)
             sigma[start:] = temp3.flatten()
+        #self.projection(sigma[self.index_map_size:])
 
         return sigma
+     
+    def compute_overlap_csf_contribution(self, egap):
+        """
+        Parameters:
+        egap: Energy gap (E_state2 - E_state1) in Hartree
+        """
+        #strange symmetry D_mn N_mn^a = -D_mn N_nm^a = -(D^T)_nm N_nm^a
+        #basis = self.wfn.basisset()
+        #n_atoms = self.wfn.molecule().natom()
+        #n_bf = basis.nbf()
+        #temp1 = -egap * np.einsum("rs,mr->ms", self.tran_D_tu_full.T, self.opt_C)
+        #rdm1_ao = np.einsum("ms,ns->mn", temp1, self.opt_C)
+
+        #nabla = [mats.to_array() for mats in self.mints.ao_nabla()]
+
+        ## 3. Calculate per-atom contribution
+        ## Term_A = sum_{mu, nu in atom A} gamma_{mu,nu} <phi_mu | grad_A phi_nu>
+        #overlap_csf_grad = np.zeros((n_atoms, 3))
 
 
-    def compute_grad(self, state):
+        ## 4. Loop over atoms to assign basis function derivatives
+        #for i in range(n_atoms):
+        #    for shell_idx in range(basis.nshell()):
+        #        # Only process shells centered on the current atom i
+        #        if basis.shell_to_center(shell_idx) == i:
+        #            # FIX: nfunction is an attribute, not a method
+        #            f_start = basis.shell_to_basis_function(shell_idx)
+        #            f_end = f_start + basis.shell(shell_idx).nfunction
+
+        #            # We contract ALL mu with the specific nu belonging to this atom
+        #            for xyz in range(3):
+        #                # Nabla[xyz] is <mu | d/dx_nu | nu>
+        #                # This represents the basis functions 'tracking' the nucleus
+        #                term = np.sum(rdm1_ao[:, f_start:f_end] * nabla[xyz][:, f_start:f_end])
+        #                overlap_csf_grad[i, xyz] += term
+        
+        basis  = self.wfn.basisset()
+        n_atoms = self.wfn.molecule().natom()
+
+        temp1   = egap * np.einsum("rs,mr->ms", self.tran_D_tu_full, self.opt_C)
+        rdm1_ao = np.einsum("ms,ns->mn", temp1, self.opt_C)
+        # rdm1_ao = egap * C @ gamma @ C.T
+
+        nabla = [m.to_array() for m in self.mints.ao_nabla()]
+
+        overlap_csf_grad = np.zeros((n_atoms, 3))
+
+        for i in range(n_atoms):
+            for shell_idx in range(basis.nshell()):
+                if basis.shell_to_center(shell_idx) == i:
+                    f_start = basis.shell_to_basis_function(shell_idx)
+                    f_end   = f_start + basis.shell(shell_idx).nfunction
+
+                    for xyz in range(3):
+                        # NOW sum over mu in A (rows), all nu (cols)
+                        # matches BAGEL: sum_{mu in A, nu} V_{mu,nu} * N_{mu,nu}
+                        term = np.sum(rdm1_ao[f_start:f_end, :] * nabla[xyz][f_start:f_end, :])
+                        overlap_csf_grad[i, xyz] += term 
+
+
+
+        return overlap_csf_grad
+
+     
+
+    def compute_grad(self, state1, state2,deriv_type=None):
+        if state1 == state2:
+            derivative_coupling = False
+            state = state1
+        else:
+            derivative_coupling = True
         print("\n\n")
         print("--------------------------------------------")
-        print("Begin computing the analytical gradient for state",state)
+        if derivative_coupling == False:
+            print("Begin computing the analytical gradient for state",state, flush = True)
+        else:
+            print("Begin computing the h vector for states",state1, "-", state2, "coupling", flush = True)
+
         rot_dim = self.nmo
         self.H_dim = self.eigenvecs.shape[1]
         np1 = self.N_p + 1
         H_dim = self.num_alpha * self.num_alpha * np1
-        self.build_state_average_rdms(self.eigenvecs)
+              
 
-
-
-        A = np.zeros((rot_dim, rot_dim))
-        G = np.zeros((self.n_occupied, self.n_occupied, rot_dim, rot_dim))
-        self.build_intermediates(self.eigenvecs, A, G, True)
-        G1 = G.transpose(3, 1, 2, 0).reshape(
-                self.nmo * self.n_occupied, self.nmo * self.n_occupied
-            )
-
-       
         self.fock_core = copy.deepcopy(self.H_spatial2)
         self.fock_core += 2.0 * np.einsum(
             "jjrs->rs", self.J[: self.n_in_a, : self.n_in_a, :, :], optimize="optimal"
@@ -1428,6 +1567,24 @@ class nuclear_grad(PFHamiltonianGenerator):
         self.d_diag = 2.0 * np.einsum(
             "ii->", self.d_cmo[: self.n_in_a, : self.n_in_a]
         )
+
+        self.build_state_average_rdms(self.eigenvecs)
+
+
+
+        A = np.zeros((rot_dim, rot_dim))
+        G = np.zeros((self.n_occupied, self.n_occupied, rot_dim, rot_dim))
+        self.build_intermediates(self.eigenvecs, A, G, True)
+        G1 = G.transpose(3, 1, 2, 0).reshape(
+                self.nmo * self.n_occupied, self.nmo * self.n_occupied
+            )
+
+
+
+
+
+
+
         Y = np.zeros((rot_dim, rot_dim))
         #self.build_Y(0, self.eigenvecs, Y)
         #self.b = np.zeros(self.index_map_size + self.davidson_roots * self.H_dim)
@@ -1449,10 +1606,12 @@ class nuclear_grad(PFHamiltonianGenerator):
         self.build_hessian_diagonal(U, G, A)
         
 
-
-        self.build_Y(state, self.eigenvecs, Y)
+        self.build_Y(state1, state2, self.eigenvecs, Y, deriv_type)
+        #print("source vector")
+        #self.print_matrix_nice(Y, precision=10, width=14, cols_per_line=6)
         state_gradient = copy.deepcopy(Y)
-        self.reduced_state_gradient = self.build_total_gradient(Y)
+    
+        self.reduced_state_gradient = self.build_total_gradient(Y, state1, state2)
         denom0 = np.zeros(self.index_map_size + self.davidson_roots * self.H_dim)
         #denom0[:self.index_map_size] = 2.0 * self.reduced_hessian_diagonal[:]
         denom0[:self.index_map_size] = self.reduced_hessian_diagonal[:]
@@ -1463,11 +1622,10 @@ class nuclear_grad(PFHamiltonianGenerator):
         self.G1 = G1
         self.denom = denom0
         #solution = self.solve2(A, G1, self.matvec_product, denom0, max_iter=2000, conv_thresh=1e-7)
-        print(f"Current memory: {get_memory_usage():.2f} MB", flush = True)
         solution = self.solve3(A, G1, self.matvec_product, denom0, max_iter=2000, conv_thresh=1e-7)
 
 
-        print(f"Current memory1: {get_memory_usage():.2f} MB", flush = True)
+
 
 
         ####print(self.reduced_hessian_diagonal)
@@ -1641,7 +1799,7 @@ class nuclear_grad(PFHamiltonianGenerator):
         X = 0.25 *(X_temp + X_temp.T)
         #print(X)
         #state = 0
-        self.build_effective_densities_mo(Z_final, z_final, self.eigenvecs, state)
+        self.build_effective_densities_mo(Z_final, z_final, self.eigenvecs, state1, state2)
         self.transform_effective_densities(self.opt_C)
 
         #mints = psi4.core.MintsHelper(wfn.basisset())
@@ -1718,7 +1876,6 @@ class nuclear_grad(PFHamiltonianGenerator):
 
         #print(np.linalg.norm(total_gradient))
 
-        print(f"Current memory2: {get_memory_usage():.2f} MB", flush = True)
         #self.print_matrix_nice((self.twoeint-self.twoeint_hf).reshape(self.nmo*self.nmo, self.nmo *self.nmo), precision=10, width=14, cols_per_line=6)
         self.twoeint = np.asarray(self.mints.mo_eri(self.Ca_hf, self.Ca_hf, self.Ca_hf, self.Ca_hf))
         self.d_spatial = np.einsum("ij,kl-> ijkl", self.d_hf, self.d_hf)
@@ -1750,10 +1907,9 @@ class nuclear_grad(PFHamiltonianGenerator):
                         temp_aibj[a][i][b][j] += -self.twoeint.reshape(self.nmo, self.nmo, self.nmo, self.nmo)[self.ndocc+a][j][self.ndocc+b][i]
                         temp_aibj[a][i][b][j] -= 4.0 * self.d_spatial[self.ndocc+a][i][self.ndocc+b][j]
         Y_hf = np.zeros((self.nmo, self.nmo))
-        self.build_Y_hf(state, Z_vector, z_vector, self.eigenvecs, Y_hf)
+        self.build_Y_hf(state1, state2, Z_vector, z_vector, self.eigenvecs, Y_hf)
         grad_hf = Y_hf - Y_hf.T
         grad_hf_ai = grad_hf[self.ndocc:, :self.ndocc].flatten()
-        print(f"Current memory3: {get_memory_usage():.2f} MB", flush = True)
 
 
 
@@ -1773,7 +1929,7 @@ class nuclear_grad(PFHamiltonianGenerator):
 
             solver_sym3 = LinearRMSolver(b_vector=residual, max_subspace=2000)
             print("---------------------------------------------")
-            print("------- Start solving CP-HF equations -------.", flush = True)
+            print("------- Start solving CP-HF equations -------", flush = True)
             print("---------------------------------------------")
             for i in range(max_iter):
                 residual_norm = np.linalg.norm(residual)
@@ -1798,18 +1954,16 @@ class nuclear_grad(PFHamiltonianGenerator):
             kappa[:] = self.cp_hf_solution
         else:
             kappa[:] = 0.0 
-        print(f"Current memory4: {get_memory_usage():.2f} MB", flush = True)
         #print("kappa", kappa)        
         Z_vector = Z_final
         z_vector = z_final
         Y_hf = np.zeros((self.nmo, self.nmo))
         A_tilde_hf = np.zeros((self.nmo, self.nmo))
-        self.build_Y_hf(state, Z_vector, z_vector, self.eigenvecs, Y_hf)
+        self.build_Y_hf(state1, state2, Z_vector, z_vector, self.eigenvecs, Y_hf)
         self.build_A_tilde_hf(self.fock_hf, kappa, A_tilde_hf)
         del(self.d_spatial)
         del(self.twoeint)
         gc.collect()
-        print(f"Current memory5: {get_memory_usage():.2f} MB", flush = True)
         #A_tilde_hf2 = np.zeros((self.nmo, self.nmo))
         #A_tilde_hf2[:,:self.ndocc] = np.dot(self.fock_hf[:,self.ndocc:], kappa.reshape(self.n_v_hf, self.ndocc))
         #A_tilde_hf2[:,self.ndocc:] += np.dot(self.fock_hf[:,:self.ndocc], kappa.reshape(self.n_v_hf, self.ndocc).T)
@@ -1825,8 +1979,8 @@ class nuclear_grad(PFHamiltonianGenerator):
         #self.print_matrix_nice(A_tilde_hf2-A_tilde_hf, precision=10, width=14, cols_per_line=6)
         X_hf = 0.25 * (A_tilde_hf + Y_hf + A_tilde_hf.T + Y_hf.T)
         #self.print_matrix_nice(X_hf, precision=10, width=14, cols_per_line=6)
-        self.update_effective_densities_ao(state, kappa, z_vector, self.eigenvecs, self.C_hf)
-        
+        self.update_effective_densities_ao(state1, state2, kappa, z_vector, self.eigenvecs, self.C_hf)
+       
         #symmetrize effective density
         #temp_rdm = self.two_rdm_eff_ao.reshape(self.nmo * self.nmo, self.nmo * self.nmo)
         #temp_sum  = (temp_rdm + temp_rdm.T)
@@ -1866,8 +2020,7 @@ class nuclear_grad(PFHamiltonianGenerator):
         self.total_gradient = np.zeros(3 * n_atoms)
 
         self.pulay_force2 = np.zeros(3 * n_atoms)
-        print(f"Current memory8: {get_memory_usage():.2f} MB", flush = True)
-        # loop over the atoms
+
         for i in range(self.n_atoms):
             # loop over the cartesian coordinates
             #derivs_for_atom_i = self.mints.ao_tei_deriv1(i)
@@ -1911,8 +2064,9 @@ class nuclear_grad(PFHamiltonianGenerator):
                 # potential gradient
                 self.potential_gradient[deriv_index] = np.einsum("uv,uv->", self.one_rdm_eff_ao, self.potential_deriv_matrix_ao[deriv_index, :, :])
             #del derivs_for_atom_i
-            # Periodically force garbage collection if RAM is still critical
-        print(f"Current memory9: {get_memory_usage():.2f} MB", flush = True)
+
+
+
                                                                     
 
         self.total_gradient = self.nuclear_energy_gradient + self.pulay_force + self.kinetic_gradient + self.potential_gradient + self.repulsion_gradient 
@@ -2000,12 +2154,44 @@ class nuclear_grad(PFHamiltonianGenerator):
         #print(self.dipole_gradient + self.o_dse_gradient)
         #print("dse2 +ose")
         #print(self.dipole_gradient2 + self.o_dse_gradient)
- 
-        print("Total gradient")
-        self.print_matrix_nice(self.total_gradient.reshape(self.n_atoms, 3), precision=10, width=14, cols_per_line=6)
-        print(self.total_gradient)
-        print("nuclear gradient norm", np.linalg.norm(self.total_gradient), flush = True)
+        #if state1 == state2: 
+        #    print("Total gradient", flush = True)
+        #    self.print_matrix_nice(self.total_gradient.reshape(self.n_atoms, 3), precision=10, width=14, cols_per_line=6)
+        #    print(self.total_gradient)
+        #    print("gradient norm", np.linalg.norm(self.total_gradient), flush = True)
+        #else:
+        #    print("Total gradient", flush = True)
+        #    self.h0 = self.total_gradient - self.nuclear_energy_gradient  
+        #    self.print_matrix_nice(self.h0.reshape(self.n_atoms, 3), precision=10, width=14, cols_per_line=6)
+        #    print("h vector", flush = True)
+        #    self.h_vector = self.h0/(self.eigenvals[state1]-self.eigenvals[state2])
+        #    self.print_matrix_nice(self.h_vector.reshape(self.n_atoms, 3), precision=10, width=14, cols_per_line=6)
+           
+        if deriv_type == "full":
+            egap = self.eigenvals[state1]-self.eigenvals[state2]
+            #temp1 = np.einsum("rs,mr->ms", self.tran_D_tu_full, self.opt_C)
+            #rdm1_ao = np.einsum("ms,ns->mn", temp1, self.opt_C)
 
-
-
-
+            # 3. Convert your AO-basis transition RDM to a Psi4 Matrix
+            # (Assuming rdm1_ao is a numpy array)
+    
+    
+            print("Overlap CSF gradient", flush = True)
+            overlap_csf_grad = self.compute_overlap_csf_contribution(egap)
+            self.print_matrix_nice(overlap_csf_grad.reshape(self.n_atoms, 3), precision=10, width=14, cols_per_line=6)
+        else:
+            overlap_csf_grad = np.zeros((self.n_atoms * 3))
+        if state1 == state2: 
+            print("Total gradient", flush = True)
+            self.print_matrix_nice(self.total_gradient.reshape(self.n_atoms, 3), precision=10, width=14, cols_per_line=6)
+            print(self.total_gradient)
+            print("gradient norm", np.linalg.norm(self.total_gradient), flush = True)
+        else:
+            print("h vector", flush = True)
+            self.h0 = self.total_gradient - self.nuclear_energy_gradient  
+            self.h0 +=  overlap_csf_grad.reshape(self.n_atoms * 3)
+            self.print_matrix_nice(self.h0.reshape(self.n_atoms, 3), precision=10, width=14, cols_per_line=6)
+            print("Total gradient", flush = True)
+            self.h_vector = self.h0/(self.eigenvals[state1]-self.eigenvals[state2])
+            self.print_matrix_nice(self.h_vector.reshape(self.n_atoms, 3), precision=10, width=14, cols_per_line=6)
+         

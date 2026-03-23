@@ -4698,15 +4698,15 @@ class PFHamiltonianGenerator:
         wfn = psi4.core.Wavefunction.from_file(wfn_dict)
         self.Ca_hf = wfn.Ca()
 
-        #random orbital guess
-        U = ortho_group.rvs(wfn.nmo())
-        new_C = np.einsum("pq,qr->pr", self.C, U)
+        ##random orbital guess
+        #U = ortho_group.rvs(wfn.nmo())
+        #new_C = np.einsum("pq,qr->pr", self.C, U)
 
-        self.C[:,:] = new_C[:,:]
-        #update d_cmo
-        self.d_cmo = np.dot(self.C.T, self.d_ao).dot(self.C)
+        #self.C[:,:] = new_C[:,:]
+        ##update d_cmo
+        #self.d_cmo = np.dot(self.C.T, self.d_ao).dot(self.C)
 
-        np.savetxt("orbital2.out", self.C)
+        #np.savetxt("orbital2.out", self.C)
         # print("Unitary matrix")
         # print(U)
         # update wfn_dict with orbitals from CQED-RHF

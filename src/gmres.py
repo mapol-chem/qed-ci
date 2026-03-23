@@ -1,7 +1,7 @@
 import numpy as np
 
 class GMRESSolver:
-    def __init__(self, b_vector, max_subspace=20):
+    def __init__(self, b_vector, max_subspace=60):
         """
         Args:
             b_vector: The RHS vector (your 'reduced_state_gradient')
@@ -42,15 +42,15 @@ class GMRESSolver:
         V = np.zeros((self.m + 1, n)) 
         H = np.zeros((self.m + 1, self.m))
         
-        print("--- Starting GMRES Solver ---")
+        print("--- Starting GMRES Solver ---", flush = True)
 
         for iteration in range(max_iter):
             # 1. Normalize residual
             r_norm = np.linalg.norm(r)
-            print(f"Iter (Restart): {iteration+1:3d}   Residual Norm: {r_norm:.4e}")
+            print(f"Iter (Restart): {iteration+1:3d}   Residual Norm: {r_norm:.4e}", flush = True)
             
             if r_norm < conv_thresh:
-                print("\n--- Convergence Achieved ---")
+                print("\n--- Convergence Achieved ---", flush = True)
                 return x
 
             V[0] = r / r_norm
@@ -84,14 +84,14 @@ class GMRESSolver:
                 
                 # D. Check Convergence early
                 if abs(s[k+1]) < conv_thresh:
-                    print(f"   Convergence at Inner Iter: {k+1}")
+                    print(f"   Convergence at Inner Iter: {k+1}", flush = True)
                     return self._build_solution(k + 1, H, s, V, x, preconditioner)
 
             # 3. Restart: Update x and recompute real residual
             x = self._build_solution(self.m, H, s, V, x, preconditioner)
             r = self.b - matvec_product(x)
 
-        print("\n--- Max Iterations Reached ---")
+        print("\n--- Max Iterations Reached ---", flush = True)
         return x
 
     def _apply_givens_rotation(self, H, s, k):
