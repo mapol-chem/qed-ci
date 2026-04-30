@@ -41,6 +41,8 @@ from timeit import default_timer as timer
 from scipy.linalg import eigh_tridiagonal
 from collections import deque
 import numba as nb
+from scipy.linalg import eigh, cho_factor, cho_solve, solve_triangular
+
 script_dir = os.path.abspath(os.path.dirname(__file__))
 lib_path = os.path.join(script_dir, "cfunctions.so")
 
@@ -1342,7 +1344,7 @@ class PFHamiltonianGenerator:
         psi4_wfn_o = self.generateOrbitalBasis(molecule_string, psi4_options_dict)
 
         # build arrays in orbital basis from last step
-        self.buildArraysInOrbitalBasis(psi4_wfn_o)
+        self.buildArraysInOrbitalBasis(psi4_wfn_o, psi4_options_dict)
 
         t_det_start = time.time()
         np1 = self.N_p + 1
@@ -1386,7 +1388,17 @@ class PFHamiltonianGenerator:
                 self.H_diag = np.zeros(H_dim)
                 self.H1temp = copy.deepcopy(self.H_spatial2)
                 self.d_cmo_temp = copy.deepcopy(self.d_cmo)
-                self.build_JK()
+                if "df_basis_scf" in psi4_options_dict:
+                    self.J, self.K = self.build_JK_from_df(
+                        self.B_mo,  # Your DF 3-index tensor
+                        self.d_cmo,  # Your dipole matrix
+                        self.n_occupied,
+                        ignore_dse_terms=self.ignore_dse_terms
+                    )
+                    self.J = np.ascontiguousarray(self.J)
+                    self.K = np.ascontiguousarray(self.K)
+                else:
+                    self.build_JK()
                 self.occupied_J = copy.deepcopy(
                     self.J[:, :, : self.n_occupied, : self.n_occupied]
                 )
@@ -1602,8 +1614,17 @@ class PFHamiltonianGenerator:
                 self.FCInumDets = self.num_det
                 H_dim = self.FCInumDets * np1
                 self.H_diag = np.zeros(H_dim)
-
-                self.build_JK()
+                if "df_basis_scf" in psi4_options_dict:
+                    self.J, self.K = self.build_JK_from_df(
+                        self.B_mo,  # Your DF 3-index tensor
+                        self.d_cmo,  # Your dipole matrix
+                        self.n_occupied,
+                        ignore_dse_terms=self.ignore_dse_terms
+                    )
+                    self.J = np.ascontiguousarray(self.J)
+                    self.K = np.ascontiguousarray(self.K)
+                else:
+                    self.build_JK()
                 self.occupied_K = copy.deepcopy(
                     self.K[:, :, : self.n_occupied, : self.n_occupied]
                 )
@@ -2118,16 +2139,16 @@ class PFHamiltonianGenerator:
                 print(self.dipole_array)
                 # print(self.nat_obt_number)
                 ###check total energy
-                print("check total energy using full rdms", flush=True)
-                twoeint2 = self.twoeint.reshape(
-                    (self.nmo, self.nmo, self.nmo, self.nmo)
-                )
-                twoeint2 = twoeint2[
-                    : self.n_occupied,
-                    : self.n_occupied,
-                    : self.n_occupied,
-                    : self.n_occupied,
-                ]
+                #######print("check total energy using full rdms", flush=True)
+                #######twoeint2 = self.twoeint.reshape(
+                #######    (self.nmo, self.nmo, self.nmo, self.nmo)
+                #######)
+                #######twoeint2 = twoeint2[
+                #######    : self.n_occupied,
+                #######    : self.n_occupied,
+                #######    : self.n_occupied,
+                #######    : self.n_occupied,
+                #######]
                 ##########for i in range(self.davidson_roots):
                 ##########    sum_energy = 0.0
                 ##########    off_diagonal_constant_energy = 0.0
@@ -2342,12 +2363,13 @@ class PFHamiltonianGenerator:
                     "{:20s}".format("total energies"),
                     "error",
                 )
-                active_twoeint = twoeint2[
+                active_twoeint = self.J[
                     self.n_in_a : self.n_occupied,
                     self.n_in_a : self.n_occupied,
                     self.n_in_a : self.n_occupied,
                     self.n_in_a : self.n_occupied,
                 ]
+                
                 active_fock_core = self.fock_core[
                     self.n_in_a : self.n_occupied, self.n_in_a : self.n_occupied
                 ]
@@ -4324,6 +4346,7 @@ class PFHamiltonianGenerator:
                             self.H_spatial2[:, :] = np.einsum(
                                 "ps,pr->rs", temp8, self.U2
                             )
+                            d_cmo0 = copy.deepcopy(self.d_cmo)
                             temp8 = np.einsum("pq,qs->ps", self.d_cmo, self.U2)
                             self.d_cmo[:, :] = np.einsum("ps,pr->rs", temp8, self.U2)
 
@@ -4331,26 +4354,39 @@ class PFHamiltonianGenerator:
 
                             # print(self.U_total)
 
-                            ##JJ = np.zeros((self.n_occupied, self.n_occupied, self.nmo, self.nmo))
-                            ##KK = np.zeros((self.n_occupied, self.n_occupied, self.nmo, self.nmo))
-                            ##self.full_transformation_macroiteration(self.U_total, JJ, KK)
-                            start1 = timer()
-                            self.K = np.ascontiguousarray(self.K)
-                            c_full_transformation_macroiteration(
-                                self.U_total,
-                                self.twoeint,
-                                self.J,
-                                self.K,
-                                self.index_map_pq,
-                                self.index_map_kl,
-                                self.nmo,
-                                self.n_occupied,
-                            )
-                            # self.full_transformation_macroiteration(self.U_total, self.J, self.K)
-                            end1 = timer()
-                            print("full JK transformation took", end1 - start1, flush = True)
-                            ##print("tvhj", np.allclose(self.K3,self.K, rtol=1e-14,atol=1e-14))
-                            ##print("oins", np.allclose(self.J3,self.J, rtol=1e-14,atol=1e-14))
+                            #JJ = np.zeros((self.n_occupied, self.n_occupied, self.nmo, self.nmo))
+                            #KK = np.zeros((self.n_occupied, self.n_occupied, self.nmo, self.nmo))
+                            #self.full_transformation_macroiteration(self.U_total, JJ, KK)
+                            if self.density_fitting == False: 
+                                start1 = timer()
+                                self.K = np.ascontiguousarray(self.K)
+                                c_full_transformation_macroiteration(
+                                    self.U_total,
+                                    self.twoeint,
+                                    self.J,
+                                    self.K,
+                                    self.index_map_pq,
+                                    self.index_map_kl,
+                                    self.nmo,
+                                    self.n_occupied,
+                                )
+                                # self.full_transformation_macroiteration(self.U_total, self.J, self.K)
+                                end1 = timer()
+                                print("full JK transformation took", end1 - start1, flush = True)
+                            #print("tvhj", np.allclose(KK,self.K, rtol=1e-10,atol=1e-10))
+                            #print("oins", np.allclose(JJ,self.J, rtol=1e-10,atol=1e-10))
+                            else:
+                                start1 = timer()
+                                self.J, self.K = self.transform_JK_with_df(
+                                    self.B_mo,
+                                    self.U_total,
+                                    self.n_occupied,
+                                    ignore_dse_terms=self.ignore_dse_terms
+                                )
+                                end1 = timer()
+                                #print("tvhj", np.allclose(KK,self.KKK, rtol=1e-10,atol=1e-10))
+                                #print("oins", np.allclose(JJ,self.JJJ, rtol=1e-10,atol=1e-10))
+                                print("full JK transformation took", end1 - start1, flush = True)
                             ##print("tc5k", np.allclose(self.h3,self.H_spatial2, rtol=1e-14,atol=1e-14))
                             ##print("p0ba", np.allclose(self.d_cmo3,self.d_cmo, rtol=1e-14,atol=1e-14))
                             active_twoeint = self.J[
@@ -4706,7 +4742,7 @@ class PFHamiltonianGenerator:
         ##update d_cmo
         #self.d_cmo = np.dot(self.C.T, self.d_ao).dot(self.C)
 
-        #np.savetxt("orbital2.out", self.C)
+        np.savetxt("orbital2.out", self.C)
         # print("Unitary matrix")
         # print(U)
         # update wfn_dict with orbitals from CQED-RHF
@@ -4858,6 +4894,64 @@ class PFHamiltonianGenerator:
         self.twoeint = np.reshape(
             self.twoeint, (self.nmo * self.nmo, self.nmo * self.nmo)
         )
+    def build_gkl_from_df_optimized(self, B_array, d_cmo, H_spatial):
+        """
+        Build gkl intermediate efficiently using DF tensors
+        
+        Memory: O(nmo^3) instead of O(nmo^4)
+        """
+        nmo = B_array.shape[1]
+        naux = B_array.shape[0]
+        
+        print(f"Building gkl from DF tensors: {naux} auxiliary, {nmo} MO")
+        
+        # Start with one-electron part
+        gkl = H_spatial.copy()
+        
+        # ============================================
+        # Term 1: -sum_{j<k} (kj|jl)
+        # ============================================
+        # Compute all (kj|jl) at once
+        # Coulomb: sum_Q B[Q,k,j] * B[Q,j,l]
+        print("Computing Coulomb contribution...")
+        I_kjjl = np.einsum('Qkj,Qjl->kjl', B_array, B_array, optimize=True)
+        
+        # Add DSE contribution: d[k,j] * d[j,l]
+        if not np.allclose(d_cmo, 0):
+            print("Adding DSE contribution...")
+            I_kjjl += np.einsum('kj,jl->kjl', d_cmo, d_cmo)
+        
+        # Sum only over j < k
+        for k in range(nmo):
+            # Vectorized over l: sum over j=0 to k-1
+            if k > 0:
+                gkl[k, :] -= np.sum(I_kjjl[k, :k, :], axis=0)
+        
+        # ============================================
+        # Term 2: -(k>=l) * (kk|kl) / (1 + delta_{kl})
+        # ============================================
+        # Extract B[Q,k,k] for all k
+        B_diag = B_array[np.arange(naux)[:, None], 
+                         np.arange(nmo), 
+                         np.arange(nmo)]  # (naux, nmo)
+        
+        # Compute (kk|kl) = sum_Q B[Q,k,k] * B[Q,k,l]
+        I_kkkl = np.einsum('Qk,Qkl->kl', B_diag, B_array, optimize=True)
+        
+        # Add DSE: d[k,k] * d[k,l]
+        if not np.allclose(d_cmo, 0):
+            d_diag = np.diag(d_cmo)
+            I_kkkl += d_diag[:, np.newaxis] * d_cmo
+        
+        # Apply only for k >= l with normalization
+        for k in range(nmo):
+            # Lower triangle: l <= k
+            gkl[k, :k+1] -= I_kkkl[k, :k+1] / np.where(
+                np.arange(k+1) == k, 2.0, 1.0
+            )
+        
+        return gkl
+
     def buildGSO(self):
         """
         Will build the 1-electron arrays in the spin orbital basis
@@ -5303,6 +5397,8 @@ class PFHamiltonianGenerator:
         print(f" Completed QED-RHF in {t_hf_end - t_hf_start} seconds")
         #grab the number of atoms and nuclear gradient 
         mol = psi4.geometry(molecule_string)
+        self.mol = psi4.geometry(molecule_string)
+
         self.n_atoms = mol.natom()
         self.nuclear_energy_gradient =  np.asarray(mol.nuclear_repulsion_energy_deriv1()).flatten()
 
@@ -5310,7 +5406,7 @@ class PFHamiltonianGenerator:
         psi4_wfn = self.parseArrays(cqed_rhf_dict)
 
         if self.natural_orbitals:  # <== need to run CIS
-            self.buildArraysInOrbitalBasis(psi4_wfn)
+            self.buildArraysInOrbitalBasis(psi4_wfn, psi4_options_dict)
             t_det_start = time.time()
             self.generateCISDeterminants()
             H_dim = self.CISnumDets * 2
@@ -5370,7 +5466,7 @@ class PFHamiltonianGenerator:
 
         return psi4_wfn
 
-    def buildArraysInOrbitalBasis(self, p4_wfn):
+    def buildArraysInOrbitalBasis(self, p4_wfn, psi4_options_dict):
         # build 1H in orbital basis
         t_1H_start = time.time()
         self.build1HSO()
@@ -5380,40 +5476,213 @@ class PFHamiltonianGenerator:
         # build 2eInt in cqed-rhf basis
         print("number of MO", self.nmo)
         mints = psi4.core.MintsHelper(p4_wfn.basisset())
+        
         self.mints = psi4.core.MintsHelper(p4_wfn.basisset())
         if self.full_diagonalization or self.test_mode or self.ci_level == "cis":
             self.eri_so = np.asarray(mints.mo_spin_eri(self.Ca, self.Ca))
+        
+        if "df_basis_scf" in psi4_options_dict:
+            df_basis_name = psi4_options_dict["df_basis_scf"]
+            self.df_basis_name = psi4_options_dict["df_basis_scf"]
+            self.density_fitting = True
+            primary_basis = p4_wfn.basisset()
+            mol = p4_wfn.molecule()
+            nbf = primary_basis.nbf()
+            use_spherical = primary_basis.has_puream()
 
-        self.twoeint1 = np.asarray(mints.mo_eri(self.Ca, self.Ca, self.Ca, self.Ca))
-        t_eri_end = time.time()
-        print(f" Completed ERI Build in {t_eri_end - t_1H_end} seconds ")
+            df_basis = psi4.core.BasisSet.build(mol, "DF_BASIS_SCF", df_basis_name, puream=use_spherical)
+            naux = df_basis.nbf()
+            self.wfn.set_basisset("DF_BASIS_SCF", df_basis)
+            print(f"DF reconstruction: {nbf} primary, {naux} auxiliary")
 
-        # form the 2H in spin orbital basis
-        self.build2DSO()
-        t_2d_end = time.time()
+            ## Get DF tensor
+            #dfh = psi4.core.DFHelper(primary_basis, df_basis)
+            #dfh.initialize()
 
-        print(psutil.Process().memory_info().rss / (1024 * 1024))
-        self.gkl = np.zeros((self.nmo, self.nmo))
-        for k in range(self.nmo):
-            for l in range(self.nmo):
-                self.gkl[k][l] = self.H_spatial[k][l]
-                for j in range(self.nmo):
-                    if j >= k:
-                        continue
-                    else:
-                        kj = k * self.nmo + j
-                        jl = j * self.nmo + l
-                        self.gkl[k][l] -= self.twoeint[kj][jl]
-                if k >= l:
-                    kk = k * self.nmo + k
-                    kl = k * self.nmo + l
-                    self.gkl[k][l] -= self.twoeint[kk][kl] / (1 + (k == l))
+            #identity = psi4.core.Matrix("Identity", nbf, nbf)
+            #identity.identity()
+
+            #dfh.add_space("AO", identity)
+            #dfh.add_transformation("B", "AO", "AO")
+            #dfh.transform()
+
+            #B_tensor = dfh.get_tensor("B")
+            #B_array = np.asarray(B_tensor)
+            #print(f"DF tensor shape: {B_array.shape}")
+            
+            # Get raw (pq|A) integrals
+            zero = psi4.core.BasisSet.zero_ao_basis_set()
+            orb_basis = p4_wfn.basisset()
+            
+            # FIX: Just use df_basis that you already built above!
+            self.aux_basis = df_basis  # <-- This is the fix!
+            aux_basis = df_basis  # <-- This is the fix!
+            
+            raw_3c = mints.ao_eri(aux_basis, zero, orb_basis, orb_basis)
+            # Convert to numpy and reshape
+            naux = aux_basis.nbf()
+            nbf = orb_basis.nbf()
+            raw_3c_np = np.asarray(raw_3c).reshape(naux, nbf, nbf)
+            self.raw_3c_np = np.copy(raw_3c_np)
+        
+           
+            #######metric_obj = psi4.core.FittingMetric(aux_basis, True)
+            #######metric_obj.form_eig_inverse(1.0e-14)
+            #######metric_raw = np.array(metric_obj.get_metric())
+            #######eigs = np.linalg.eigvalsh(metric_raw)
+            #######cond = np.max(eigs) / np.min(eigs)
+            #######print(np.max(eigs))
+            #######print(np.max(eigs)* 1e-16)
+            #######print(f"Condition Number for {self.df_basis_name}: {cond:.2e}")
+            #######metric_obj.form_eig_inverse(np.max(eigs) * 1e-18)
+            ########metric_obj.form_eig_inverse(1.0e-10)
+           
+            #######J_inv_half = np.asarray(metric_obj.get_metric())
+            
+            J = mints.ao_eri(aux_basis, zero, aux_basis, zero)
+            J_np = np.asarray(J).reshape(naux, naux)
+            #####max_eig = np.linalg.eigvalsh(J_np).max()
+            #####print(max_eig)
+            #####thresh = max_eig * 1e-12 # Relative threshold is safest
+            ###### 3. Derive Gradient term (J^-1)
+            #####J_inv_mat = J.clone()
+            #####J_inv_mat.power(-1.0, thresh)
+            #####self.J_inv = np.array(J_inv_mat).squeeze() 
+
+            ########self.J_chol  = cho_factor(J_np)            # exact factorization, no threshold
+            ########self.L_lower = np.linalg.cholesky(J_np)   # for energy only: J = L @ L^T
+
+            ######### Apply metric: (pq|Q) = J^{-1/2} @ (pq|A)
+            #########Qpq_reconstructed = np.einsum('QA,Amn->Qmn', J_inv_half, raw_3c_np)
+            ########Qpq_reconstructed = solve_triangular(
+            ########    self.L_lower,
+            ########    raw_3c_np.reshape(naux, -1),
+            ########    lower=True
+            ########).reshape(naux, nbf, nbf)
+            
+            eigvals, eigvecs = eigh(J_np)            # eigvals ascending, eigvecs columns
+            max_eig = eigvals[-1]
+            #thresh  = max_eig * 1e-11               # single threshold, used everywhere
+            thresh  = 1e-8                # single threshold, used everywhere
+            
+            mask       = eigvals > thresh            # True for kept eigenvectors
+            inv_vals   = np.where(mask, 1.0 / eigvals,         0.0)
+            inv_half   = np.where(mask, 1.0 / np.sqrt(eigvals), 0.0)
+            
+            # Store compact (truncated) factors — only the kept subspace
+            # eigvecs_k: (naux, nkeep),  shape avoids naux x naux intermediates
+            nkeep = mask.sum()
+            eigvecs_k   = eigvecs[:, mask]           # (naux, nkeep)
+            inv_vals_k  = inv_vals[mask]             # (nkeep,)
+            inv_half_k  = inv_half[mask]             # (nkeep,)
+            
+            # Convenience: pseudo-solve  J^{-1} @ X  for X of shape (naux, ...)
+            def pseudo_solve(X, inv_k=inv_vals_k, V=eigvecs_k):
+                """Solves J @ result = X in the non-null subspace."""
+                shape = X.shape
+                X_flat = X.reshape(naux, -1)
+                coeffs = V.T @ X_flat              # (nkeep, ncols)
+                coeffs *= inv_k[:, None]           # divide by eigenvalues
+                return (V @ coeffs).reshape(shape)
+            
+            self.pseudo_solve = pseudo_solve
+            self.eigvecs_k    = eigvecs_k
+            self.inv_half_k   = inv_half_k
+            print(f"J condition: {max_eig:.3e},  kept {nkeep}/{naux} eigenvectors")
+            B_flat = raw_3c_np.reshape(naux, -1)
+            coeffs = self.eigvecs_k.T @ B_flat                  # (nkeep, nbf*nbf)
+            coeffs *= self.inv_half_k[:, None]
+            Qpq_reconstructed = (self.eigvecs_k @ coeffs).reshape(naux, nbf, nbf)
+
+
+            #diff = np.max(np.abs(Qpq_reconstructed - B_array))
+            #print(f"Difference: {diff:.2e}")  # Should be ~1e-10 or smaller
+            B_array = np.copy(Qpq_reconstructed)
+            self.B_array = np.copy(Qpq_reconstructed)
+
+            self.B_mo = np.einsum("Qmn,mp,nq->Qpq", Qpq_reconstructed, self.C, self.C)            
+            self.B_mo_hf = np.einsum("Qmn,mp,nq->Qpq", Qpq_reconstructed, self.C_hf, self.C_hf)            
+            #Correct contraction for (naux, nbf, nbf) format
+            #if B_array.shape == (naux, nbf, nbf):
+            #    print("Using Einstein summation: (μν|λσ) = Σ_P B_P^μν * B_P^λσ")
+            #    I = np.einsum('Pmn,Pls->mnls', B_array, B_array)
+            # Reconstruct 4-index AO integrals
+            ######I_ao_4d = np.einsum('Pmn,Pls->mnls', B_array, B_array)
+            ######print(f"Reconstructed AO integrals shape: {I_ao_4d.shape}")  # (nbf, nbf, nbf, nbf)
+            ######
+            ####### Method 1: Reshape and use mo_transform
+            ####### Reshape from (nbf, nbf, nbf, nbf) to (nbf*nbf, nbf*nbf)
+            ######I_ao_2d = I_ao_4d.reshape(nbf*nbf, nbf*nbf)
+            ######
+            ####### Convert to Psi4 Matrix
+            ######I_ao_mat = psi4.core.Matrix.from_array(I_ao_2d)
+            ######I_mo_mat = mints.mo_transform(I_ao_mat, self.Ca, self.Ca, self.Ca, self.Ca)
+            ######I_mo = np.asarray(I_mo_mat).reshape(nbf, nbf, nbf, nbf)
+            ######self.I_mo = np.copy(I_mo)
+            ######print(f"MO integrals shape: {I_mo.shape}")
+            ######print("\n=== Verification ===")
+
+            ######dfh_mo = psi4.core.DFHelper(primary_basis, df_basis)
+            ######dfh_mo.initialize()
+            ######dfh_mo.add_space("MO", self.Ca)
+            ######dfh_mo.add_transformation("B_MO", "MO", "MO")
+            ######dfh_mo.transform()
+            ######self.B_mo = np.asarray(dfh_mo.get_tensor("B_MO"))
+            ######self.B_mo = np.einsum("Qmn,mp,nq->Qpq", Qpq_reconstructed, self.C, self.C)            
+            ####### Reconstruct using DF in MO basis
+            ######I_mo_df = np.einsum('Qpq,Qrs->pqrs', self.B_mo, self.B_mo)
+            ######
+            ####### Compare
+            ######diff = np.max(np.abs(I_mo - I_mo_df))
+            ######print(f"Difference: {diff:.2e}")
+            ######self.twoeint1 = np.copy(I_mo_df)
+            if self.ignore_dse_terms:
+                d_cmo_effective = np.zeros_like(self.d_cmo)
+            else:
+                d_cmo_effective = self.d_cmo 
+            self.gkl = self.build_gkl_from_df_optimized(self.B_mo, d_cmo_effective, self.H_spatial)
+            #for k in range(self.nmo):
+            #    for l in range(self.nmo):
+            #        print(self.gkl[k,l], self.gkl_new[k,l])
+            #print(np.allclose(self.gkl, self.gkl_new)) 
+            #self.twoeint1 = np.copy(I_mo_df)
+            #self.build2DSO()
+        else:
+            self.density_fitting = False
+            I = np.asarray(mints.ao_eri())
+            self.twoeint1 = np.asarray(mints.mo_eri(self.Ca, self.Ca, self.Ca, self.Ca))
+
+            #self.twoeint1 = np.asarray(mints.mo_eri(self.Ca, self.Ca, self.Ca, self.Ca))
+            t_eri_end = time.time()
+            print(f" Completed ERI Build in {t_eri_end - t_1H_end} seconds ")
+
+            # form the 2H in spin orbital basis
+            self.build2DSO()
+            t_2d_end = time.time()
+            print(f" Completed 2D build in {t_2d_end - t_eri_end} seconds")
+
+            print(psutil.Process().memory_info().rss / (1024 * 1024))
+            self.gkl = np.zeros((self.nmo, self.nmo))
+            for k in range(self.nmo):
+                for l in range(self.nmo):
+                    self.gkl[k][l] = self.H_spatial[k][l]
+                    for j in range(self.nmo):
+                        if j >= k:
+                            continue
+                        else:
+                            kj = k * self.nmo + j
+                            jl = j * self.nmo + l
+                            self.gkl[k][l] -= self.twoeint[kj][jl]
+                    if k >= l:
+                        kk = k * self.nmo + k
+                        kl = k * self.nmo + l
+                        self.gkl[k][l] -= self.twoeint[kk][kl] / (1 + (k == l))
+            print("mem_twoeint", self.twoeint.size * self.twoeint.itemsize / 1024 / 1024)
+        print("density_fitting",self.density_fitting)
         print(psutil.Process().memory_info().rss / (1024 * 1024))
         print("mem_gkl", self.gkl.size * self.gkl.itemsize / 1024 / 1024)
-        print("mem_twoeint", self.twoeint.size * self.twoeint.itemsize / 1024 / 1024)
         print("mem_d_cmo", self.d_cmo.size * self.d_cmo.itemsize / 1024 / 1024)
 
-        print(f" Completed 2D build in {t_2d_end - t_eri_end} seconds")
         if self.full_diagonalization or self.test_mode or self.ci_level == "cis":
             # build the array to build G in the so basis
             self.buildGSO()
@@ -6611,25 +6880,85 @@ class PFHamiltonianGenerator:
                 : self.n_occupied, : self.n_occupied, :, :
             ]
         )
-        self.J_temp = copy.deepcopy(
-            self.twoeint.reshape((self.nmo, self.nmo, self.nmo, self.nmo))[
-                : self.n_occupied, : self.n_occupied, :, :
-            ]
-        )
+        #self.J_temp = copy.deepcopy(
+        #    self.twoeint.reshape((self.nmo, self.nmo, self.nmo, self.nmo))[
+        #        : self.n_occupied, : self.n_occupied, :, :
+        #    ]
+        #)
         self.K = copy.deepcopy(
             self.twoeint.reshape((self.nmo, self.nmo, self.nmo, self.nmo))[
                 :, : self.n_occupied, :, : self.n_occupied
             ]
         )
-        self.K_temp = copy.deepcopy(
-            self.twoeint.reshape((self.nmo, self.nmo, self.nmo, self.nmo))[
-                :, : self.n_occupied, :, : self.n_occupied
-            ]
-        )
+        #self.K_temp = copy.deepcopy(
+        #    self.twoeint.reshape((self.nmo, self.nmo, self.nmo, self.nmo))[
+        #        :, : self.n_occupied, :, : self.n_occupied
+        #    ]
+        #)
         # print (np.shape(self.J),np.shape(self.K))
         self.K = self.K.transpose(1, 3, 0, 2)
-        self.K_temp = self.K_temp.transpose(1, 3, 0, 2)
+        #self.K_temp = self.K_temp.transpose(1, 3, 0, 2)
         # print (np.shape(self.K))
+    def build_JK_from_df(self, B_mo, d_cmo, n_occupied, ignore_dse_terms=False):
+        """
+        Build J and K integrals from DF 3-index tensors
+        
+        Parameters:
+        -----------
+        B_mo : np.ndarray, shape (naux, nmo, nmo)
+            DF 3-index tensor in MO basis: B[Q,p,q]
+        d_cmo : np.ndarray, shape (nmo, nmo)
+            Dipole matrix in MO basis for QED terms
+        n_occupied : int
+            Number of occupied orbitals
+        ignore_dse_terms : bool
+            If True, ignore dipole self-energy (DSE) contributions
+        
+        Returns:
+        --------
+        J : np.ndarray, shape (n_occ, n_occ, nmo, nmo)
+            J[i,j,k,l] = (ij|kl) for i,j occupied
+        K : np.ndarray, shape (n_occ, n_occ, nmo, nmo)
+            K[j,l,p,q] = (pj|ql) for j,l occupied (after transpose)
+        """
+        naux, nmo, _ = B_mo.shape
+        
+        print(f"Building J and K from DF: {naux} aux, {nmo} MO, {n_occupied} occupied")
+        
+        # ================================================
+        # Build J: (ij|kl) for i,j < n_occupied, all k,l
+        # ================================================
+        # Extract occupied-occupied block of B
+        B_oo = B_mo[:, :n_occupied, :n_occupied]  # (naux, n_occ, n_occ)
+        
+        # Coulomb contribution: sum_Q B[Q,i,j] * B[Q,k,l]
+        J = np.einsum('Qij,Qkl->ijkl', B_oo, B_mo, optimize=True)
+        
+        # Add DSE contribution: d[i,j] * d[k,l]
+        if not ignore_dse_terms:
+            d_oo = d_cmo[:n_occupied, :n_occupied]
+            J += np.einsum('ij,kl->ijkl', d_oo, d_cmo)
+        
+        print(f"J shape: {J.shape}")
+        
+        # ================================================
+        # Build K: (pj|ql) then transpose to (j,l,p,q)
+        # ================================================
+        # Extract all_orbitals × occupied block
+        B_mo_occ = B_mo[:, :, :n_occupied]  # (naux, nmo, n_occ)
+        
+        # Coulomb contribution: sum_Q B[Q,p,j] * B[Q,q,l]
+        # We want final shape (j,l,p,q), so use einsum directly
+        K = np.einsum('Qpj,Qql->jlpq', B_mo_occ, B_mo_occ, optimize=True)
+        
+        # Add DSE contribution: d[p,j] * d[q,l] -> d[j,l,p,q] after transpose
+        if not ignore_dse_terms:
+            d_mo_occ = d_cmo[:, :n_occupied]  # (nmo, n_occ)
+            K += np.einsum('pj,ql->jlpq', d_mo_occ, d_mo_occ)
+        
+        print(f"K shape: {K.shape}")
+        
+        return J, K
 
     def build_intermediates_internal(
         self,
@@ -7840,7 +8169,7 @@ class PFHamiltonianGenerator:
 
     def full_transformation_macroiteration(self, U, J, K):
 
-        self.twoeint = self.twoeint.reshape((self.nmo, self.nmo, self.nmo, self.nmo))
+        self.twoeint00 = self.twoeint.reshape((self.nmo, self.nmo, self.nmo, self.nmo))
         # self.J3 = np.zeros((self.n_occupied, self.n_occupied, self.nmo, self.nmo))
         # self.K3 = np.zeros((self.n_occupied, self.n_occupied, self.nmo, self.nmo))
         # self.h3 = np.zeros((self.nmo, self.nmo))
@@ -7866,7 +8195,7 @@ class PFHamiltonianGenerator:
         temp2 = np.zeros((self.n_occupied, self.n_occupied, self.nmo, self.nmo))
         temp3 = np.zeros((self.n_occupied, self.n_occupied, self.nmo, self.nmo))
 
-        temp1 = np.einsum("pqrs,pk->kqrs", self.twoeint, U[:, : self.n_occupied])
+        temp1 = np.einsum("pqrs,pk->kqrs", self.twoeint00, U[:, : self.n_occupied])
         temp2 = np.einsum("kqrs,ql->klrs", temp1, U[:, : self.n_occupied])
         temp3 = np.einsum("klrs,rm->klms", temp2, U)
         J[:, :, :, :] = np.einsum("klms,sn->klmn", temp3, U)
@@ -7879,6 +8208,51 @@ class PFHamiltonianGenerator:
         # print("ztlv", np.allclose(self.J3,J, rtol=1e-14,atol=1e-14))
         # print("tdck", np.allclose(self.h3,self.H_spatial2, rtol=1e-14,atol=1e-14))
         # print("pgxq", np.allclose(self.d_cmo3,self.d_cmo, rtol=1e-14,atol=1e-14))
+    def transform_JK_with_df(self, B_mo, U, n_occupied, ignore_dse_terms=False):
+        """
+        Transform J and K integrals using DF tensors
+
+        Note: Symmetrization is NOT needed - it's automatic from the math!
+        """
+        naux, nmo_old, _ = B_mo.shape
+        nmo = U.shape[1]
+
+        print(f"Transforming J/K: {naux} aux, {nmo_old} -> {nmo} MO, {n_occupied} occupied")
+
+        # Transform B to new basis
+        # B_new is automatically symmetric because B_mo is symmetric
+        B_temp = np.einsum('Qpq,pi->Qiq', B_mo, U, optimize=True)
+        B_new = np.einsum('Qiq,qj->Qij', B_temp, U, optimize=True)
+
+        ## Transform dipole (automatically symmetric if d_cmo is symmetric)
+        #if not ignore_dse_terms:
+        #    d_new = U.T @ d_cmo @ U
+        #else:
+        #    d_new = np.zeros((nmo, nmo))
+
+        # Build J - automatically symmetric in k<->l and m<->n
+        B_new_oo = B_new[:, :n_occupied, :n_occupied]
+        J_new = np.einsum('Qkl,Qmn->klmn', B_new_oo, B_new, optimize=True)
+
+        if not ignore_dse_terms:
+            #d_new_oo = d_new[:n_occupied, :n_occupied]
+            d_new_oo = self.d_cmo[:n_occupied, :n_occupied]
+            J_new += np.einsum('kl,mn->klmn', d_new_oo, self.d_cmo)
+
+        J_new = np.ascontiguousarray(J_new)
+
+        # Build K - automatically has K[k,l,m,n] = K[l,k,n,m] symmetry
+        B_new_occ = B_new[:, :n_occupied, :]
+        K_new = np.einsum('Qkm,Qln->klmn', B_new_occ, B_new_occ, optimize=True)
+
+        if not ignore_dse_terms:
+            #d_new_occ = d_new[:n_occupied, :]
+            d_new_occ = self.d_cmo[:n_occupied, :]
+            K_new += np.einsum('km,ln->klmn', d_new_occ, d_new_occ)
+
+        K_new = np.ascontiguousarray(K_new)
+
+        return J_new, K_new
 
     def internal_optimization_exact_energy(
         self, E0, eigenvecs, occupied_h1, occupied_d_cmo, occupied_J, occupied_K, hard_case

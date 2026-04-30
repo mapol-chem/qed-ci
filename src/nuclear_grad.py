@@ -45,6 +45,7 @@ from typing import List, Tuple, Optional, Union
 from timeit import default_timer as timer
 import numba as nb
 from numba import objmode
+from scipy.linalg import cho_factor, cho_solve, solve_triangular
 
 def get_memory_usage():
     """Return current process memory usage in MB"""
@@ -311,6 +312,7 @@ class nuclear_grad(PFHamiltonianGenerator):
                                                                self.n_occupied, self.n_occupied)[:,:,:,:].transpose(1,3,0,2)
         self.two_rdm_eff_mo[:,:,:,:] +=  np.einsum("pr, klrq->qlpk", Z_vector, two_rdm_hf, optimize = "optimal")
         self.two_rdm_eff_mo[:,:,:,:] +=  np.einsum("klpr, qr->qlpk", two_rdm_hf, Z_vector, optimize = "optimal")
+        self.two_rdm_eff0 = np.copy(self.two_rdm_eff_mo)
         del two_rdm_hf
 
     def update_effective_densities_ao(self, state1, state2, kappa, z_vector, eigenvecs, C):
@@ -323,10 +325,13 @@ class nuclear_grad(PFHamiltonianGenerator):
 
         self.one_rdm_eff_ao += one_rdm_kappa 
         one_rdm_hf = 2.0 * np.einsum("mi,ni->mn", C[:,:self.ndocc], C[:,:self.ndocc])
-
-        self.two_rdm_eff_ao += np.einsum("mn,pq->mnpq", one_rdm_kappa, one_rdm_hf)
-        self.two_rdm_eff_ao -= 0.5 * np.einsum("mp,nq->mnpq", one_rdm_kappa, one_rdm_hf)
-      
+        if self.density_fitting == False:
+            self.two_rdm_eff_ao += np.einsum("mn,pq->mnpq", one_rdm_kappa, one_rdm_hf)
+            self.two_rdm_eff_ao -= 0.5 * np.einsum("mp,nq->mnpq", one_rdm_kappa, one_rdm_hf)
+        #self.ooo =  np.einsum("mn,pq->mnpq", one_rdm_kappa, one_rdm_hf)
+        #self.ooo -=  0.5 * np.einsum("mp,nq->mnpq", one_rdm_kappa, one_rdm_hf)
+        #self.ooo +=  np.einsum("pq,mn->mnpq", one_rdm_kappa, one_rdm_hf)
+        #self.ooo -=  0.5 * np.einsum("pm,qn->mnpq", one_rdm_kappa, one_rdm_hf)
         if state1 == state2:
             off_diagonal_constant_state = self.calculate_off_diagonal_photon_constant_z(eigenvecs, eigenvecs, state1)
         else:
@@ -344,13 +349,14 @@ class nuclear_grad(PFHamiltonianGenerator):
         #self.one_rdm_pe_eff_ao2 = scale_factor2 * one_rdm_hf
 
     def transform_effective_densities(self, C):
-        two_rdm_1 = np.einsum("slpk,ms->mlpk", self.two_rdm_eff_mo, C, optimize = "optimal")
-        two_rdm_2 = np.einsum("mlpk,xp->mlxk", two_rdm_1, C, optimize = "optimal")
-        del two_rdm_1
-        two_rdm_3 = np.einsum("mlxk,nl->mnxk", two_rdm_2, C[:,:self.n_occupied], optimize = "optimal")
-        del two_rdm_2
-        self.two_rdm_eff_ao = np.einsum("mnxk,yk->mnxy", two_rdm_3, C[:,:self.n_occupied], optimize = "optimal")
-        del two_rdm_3
+        if self.density_fitting == False: 
+            two_rdm_1 = np.einsum("slpk,ms->mlpk", self.two_rdm_eff_mo, C, optimize = "optimal")
+            two_rdm_2 = np.einsum("mlpk,xp->mlxk", two_rdm_1, C, optimize = "optimal")
+            del two_rdm_1
+            two_rdm_3 = np.einsum("mlxk,nl->mnxk", two_rdm_2, C[:,:self.n_occupied], optimize = "optimal")
+            del two_rdm_2
+            self.two_rdm_eff_ao = np.einsum("mnxk,yk->mnxy", two_rdm_3, C[:,:self.n_occupied], optimize = "optimal")
+            del two_rdm_3
 
         one_rdm_mj = np.einsum("rs,mr->ms", self.one_rdm_eff_mo, C)
         self.one_rdm_eff_ao = np.einsum("ms,ns->mn", one_rdm_mj, C)
@@ -804,7 +810,7 @@ class nuclear_grad(PFHamiltonianGenerator):
         
         # Initialize GMRES with your RHS (b vector)
         # Note: we use max_subspace=20 (standard), increase if convergence is jagged
-        gmres = GMRESSolver(b_vector=-self.reduced_state_gradient, max_subspace=60)
+        gmres = GMRESSolver(b_vector=-self.reduced_state_gradient, max_subspace=100)
         
         # Run the solver
         # We pass the wrapper methods we defined above
@@ -1221,9 +1227,86 @@ class nuclear_grad(PFHamiltonianGenerator):
         g_bar = np.einsum("mn, rqmn-> rq", z_bar, self.twoeint.reshape(self.nmo, self.nmo, self.nmo, self.nmo))
         g_bar += -np.einsum("mn, rqmn-> rq", z_bar, self.d_spatial.reshape(self.nmo, self.nmo, self.nmo, self.nmo))
         g_bar += -0.5 * np.einsum("mn, rmqn-> rq", z_bar, self.twoeint.reshape(self.nmo, self.nmo, self.nmo, self.nmo))
+        kappa_matrix = kappa.reshape(self.n_v_hf, self.ndocc)
+        #g_bar2 = 2.0 * np.einsum("mn, rqmn-> rq", kappa_matrix, self.twoeint.reshape(self.nmo, self.nmo, self.nmo, self.nmo)[:,:,self.ndocc:,:self.ndocc])
+        #g_bar2 += -2.0 * np.einsum("mn, rqmn-> rq", kappa_matrix, self.d_spatial.reshape(self.nmo, self.nmo, self.nmo, self.nmo)[:,:,self.ndocc:,:self.ndocc])
+        #g_bar2 += -0.5 * np.einsum("mn, rmqn-> rq", kappa_matrix, self.twoeint.reshape(self.nmo, self.nmo, self.nmo, self.nmo)[:,self.ndocc:,:,:self.ndocc])
+        #g_bar2 += -0.5 * np.einsum("mn, rmqn-> rq", kappa_matrix.T, self.twoeint.reshape(self.nmo, self.nmo, self.nmo, self.nmo)[:,:self.ndocc,:,self.ndocc:])
+        #print(np.allclose(g_bar, g_bar2))
+        #print(g_bar- g_bar2)
         diagonal_values = np.concatenate([np.full(self.ndocc, 2), np.zeros(self.n_v_hf)])
         d_zero = np.diag(diagonal_values)
         A_tilde_hf[:,:] += np.dot(g_bar, d_zero)
+     
+    def build_A_tilde_hf_df(self, fock_hf, kappa, A_tilde_hf, B_extended):
+        """
+        Build A_tilde_hf using density fitting with extended DF tensor
+        
+        Parameters:
+        -----------
+        fock_hf : np.ndarray, shape (nmo, nmo)
+            Fock matrix
+        kappa : np.ndarray, shape (n_virt * n_occ,)
+            Orbital rotation parameters (flattened)
+        A_tilde_hf : np.ndarray, shape (nmo, nmo)
+            Output array (modified in-place)
+        B_extended : np.ndarray, shape (naux+1, nmo, nmo)
+            Extended DF tensor with dipole as last auxiliary function
+        """
+        
+        naux_ext, nmo, _ = B_extended.shape
+        naux = naux_ext - 1  # Last one is dipole
+        
+        # Build z and z_bar
+        z = np.zeros((nmo, nmo))
+        kappa_matrix = kappa.reshape(self.n_v_hf, self.ndocc)
+        z[self.ndocc:, :self.ndocc] = kappa_matrix
+        z_bar = z + z.T
+        
+        # First term: Fock contribution
+        A_tilde_hf[:, :] = np.dot(fock_hf, z_bar)
+        
+        # Build g_bar using DF (following g_bar2 structure)
+        g_bar = self.compute_g_bar_df(kappa_matrix, B_extended)
+        
+        # Add g_bar contribution with diagonal matrix
+        diagonal_values = np.concatenate([np.full(self.ndocc, 2), np.zeros(self.n_v_hf)])
+        d_zero = np.diag(diagonal_values)
+        A_tilde_hf[:, :] += np.dot(g_bar, d_zero)
+    
+    def compute_g_bar_df(self, kappa_matrix, B_extended):
+        """
+        Memory-efficient version - computes term by term
+        """
+        
+        naux_ext, nmo, _ = B_extended.shape
+        naux = naux_ext - 1
+        
+        g_bar = np.zeros((nmo, nmo))
+        
+        # Extract blocks once
+        B_o = B_extended[:, :, :self.ndocc]
+        B_v = B_extended[:, :, self.ndocc:]
+        B_ai = B_extended[:, self.ndocc:, :self.ndocc]
+        d_hf = B_extended[naux, :, :]
+        d_ai = d_hf[self.ndocc:, :self.ndocc]
+        
+        # Term 1: 2 * (rq|ai) κ[a,i]
+        W_Q = np.einsum('Qai,ai->Q', B_ai, kappa_matrix, optimize=True)
+        g_bar += 2.0 * np.einsum('Qrq,Q->rq', B_extended, W_Q, optimize=True)
+        
+        # Term 2: -2 * d[rq] * d[ai] * κ[ai]
+        g_bar -= 2.0 * d_hf * np.einsum('ai,ai->', kappa_matrix, d_ai)
+        
+        # Term 3: -0.5 * (ra|qi) κ[ai]
+        g_bar -= 0.5 * np.einsum('ai,Qra,Qqi->rq', kappa_matrix, B_v, B_o, optimize=True)
+        
+        # Term 4: -0.5 * (ri|qa) κ[ia]
+        g_bar -= 0.5 * np.einsum('ia,Qri,Qqa->rq', kappa_matrix.T, B_o, B_v, optimize=True)
+        
+        return g_bar
+
+
 
     def purify(self, sigma, dim0):
         temp = sigma[:dim0*dim0]
@@ -1447,8 +1530,524 @@ class nuclear_grad(PFHamiltonianGenerator):
 
 
         return overlap_csf_grad
+    def compute_metric_and_inverse(self, threshold_factor=1e-12):
+        """
+        Compute metric inverse with single, deterministic eigendecomposition
+        """
+        import numpy as np
+        import psi4
+        aux_basis = self.aux_basis
+        naux = aux_basis.nbf()
+        
+        # Build raw metric manually
+        zero = psi4.core.BasisSet.zero_ao_basis_set()
+        factory = psi4.core.IntegralFactory(aux_basis, zero, aux_basis, zero)
+        eri = factory.eri()
+        
+        metric_matrix = np.zeros((naux, naux))
+        for P in range(aux_basis.nshell()):
+            np_func = aux_basis.shell(P).nfunction
+            pstart = aux_basis.shell(P).function_index
+            for Q in range(aux_basis.nshell()):
+                nq_func = aux_basis.shell(Q).nfunction
+                qstart = aux_basis.shell(Q).function_index
+                eri.compute_shell(P, 0, Q, 0)
+                buffer = np.array(eri).reshape(np_func, nq_func)
+                metric_matrix[pstart:pstart+np_func, qstart:qstart+nq_func] = buffer
+        
+        # Symmetrize for numerical stability
+        metric_matrix = 0.5 * (metric_matrix + metric_matrix.T)
+        
+        # Single eigendecomposition (deterministic)
+        eigs, eigvecs = np.linalg.eigh(metric_matrix)
+        
+        max_eig = np.max(eigs)
+        min_eig = np.min(eigs)
+        threshold = max_eig * threshold_factor
+        
+        print(f"Metric eigenvalues: max={max_eig:.6e}, min={min_eig:.6e}")
+        print(f"Threshold: {threshold:.6e}")
+        print(f"Eigenvalues below threshold: {np.sum(eigs < threshold)}/{naux}")
+        print(f"Condition number: {max_eig/max(min_eig, threshold):.2e}")
+        
+        # Apply threshold
+        eigs_inv = np.where(eigs > threshold, 1.0 / eigs, 0.0)
+        
+        # Compute inverse
+        J_inv = eigvecs @ np.diag(eigs_inv) @ eigvecs.T
+        
+        return J_inv, metric_matrix
 
-     
+    def compute_df_tei_gradient(self, n_atoms, kappa):
+        # Get basis sets and MO coefficients
+        primary_basis = self.wfn.basisset()
+        use_spherical = primary_basis.has_puream()
+ 
+
+        #if "df_basis_scf" in psi4_options_dict:
+        df_basis = psi4.core.BasisSet.build(self.mol, "DF_BASIS_SCF", self.df_basis_name, puream=use_spherical)
+        self.wfn.set_basisset("DF_BASIS_SCF", df_basis)
+
+
+        aux_basis = self.aux_basis 
+        naux = self.aux_basis.nbf()
+        C = np.copy(self.opt_C)
+        C_hf = np.asarray(self.Ca_hf)
+        nbf = self.nmo
+        nmo = self.nmo
+        #n_atoms = primary_basis.molecule().natom()
+
+        # Get dimensions from 2-RDM
+        nr, nk, ns, nl = self.two_rdm_eff0.shape
+
+        print(f"\n=== DF Two-Electron Gradient ===")
+        print(f"Basis: {nbf} AO, {nmo} MO, {naux} aux")
+        print(f"2-RDM shape: ({nr}, {nk}, {ns}, {nl})")
+        print(f"Computing gradient for {n_atoms} atoms")
+
+        # Setup MintsHelper
+        mints = psi4.core.MintsHelper(primary_basis)
+        
+        # Get inverse metric J^-1 = (A|B)^-1
+        metric_obj = psi4.core.FittingMetric(aux_basis, True)
+
+          
+        #metric_obj.form_eig_inverse(1.0e-14)
+        #metric_raw = np.array(metric_obj.get_metric())
+         
+        ######zero_bas = psi4.core.BasisSet.zero_ao_basis_set() 
+        ######metric = mints.ao_eri(aux_basis, zero_bas, aux_basis, zero_bas)
+        #######metric.power(-1.0, 1.e-7 )
+        ######metric_raw = np.asarray(metric).squeeze() 
+        ######max_eig = np.linalg.eigvalsh(metric_raw).max()
+        ######print(max_eig)
+        ######print(max_eig*1e-9)
+        ####### 1e-10 relative to the max eigenvalue is the "Goldilocks" zone
+        ######metric.power(-1.0, max_eig * 1e-9 )
+        ######J_inv = np.asarray(metric).squeeze() 
+        #J_inv = copy.deepcopy(self.J_inv) 
+        #eigs = np.linalg.eigvalsh(metric_raw)
+        #cond = np.max(eigs) / np.min(eigs)
+        #print(np.max(eigs))
+        #print(np.max(eigs)*1e-12)
+        #print(f"Condition Number for {self.df_basis_name}: {cond:.2e}")
+        #metric_obj.form_eig_inverse(np.max(eigs) * 1e-10)
+        #J_inv_half = np.asarray(metric_obj.get_metric())
+        #J_inv = J_inv_half @ J_inv_half
+        #B_mo = np.einsum("Qmn,mp,nq->Qpq", self.raw_3c_np, C, C,optimize=True)
+        #B_mo_hf = np.einsum("Qmn,mp,nq->Qpq", self.raw_3c_np, C_hf, C_hf)
+        # Check the condition number of the metric
+        #cond = np.linalg.cond(metric_raw)
+        #print(f"Metric Condition Number: {cond}") 
+
+        # ================================================================
+        # Pre-compute intermediates (outside atom loop)
+        # ================================================================
+
+        ############ For Terms 1 & 3: W^A_rk = J^-1_AB W^B_rk where W^B_rk = (B|sl) D_rksl
+        ###########W_B_1 = np.einsum('Bsl,rksl->Brk', B_mo[:, :ns, :nl], self.two_rdm_eff0, optimize=True)
+        ###########W_A_1 = np.einsum('AB,Brk->Ark', J_inv, W_B_1, optimize=True)
+        ###########
+        ############ Term 3: W^A_sl = (A|rk) D_rksl, then W^B = J^-1 W^A
+        ###########W_B_3 = np.einsum('Ark,rksl->Asl', B_mo[:, :nr, :nk], self.two_rdm_eff0, optimize=True)
+        ###########W_A_3 = np.einsum('BA,Asl->Bsl', J_inv, W_B_3, optimize=True)
+        ############ Transform W^A_rk to AO basis: W_μν = C_μr W^A_Ark C_νk
+        ###########W_combine = W_A_1 + W_A_3
+        ###########W_ao_0 = np.einsum('Ark,ur->Auk', W_combine, C[:, :nr], optimize=True)
+        ###########W_ao = np.einsum('Auk,vk->Auv', W_ao_0, C[:, :nk], optimize=True)
+        ############W_ao_1 = np.einsum('Ark,ur,vk->Auv', W_A_1, C, C[:, :nk], optimize=True)
+        ############V_ao_3 = np.einsum('Bsl,us,vl->Buv', W_A_3, C, C[:, :nl], optimize=True)
+        ############ For Term 2: Gamma_AB = (A|rk) D_rksl (B|sl)
+        ###########Gamma_AB = np.einsum('Asl,Bsl->AB',
+        ###########                     W_B_3,
+        ###########                     B_mo[:, :ns, :nl],
+        ###########                     optimize=True)
+        ###########print(f"Gamma_AB norm: {np.linalg.norm(Gamma_AB):.6e}")
+        ###########Gamma_raw = np.einsum('Asl,Bsl->AB', W_B_3, B_mo[:, :ns, :nl], optimize=True)
+        ###########Gamma_weighted = J_inv @ Gamma_raw @ J_inv
+        ###########print(f"Gamma_weighted: {np.linalg.norm(Gamma_weighted):.6e}")
+        ############ Initialize gradient array
+        ###########gradient = np.zeros((n_atoms, 3))
+        ###########mints.set_basisset("MY_AUX", aux_basis)
+        ############ ================================================================
+        ############ Loop over atoms and coordinates
+        ############ ================================================================
+        ###########for i_atom in range(n_atoms):
+        ###########    print(f"  Processing atom {i_atom+1}/{n_atoms}")
+
+        ###########    # Get derivative integrals for this atom
+        ###########    B_deriv_list = mints.ao_3center_deriv1(i_atom,"MY_AUX")
+        ###########    metric_deriv_list = mints.ao_metric_deriv1(i_atom, "MY_AUX")
+
+        ###########    for i_coord in range(3):  # x, y, z
+        ###########        # Extract derivatives for this coordinate
+        ###########        B_deriv_ao = np.asarray(B_deriv_list[i_coord])
+        ###########        B_deriv_ao = B_deriv_ao.reshape(naux, nbf, nbf)
+
+        ###########        metric_deriv = np.asarray(metric_deriv_list[i_coord])
+
+        ###########        # ========================================================
+        ###########        # Terms 1 & 3: (A|μν)^x and (B|σλ)^x contributions
+        ###########        # These are equal by symmetry, so compute once and multiply by 2
+        ###########        # ========================================================
+
+
+        ###########        # Contract with derivative: sum_Aμν (A|μν)^x W_Aμν
+        ###########        grad_terms_1_and_3 = np.einsum('Auv,Auv->', B_deriv_ao, W_ao)
+        ###########        
+
+        ###########        # ========================================================
+        ###########        # Term 2: Metric derivative contribution
+        ###########        # ========================================================
+
+        ###########        # Compute (J^-1)^x = -J^-1 (J)^x J^-1
+        ###########        J_inv_deriv = -J_inv @ metric_deriv @ J_inv
+        ###########        print(f"J_inv_deriv norm: {np.linalg.norm(J_inv_deriv):.6e}")
+
+        ###########        # Contract with pre-computed Gamma: trace(J^-1_deriv Gamma)
+        ###########        grad_term_2 = np.einsum('AB,AB->', J_inv_deriv, Gamma_AB)
+        ###########        #grad_term_2 = -np.einsum('AB,AB->', metric_deriv, Gamma_weighted)
+        ###########        # ========================================================
+        ###########        # Total gradient for this atom and coordinate
+        ###########        # ========================================================
+        ###########        gradient[i_atom, i_coord] = (grad_terms_1_and_3 + grad_term_2)
+        
+        
+        B_mo = np.einsum("Qmn,mp,nq->Qpq", self.raw_3c_np, C, C, optimize=True)
+
+        # J^{-1} @ B_mo — analogous to PySCF's dferi, used for BOTH W terms and metric
+        #Btilde_mo = cho_solve(
+        #    self.J_chol,
+        #    B_mo.reshape(naux, -1).copy()
+        #).reshape(B_mo.shape)
+        Btilde_mo = self.pseudo_solve(B_mo)        # J^{-1} B,  same threshold as energy
+
+        W_B_1 = np.einsum('Bsl,rksl->Brk', B_mo[:, :ns, :nl], self.two_rdm_eff0, optimize=True)
+        W_B_3 = np.einsum('Ark,rksl->Asl', B_mo[:, :nr, :nk], self.two_rdm_eff0, optimize=True)
+        
+        ##W_A_1 = J^{-1} @ W_B_1  (PySCF's dfcasdm2 for the "left" 2RDM leg)
+        #W_A_1 = cho_solve(self.J_chol, W_B_1.reshape(naux, -1).copy()).reshape(W_B_1.shape)
+        ##W_A_3 = J^{-1} @ W_B_3  (PySCF's dfcasdm2 for the "right" 2RDM leg)
+        #W_A_3 = cho_solve(self.J_chol, W_B_3.reshape(naux, -1).copy()).reshape(W_B_3.shape)
+        W_A_1 = self.pseudo_solve(W_B_1)
+        W_A_3 = self.pseudo_solve(W_B_3)
+
+        W_combine = W_A_1 + W_A_3
+        W_ao_0 = np.einsum('Ark,ur->Auk', W_combine, C[:, :nr], optimize=True)
+        W_ao   = np.einsum('Auk,vk->Auv', W_ao_0, C[:, :nk],  optimize=True)
+        
+        # Z = W_A_3_{A,sl} * Btilde_{B,sl}  ← directly, no double solve
+        # Proof: Z_{AB} = sum_{sl} W_A_3_{A,sl} Btilde_{B,sl}
+        #              = sum_{sl,rk} (J^{-1}B)_{A,rk} D_{rk,sl} (J^{-1}B)_{B,sl}
+        #              = (J^{-1} Gamma J^{-1})_{AB}  ✓
+        Z = np.einsum('Asl,Bsl->AB', W_A_3, Btilde_mo[:, :ns, :nl], optimize=True)
+        
+        # ── atom/coord loop ──────────────────────────────────────────────────────
+        gradient = np.zeros((n_atoms, 3))
+        mints.set_basisset("MY_AUX", aux_basis)
+        
+        for i_atom in range(n_atoms):
+            B_deriv_list      = mints.ao_3center_deriv1(i_atom, "MY_AUX")
+            metric_deriv_list = mints.ao_metric_deriv1(i_atom, "MY_AUX")
+        
+            for i_coord in range(3):
+                B_deriv_ao   = np.array(B_deriv_list[i_coord]).reshape(naux, nbf, nbf)  # np.array = copy
+                metric_deriv = np.array(metric_deriv_list[i_coord])                     # np.array = copy
+        
+                grad_terms_1_and_3 = np.einsum('Auv,Auv->', B_deriv_ao, W_ao)
+                grad_term_2        = -np.einsum('AB,AB->', metric_deriv, Z)
+        
+                gradient[i_atom, i_coord] = grad_terms_1_and_3 + grad_term_2
+
+
+        kappa_matrix = kappa.reshape(self.n_v_hf, self.ndocc)
+        kappa_temp1 = np.einsum("ai,ma->mi", kappa_matrix, C_hf[:,self.ndocc:])
+        D_kappa= np.einsum("mi,ni->mn", kappa_temp1, C_hf[:,:self.ndocc])
+
+
+        D_HF = 2.0 * np.einsum("mi,ni->mn", C_hf[:,:self.ndocc], C_hf[:,:self.ndocc])
+        B_ao = self.raw_3c_np
+
+        # ================================================================
+        # TERM 1 INTERMEDIATES: (μν|A)^x J^-1_AB (B|σλ) Γ_μνσλ
+        # ================================================================
+        
+        # Coulomb part: (μν|A)^x J^-1_AB (B|σλ) D_κ_μν D_HF_σλ
+        # = (μν|A)^x γ^A D_κ_μν where γ^B = (B|σλ) D_HF_σλ, γ^A = J^-1 γ^B
+        gamma_B_J = np.einsum('Bsl,sl->B', B_ao, D_HF, optimize=True)
+        #gamma_A_J = np.einsum('AB,B->A', J_inv, gamma_B_J)
+        #gamma_A_J = cho_solve(self.J_chol, gamma_B_J.copy())
+        gamma_A_J = self.pseudo_solve(gamma_B_J.reshape(naux, 1)).ravel()
+        gamma_C_J = np.einsum('A,uv->Auv', gamma_A_J, D_kappa)
+        # Exchange part: -0.5 (μν|A)^x J^-1_AB (B|σλ) D_κ_μσ D_HF_νλ
+        # = -0.5 (μν|A)^x Θ^A_μν where:
+        # Ω^B_σν = sum_λ (B|σλ) D_HF_νλ
+        Omega_B_K = np.einsum('Bsl,vl->Bsv', B_ao, D_HF, optimize=True)
+        # Θ^B_μν = sum_σ D_κ_μσ Ω^B_σν
+        Theta_B_K = np.einsum('us,Bsv->Buv', D_kappa, Omega_B_K, optimize=True)
+        # Θ^A = J^-1 Θ^B
+        #Theta_A_K = np.einsum('AB,Buv->Auv', J_inv, Theta_B_K, optimize=True)
+        #Theta_A_K = cho_solve(self.J_chol, Theta_B_K.reshape(naux, -1).copy()).reshape(Theta_B_K.shape) 
+        Theta_A_K = self.pseudo_solve(Theta_B_K.reshape(naux, -1)).reshape(Theta_B_K.shape)
+        # ================================================================
+        # TERM 2 INTERMEDIATES: (μν|A) (J^-1)^x_AB (B|σλ) Γ_μνσλ
+        # Need: Γ_AB = sum_μνσλ (A|μν) Γ_μνσλ (B|σλ)
+        # ================================================================
+
+        ###### Coulomb part: Γ^J_AB = sum_μνσλ (A|μν) D_κ_μν D_HF_σλ (B|σλ)
+        ###### = [sum_μν (A|μν) D_κ_μν] * [sum_σλ (B|σλ) D_HF_σλ]
+        #####W_A_J = np.einsum('Auv,uv->A', B_ao, D_kappa, optimize=True)
+        #####W_B_J = np.einsum('Bsl,sl->B', B_ao, D_HF, optimize=True)
+        ###### Γ^J_AB = W^A_J * W^B_J
+        #####Gamma_AB_J = np.outer(W_A_J, gamma_B_J)
+
+        ###### Exchange part: Γ^K_AB = -0.5 sum_μνσλ (A|μν) (B|σλ) D_κ_μσ D_HF_νλ
+        ###### = -0.5 sum_μνσ (A|μν) W^B_σν D_κ_μσ where W^B_σν = sum_λ (B|σλ) D_HF_νλ
+        #####W_A_K = np.einsum('Auv,us->Avs', B_ao, D_kappa, optimize=True)
+        #####W_B_K = np.einsum('Bsl,vl->Bsv', B_ao, D_HF, optimize=True)
+        ###### Γ^K_AB = sum_μνσ (A|μν) W^B_σν D_κ_μσ
+        #####Gamma_AB_K = np.einsum('Avs,Bsv->AB', W_A_K, Omega_B_K, optimize=True)
+
+        ###### Total Gamma for Term 2
+        #####Gamma_AB = Gamma_AB_J - 0.5 * Gamma_AB_K
+         
+        W_A_J = np.einsum('Auv,uv->A', B_ao, D_kappa, optimize=True)
+        W_A_K = np.einsum('Auv,us->Avs', B_ao, D_kappa, optimize=True)
+        
+        #tilde_W_A_J   = cho_solve(self.J_chol, W_A_J.copy())
+        #tilde_gamma_J = gamma_A_J                                    # already computed in term 1
+        #tilde_W_A_K   = cho_solve(self.J_chol, W_A_K.reshape(naux, -1).copy()).reshape(W_A_K.shape)
+        #tilde_Omega_K = cho_solve(self.J_chol, Omega_B_K.reshape(naux, -1).copy()).reshape(Omega_B_K.shape)
+        
+        tilde_W_A_J   = self.pseudo_solve(W_A_J.reshape(naux, 1)).ravel()       # J^{-1} W^A_J
+        tilde_gamma_J = self.pseudo_solve(gamma_B_J.reshape(naux, 1)).ravel()   # J^{-1} gamma^B_J  (= gamma_A_J)
+        tilde_W_A_K   = self.pseudo_solve(W_A_K.reshape(naux, -1)).reshape(W_A_K.shape)
+        tilde_Omega_K = self.pseudo_solve(Omega_B_K.reshape(naux, -1)).reshape(Omega_B_K.shape)
+
+        Z_J = np.outer(tilde_W_A_J, tilde_gamma_J)
+        Z_K = np.einsum('Avs,Bsv->AB', tilde_W_A_K, tilde_Omega_K, optimize=True)
+        Z   = Z_J - 0.5 * Z_K 
+
+
+        # ================================================================
+        # TERM 3 INTERMEDIATES: (μν|A) J^-1_AB (B|σλ)^x Γ_μνσλ
+        # ================================================================
+
+        # Coulomb part: (μν|A) J^-1_AB (B|σλ)^x D_κ_μν D_HF_σλ
+        # = γ^B (B|σλ)^x D_HF_σλ where γ^A = (A|μν) D_κ_μν, γ^B = J^-1 γ^A
+        #gamma_A_J_term3 = np.einsum('Auv,uv->A', B_ao, D_kappa, optimize=True)
+        #gamma_B_J_term3 = np.einsum('AB,A->B', J_inv, W_A_J)
+        gamma_B_J_term3 = tilde_W_A_J
+        gamma_C_J_term3 = np.einsum("B,sl->Bsl", gamma_B_J_term3, D_HF)
+
+        # Exchange part: -0.5 (μν|A) J^-1_AB (B|σλ)^x D_κ_μσ D_HF_νλ
+        # = -0.5 Λ^B_ν (B|σλ)^x D_HF_νλ where:
+        # Λ^A_ν = sum_μσ (A|μσ) D_κ_μσ
+        Lambda_A_K = np.einsum('vl,Avs->Asl', D_HF, W_A_K, optimize=True)
+        # Λ^B = J^-1 Λ^A (note: Λ still has ν index)
+        #Lambda_B_K = np.einsum('AB,Asl->Bsl', J_inv, Lambda_A_K, optimize=True)
+        #Lambda_B_K = cho_solve(self.J_chol, Lambda_A_K.reshape(naux, -1).copy()).reshape(Lambda_A_K.shape) 
+        Lambda_B_K = self.pseudo_solve(Lambda_A_K.reshape(naux, -1)).reshape(Lambda_A_K.shape)
+        for i_atom in range(n_atoms):
+            #print(f"  Atom {i_atom+1}/{n_atoms}")
+            
+            B_deriv_list = mints.ao_3center_deriv1(i_atom, "MY_AUX")
+            metric_deriv_list = mints.ao_metric_deriv1(i_atom, "MY_AUX")
+            
+            for i_coord in range(3):
+                B_deriv = np.asarray(B_deriv_list[i_coord]).reshape(naux, nbf, nbf)
+                metric_deriv = np.asarray(metric_deriv_list[i_coord])
+                
+                # ========================================================
+                # TERM 1: (μν|A)^x J^-1_AB (B|σλ) Γ_μνσλ
+                # ========================================================
+                
+                # Coulomb: (μν|A)^x γ^A D_κ_μν
+                grad_1_J = np.einsum('Auv,Auv->', B_deriv, gamma_C_J)
+                
+                # Exchange: -0.5 (μν|A)^x Θ^A_μν
+                grad_1_K = -0.5 * np.einsum('Auv,Auv->', B_deriv, Theta_A_K)
+                
+                grad_1 = grad_1_J + grad_1_K
+                
+                # ========================================================
+                # TERM 2: (μν|A) (J^-1)^x_AB (B|σλ) Γ_μνσλ
+                # ========================================================
+                
+                ###### (J^-1)^x = -J^-1 (J)^x J^-1
+                #####J_inv_deriv = -J_inv @ metric_deriv @ J_inv
+                ###### Contract: sum_AB (J^-1)^x_AB Γ_AB
+                #####grad_2 = np.einsum('AB,AB->', J_inv_deriv, Gamma_AB)
+                grad_2   = -np.einsum('AB,AB->', metric_deriv, Z)        
+                # ========================================================
+                # TERM 3: (μν|A) J^-1_AB (B|σλ)^x Γ_μνσλ
+                # ========================================================
+                
+                # Coulomb: γ^B (B|σλ)^x D_HF_σλ
+                grad_3_J = np.einsum('Bsl,Bsl->', B_deriv, gamma_C_J_term3)
+                
+                # Exchange: -0.5 Λ^B_ν (B|νλ)^x D_HF_νλ
+                # Note: (B|σλ)^x has indices σλ, we need to contract with Λ^B_ν D_HF_νλ
+                # So: sum_νλ (B|νλ)^x Λ^B_ν D_HF_νλ
+                grad_3_K = -0.5 * np.einsum('Bsl,Bsl->', B_deriv, Lambda_B_K)
+                
+                grad_3 = grad_3_J + grad_3_K
+                
+                # ========================================================
+                # Total
+                # ========================================================
+                gradient[i_atom, i_coord] +=  (grad_1 + grad_2 + grad_3)
+
+
+
+        print("\nGradient computation complete!")
+        return gradient
+    
+    def build_extended_df_tensor(self, B_mo, d_hf):
+        """
+        Create extended DF tensor with dipole as extra auxiliary function
+        
+        B_extended[Q, p, q] where:
+        - Q = 0 to naux-1: Regular DF basis functions
+        - Q = naux: Dipole matrix (treating it as auxiliary function)
+        
+        This allows: (pq|rs) = sum_Q B_ext[Q,p,q] * B_ext[Q,r,s]
+                             = sum_{Q<naux} B[Q,p,q]*B[Q,r,s] + d[p,q]*d[r,s]
+        """
+        import numpy as np
+        
+        naux, nmo, _ = B_mo.shape
+        
+        # Create extended tensor with one extra auxiliary function
+        B_extended = np.zeros((naux + 1, nmo, nmo))
+        
+        # First naux functions are regular DF basis
+        B_extended[:naux, :, :] = B_mo
+        
+        # Last "auxiliary function" is the dipole matrix
+        B_extended[naux, :, :] = d_hf
+        
+        return B_extended
+
+    def build_fock_hf_df(self, H_hf, B_extended, ndocc):
+        """
+        Build Fock matrix using extended DF tensor
+        
+        F[r,s] = H[r,s] + 2 * sum_j (rs|jj) - sum_j (rj|sj)
+        
+        where (pq|rs) = sum_Q B_extended[Q,p,q] * B_extended[Q,r,s]
+        and the sum over j is over occupied orbitals
+        
+        Parameters:
+        -----------
+        H_hf : np.ndarray, shape (nmo, nmo)
+            One-electron Hamiltonian
+        B_extended : np.ndarray, shape (naux+1, nmo, nmo)
+            Extended DF tensor with dipole as last auxiliary function
+        ndocc : int
+            Number of doubly occupied orbitals
+        
+        Returns:
+        --------
+        fock_hf : np.ndarray, shape (nmo, nmo)
+            Fock matrix
+        """
+        import numpy as np
+        
+        naux_ext, nmo, _ = B_extended.shape
+        
+        # Start with one-electron part
+        fock_hf = H_hf.copy()
+        
+        # ================================================================
+        # Coulomb term: 2 * sum_j (rs|jj)
+        # (rs|jj) = sum_Q B_ext[Q,r,s] * B_ext[Q,j,j]
+        # ================================================================
+        
+        # Extract diagonal occupied elements: B_ext[Q,j,j] for j < ndocc
+        # W_Q = sum_j B_ext[Q,j,j]
+        B_diag_occ = np.einsum('Qjj->Q', B_extended[:, :ndocc, :ndocc])
+        
+        # Coulomb: J[r,s] = 2 * sum_Q B_ext[Q,r,s] * W_Q
+        J = 2.0 * np.einsum('Qrs,Q->rs', B_extended, B_diag_occ, optimize=True)
+        
+        fock_hf += J
+        
+        # ================================================================
+        # Exchange term: -sum_j (rj|sj)
+        # (rj|sj) = sum_Q B_ext[Q,r,j] * B_ext[Q,s,j]
+        # ================================================================
+        
+        # Extract occupied columns: B_ext[:, :, :ndocc]
+        B_occ = B_extended[:, :, :ndocc]  # (naux+1, nmo, ndocc)
+        
+        # Exchange: K[r,s] = sum_j sum_Q B_ext[Q,r,j] * B_ext[Q,s,j]
+        K = np.einsum('Qrj,Qsj->rs', B_occ, B_occ, optimize=True)
+        
+        fock_hf -= K
+        
+        return fock_hf   
+
+
+    def compute_temp_aibj_df_memory_efficient(self, B_extended, ndocc):
+        """
+        Memory-efficient version - compute in blocks to reduce peak memory
+        """
+        import numpy as np
+        
+        naux_ext, nmo, _ = B_extended.shape
+        naux = naux_ext - 1
+        n_virt = nmo - ndocc
+        
+        temp_aibj = np.zeros((n_virt, ndocc, n_virt, ndocc))
+        
+        # Extract blocks
+        B_vo = B_extended[:, ndocc:, :ndocc]  # (naux+1, nvirt, nocc)
+        B_vv = B_extended[:, ndocc:, ndocc:]  # (naux+1, nvirt, nvirt)
+        B_oo = B_extended[:, :ndocc, :ndocc]  # (naux+1, nocc, nocc)
+        
+        d_ai = B_extended[naux, ndocc:, :ndocc]
+        
+        
+        # Compute term by term to control memory
+        # Term 1: 4.0 * (ai|bj)
+        temp_aibj += 4.0 * np.einsum('Qai,Qbj->aibj', B_vo, B_vo, optimize=True)
+        
+        # Term 2: -(ab|ij)
+        temp_aibj -= np.einsum('Qab,Qij->aibj', B_vv, B_oo, optimize=True)
+        
+        # Term 3: -(aj|bi)
+        temp_aibj -= np.einsum('Qaj,Qbi->aibj', B_vo, B_vo, optimize=True)
+        
+        # Term 4: -4.0 * d[ai]*d[bj]
+        temp_aibj -= 4.0 * np.outer(d_ai.ravel(), d_ai.ravel()).reshape(n_virt, ndocc, n_virt, ndocc)
+        
+        return temp_aibj
+    def build_eff_pe_rdm_from_two_rdm(self, kappa):
+        temp = 0.5 * (self.two_rdm_eff0 + self.two_rdm_eff0.transpose(2,3,0,1))
+        self.two_rdm_eff0 = np.copy(temp)
+        del temp 
+        C = copy.deepcopy(self.opt_C)
+        temp1 = np.einsum('sl,rksl->rk', self.d_cmo[:,:self.n_occupied], self.two_rdm_eff0, optimize=True)
+        temp2 = np.einsum('rk,pr->pk', temp1, self.opt_C, optimize=True)
+        one_rdm_pe = 2.0 * np.einsum('pk,qk->pq', temp2, self.opt_C[:,:self.n_occupied], optimize=True)
+        
+        C = copy.deepcopy(self.C_hf) 
+        kappa_matrix = kappa.reshape(self.n_v_hf, self.ndocc)
+        kappa_temp1 = np.einsum("ai,ma->mi", kappa_matrix, C[:,self.ndocc:])
+        one_rdm_kappa= np.einsum("mi,ni->mn", kappa_temp1, C[:,:self.ndocc])
+        one_rdm_hf = 2.0 * np.einsum("mi,ni->mn", C[:,:self.ndocc], C[:,:self.ndocc])
+ 
+       
+        tem1 =np.einsum('sl,sl->', self.d_ao, one_rdm_hf)
+        one_rdm_pe += tem1 *one_rdm_kappa
+        tem2 =np.einsum('sl,vl->sv', self.d_ao, one_rdm_hf)
+        one_rdm_pe += -0.5 * np.einsum('sv,us->uv', tem2, one_rdm_kappa)
+        tem3 =np.einsum('sl,sl->', self.d_ao, one_rdm_kappa)
+        one_rdm_pe += tem3 *one_rdm_hf   
+        tem4 =np.einsum('sl,lv->sv', self.d_ao, one_rdm_hf)
+        one_rdm_pe += -0.5 * np.einsum('sv,su->uv', tem4, one_rdm_kappa)
+        return one_rdm_pe
 
     def compute_grad(self, state1, state2,deriv_type=None):
         if state1 == state2:
@@ -1877,35 +2476,45 @@ class nuclear_grad(PFHamiltonianGenerator):
         #print(np.linalg.norm(total_gradient))
 
         #self.print_matrix_nice((self.twoeint-self.twoeint_hf).reshape(self.nmo*self.nmo, self.nmo *self.nmo), precision=10, width=14, cols_per_line=6)
-        self.twoeint = np.asarray(self.mints.mo_eri(self.Ca_hf, self.Ca_hf, self.Ca_hf, self.Ca_hf))
-        self.d_spatial = np.einsum("ij,kl-> ijkl", self.d_hf, self.d_hf)
-        #self.twoeint += self.d_spatial
-        np.add(self.twoeint, self.d_spatial, out=self.twoeint)
         self.n_v_hf = self.nmo - self.ndocc
+        if self.density_fitting == False: 
+            self.twoeint = np.asarray(self.mints.mo_eri(self.Ca_hf, self.Ca_hf, self.Ca_hf, self.Ca_hf))
+            #self.twoeint = self.I_mo 
+            self.d_spatial = np.einsum("ij,kl-> ijkl", self.d_hf, self.d_hf)
+            #self.twoeint += self.d_spatial
+            np.add(self.twoeint, self.d_spatial, out=self.twoeint)
 
-        self.fock_hf = copy.deepcopy(self.H_hf)
-        self.fock_hf += 2.0 * np.einsum(
-            "rsjj->rs", self.twoeint.reshape(self.nmo,self.nmo,self.nmo,self.nmo)[:, :, :self.ndocc, :self.ndocc], optimize="optimal"
-        )
-        self.fock_hf -= np.einsum(
-            "rjsj->rs", self.twoeint.reshape(self.nmo,self.nmo,self.nmo,self.nmo)[:, :self.ndocc, :, :self.ndocc], optimize="optimal"
-        )
-        #print("fock HF ")
-        #self.print_matrix_nice(self.fock_hf, precision=10, width=14, cols_per_line=6)
+            self.fock_hf = copy.deepcopy(self.H_hf)
+            self.fock_hf += 2.0 * np.einsum(
+                "rsjj->rs", self.twoeint.reshape(self.nmo,self.nmo,self.nmo,self.nmo)[:, :, :self.ndocc, :self.ndocc], optimize="optimal"
+            )
+            self.fock_hf -= np.einsum(
+                "rjsj->rs", self.twoeint.reshape(self.nmo,self.nmo,self.nmo,self.nmo)[:, :self.ndocc, :, :self.ndocc], optimize="optimal"
+            )
+            #print("fock HF ")
+            #self.print_matrix_nice(self.fock_hf, precision=10, width=14, cols_per_line=6)
+            temp_aibj = np.zeros((self.n_v_hf, self.ndocc, self.n_v_hf, self.ndocc))
+            for a in range(self.n_v_hf):
+                for i in range(self.ndocc):
+                    for b in range(self.n_v_hf):
+                        for j in range(self.ndocc):
+                            temp_aibj[a][i][b][j] = 4.0 * self.twoeint.reshape(self.nmo, self.nmo, self.nmo, self.nmo)[self.ndocc+a][i][self.ndocc+b][j]
+                            temp_aibj[a][i][b][j] += -self.twoeint.reshape(self.nmo, self.nmo, self.nmo, self.nmo)[self.ndocc+a][self.ndocc+b][i][j]
+                            temp_aibj[a][i][b][j] += -self.twoeint.reshape(self.nmo, self.nmo, self.nmo, self.nmo)[self.ndocc+a][j][self.ndocc+b][i]
+                            temp_aibj[a][i][b][j] -= 4.0 * self.d_spatial[self.ndocc+a][i][self.ndocc+b][j]
+        else:
+            B_extended = self.build_extended_df_tensor(self.B_mo_hf, self.d_hf)
+            self.fock_hf = self.build_fock_hf_df(self.H_hf, B_extended, self.ndocc)
+            #print(np.allclose(self.fock_hf2, self.fock_hf))
+            temp_aibj = self.compute_temp_aibj_df_memory_efficient(B_extended, self.ndocc)
+            #print(np.allclose(temp_aibj, temp_aibj2))
+            
         fock_diag = np.diag(self.fock_hf)
         
         eps_occ = fock_diag[:self.ndocc]      # ε_i (occupied)
         eps_virt = fock_diag[self.ndocc:]     # ε_a (virtual)
         energy_diff = eps_virt[:, np.newaxis] - eps_occ[np.newaxis, :]   
-        temp_aibj = np.zeros((self.n_v_hf, self.ndocc, self.n_v_hf, self.ndocc))
-        for a in range(self.n_v_hf):
-            for i in range(self.ndocc):
-                for b in range(self.n_v_hf):
-                    for j in range(self.ndocc):
-                        temp_aibj[a][i][b][j] = 4.0 * self.twoeint.reshape(self.nmo, self.nmo, self.nmo, self.nmo)[self.ndocc+a][i][self.ndocc+b][j]
-                        temp_aibj[a][i][b][j] += -self.twoeint.reshape(self.nmo, self.nmo, self.nmo, self.nmo)[self.ndocc+a][self.ndocc+b][i][j]
-                        temp_aibj[a][i][b][j] += -self.twoeint.reshape(self.nmo, self.nmo, self.nmo, self.nmo)[self.ndocc+a][j][self.ndocc+b][i]
-                        temp_aibj[a][i][b][j] -= 4.0 * self.d_spatial[self.ndocc+a][i][self.ndocc+b][j]
+
         Y_hf = np.zeros((self.nmo, self.nmo))
         self.build_Y_hf(state1, state2, Z_vector, z_vector, self.eigenvecs, Y_hf)
         grad_hf = Y_hf - Y_hf.T
@@ -1958,12 +2567,16 @@ class nuclear_grad(PFHamiltonianGenerator):
         Z_vector = Z_final
         z_vector = z_final
         Y_hf = np.zeros((self.nmo, self.nmo))
-        A_tilde_hf = np.zeros((self.nmo, self.nmo))
         self.build_Y_hf(state1, state2, Z_vector, z_vector, self.eigenvecs, Y_hf)
-        self.build_A_tilde_hf(self.fock_hf, kappa, A_tilde_hf)
-        del(self.d_spatial)
-        del(self.twoeint)
-        gc.collect()
+        if self.density_fitting == False: 
+            A_tilde_hf = np.zeros((self.nmo, self.nmo))
+            self.build_A_tilde_hf(self.fock_hf, kappa, A_tilde_hf)
+            del(self.d_spatial)
+            del(self.twoeint)
+            gc.collect()
+        else:
+            A_tilde_hf = np.zeros((self.nmo, self.nmo))
+            self.build_A_tilde_hf_df(self.fock_hf, kappa, A_tilde_hf, B_extended)
         #A_tilde_hf2 = np.zeros((self.nmo, self.nmo))
         #A_tilde_hf2[:,:self.ndocc] = np.dot(self.fock_hf[:,self.ndocc:], kappa.reshape(self.n_v_hf, self.ndocc))
         #A_tilde_hf2[:,self.ndocc:] += np.dot(self.fock_hf[:,:self.ndocc], kappa.reshape(self.n_v_hf, self.ndocc).T)
@@ -1989,10 +2602,9 @@ class nuclear_grad(PFHamiltonianGenerator):
         ####temp_rdm2 = 0.5 * (temp_rdm + temp_rdm.T)
         ####temp_rdm3 = temp_rdm2
         ####self.two_rdm_eff_ao = temp_rdm3.reshape(self.nmo, self.nmo, self.nmo, self.nmo)
-        
-        print(f"Current memory6: {get_memory_usage():.2f} MB", flush = True)
-        self.two_rdm_eff_ao += self.two_rdm_eff_ao.transpose(2, 3, 0, 1)
-        self.two_rdm_eff_ao *= 0.5
+        if self.density_fitting == False: 
+            self.two_rdm_eff_ao += self.two_rdm_eff_ao.transpose(2, 3, 0, 1)
+            self.two_rdm_eff_ao *= 0.5
 
 
 
@@ -2000,20 +2612,17 @@ class nuclear_grad(PFHamiltonianGenerator):
         temp_rdm2 = 0.5 * (temp_rdm + temp_rdm.T)
         temp_rdm3 = temp_rdm2
         self.one_rdm_eff_ao = temp_rdm2
-
         #update 1rdm_pe_eff with contributions from 1rdm_eff and 2rdm_eff
-        self.one_rdm_pe_eff_ao += 2.0 *np.einsum("mn, pqmn", self.d_ao, self.two_rdm_eff_ao)
+        #self.one_rdm_pe_eff_ao += 2.0 *np.einsum("mn, pqmn", self.d_ao, self.two_rdm_eff_ao)
+        onerdm_pe0= self.build_eff_pe_rdm_from_two_rdm(kappa)
+        self.one_rdm_pe_eff_ao += onerdm_pe0
         self.one_rdm_pe_eff_ao += -self.d_exp * self.one_rdm_eff_ao
-        #self.one_rdm_pe_eff_ao2 += 2.0 *np.einsum("mn, pqmn", self.d_ao, self.two_rdm_eff_ao)
-        #self.one_rdm_pe_eff_ao2 += -self.d_exp * self.one_rdm_eff_ao
-
-
+        
         temp_rdm = self.one_rdm_pe_eff_ao.reshape(self.nmo, self.nmo)
         temp_rdm2 = 0.5 * (temp_rdm + temp_rdm.T)
         temp_rdm3 = temp_rdm2
         self.one_rdm_pe_eff_ao = temp_rdm3
 
-        print(f"Current memory7: {get_memory_usage():.2f} MB", flush = True)
         self.Ca_hf = psi4.core.Matrix.from_array(self.C_hf)
 
         self.overlap_deriv_matrix_ao2 = np.zeros((3 * n_atoms, n_orbitals, n_orbitals))
@@ -2037,22 +2646,6 @@ class nuclear_grad(PFHamiltonianGenerator):
                 self.potential_deriv_matrix_ao[deriv_index] = np.asarray(self.mints.ao_oei_deriv1("POTENTIAL", i)[j])
                 self.kinetic_deriv_matrix_ao[deriv_index] = np.asarray(self.mints.ao_oei_deriv1("KINETIC", i)[j])
 
-                # get the two-electron integral derivatives
-                # self.eri_deriv_matrix_ao[deriv_index] = np.asarray(self.mints.ao_tei_deriv1(i)[j])
-                #tmp_eri_deriv = np.asarray(derivs_for_atom_i[j])
-                tmp_eri_deriv = np.asarray(self.mints.ao_tei_deriv1(i)[j], copy = False)
-                # compute the J and K derivetives
-                #self.repulsion_gradient[deriv_index] = np.einsum("mnxy,mnxy->", self.eri_deriv_matrix_ao[deriv_index, :, :, :, :], self.two_rdm_eff_ao)
-                #self.repulsion_gradient[deriv_index] = np.einsum("mnxy,mnxy->", tmp_eri_deriv, self.two_rdm_eff_ao, optimize = "optimal")
-                self.repulsion_gradient[deriv_index] = np.tensordot(
-                   tmp_eri_deriv, self.two_rdm_eff_ao, axes=([0,1,2,3], [0,1,2,3])
-                )
-                print(f"Current memory00: {get_memory_usage():.2f} MB", flush = True)
-                tmp_eri_deriv = None
-                del tmp_eri_deriv   
-                gc.collect()
-                print(f"Current memory0: {get_memory_usage():.2f} MB", flush = True)
-
                 # now contract each of the derivatives with the density matrix to get the respective gradient components
                 # Pulay force first
                 self.pulay_force[deriv_index] =  - np.einsum("pq,pq->", X, self.overlap_deriv_matrix_ao[deriv_index])
@@ -2064,12 +2657,41 @@ class nuclear_grad(PFHamiltonianGenerator):
                 # potential gradient
                 self.potential_gradient[deriv_index] = np.einsum("uv,uv->", self.one_rdm_eff_ao, self.potential_deriv_matrix_ao[deriv_index, :, :])
             #del derivs_for_atom_i
+        if self.density_fitting == False:
+            for i in range(self.n_atoms):
+                # loop over the cartesian coordinates
+                #derivs_for_atom_i = self.mints.ao_tei_deriv1(i)
+                for j in range(3):
+                    # define the derivative index
+                    deriv_index = 3 * i + j
+
+
+
+                    # get the two-electron integral derivatives
+                    # self.eri_deriv_matrix_ao[deriv_index] = np.asarray(self.mints.ao_tei_deriv1(i)[j])
+                    #tmp_eri_deriv = np.asarray(derivs_for_atom_i[j])
+                    tmp_eri_deriv = np.asarray(self.mints.ao_tei_deriv1(i)[j], copy = False)
+                    # compute the J and K derivetives
+                    #self.repulsion_gradient[deriv_index] = np.einsum("mnxy,mnxy->", self.eri_deriv_matrix_ao[deriv_index, :, :, :, :], self.two_rdm_eff_ao)
+                    #self.repulsion_gradient[deriv_index] = np.einsum("mnxy,mnxy->", tmp_eri_deriv, self.two_rdm_eff_ao, optimize = "optimal")
+                    self.repulsion_gradient[deriv_index] = np.tensordot(
+                       tmp_eri_deriv, self.two_rdm_eff_ao, axes=([0,1,2,3], [0,1,2,3])
+                    )
+                    tmp_eri_deriv = None
+                    del tmp_eri_deriv   
+                    gc.collect()
+        else:
+            self.repulsion_gradient = self.compute_df_tei_gradient(n_atoms, kappa)
+            self.print_matrix_nice(self.repulsion_gradient.reshape(self.n_atoms, 3), precision=10, width=14, cols_per_line=6)
+        #gradient = self.compute_df_tei_gradient(n_atoms, kappa)
+        #self.print_matrix_nice(gradient.reshape(self.n_atoms, 3), precision=10, width=14, cols_per_line=6)
+
 
 
 
                                                                     
 
-        self.total_gradient = self.nuclear_energy_gradient + self.pulay_force + self.kinetic_gradient + self.potential_gradient + self.repulsion_gradient 
+        self.total_gradient = self.nuclear_energy_gradient + self.pulay_force + self.kinetic_gradient + self.potential_gradient + self.repulsion_gradient.flatten() 
         print("Nuclear energy gradient", flush = True)
         self.print_matrix_nice(self.nuclear_energy_gradient.reshape(self.n_atoms, 3), precision=10, width=14, cols_per_line=6)
         print("Pulay force")
@@ -2185,7 +2807,7 @@ class nuclear_grad(PFHamiltonianGenerator):
             print("Total gradient", flush = True)
             self.print_matrix_nice(self.total_gradient.reshape(self.n_atoms, 3), precision=10, width=14, cols_per_line=6)
             print(self.total_gradient)
-            print("gradient norm", np.linalg.norm(self.total_gradient), flush = True)
+            print("nuclear gradient norm", np.linalg.norm(self.total_gradient), flush = True)
         else:
             print("h vector", flush = True)
             self.h0 = self.total_gradient - self.nuclear_energy_gradient  
@@ -2194,4 +2816,7 @@ class nuclear_grad(PFHamiltonianGenerator):
             print("Total gradient", flush = True)
             self.h_vector = self.h0/(self.eigenvals[state1]-self.eigenvals[state2])
             self.print_matrix_nice(self.h_vector.reshape(self.n_atoms, 3), precision=10, width=14, cols_per_line=6)
-         
+        
+        #J_inv, metric_raw = self.compute_metric_and_inverse(threshold_factor=1e-12)
+
+        

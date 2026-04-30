@@ -97,7 +97,69 @@ def cqed_rhf(lambda_vector, molecule_string, psi4_options_dict, canonical_basis=
     # Ordinary integrals first
     V = np.asarray(mints.ao_potential())
     T = np.asarray(mints.ao_kinetic())
-    I = np.asarray(mints.ao_eri())
+    if "df_basis_scf" in psi4_options_dict:
+        df_basis_name = psi4_options_dict["df_basis_scf"]
+        density_fitting = True
+        primary_basis = wfn.basisset()
+        mol = wfn.molecule()
+        nbf = primary_basis.nbf()
+        use_spherical = primary_basis.has_puream()
+
+        df_basis = psi4.core.BasisSet.build(mol, "DF_BASIS_SCF", df_basis_name, puream=use_spherical)
+        naux = df_basis.nbf()
+
+        #print(f"DF reconstruction: {nbf} primary, {naux} auxiliary")
+
+        ## Get DF tensor
+        #dfh = psi4.core.DFHelper(primary_basis, df_basis)
+        ##dfh.set_schwarz_cutoff(1e-20)   # effectively disable screening
+        #dfh.set_schwarz_cutoff(0.0)   # disable screening entirely 
+        ##dfh.set_fitting_condition(1e-12) # match Psi4's internal metric threshold
+        #dfh.initialize()
+
+        #identity = psi4.core.Matrix("Identity", nbf, nbf)
+        #identity.identity()
+
+        #dfh.add_space("AO", identity)
+        #dfh.add_transformation("B", "AO", "AO")
+        #dfh.transform()
+
+        #B_tensor = dfh.get_tensor("B")
+        #B_array = np.asarray(B_tensor)
+        #print(f"DF tensor shape: {B_array.shape}")
+       
+
+        zero = psi4.core.BasisSet.zero_ao_basis_set()
+        orb_basis = wfn.basisset()
+        #aux_basis = psi4.core.BasisSet.build(self.mol, "DF_BASIS_SCF", "", "JKFIT", orb_basis.name())
+        aux_basis = wfn.get_basisset("DF_BASIS_SCF")  # Get SCF's actual DF basis
+        raw_3c = mints.ao_eri(aux_basis, zero, orb_basis, orb_basis)
+        # Convert to numpy and reshape
+        naux = aux_basis.nbf()
+        nbf = orb_basis.nbf()
+        raw_3c_np = np.asarray(raw_3c).reshape(naux, nbf, nbf)
+        
+        metric_obj = psi4.core.FittingMetric(aux_basis, True)
+        metric_obj.form_eig_inverse(1.0e-10)
+        J_inv_half = np.asarray(metric_obj.get_metric())
+        
+        # Apply metric: (pq|Q) = J^{-1/2} @ (pq|A)
+        Qpq_reconstructed = np.einsum('QA,Amn->Qmn', J_inv_half, raw_3c_np)
+
+        #diff = np.max(np.abs(Qpq_reconstructed - B_array))
+        #print(f"Difference: {diff:.2e}")  # Should be ~1e-10 or smaller
+
+        B_array = np.copy(Qpq_reconstructed)
+        #Correct contraction for (naux, nbf, nbf) format
+        #if B_array.shape == (naux, nbf, nbf):
+        #    print("Using Einstein summation: (μν|λσ) = Σ_P B_P^μν * B_P^λσ")
+        #    I = np.einsum('Pmn,Pls->mnls', B_array, B_array)
+
+    else:
+        density_fitting = False
+        I = np.asarray(mints.ao_eri())
+    print("density_fitting", density_fitting)        
+
 
     # Extra terms for Pauli-Fierz Hamiltonian
     # electronic dipole integrals in AO basis
@@ -255,10 +317,29 @@ def cqed_rhf(lambda_vector, molecule_string, psi4_options_dict, canonical_basis=
         # maxiter
         maxiter = 500
         for SCF_ITER in range(1, maxiter + 1):
-            # Build fock matrix: [Szabo:1996] Eqn. 3.154, pp. 141
-            J = np.einsum("pqrs,rs->pq", I, D)
-            K = np.einsum("prqs,rs->pq", I, D)
-
+            # Build fock matrix: [Szabo:1996] Eqn. 3.154, pp. 141\
+            if density_fitting == False:        
+                J = np.einsum("pqrs,rs->pq", I, D)
+                K = np.einsum("prqs,rs->pq", I, D)
+            else:
+                Q_temp = np.einsum("Qmn,mn->Q", B_array, D)
+                J = np.einsum("Qpq,Q->pq", B_array, Q_temp)
+                temp1 = np.einsum("Qqs,rs->Qqr", B_array, D)
+                K = np.einsum("Qpr,Qqr->pq", B_array, temp1)
+                
+                #jk = psi4.core.JK.build_JK(primary_basis, df_basis)
+                #jk.set_memory(int(1e9))
+                #jk.initialize()
+                #
+                #C_occ = psi4.core.Matrix.from_array(C[:, :ndocc])  # occupied MO coefficients
+                #jk.C_left_add(C_occ)
+                #jk.compute()
+                #
+                #J_ref = np.asarray(jk.J()[0])
+                #K_ref = np.asarray(jk.K()[0])
+                ## Compare with your computed J, K
+                #print("J max diff:", np.max(np.abs(J - J_ref)))
+                #print("K max diff:", np.max(np.abs(K - K_ref)))                
             # Pauli-Fierz 2-e dipole-dipole terms, line 2 of Eq. (12) in [McTague:2021:ChemRxiv]
             # M = np.einsum("pq,rs,rs->pq", l_dot_mu_el, l_dot_mu_el, D)
             N = np.einsum("pr,qs,rs->pq", d_el_ao, d_el_ao, D)
