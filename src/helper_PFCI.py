@@ -3809,7 +3809,7 @@ class PFHamiltonianGenerator:
                         old_avg_energy = 0
                         new_avg_energy = avg_energy
                         convergence = 0
-                        while macroiteration < 20000:
+                        while macroiteration < 1000:
                             if macroiteration > 0:
                                 # print("U total")
                                 # self.printA(self.U_total)
@@ -3944,9 +3944,12 @@ class PFHamiltonianGenerator:
                                     flush = True)
                             if np.abs(new_avg_energy - old_avg_energy) < 1e-10:
                                 convergence = 1
-
+                            if macroiteration >= 1000:
+                                self.casscf_converged = False
+                                print(f"WARNING: SA-CASSCF did NOT converge after 30 iterations")
+ 
                             if macroiteration > 0 and convergence == 1:
-
+                                self.casscf_converged = True 
                                 self.CASSCFeigs = eigenvals
                                 self.CASSCFvecs = eigenvecs
 
@@ -4095,31 +4098,30 @@ class PFHamiltonianGenerator:
                                 if self.save_orbital == True:
                                     # print(new_C)
                                     np.savetxt("orbital.out", self.opt_C)
-                                    
-                                    #####for i in range(self.davidson_roots):
-                                    #####    one_rdm = np.zeros((self.n_occupied * self.n_occupied))
-                                    #####    c_build_one_rdm(
-                                    #####        eigenvecs,
-                                    #####        one_rdm,
-                                    #####        self.table,
-                                    #####        self.n_act_a,
-                                    #####        self.n_act_orb,
-                                    #####        self.n_in_a,
-                                    #####        np1,
-                                    #####        i,
-                                    #####        i,
-                                    #####    )
-                                    #####    one_rdm = one_rdm.reshape((self.n_occupied, self.n_occupied))
-                                    #####    one_rdm_full = np.zeros((self.nmo, self.nmo))
-                                    #####    one_rdm_full[:self.n_occupied,:self.n_occupied] = one_rdm[:,:] 
-                                    #####    _eig, _vec = np.linalg.eigh(one_rdm_full)
-                                    #####    _idx = _eig.argsort()[::-1]
-                                    #####    self.noocs = _eig[_idx]
-                                    #####    print(self.noocs)
-                                    ######np.savetxt("occupation_number.out", self.noocs)
-                                    ######self.no_vec = _vec[:, _idx]
-                                    ######self.nat_orbs = np.dot(new_C, self.no_vec)
-                                    ######np.savetxt("natural_orbital.out", self.nat_orbs)
+                                    self.build_state_average_rdms(eigenvecs)
+                                    active_rdm = self.D_tu_avg.reshape(self.n_act_orb, self.n_act_orb)
+
+                                    # Optional but safe: enforce symmetry numerically before diagonalizing
+                                    active_rdm = 0.5 * (active_rdm + active_rdm.T)
+
+                                    _eig_act, _vec_act = np.linalg.eigh(active_rdm)
+                                    _idx_act = _eig_act.argsort()[::-1]
+
+                                    # Build full transformation: identity except in the active block
+                                    no_vec = np.eye(self.nmo)
+                                    no_vec[self.n_in_a:self.n_occupied, self.n_in_a:self.n_occupied] = _vec_act[:, _idx_act]
+
+                                    self.nat_orbs = np.dot(self.opt_C, no_vec)
+                                    self.noocs = np.concatenate([
+                                        2.0 * np.ones(self.n_in_a),
+                                        _eig_act[_idx_act],
+                                        np.zeros(self.nmo - self.n_occupied)
+                                    ])
+
+                                    np.savetxt("occupation_number.out", self.noocs)
+                                    np.savetxt("natural_orbital.out", self.nat_orbs)
+ 
+                              
                                 _mu_x_spin = np.einsum(
                                     "uj,vi,uv",
                                     self.opt_C[:, : self.n_occupied],
@@ -17917,7 +17919,7 @@ class PFHamiltonianGenerator:
                 active_twoeint[:, :, :, :] = self.active_twoeint[:, :, :, :]
                 active_fock_core[:, :] = self.active_fock_core[:, :]
                 d_cmo[:, :] = self.d_cmo[:, :]
-
+                self.E_core2 = self.E_core
                 # self.U_total = np.einsum("pq,qs->ps", self.U_total, self.U2)
                 # temp8 = np.zeros((self.nmo, self.nmo))
                 # temp8 = np.einsum("pq,qs->ps", self.H_spatial2, self.U2)
