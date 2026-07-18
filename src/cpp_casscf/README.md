@@ -170,13 +170,74 @@ Traced directly in helper_PFCI.py (not inferred):
   master switch (default true, matching the Python's de-facto behavior)
   rather than a purely automatic decision.
 
+## Intermediates building (`intermediates.hpp`/`.cpp`)
+
+The tensor-contraction-heavy code that produces the `A`/`G` blocks,
+gradient, and Hessian diagonal the trust-region solvers consume is now
+**fully ported and tested**:
+
+| Function | Python source | Notes |
+|---|---|---|
+| `calculate_off_diagonal_photon_constant` | helper_PFCI.py:6105-6151 | direct port |
+| `build_intermediates_internal` | helper_PFCI.py:5569-5747 | small block (occupied-space slices), used by `internal_optimization3` |
+| `build_intermediates` | helper_PFCI.py:5748-5929 | full block, `full_space==True` only (the only value ever used); note `self.J`/`self.K` are `(n_occupied, n_occupied, nmo, nmo)`, **not** `(nmo, nmo, nmo, nmo)` -- see the header doc comment |
+| `build_gradient` | helper_PFCI.py:6188-6203 | `full_space==True` branch only (the only one called, from `microiteration_optimization6`) |
+| `build_gradient_and_hessian` | helper_PFCI.py:6282-6441 | `full_space==False` branch only (the only one called, from `internal_optimization3`); the `full_space==True` branch is both unreachable *and* dominated by ~O(n^6) nested-loop debug/`allclose` validation code with no bearing on the returned values, so it wasn't ported at all |
+| `build_hessian_diagonal` | helper_PFCI.py:14416-14513 | direct port; reduction into `reduced_hessian_diagonal` reuses `build_index_map` |
+
+Deliberately **not** ported: `build_intermediates2` (dead code -- every call
+site is commented out, confirmed via grep) and `build_intermediates_with_blocks`
+(referenced only in a commented-out line; the real `G_blocks` construction is
+three reshaped slices of `build_intermediates`'s own `G` output, done inline
+at the call site).
+
+Two internal-representation surprises worth remembering if you're reading
+the Python alongside this port (both documented in `intermediates.hpp`'s
+doc comments):
+- `self.J`/`self.K` are `(n_occupied, n_occupied, nmo, nmo)`, confirmed via
+  a commented-out shape declaration at helper_PFCI.py:5480-5481 and
+  `c_full_transformation_macroiteration`'s output array shapes -- easy to
+  misread as the full `(nmo,nmo,nmo,nmo)` ERI tensor from the slicing
+  syntax alone (an earlier pass of this reasoning did exactly that, and
+  "resolved" what looked like a shape-mismatch bug in the Python before
+  realizing the actual array shape made it consistent all along).
+- `build_intermediates`'s active-active two-electron term in `A`
+  (`"vwrt,tuvw->ru"`) uses a genuinely different index pattern than
+  `build_intermediates_internal`'s analogous term (`"rtvw,tuvw->ru"`) --
+  not the same formula under different variable names. Confirmed by tracing
+  both term by term rather than assumed from the similar structure
+  elsewhere, which is why these two functions were ported as two separate,
+  literal translations rather than one shared core (unlike the LSTRS
+  bisection, where the shared structure *was* verified to be exact).
+
+Implemented as explicit nested index loops (matching each einsum's index
+labels term by term) rather than chained `Eigen::Tensor::contract()`/
+`shuffle()` calls, deliberately: some of the einsum strings relabel a
+tensor's own axes in a way that's easy to get subtly wrong when composing
+tensor-library primitives (e.g. `"tvuw"` applied to a tensor whose natural
+storage order is `(t,u,v,w)` really does mean literal `D(t,v,u,w)` element
+access, not a contraction over some `v`/`w` you'd have to derive the right
+`shuffle()` for) -- with dimensions this small (orbital-space), explicit
+loops cost nothing and are far easier to verify by eye against the source.
+
+**Validated against real captured data**, same methodology as the
+trust-region solvers (see "Validation against Python" below): the
+`internal_intermediates_NNN`/`full_intermediates_NNN`/`build_gradient_NNN`/
+`build_hessian_diagonal_NNN` dump categories capture every input and output
+of these functions from a live run and replay them through this port. Last
+full run: LiH -- 194/194 checks pass to ~1e-15-1e-17; H2O/6-31G (bigger
+tensors, more active-space richness) -- 710/712, the only 2 failures being
+the already-known, unrelated `internal_lstrs`/`davidson_lstrs` residuals
+documented in "Sweep findings" (neither touches this code).
+
 ## What's still open
 
 - **`HessianGuessProvider`** (needed by `DavidsonAugmentedHessianSolver`, and
   transitively by `DavidsonDrivenLstrsSolver`) has
   no real implementation yet — it depends on `build_orbital_hessian_guess`
-  (helper_PFCI.py:16413-16450+), which in turn depends on the
-  intermediates-building tensor contractions below.
+  (helper_PFCI.py:16413-16450+, `hessian_guess` at 16451+), which is still
+  unported (the intermediates-building tensor contractions it depends on
+  are done, but this function itself hasn't been read/ported yet).
 - **The macroiteration/microiteration driver loop**
   (helper_PFCI.py:2394-3060): `MacroiterationDriver::run` is now a **fully
   ported, tested** faithful port of the loop's orchestration shape — the
@@ -211,13 +272,26 @@ Traced directly in helper_PFCI.py (not inferred):
   `IntegralTransformer::transform_macroiteration` as an implementation
   detail shared with `CiStateAverageSolver`, not threaded through
   `MacroiterationDriver::run`'s signature.
-- **Intermediates building** (`build_intermediates`, `build_intermediates2`,
-  `build_intermediates_with_blocks`, `build_gradient_and_hessian`, RDM
-  contractions): the tensor-contraction-heavy code that produces the
-  `A_tilde`/`G` blocks, gradient, and Hessian diagonal these solvers consume.
-  Untouched. Probably the best candidate to prototype directly against TAMM
-  tensors once the solver layer above is stable, since Eigen has no native
-  distributed-tensor story.
+- **Real implementations of the 4 `MacroiterationDriver` collaborator
+  interfaces** still don't exist, though the hard part underneath two of
+  them (the intermediates-building math, see above) is now done:
+  - `InternalOptimizationStep` / `MicroiterationOptimizationStep`: mostly
+    plumbing at this point -- call the now-ported `build_intermediates*`/
+    `build_gradient*`/`build_hessian_diagonal`, dispatch to the
+    already-tested `LstrsSolver`/`GltrTrustRegionSolver`/
+    `DavidsonDrivenLstrsSolver`/QN solvers, and actually resolve the
+    documented `H_spatial2`/`d_cmo`/`U_total` shared-state gap above rather
+    than just flagging it.
+  - `CiStateAverageSolver`: needs `extern "C"` wrappers around `get_roots`/
+    `build_H_diag_cas_spin` (ci_solver.c, already plain C, already
+    ctypes-called from Python) plus `build_state_average_rdms`
+    (helper_PFCI.py:7992+, itself a thin wrapper around `c_build_active_rdm`
+    C calls) -- no new numerical work, just C++/C linkage.
+  - `IntegralTransformer`: same story -- `c_full_transformation_macroiteration`/
+    `c_full_transformation_internal_optimization` (orbital.c) are already
+    plain C, just need wrapping.
+  - `HessianGuessProvider`: blocked on `build_orbital_hessian_guess`/
+    `hessian_guess` below.
 
 `build_unitary_matrix` (`orbital_rotation.hpp`/`.cpp`, port of
 helper_PFCI.py:6131-6164 -- builds `exp(R)` for the antisymmetric rotation
@@ -247,24 +321,47 @@ If Eigen lives somewhere else, point `CMAKE_PREFIX_PATH` at that prefix (or
 The unit tests above check the ported solvers against synthetic/analytic
 problems. Separately, `validation/dump_lih_case.py` + `tools/validate_against_python.cpp`
 check them against **real** chemistry: a live, unmodified run of the pure-Python
-`helper_PFCI.py` driver on a real molecule, with its actual (Hessian, gradient,
-trust_radius, step) instances at the two already-ported solver call sites
-captured to disk and replayed through the corresponding C++ solver.
+`helper_PFCI.py` driver on a real molecule, with real intermediate values
+captured to disk at a series of points and replayed through the
+corresponding C++ port.
 
-This is deliberately narrower than a full CASSCF cross-check: the
-intermediates-building tensor contractions aren't ported yet (see "What's
-still open"), so there's no way to build a real `A_tilde`/`G`/gradient/Hessian
-from scratch in C++. Instead, the *Python* run builds them (as it always
-does), and the dump hooks intercept the values right before Python's own
-inline solver logic consumes them -- so what's being checked is exactly
-"does the ported C++ solver reproduce the step the Python solver actually
-took on this real problem," decoupled from whether the intermediates
-themselves are ported.
+Two flavors of check, at different points in the pipeline:
+- **Intermediates-building functions** (`build_intermediates*`/`build_gradient*`/
+  `build_hessian_diagonal`, see above): dumps capture every *input* (J/K/H_spatial2/
+  d_cmo/RDMs/...) and Python's actual output (A/G/gradient_tilde/hessian_tilde/
+  hessian_diagonal), and this C++ port is run from scratch on those same
+  inputs and compared directly -- a true from-the-ground-up reproduction,
+  not just "given Python's own intermediate, does the next step match."
+- **Trust-region solvers**: since the collaborator interfaces around them
+  aren't wired up yet (see "What's still open"), these dumps instead
+  intercept Python's already-built (Hessian, gradient, trust_radius) right
+  before Python's own inline solver logic consumes it, and check that the
+  ported C++ solver reproduces the same step -- decoupled from whether
+  everything upstream of that point is ported, since (as of this port) it
+  now actually is, but the dumps predate that and there's no need to change
+  a validation methodology that already works.
 
 **How it works**: `helper_PFCI.py` has a handful of `_dump_cpp_casscf_validation_case(...)`
 calls, active only when `CPP_CASSCF_VALIDATION_DIR` is set (zero effect on
-normal runs):
+normal runs). Arrays of rank > 2 (e.g. the `J`/`K`/`G` tensors) can't go
+through `np.savetxt` directly, so the dump helper flattens them (C-order)
+into `<name>.txt` plus a `<name>.shape.txt` sidecar; `load_tensor4` on the
+C++ side reads both back into a `Tensor4` via `TensorMap` (safe since
+`Tensor4` is `RowMajor`, matching numpy's C-order exactly -- see
+`tensor_types.hpp`).
 
+- `internal_optimization3`'s `build_intermediates_internal` +
+  `build_gradient_and_hessian` calls dump every input (occupied J/K/fock_core/
+  d_cmo, the RDMs, `off_diagonal_constant`, `omega`, dims) plus both
+  functions' outputs (`A1`/`G1`/`gradient_tilde1`/`hessian_tilde1`) as one
+  `internal_intermediates_NNN/` case. Replayed by calling this port's
+  `build_intermediates_internal` then `build_gradient_and_hessian` on the
+  same inputs from scratch.
+- `microiteration_optimization6`'s `build_intermediates` call dumps its
+  inputs (`H_spatial2`/`d_cmo`/`J`/`K`/RDMs/`off_diagonal_constant`/`omega`/dims)
+  and outputs (`A`/`G`) as `full_intermediates_NNN/`. Its `build_gradient`
+  and `build_hessian_diagonal` calls each get their own
+  `build_gradient_NNN/`/`build_hessian_diagonal_NNN/` case the same way.
 - `internal_optimization3`'s inline LSTRS bisection (helper_PFCI.py:6996-7548)
   dumps `hessian_tilde_ai`/`gradient_tilde_ai`/`trust_radius`/`step` once the
   step is finalized. Replayed through `LstrsSolver`.
@@ -495,6 +592,12 @@ include/casscf/
                                          see "What's still open")
   minres_solver.hpp                     faithful port of scipy.sparse.linalg.minres (implemented, tested);
                                          used by LstrsSolver's hard_case==2
+  tensor_types.hpp                      Tensor2/3/4 (Eigen::Tensor, RowMajor), Matrix<->Tensor2 helpers,
+                                         build_index_map (shared rotation-parameter-pair enumeration)
+  intermediates.hpp                     build_intermediates(_internal)/build_gradient(_and_hessian)/
+                                         build_hessian_diagonal -- the A/G/gradient/Hessian-diagonal
+                                         tensor-contraction math (implemented, tested; see
+                                         "Intermediates building" above)
 src/                                    corresponding .cpp files
 tests/
   test_pcg_trust_region.cpp             analytic smoke tests (interior/boundary/negative-curvature)

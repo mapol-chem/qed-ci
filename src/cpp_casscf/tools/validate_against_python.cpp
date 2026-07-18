@@ -66,12 +66,26 @@
 // matrix by unit-vector probing (orbital_sigma3 for qn_gltr, get_bfgs_mv
 // directly for qn_bfgs -- no need to port L-BFGS to C++ at all, it's just
 // some Hv function from the outside) and replayed exactly like gltr_NNN.
+// internal_intermediates_NNN/, full_intermediates_NNN/, build_gradient_NNN/
+// and build_hessian_diagonal_NNN/ cases (from internal_optimization3's
+// build_intermediates_internal + build_gradient_and_hessian, and
+// microiteration_optimization6's build_intermediates + build_gradient +
+// build_hessian_diagonal) replay the ported intermediates-building
+// functions (cpp_casscf/include/casscf/intermediates.hpp) against real
+// captured (Hessian, gradient, RDM, ...) inputs and check the resulting
+// A/G/gradient_tilde/hessian_tilde/hessian_diagonal tensors match Python's
+// actual values -- this is the primary correctness check for that port,
+// given how many einsum index-order derivations it required (see that
+// header's doc comments for the specific reasoning behind each one).
 #include "casscf/davidson_driven_lstrs_solver.hpp"
 #include "casscf/gltr_trust_region_solver.hpp"
 #include "casscf/hessian_operator.hpp"
+#include "casscf/intermediates.hpp"
 #include "casscf/lstrs_solver.hpp"
+#include "casscf/tensor_types.hpp"
 
 #include <algorithm>
+#include <cmath>
 #include <cstdio>
 #include <filesystem>
 #include <fstream>
@@ -125,6 +139,59 @@ Vector load_text_vector(const fs::path& path) {
 
 double load_scalar(const fs::path& path) { return load_text_vector(path)(0); }
 
+// Reads <base>.txt (flat, C-order raveled data, one value per line -- see
+// _dump_cpp_casscf_validation_case's ndim>2 branch in helper_PFCI.py) plus
+// <base>.shape.txt (the 4 dimensions, space-separated) and reconstructs a
+// Tensor4. Tensor4 is RowMajor (see tensor_types.hpp), matching numpy's
+// C-order ravel exactly, so this is a straight element-for-element copy via
+// TensorMap, not a transpose.
+Tensor4 load_tensor4(const fs::path& base_path) {
+    std::ifstream shape_in(base_path.string() + ".shape.txt");
+    if (!shape_in) throw std::runtime_error("cannot open shape file for " + base_path.string());
+    int d0, d1, d2, d3;
+    shape_in >> d0 >> d1 >> d2 >> d3;
+
+    const Vector flat = load_text_vector(fs::path(base_path.string() + ".txt"));
+    if (flat.size() != static_cast<long>(d0) * d1 * d2 * d3) {
+        throw std::runtime_error("tensor size mismatch for " + base_path.string());
+    }
+    Eigen::TensorMap<const Tensor4> mapped(flat.data(), d0, d1, d2, d3);
+    Tensor4 t = mapped; // copies out of `flat`'s storage before it goes out of scope
+    return t;
+}
+
+Dimensions load_dims(const fs::path& path) {
+    const Vector v = load_text_vector(path);
+    Dimensions dims;
+    dims.n_in_a = static_cast<int>(std::lround(v(0)));
+    dims.n_act_orb = static_cast<int>(std::lround(v(1)));
+    dims.n_virtual = static_cast<int>(std::lround(v(2)));
+    dims.nmo = static_cast<int>(std::lround(v(3)));
+    dims.n_occupied = static_cast<int>(std::lround(v(4)));
+    return dims;
+}
+
+double tensor4_diff_norm(const Tensor4& a, const Tensor4& b) {
+    double acc = 0.0;
+    for (int i = 0; i < a.dimension(0); ++i)
+        for (int j = 0; j < a.dimension(1); ++j)
+            for (int k = 0; k < a.dimension(2); ++k)
+                for (int l = 0; l < a.dimension(3); ++l) {
+                    const double d = a(i, j, k, l) - b(i, j, k, l);
+                    acc += d * d;
+                }
+    return std::sqrt(acc);
+}
+
+double tensor4_norm(const Tensor4& a) {
+    double acc = 0.0;
+    for (int i = 0; i < a.dimension(0); ++i)
+        for (int j = 0; j < a.dimension(1); ++j)
+            for (int k = 0; k < a.dimension(2); ++k)
+                for (int l = 0; l < a.dimension(3); ++l) acc += a(i, j, k, l) * a(i, j, k, l);
+    return std::sqrt(acc);
+}
+
 void report(const std::string& label, double step_err, double step_scale, double tol) {
     ++checked;
     const double rel_err = step_err / step_scale;
@@ -136,6 +203,98 @@ void report(const std::string& label, double step_err, double step_scale, double
         std::printf("PASS: %-20s step error %.3e (rel %.3e, tol %.3e)\n",
                     label.c_str(), step_err, rel_err, tol);
     }
+}
+
+void validate_internal_intermediates(const fs::path& dir) {
+    const Dimensions dims = load_dims(dir / "dims.txt");
+    const Matrix occupied_fock_core = load_text_matrix(dir / "occupied_fock_core.txt");
+    const Matrix occupied_d_cmo = load_text_matrix(dir / "occupied_d_cmo.txt");
+    const Tensor4 occupied_J = load_tensor4(dir / "occupied_J");
+    const Tensor4 occupied_K = load_tensor4(dir / "occupied_K");
+    const Matrix D_tu_avg = load_text_matrix(dir / "D_tu_avg.txt");
+    const Tensor4 D_tuvw_avg = load_tensor4(dir / "D_tuvw_avg");
+    const Matrix Dpe_tu_avg = load_text_matrix(dir / "Dpe_tu_avg.txt");
+    const double off_diagonal_constant = load_scalar(dir / "off_diagonal_constant.txt");
+    const double omega = load_scalar(dir / "omega.txt");
+
+    const Matrix expected_A1 = load_text_matrix(dir / "A1.txt");
+    const Tensor4 expected_G1 = load_tensor4(dir / "G1");
+    const Matrix expected_gradient_tilde1 = load_text_matrix(dir / "gradient_tilde1.txt");
+    const Tensor4 expected_hessian_tilde1 = load_tensor4(dir / "hessian_tilde1");
+
+    const SmallBlockIntermediates interm = build_intermediates_internal(
+        occupied_fock_core, occupied_d_cmo, occupied_J, occupied_K, D_tu_avg, D_tuvw_avg,
+        Dpe_tu_avg, off_diagonal_constant, omega, dims);
+
+    const std::string label = dir.filename().string();
+    report(label + " A", (interm.A - expected_A1).norm(), std::max(1.0, expected_A1.norm()), 1e-8);
+    report(label + " G", tensor4_diff_norm(interm.G, expected_G1), std::max(1.0, tensor4_norm(expected_G1)), 1e-8);
+
+    const GradientAndHessianResult gh = build_gradient_and_hessian(interm.A, interm.G, dims);
+    report(label + " gradient_tilde", (gh.gradient_tilde - expected_gradient_tilde1).norm(),
+           std::max(1.0, expected_gradient_tilde1.norm()), 1e-8);
+    report(label + " hessian_tilde", tensor4_diff_norm(gh.hessian_tilde, expected_hessian_tilde1),
+           std::max(1.0, tensor4_norm(expected_hessian_tilde1)), 1e-8);
+}
+
+void validate_full_intermediates(const fs::path& dir) {
+    const Dimensions dims = load_dims(dir / "dims.txt");
+    const Matrix H_spatial2 = load_text_matrix(dir / "H_spatial2.txt");
+    const Matrix d_cmo = load_text_matrix(dir / "d_cmo.txt");
+    const Tensor4 J = load_tensor4(dir / "J");
+    const Tensor4 K = load_tensor4(dir / "K");
+    const Matrix D_tu_avg = load_text_matrix(dir / "D_tu_avg.txt");
+    const Tensor4 D_tuvw_avg = load_tensor4(dir / "D_tuvw_avg");
+    const Matrix Dpe_tu_avg = load_text_matrix(dir / "Dpe_tu_avg.txt");
+    const double off_diagonal_constant = load_scalar(dir / "off_diagonal_constant.txt");
+    const double omega = load_scalar(dir / "omega.txt");
+
+    const Matrix expected_A = load_text_matrix(dir / "A.txt");
+    const Tensor4 expected_G = load_tensor4(dir / "G");
+
+    const FullBlockIntermediates interm = build_intermediates(
+        H_spatial2, d_cmo, J, K, D_tu_avg, D_tuvw_avg, Dpe_tu_avg, off_diagonal_constant, omega, dims);
+
+    const std::string label = dir.filename().string();
+    report(label + " A", (interm.A - expected_A).norm(), std::max(1.0, expected_A.norm()), 1e-8);
+    report(label + " G", tensor4_diff_norm(interm.G, expected_G), std::max(1.0, tensor4_norm(expected_G)), 1e-8);
+}
+
+void validate_build_gradient(const fs::path& dir) {
+    const Dimensions dims = load_dims(dir / "dims.txt");
+    const Matrix U = load_text_matrix(dir / "U.txt");
+    const Matrix A = load_text_matrix(dir / "A.txt");
+    const Tensor4 G = load_tensor4(dir / "G");
+    const Matrix expected_A_tilde_full = load_text_matrix(dir / "A_tilde.txt"); // (nmo, nmo)
+    const Matrix expected_gradient_tilde = load_text_matrix(dir / "gradient_tilde.txt");
+
+    const GradientResult result = build_gradient(U, A, G, dims);
+
+    // Python's A_tilde is (nmo, nmo) but build_gradient only ever populates
+    // its first n_occupied columns (see intermediates.hpp's doc comment) --
+    // compare against just that block.
+    const Matrix expected_A_tilde = expected_A_tilde_full.leftCols(dims.n_occupied);
+    const std::string label = dir.filename().string();
+    report(label + " A_tilde", (result.A_tilde - expected_A_tilde).norm(), std::max(1.0, expected_A_tilde.norm()), 1e-8);
+    report(label + " gradient_tilde", (result.gradient_tilde - expected_gradient_tilde).norm(),
+           std::max(1.0, expected_gradient_tilde.norm()), 1e-8);
+}
+
+void validate_build_hessian_diagonal(const fs::path& dir) {
+    const Dimensions dims = load_dims(dir / "dims.txt");
+    const Matrix U = load_text_matrix(dir / "U.txt");
+    const Tensor4 G = load_tensor4(dir / "G");
+    const Matrix A_tilde = load_text_matrix(dir / "A_tilde.txt"); // (nmo, nmo)
+    const Matrix expected_hessian_diagonal = load_text_matrix(dir / "hessian_diagonal.txt");
+    const Vector expected_reduced = load_text_vector(dir / "reduced_hessian_diagonal.txt");
+
+    const HessianDiagonalResult result = build_hessian_diagonal(U, G, A_tilde, dims);
+
+    const std::string label = dir.filename().string();
+    report(label + " hessian_diagonal", (result.hessian_diagonal - expected_hessian_diagonal).norm(),
+           std::max(1.0, expected_hessian_diagonal.norm()), 1e-8);
+    report(label + " reduced_hessian_diagonal", (result.reduced_hessian_diagonal - expected_reduced).norm(),
+           std::max(1.0, expected_reduced.norm()), 1e-8);
 }
 
 void validate_internal_lstrs(const fs::path& dir) {
@@ -240,6 +399,7 @@ int main(int argc, char** argv) {
     }
 
     std::vector<fs::path> internal_dirs, gltr_dirs, davidson_dirs, qn_gltr_dirs, qn_bfgs_dirs;
+    std::vector<fs::path> internal_interm_dirs, full_interm_dirs, build_gradient_dirs, hessian_diag_dirs;
     for (const auto& entry : fs::directory_iterator(dump_dir)) {
         if (!entry.is_directory()) continue;
         const std::string name = entry.path().filename().string();
@@ -248,13 +408,25 @@ int main(int argc, char** argv) {
         else if (name.rfind("qn_gltr_", 0) == 0) qn_gltr_dirs.push_back(entry.path());
         else if (name.rfind("qn_bfgs_", 0) == 0) qn_bfgs_dirs.push_back(entry.path());
         else if (name.rfind("gltr_", 0) == 0) gltr_dirs.push_back(entry.path());
+        else if (name.rfind("internal_intermediates_", 0) == 0) internal_interm_dirs.push_back(entry.path());
+        else if (name.rfind("full_intermediates_", 0) == 0) full_interm_dirs.push_back(entry.path());
+        else if (name.rfind("build_gradient_", 0) == 0) build_gradient_dirs.push_back(entry.path());
+        else if (name.rfind("build_hessian_diagonal_", 0) == 0) hessian_diag_dirs.push_back(entry.path());
     }
     std::sort(internal_dirs.begin(), internal_dirs.end());
     std::sort(gltr_dirs.begin(), gltr_dirs.end());
     std::sort(davidson_dirs.begin(), davidson_dirs.end());
     std::sort(qn_gltr_dirs.begin(), qn_gltr_dirs.end());
     std::sort(qn_bfgs_dirs.begin(), qn_bfgs_dirs.end());
+    std::sort(internal_interm_dirs.begin(), internal_interm_dirs.end());
+    std::sort(full_interm_dirs.begin(), full_interm_dirs.end());
+    std::sort(build_gradient_dirs.begin(), build_gradient_dirs.end());
+    std::sort(hessian_diag_dirs.begin(), hessian_diag_dirs.end());
 
+    for (const auto& d : internal_interm_dirs) validate_internal_intermediates(d);
+    for (const auto& d : full_interm_dirs) validate_full_intermediates(d);
+    for (const auto& d : build_gradient_dirs) validate_build_gradient(d);
+    for (const auto& d : hessian_diag_dirs) validate_build_hessian_diagonal(d);
     for (const auto& d : internal_dirs) validate_internal_lstrs(d);
     for (const auto& d : gltr_dirs) validate_gltr(d);
     for (const auto& d : davidson_dirs) validate_davidson_lstrs(d);

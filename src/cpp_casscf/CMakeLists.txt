@@ -34,6 +34,7 @@ add_library(casscf_trust_region
     src/orbital_rotation.cpp
     src/macroiteration_driver.cpp
     src/minres_solver.cpp
+    src/intermediates.cpp
 )
 target_include_directories(casscf_trust_region PUBLIC include)
 target_link_libraries(casscf_trust_region PUBLIC Eigen3::Eigen)
