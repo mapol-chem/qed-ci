@@ -100,6 +100,14 @@ struct GradientResult {
 // (nmo, n_occupied) shape rather than carrying the always-zero remainder.
 GradientResult build_gradient(const Matrix& U, const Matrix& A, const Tensor4& G, const Dimensions& dims);
 
+// Embeds build_gradient's (nmo, n_occupied) A_tilde back into the full
+// (nmo, nmo) matrix it's a slice of (virtual-orbital columns zero, matching
+// the Python's own A_tilde array -- see build_gradient's doc comment), then
+// returns A_tilde_full + A_tilde_full.transpose(). Matches
+// `sym_A_tilde = A_tilde + A_tilde.T` at helper_PFCI.py:15544, the input
+// OrbitalHessianGuessProvider (hessian_guess.hpp) expects.
+Matrix embed_and_symmetrize_A_tilde(const Matrix& A_tilde_occ_cols, const Dimensions& dims);
+
 struct GradientAndHessianResult {
     Matrix gradient_tilde;  // (n_occupied, n_occupied)
     Tensor4 hessian_tilde;  // (n_occupied, n_occupied, n_occupied, n_occupied)

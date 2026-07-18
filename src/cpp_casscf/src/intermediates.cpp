@@ -381,6 +381,12 @@ GradientResult build_gradient(const Matrix& U, const Matrix& A, const Tensor4& G
     return result;
 }
 
+Matrix embed_and_symmetrize_A_tilde(const Matrix& A_tilde_occ_cols, const Dimensions& dims) {
+    Matrix A_tilde_full = Matrix::Zero(dims.nmo, dims.nmo);
+    A_tilde_full.leftCols(dims.n_occupied) = A_tilde_occ_cols;
+    return A_tilde_full + A_tilde_full.transpose();
+}
+
 GradientAndHessianResult build_gradient_and_hessian(const Matrix& A, const Tensor4& G, const Dimensions& dims) {
     const int n_occupied = dims.n_occupied;
 

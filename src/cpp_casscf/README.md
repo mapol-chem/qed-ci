@@ -26,6 +26,8 @@ retargeting onto TAMM's distributed tensor API.
 | `build_unitary_matrix` | **Fully ported, tested** | helper_PFCI.py:6131-6164 |
 | `MacroiterationDriver::run` (outer loop orchestration) | **Fully ported, tested** against mocked collaborators (see "documented gap" below) | helper_PFCI.py:2394-3060 |
 | `minres_solve` (Paige/Saunders MINRES) | **Fully ported, tested** against real ill-conditioned chemistry data; used by `LstrsSolver`'s hard_case==2 | helper_PFCI.py:7547-7549 (`scipy.sparse.linalg.minres` call site) |
+| `build_intermediates(_internal)`/`build_gradient(_and_hessian)`/`build_hessian_diagonal` | **Fully ported, tested** against real captured data | see "Intermediates building" section |
+| `OrbitalHessianGuessProvider` (real `HessianGuessProvider`) | **Fully ported, tested** against real captured data | helper_PFCI.py:16614-16712 (`build_orbital_hessian_guess`/`hessian_guess`) |
 
 ### A naming correction from the first pass of this scaffold
 
@@ -230,14 +232,35 @@ tensors, more active-space richness) -- 710/712, the only 2 failures being
 the already-known, unrelated `internal_lstrs`/`davidson_lstrs` residuals
 documented in "Sweep findings" (neither touches this code).
 
+## `OrbitalHessianGuessProvider` (`hessian_guess.hpp`/`.cpp`)
+
+**Fully ported and tested.** Faithful port of `hessian_guess` /
+`build_orbital_hessian_guess` (helper_PFCI.py:16614-16712, the latter a
+`@nb.njit`-compiled staticmethod) -- the real `HessianGuessProvider`
+implementation `DavidsonAugmentedHessianSolver`/`DavidsonDrivenLstrsSolver`
+were missing. Computes individual elements of the full (matrix-free)
+reduced orbital Hessian at specific `index_map`-pair coordinates on demand,
+rather than materializing the whole `index_map_size x index_map_size`
+matrix -- this is what lets the Davidson solver build a small "guess
+subspace" Hessian block cheaply. The index *selection* (ranking by
+`|gradient_i / diagonal_i|`) already lived in `DavidsonAugmentedHessianSolver`
+itself from an earlier session; this class only answers "what is the
+Hessian element at these coordinates," exactly like the Python function it
+ports.
+
+Needs `sym_A_tilde = A_tilde_full + A_tilde_full.transpose()`
+(helper_PFCI.py:15544), where `A_tilde_full` is `build_gradient`'s
+`(nmo, n_occupied)` `A_tilde` embedded back into the full `(nmo, nmo)`
+shape it's a slice of (virtual-orbital columns zero) -- `embed_and_symmetrize_A_tilde`
+in `intermediates.hpp` does exactly that embedding, added alongside this.
+
+**Validated against real captured data**: `hessian_guess_NNN/` dump cases
+capture `U`/`sym_A_tilde`/`reduced_gradient`/`G`/the selected `idx` plus
+Python's actual `guess_hessian`/`guess_gradient`. LiH: 4/4 checks (2 cases)
+match to 0.0-1e-16. H2O/6-31G: 22/22 checks (11 cases) match to ~1e-15-1e-18.
+
 ## What's still open
 
-- **`HessianGuessProvider`** (needed by `DavidsonAugmentedHessianSolver`, and
-  transitively by `DavidsonDrivenLstrsSolver`) has
-  no real implementation yet — it depends on `build_orbital_hessian_guess`
-  (helper_PFCI.py:16413-16450+, `hessian_guess` at 16451+), which is still
-  unported (the intermediates-building tensor contractions it depends on
-  are done, but this function itself hasn't been read/ported yet).
 - **The macroiteration/microiteration driver loop**
   (helper_PFCI.py:2394-3060): `MacroiterationDriver::run` is now a **fully
   ported, tested** faithful port of the loop's orchestration shape — the
@@ -290,8 +313,8 @@ documented in "Sweep findings" (neither touches this code).
   - `IntegralTransformer`: same story -- `c_full_transformation_macroiteration`/
     `c_full_transformation_internal_optimization` (orbital.c) are already
     plain C, just need wrapping.
-  - `HessianGuessProvider`: blocked on `build_orbital_hessian_guess`/
-    `hessian_guess` below.
+  - `HessianGuessProvider` now has a real implementation
+    (`OrbitalHessianGuessProvider`, see above) -- nothing left here for it.
 
 `build_unitary_matrix` (`orbital_rotation.hpp`/`.cpp`, port of
 helper_PFCI.py:6131-6164 -- builds `exp(R)` for the antisymmetric rotation
@@ -362,6 +385,12 @@ C++ side reads both back into a `Tensor4` via `TensorMap` (safe since
   and outputs (`A`/`G`) as `full_intermediates_NNN/`. Its `build_gradient`
   and `build_hessian_diagonal` calls each get their own
   `build_gradient_NNN/`/`build_hessian_diagonal_NNN/` case the same way.
+- `Davidson_augmented_hessian_solve6`'s `build_orbital_hessian_guess` call
+  (helper_PFCI.py:15551, `restart == False` only -- the guess subspace is
+  only built once per outer bisection sequence) dumps
+  `U`/`sym_A_tilde`/`reduced_gradient`/`G`/the selected `idx` plus Python's
+  actual `guess_hessian`/`guess_gradient` as `hessian_guess_NNN/`. Replayed
+  through `OrbitalHessianGuessProvider`.
 - `internal_optimization3`'s inline LSTRS bisection (helper_PFCI.py:6996-7548)
   dumps `hessian_tilde_ai`/`gradient_tilde_ai`/`trust_radius`/`step` once the
   step is finalized. Replayed through `LstrsSolver`.
@@ -397,22 +426,30 @@ C++ side reads both back into a `Tensor4` via `TensorMap` (safe since
   gated on `n_negative > 0 and ||reduced_gradient|| > 1e-3` so it only fires
   for genuine Davidson-bisection solves, not the GLTR branch or the
   small-gradient Newton fallback that shares the same `step` variable.
-  Replayed through `DavidsonDrivenLstrsSolver` -- see below for how, since
-  `HessianGuessProvider` isn't real yet.
+  Replayed through `DavidsonDrivenLstrsSolver` -- see below for the
+  validation strategy this uses.
 
-**`n_negative > 0` needs a different validation strategy than the other two.**
-Python's production path there uses a genuinely subspace-approximate
-algorithm, and this module's `HessianGuessProvider` has no real
-implementation (it needs `build_orbital_hessian_guess`, still unported), so
-there's no way to run `DavidsonDrivenLstrsSolver` the way Python actually
-would on this problem. Instead, `validate_davidson_lstrs` follows the same
-methodology already established in `test_davidson_driven_lstrs_solver.cpp`
-/ `test_davidson_expansion_loop.cpp`: cross-validate against `LstrsSolver`'s
-dense/exact answer under a guess provider forced to cover the whole space
-(`DenseGuessProviderWithGradient`, same class as those tests) -- now on the
-real, materialized chemistry Hessian instead of a synthetic one. Python's
-actual step is also loaded and printed for information (not pass/fail),
-since it isn't expected to match a full-coverage run exactly.
+**`n_negative > 0` still uses a different validation strategy than the
+other two, even though `HessianGuessProvider` now has a real implementation
+(`OrbitalHessianGuessProvider`, validated separately via `hessian_guess_NNN`
+above).** Python's production path there uses a genuinely
+subspace-approximate Davidson algorithm on a small guess subspace, so
+there's still no way to make `DavidsonDrivenLstrsSolver` reproduce Python's
+*exact* step here (that would need the guess subspace to be selected
+identically, not just computed correctly once selected). Instead,
+`validate_davidson_lstrs` follows the same methodology already established
+in `test_davidson_driven_lstrs_solver.cpp` / `test_davidson_expansion_loop.cpp`:
+cross-validate against `LstrsSolver`'s dense/exact answer under a guess
+provider forced to cover the whole space (`DenseGuessProviderWithGradient`,
+same synthetic-but-exact-coverage class as those tests, not
+`OrbitalHessianGuessProvider`) -- now on the real, materialized chemistry
+Hessian instead of a synthetic one. Python's actual step is also loaded and
+printed for information (not pass/fail), since it isn't expected to match a
+full-coverage run exactly. Swapping in `OrbitalHessianGuessProvider` with
+the *actual* selected guess subspace (rather than forcing full coverage)
+would let this cross-check the real Davidson expansion/subspace-selection
+logic against Python's real intermediate steps, not just the final step --
+a reasonable next enhancement, not done here.
 
 - `microiteration_optimization6`'s `qn_optimization == True` dispatch
   (helper_PFCI.py:11144-11180) has two sub-branches, both dumped the same
@@ -595,9 +632,11 @@ include/casscf/
   tensor_types.hpp                      Tensor2/3/4 (Eigen::Tensor, RowMajor), Matrix<->Tensor2 helpers,
                                          build_index_map (shared rotation-parameter-pair enumeration)
   intermediates.hpp                     build_intermediates(_internal)/build_gradient(_and_hessian)/
-                                         build_hessian_diagonal -- the A/G/gradient/Hessian-diagonal
-                                         tensor-contraction math (implemented, tested; see
-                                         "Intermediates building" above)
+                                         build_hessian_diagonal/embed_and_symmetrize_A_tilde -- the
+                                         A/G/gradient/Hessian-diagonal tensor-contraction math
+                                         (implemented, tested; see "Intermediates building" above)
+  hessian_guess.hpp                     OrbitalHessianGuessProvider, the real HessianGuessProvider
+                                         (implemented, tested; see that section above)
 src/                                    corresponding .cpp files
 tests/
   test_pcg_trust_region.cpp             analytic smoke tests (interior/boundary/negative-curvature)

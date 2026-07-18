@@ -79,6 +79,7 @@
 // header's doc comments for the specific reasoning behind each one).
 #include "casscf/davidson_driven_lstrs_solver.hpp"
 #include "casscf/gltr_trust_region_solver.hpp"
+#include "casscf/hessian_guess.hpp"
 #include "casscf/hessian_operator.hpp"
 #include "casscf/intermediates.hpp"
 #include "casscf/lstrs_solver.hpp"
@@ -297,6 +298,33 @@ void validate_build_hessian_diagonal(const fs::path& dir) {
            std::max(1.0, expected_reduced.norm()), 1e-8);
 }
 
+void validate_hessian_guess(const fs::path& dir) {
+    const Dimensions dims = load_dims(dir / "dims.txt");
+    const Matrix U = load_text_matrix(dir / "U.txt");
+    const Matrix sym_A_tilde = load_text_matrix(dir / "sym_A_tilde.txt");
+    const Vector reduced_gradient = load_text_vector(dir / "reduced_gradient.txt");
+    const Tensor4 G = load_tensor4(dir / "G");
+    const Vector idx_double = load_text_vector(dir / "idx.txt");
+
+    std::vector<int> idx(idx_double.size());
+    for (int i = 0; i < idx_double.size(); ++i) idx[i] = static_cast<int>(std::lround(idx_double(i)));
+
+    const Matrix expected_hessian = load_text_matrix(dir / "guess_hessian.txt");
+    const Vector expected_gradient = load_text_vector(dir / "guess_gradient.txt");
+
+    const OrbitalHessianGuessProvider provider(U, sym_A_tilde, reduced_gradient, G,
+                                                build_index_map(dims), dims.n_occupied);
+    Matrix hessian_block;
+    Vector gradient_block;
+    provider.guess_block(idx, hessian_block, gradient_block);
+
+    const std::string label = dir.filename().string();
+    report(label + " guess_hessian", (hessian_block - expected_hessian).norm(),
+           std::max(1.0, expected_hessian.norm()), 1e-8);
+    report(label + " guess_gradient", (gradient_block - expected_gradient).norm(),
+           std::max(1.0, expected_gradient.norm()), 1e-8);
+}
+
 void validate_internal_lstrs(const fs::path& dir) {
     const Matrix H = load_text_matrix(dir / "hessian.txt");
     const Vector g = load_text_vector(dir / "gradient.txt");
@@ -400,6 +428,7 @@ int main(int argc, char** argv) {
 
     std::vector<fs::path> internal_dirs, gltr_dirs, davidson_dirs, qn_gltr_dirs, qn_bfgs_dirs;
     std::vector<fs::path> internal_interm_dirs, full_interm_dirs, build_gradient_dirs, hessian_diag_dirs;
+    std::vector<fs::path> hessian_guess_dirs;
     for (const auto& entry : fs::directory_iterator(dump_dir)) {
         if (!entry.is_directory()) continue;
         const std::string name = entry.path().filename().string();
@@ -412,6 +441,7 @@ int main(int argc, char** argv) {
         else if (name.rfind("full_intermediates_", 0) == 0) full_interm_dirs.push_back(entry.path());
         else if (name.rfind("build_gradient_", 0) == 0) build_gradient_dirs.push_back(entry.path());
         else if (name.rfind("build_hessian_diagonal_", 0) == 0) hessian_diag_dirs.push_back(entry.path());
+        else if (name.rfind("hessian_guess_", 0) == 0) hessian_guess_dirs.push_back(entry.path());
     }
     std::sort(internal_dirs.begin(), internal_dirs.end());
     std::sort(gltr_dirs.begin(), gltr_dirs.end());
@@ -422,11 +452,13 @@ int main(int argc, char** argv) {
     std::sort(full_interm_dirs.begin(), full_interm_dirs.end());
     std::sort(build_gradient_dirs.begin(), build_gradient_dirs.end());
     std::sort(hessian_diag_dirs.begin(), hessian_diag_dirs.end());
+    std::sort(hessian_guess_dirs.begin(), hessian_guess_dirs.end());
 
     for (const auto& d : internal_interm_dirs) validate_internal_intermediates(d);
     for (const auto& d : full_interm_dirs) validate_full_intermediates(d);
     for (const auto& d : build_gradient_dirs) validate_build_gradient(d);
     for (const auto& d : hessian_diag_dirs) validate_build_hessian_diagonal(d);
+    for (const auto& d : hessian_guess_dirs) validate_hessian_guess(d);
     for (const auto& d : internal_dirs) validate_internal_lstrs(d);
     for (const auto& d : gltr_dirs) validate_gltr(d);
     for (const auto& d : davidson_dirs) validate_davidson_lstrs(d);
