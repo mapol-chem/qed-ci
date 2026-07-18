@@ -33,6 +33,7 @@ add_library(casscf_trust_region
     src/solver_selector.cpp
     src/orbital_rotation.cpp
     src/macroiteration_driver.cpp
+    src/minres_solver.cpp
 )
 target_include_directories(casscf_trust_region PUBLIC include)
 target_link_libraries(casscf_trust_region PUBLIC Eigen3::Eigen)
@@ -64,6 +65,10 @@ add_executable(test_davidson_expansion_loop tests/test_davidson_expansion_loop.c
 target_link_libraries(test_davidson_expansion_loop PRIVATE casscf_trust_region)
 add_test(NAME davidson_expansion_loop COMMAND test_davidson_expansion_loop)
 
+add_executable(test_minres_solver tests/test_minres_solver.cpp)
+target_link_libraries(test_minres_solver PRIVATE casscf_trust_region)
+add_test(NAME minres_solver COMMAND test_minres_solver)
+
 add_executable(test_orbital_rotation tests/test_orbital_rotation.cpp)
 target_link_libraries(test_orbital_rotation PRIVATE casscf_trust_region)
 add_test(NAME orbital_rotation COMMAND test_orbital_rotation)
@@ -71,3 +76,9 @@ add_test(NAME orbital_rotation COMMAND test_orbital_rotation)
 add_executable(test_macroiteration_driver tests/test_macroiteration_driver.cpp)
 target_link_libraries(test_macroiteration_driver PRIVATE casscf_trust_region)
 add_test(NAME macroiteration_driver COMMAND test_macroiteration_driver)
+
+# Standalone tool, not a ctest: replays real Python-captured solver instances
+# from a dump directory (see validation/dump_lih_case.py). Run manually:
+#   ./validate_against_python <dump_dir>
+add_executable(validate_against_python tools/validate_against_python.cpp)
+target_link_libraries(validate_against_python PRIVATE casscf_trust_region)

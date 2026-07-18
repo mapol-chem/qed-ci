@@ -1,0 +1,7 @@
+run.log
+dump_lih.out
+orbital2.out
+timer.dat
+dumps_sweep_*/
+sweep_*.log
+psi.*.clean

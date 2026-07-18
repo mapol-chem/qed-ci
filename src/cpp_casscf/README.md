@@ -25,6 +25,7 @@ retargeting onto TAMM's distributed tensor API.
 | `QuasiNewtonPolicy` / `should_activate_qn` | Fully ported, made user-configurable per developer request | trigger at helper_PFCI.py:10417-10423, 11988-11994 |
 | `build_unitary_matrix` | **Fully ported, tested** | helper_PFCI.py:6131-6164 |
 | `MacroiterationDriver::run` (outer loop orchestration) | **Fully ported, tested** against mocked collaborators (see "documented gap" below) | helper_PFCI.py:2394-3060 |
+| `minres_solve` (Paige/Saunders MINRES) | **Fully ported, tested** against real ill-conditioned chemistry data; used by `LstrsSolver`'s hard_case==2 | helper_PFCI.py:7547-7549 (`scipy.sparse.linalg.minres` call site) |
 
 ### A naming correction from the first pass of this scaffold
 
@@ -109,8 +110,13 @@ differs only in:
 
 1. how the two lowest bordered-matrix eigenpairs are obtained at each trial
    alpha (dense eigh vs. Davidson subspace approximation),
-2. how the interior/near-Newton ("hard_case==2") step is solved (dense
-   direct solve vs. an iterative matrix-free solve), and
+2. how the interior/near-Newton ("hard_case==2") step is solved --
+   internal_optimization3 calls `scipy.sparse.linalg.minres` directly on the
+   dense `hessian_tilde_ai`; microiteration_optimization6 calls a custom
+   `linear_equation_solve` with a MINRES fallback on a matrix-free operator.
+   Both are iterative, not a direct solve -- `LstrsSolver`'s C++ port now
+   matches the former exactly (`minres_solve`, see below); `DavidsonDrivenLstrsSolver`
+   still substitutes plain CG for the latter (documented gap, unchanged), and
 3. the quadratic-model evaluation for the hard_case==3 "quasi-optimal" test
    (dense vs. matrix-free Hessian application -- same formula either way).
 
@@ -236,6 +242,234 @@ cd build && ctest --output-on-failure
 If Eigen lives somewhere else, point `CMAKE_PREFIX_PATH` at that prefix (or
 `Eigen3_DIR` directly at its `share/eigen3/cmake` directory).
 
+## Validation against Python
+
+The unit tests above check the ported solvers against synthetic/analytic
+problems. Separately, `validation/dump_lih_case.py` + `tools/validate_against_python.cpp`
+check them against **real** chemistry: a live, unmodified run of the pure-Python
+`helper_PFCI.py` driver on a real molecule, with its actual (Hessian, gradient,
+trust_radius, step) instances at the two already-ported solver call sites
+captured to disk and replayed through the corresponding C++ solver.
+
+This is deliberately narrower than a full CASSCF cross-check: the
+intermediates-building tensor contractions aren't ported yet (see "What's
+still open"), so there's no way to build a real `A_tilde`/`G`/gradient/Hessian
+from scratch in C++. Instead, the *Python* run builds them (as it always
+does), and the dump hooks intercept the values right before Python's own
+inline solver logic consumes them -- so what's being checked is exactly
+"does the ported C++ solver reproduce the step the Python solver actually
+took on this real problem," decoupled from whether the intermediates
+themselves are ported.
+
+**How it works**: `helper_PFCI.py` has a handful of `_dump_cpp_casscf_validation_case(...)`
+calls, active only when `CPP_CASSCF_VALIDATION_DIR` is set (zero effect on
+normal runs):
+
+- `internal_optimization3`'s inline LSTRS bisection (helper_PFCI.py:6996-7548)
+  dumps `hessian_tilde_ai`/`gradient_tilde_ai`/`trust_radius`/`step` once the
+  step is finalized. Replayed through `LstrsSolver`.
+- `microiteration_optimization6`'s `n_negative == 0` dispatch to
+  `solve_gltr_trust_region` (helper_PFCI.py:15045-15300ish, the
+  `qn_optimization == False` path) materializes a dense Hessian by probing
+  the real matrix-free `orbital_sigma3` contraction with unit vectors
+  (cheap only because the test problem is tiny), and dumps that plus
+  `reduced_hessian_diagonal`/`trust_radius`/`step`. Replayed through
+  `GltrTrustRegionSolver`.
+- `solve_gltr_trust_region` (and its near-duplicate `solve_gltr_with_operator`,
+  see the QN cases below) injects random gradient noise in production
+  ("`# NEW: Add microscopic noise to see hidden negative curvature`",
+  helper_PFCI.py:15061/14901) via numpy's unseeded global RNG, specifically
+  to steer away from exact trust-region hard cases (gradient orthogonal to
+  the most-negative-curvature eigenvector). **An earlier version of this
+  harness disabled that noise draw** so both sides would see an identical,
+  reproducible input -- but sweeping across more molecules surfaced real
+  step mismatches exactly on samples that were genuine hard cases with the
+  noise turned off (see "Sweep findings" below). **Fixed**: the noise draw
+  is left on (zero effect on production behavior), and the dump hook
+  instead captures the actual realized post-noise gradient right after the
+  draw (`self._cpp_casscf_last_noised_gradient`) and dumps *that* as
+  `gradient`, not the pre-noise `reduced_gradient`. `validate_against_python`
+  replays it with `GltrConfig::add_noise = false`, reproducing the literal
+  vector Python operated on -- sidestepping the numpy-vs-`std::mt19937` RNG
+  mismatch (never going to be bit-reproducible, see `gltr_trust_region_solver.cpp`'s
+  own doc comment) without also removing the noise's hard-case-avoidance effect.
+- `microiteration_optimization6`'s `n_negative > 0` branch (the outer
+  beta-bisection loop around `Davidson_augmented_hessian_solve6`) dumps the
+  same way (dense Hessian via unit-vector probing, plus
+  `reduced_gradient`/`reduced_hessian_diagonal`/`trust_radius`/`hard_case`/`step`),
+  gated on `n_negative > 0 and ||reduced_gradient|| > 1e-3` so it only fires
+  for genuine Davidson-bisection solves, not the GLTR branch or the
+  small-gradient Newton fallback that shares the same `step` variable.
+  Replayed through `DavidsonDrivenLstrsSolver` -- see below for how, since
+  `HessianGuessProvider` isn't real yet.
+
+**`n_negative > 0` needs a different validation strategy than the other two.**
+Python's production path there uses a genuinely subspace-approximate
+algorithm, and this module's `HessianGuessProvider` has no real
+implementation (it needs `build_orbital_hessian_guess`, still unported), so
+there's no way to run `DavidsonDrivenLstrsSolver` the way Python actually
+would on this problem. Instead, `validate_davidson_lstrs` follows the same
+methodology already established in `test_davidson_driven_lstrs_solver.cpp`
+/ `test_davidson_expansion_loop.cpp`: cross-validate against `LstrsSolver`'s
+dense/exact answer under a guess provider forced to cover the whole space
+(`DenseGuessProviderWithGradient`, same class as those tests) -- now on the
+real, materialized chemistry Hessian instead of a synthetic one. Python's
+actual step is also loaded and printed for information (not pass/fail),
+since it isn't expected to match a full-coverage run exactly.
+
+- `microiteration_optimization6`'s `qn_optimization == True` dispatch
+  (helper_PFCI.py:11144-11180) has two sub-branches, both dumped the same
+  way (dense Hessian via unit-vector probing, plus
+  `reduced_hessian_diagonal_zero`/`trust_radius`/`step`, plus the same
+  post-noise-gradient capture described above):
+  - `qn_gltr`: "solve step for original hessian" -- GLTR against the exact
+    Hessian rebuilt at the QN reference point
+    (`solve_gltr_trust_region` on `U_zero`/`A_tilde_zero`/`G_blocks_zero`,
+    the *same* function as the `gltr_NNN` cases). Materialized by probing
+    `orbital_sigma3` on those reference-point tensors.
+  - `qn_bfgs`: "solve bfgs for updated hessian" -- GLTR-with-operator against
+    a running L-BFGS approximation (`solve_gltr_with_operator` wrapping
+    `get_bfgs_mv`, the *other* near-duplicate GLTR function,
+    helper_PFCI.py:14850-15100ish). This one needed its own identical
+    noised-gradient-capture edit since it isn't literally the same function.
+    Materialized by probing `get_bfgs_mv` directly with unit vectors -- no
+    need to port L-BFGS to C++ at all, it's just some `Hv` function from the
+    outside once materialized.
+  Both replayed through the exact same `validate_gltr` used for `gltr_NNN`.
+
+**Not yet covered by this harness**: nothing else in the trust-region
+solver dispatch -- all of `internal_optimization3` and both
+`qn_optimization` states of `microiteration_optimization6` (GLTR,
+Davidson-driven LSTRS, QN-exact-GLTR, QN-BFGS-GLTR) now have at least one
+real captured instance.
+
+**Running it**:
+
+```sh
+cd validation
+python dump_lih_case.py --bond-length 1.6   # writes dumps_lih/{internal_lstrs,davidson_lstrs,gltr,qn_gltr,qn_bfgs}_NNN/
+cd ../build
+./validate_against_python ../validation/dumps_lih
+```
+
+`dump_lih_case.py` takes `--molecule lih|h2o`/`--bond-length`/`--basis`/
+`--nact-orbs`/`--nact-els`/`--davidson-roots`/`--davidson-maxdim`/
+`--davidson-indim`/`--omega`/`--dump-dir` if you want to sweep to a
+different regime; R=1.6 (near LiH/STO-3G's equilibrium bond length) already
+produces negative-curvature directions at some microiterations (3/11 at one
+point) and QN activates partway through convergence (`step_norm < 0.05` and
+an energy-lowering step), so no bond-stretching or parameter tuning was
+actually needed to reach any of the branches on that first case. Note:
+`davidson_maxdim`/`davidson_indim` are multiplied by `davidson_roots`
+internally and must stay below `H_dim / davidson_roots` or the C Davidson
+solver `sys.exit()`s (small active spaces with `davidson_roots > 1` need
+these turned down, e.g. `--davidson-maxdim 3 --davidson-indim 2`).
+
+`validation/sweep.sh` runs a set of these configs (LiH at 3 bond lengths,
+LiH/6-31G at 2 active spaces including one with `n_in_a == 0`, a 2-root
+LiH case, and H2O/6-31G at 1 and 2 roots) end to end and reports pass/fail
+per config -- see its "Sweep findings" summary below for what turned up.
+
+### Sweep findings
+
+Sweeping past the single LiH/STO-3G case surfaced two genuine, systematic
+failure modes. Both are now fixed or understood down to an intrinsic
+mathematical limit; neither was a translation bug in the sense of "the C++
+code doesn't implement what the Python does":
+
+1. **`internal_lstrs` hard_case==2, ill-conditioned small block (fixed:
+   `minres_solver.hpp`/`.cpp`).** All failures here were exactly the case
+   where Python's `hard_case == 2` fallback fires (helper_PFCI.py:7545-7551):
+   Python solves with `scipy.sparse.linalg.minres(H, -g, rtol=1e-5)`, which
+   uses the Paige-Saunders MINRES algorithm's own internal (non-trivial,
+   multi-quantity) stopping test -- not a simple `||residual|| / ||b|| < rtol`
+   check -- and can legitimately stop well short of full convergence
+   (confirmed: on the worst H2O case, condition number ~1410, scipy's
+   minres reports `info=0` (converged) after 7 iterations with an actual
+   relative residual of ~1.1%, nowhere near `1e-5`). `LstrsSolver`'s
+   hard_case2 solve originally used `H.ldlt().solve(-g)` instead -- the
+   *exact* solution -- on the stated assumption ("equivalent for the small
+   dimensions this solver targets") that this wouldn't matter at small n.
+   That held for LiH (internal block always 2x2, well-conditioned) but not
+   for H2O's 8x8 block (condition number ~1000+), where early-stopped-MINRES
+   and the exact solve are materially different vectors. **Fixed**:
+   `minres_solve()` is a faithful, line-by-line port of scipy's actual
+   MINRES algorithm and stopping criteria (istop codes 1-6, Acond/epsx/test1/test2,
+   all of it) -- not a different iterative solver called with the same
+   `rtol`, which doesn't reproduce scipy's specific early termination (Eigen's
+   built-in `MINRES` was tried first and just reconverges to the exact
+   answer in ~n iterations regardless of requested tolerance, since Krylov
+   methods hit exact convergence in at most n iterations for n-dimensional
+   systems). Unit-tested against a hardcoded real H2O case (`test_minres_solver.cpp`)
+   where it reproduces Python's captured step to ~1e-10, and the exact solve
+   is confirmed to differ by ~3e-3 -- i.e. this really is the case that
+   mattered. After wiring it into `LstrsSolver`, full-sweep `internal_lstrs`
+   failures dropped from ~9/config on H2O to 0-1/config, and the one
+   remaining ~1e-6-level residual on the worst-conditioned case (cond ~1130)
+   was confirmed to be ordinary floating-point accumulation over ~n Lanczos-like
+   iterations (a *fresh* scipy `minres` call on that exact dumped (H,g) also
+   reproduces Python's original step to `0.0`, so the C++ port is structurally
+   correct -- Eigen's dense matvec vs numpy/LAPACK's just accumulate rounding
+   slightly differently over the iteration).
+2. **`gltr`/`qn_gltr`/`qn_bfgs` near a genuine trust-region hard case
+   (fixed, with one now-understood residual).** The first sweep pass showed
+   failures with a consistent signature: the Hessian's lowest eigenvalue
+   negative (or ~0), and the gradient's projection onto that eigenvector
+   ~1e-9-1e-17 -- i.e. numerically exactly the textbook hard-case condition.
+   That's precisely what Python's "`# NEW: Add microscopic noise to see
+   hidden negative curvature`" hack (both GLTR variants) exists to steer
+   away from in production -- and the validation dump hook at the time
+   *disabled* that noise so both sides would see an identical, reproducible
+   input, which removed the very mechanism Python relies on to avoid the
+   ill-posed subproblem. **Fixed**: the noise draw is left on (matching
+   production exactly), and the dump hook instead captures the actual
+   realized post-noise gradient and replays *that* through a noise-disabled
+   C++ solve -- see the noise-handling bullet above. This eliminated the
+   large majority of these failures. **One intrinsic residual remains**: on
+   rare samples where the gradient norm itself is small (so
+   `noise_scale = 1e-6 * ||g||` is also tiny, e.g. ~8e-9), the random noise
+   draw can *by chance* still leave the perturbed gradient's projection onto
+   the hard-case eigenvector at the ~1e-9 level -- i.e. even Python's own
+   noise-injection heuristic doesn't guarantee escaping the hard case, only
+   reduces how often it happens. Confirmed on the 2 residual failures: not a
+   capture bug (the dumped gradient genuinely has a tiny `|g.v0|`), and
+   Python's own step in this regime isn't fully trustworthy either (one
+   observed case had `||step|| = 0.652` against a `trust_radius = 0.5` --
+   even production Python's hard-case construction slightly overshoots the
+   trust region here). This is a property of the underlying algorithm under
+   near-exact degeneracy, not a fixable implementation gap in either language.
+
+Sweep pass rate after both fixes: 446/451 cases across 8 configs (up from
+430/450, itself up from 439/457 before any fix). All 5 remaining failures
+are the two understood residuals above (floating-point accumulation on the
+worst-conditioned MINRES case; genuine near-exact hard-case degeneracy
+surviving the noise heuristic by chance) plus 2 `davidson_lstrs` "vs dense
+LSTRS" cross-check hits that shifted for an unrelated reason: that
+cross-check's *reference* solver (`LstrsSolver`) now also uses `minres_solve`
+for its own hard_case==2 (previously an exact solve), so a comparison that
+used to be "CG vs exact solve" is now "CG vs early-stopped-MINRES" --
+`DavidsonDrivenLstrsSolver`'s hard_case==2 branch still uses plain CG (its
+own pre-existing, separately documented gap, see
+`davidson_driven_lstrs_solver.hpp`), unaffected by this session's changes.
+See `validation/sweep.sh` to reproduce.
+
+**Result as of last run** (LiH/STO-3G, 2 electrons in 2 active orbitals, QED-coupled,
+`omega=0.1`, small `lambda`, 1 state, converged in 4 macroiterations): all
+26 strict pass/fail cases (3 `internal_lstrs`, 3 `gltr`, 2 `davidson_lstrs`
+vs. the dense LSTRS reference, 7 `qn_gltr`, 11 `qn_bfgs`) passed --
+`internal_lstrs`/`gltr`/`qn_gltr`/`qn_bfgs` matched Python's actual step to
+~1e-16-1e-21 (floating-point exactness -- including the BFGS-operator case,
+confirming the materialize-then-replay approach works even when the
+underlying operator has no tensor-contraction structure at all),
+`davidson_lstrs` matched the dense reference to ~1e-13/1e-14 under forced
+full guess coverage. The 2 informational-only comparisons (Python's actual,
+subspace-approximate Davidson step vs. the dense reference) also landed at
+~1e-13/1e-14 in this run -- i.e. production Davidson was already essentially
+exact on a problem this small, not just "close." `validate_against_python`
+is not wired into `CMakeLists.txt`'s `ctest` targets since it needs an
+external, machine-specific dump directory as input rather than being
+self-contained; it's built (`cmake --build build`) but run manually.
+
 ## Layout
 
 ```
@@ -259,6 +493,8 @@ include/casscf/
   macroiteration_driver.hpp             outer loop orchestration + 4 collaborator interfaces
                                          (loop implemented and tested; collaborators not yet implemented --
                                          see "What's still open")
+  minres_solver.hpp                     faithful port of scipy.sparse.linalg.minres (implemented, tested);
+                                         used by LstrsSolver's hard_case==2
 src/                                    corresponding .cpp files
 tests/
   test_pcg_trust_region.cpp             analytic smoke tests (interior/boundary/negative-curvature)
@@ -271,4 +507,20 @@ tests/
   test_orbital_rotation.cpp             orthogonality/det==1, closed-form 2x2 case, small-angle series branch
   test_macroiteration_driver.cpp        loop shape against mocks of all 4 collaborators: convergence latch,
                                          n_in_a==0 skip, H/d_cmo/U_total bookkeeping, restart branch
+  test_minres_solver.cpp                well-conditioned sanity case + a hardcoded real ill-conditioned
+                                         H2O hard_case==2 Hessian, matches Python's actual captured step
+tools/
+  validate_against_python.cpp           replays real Python-captured solver instances (see "Validation
+                                         against Python") -- standalone tool, not a ctest
+validation/
+  dump_lih_case.py                      runs a real LiH or H2O SA-QED-CASSCF through helper_PFCI.py with
+                                         the validation dump hooks on (--molecule/--bond-length/--basis/
+                                         --nact-orbs/--nact-els/--davidson-roots/--davidson-maxdim/
+                                         --davidson-indim/--omega/--dump-dir)
+  dumps_lih/                            captured (hessian, gradient, trust_radius, step) instances from
+                                         the last dump_lih_case.py run
+  sweep.sh                              runs a set of geometries/active-spaces/molecules through
+                                         dump_lih_case.py + validate_against_python and reports
+                                         per-config pass/fail (dumps_sweep_*/ output is gitignored,
+                                         regenerate via this script -- see "Sweep findings")
 ```

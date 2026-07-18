@@ -1,6 +1,7 @@
 #include "casscf/lstrs_solver.hpp"
 #include "casscf/bordered_eigensolve.hpp"
 #include "casscf/lstrs_bisection_core.hpp"
+#include "casscf/minres_solver.hpp"
 
 namespace casscf {
 
@@ -22,13 +23,18 @@ TrustRegionResult LstrsSolver::solve(const Vector& gradient, double trust_radius
 
     ModelValueFn model_value = [&](const Vector& x) { return gradient.dot(x) + 0.5 * x.dot(H * x); };
 
-    // Replaces scipy's iterative minres (helper_PFCI.py:7525-7527) with a
-    // direct dense solve -- equivalent for the small dimensions this solver
-    // targets, since the system is already fully materialized.
-    // NOTE: the Vector return type forces eager evaluation here -- returning
-    // the bare `H.ldlt().solve(...)` expression would dangle a reference to
-    // the temporary LDLT decomposition once this lambda returns.
-    HardCase2SolveFn hard_case2_solve = [&]() -> Vector { return H.ldlt().solve(-gradient); };
+    // Faithful port of scipy.sparse.linalg.minres(hessian_tilde_ai,
+    // -gradient_tilde_ai, rtol=1e-5) (helper_PFCI.py:7547-7549). An earlier
+    // version of this lambda used a direct dense solve instead, on the
+    // assumption it would be numerically equivalent at these small
+    // dimensions -- validating against real chemistry (see
+    // cpp_casscf/validation/, README "Sweep findings") showed that's false
+    // whenever hessian_tilde_ai is ill-conditioned, which is common exactly
+    // because hard_case==2 triggers near a singular Hessian: scipy's MINRES
+    // legitimately halts well short of full convergence under its own
+    // Paige/Saunders stopping test, and a direct solve doesn't reproduce
+    // that. See minres_solver.hpp's doc comment for detail.
+    HardCase2SolveFn hard_case2_solve = [&]() -> Vector { return minres_solve(H, -gradient, 1e-5).x; };
 
     return solve_lstrs_bisection(gradient, H.diagonal(), trust_radius, max_iter_,
                                   eigenpairs_at, model_value, hard_case2_solve);
