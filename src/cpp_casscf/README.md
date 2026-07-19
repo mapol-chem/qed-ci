@@ -34,6 +34,7 @@ retargeting onto TAMM's distributed tensor API.
 | `CasscfInternalOptimizationStep` (real `InternalOptimizationStep`) | **Fully ported, tested** against a hand-solvable all-zero case; 2 documented deviations | helper_PFCI.py:6847-7961 (`internal_optimization3`) |
 | `orbital_sigma3` (matrix-free full-space Hessian-vector product) | **Fully ported, cross-validated** against an independently-written reference implementation | helper_PFCI.py:8285-8316, 8533-8686 (`orbital_sigma3` -> `build_sigma_reduced7`) -- see "`orbital_sigma3`" below |
 | `microiteration_exact_energy`, `microiteration_predicted_energy2` | **Fully ported, tested** | helper_PFCI.py:8800-8826, 9455-9467 -- see "`microiteration_energy.hpp`/`.cpp`" below |
+| `BfgsOperator` (real `get_bfgs_mv` + damped history update) | **Fully ported, tested** | helper_PFCI.py:10857-10906 (`get_bfgs_mv`), 11128-11176 (damped update) -- see "`BfgsOperator`" below |
 
 ### A naming correction from the first pass of this scaffold
 
@@ -530,6 +531,40 @@ re-porting the LSTRS bisection loop a second time where the Python has it
 duplicated (`lstrs_bisection_core.hpp`). Tested by checking the wrapper's
 wiring (`2*g.step + sigma.step`) against the same formula computed inline.
 
+## `BfgsOperator` (`bfgs_operator.hpp`/`.cpp`)
+
+**Fully ported, tested.** Faithful port of `get_bfgs_mv`
+(helper_PFCI.py:10857-10906 -- the running L-BFGS approximation's
+matrix-vector product, `B_0*v` via `orbital_sigma3` at a fixed reference
+point plus a limited-memory recursive correction) and the damped-BFGS
+history update inside `microiteration_optimization6`
+(helper_PFCI.py:11128-11176 -- Powell damping when the curvature condition
+`y.s >= 0.1*s.Bs` fails, `m_history`-capped, oldest entry popped first).
+
+**Important distinction worth remembering**: the Python has *two*
+similar-looking but different conditions gating BFGS-related resets:
+`should_reset_bfgs_reference()` (`solver_selector.hpp`, already ported --
+the *branch-dispatch* decision between exact-Hessian GLTR and BFGS-operator
+GLTR, helper_PFCI.py's `(density_norm_change>0.025 and qn_optimization) or
+predicted_energy>0 or qn_count==1 or consecutive_skips>=3`) is **not** the
+same as the *reference-point-reset* condition
+(helper_PFCI.py:11180-11187, 12183-12187: the same three clauses but
+**without** `consecutive_skips>=3`). `BfgsOperator::reset_reference()` is
+purely mechanical (adopt new tensors, clear history); deciding *when* to
+call it needs a second, separate predicate that
+`CasscfMicroiterationOptimizationStep` must implement itself, not reuse of
+`should_reset_bfgs_reference()`.
+
+Tested (`test_bfgs_operator.cpp`): `apply()` with empty history reduces to
+plain `orbital_sigma3`; `apply()` with one hand-appended history entry
+matches the recursive update formula computed independently by hand;
+`update()`'s no-damping and damping branches both checked against the
+formula computed directly (the damping case constructed so the code path
+is genuinely exercised regardless of `orbital_sigma3`'s not-hand-predictable
+sign structure on arbitrary test data -- see the test file for the
+reasoning); the `m_history` cap correctly pops the oldest entry;
+`reset_reference()` clears history and adopts new tensors.
+
 ## What's still open
 
 - **The macroiteration/microiteration driver loop**
@@ -920,6 +955,8 @@ include/casscf/
                                          (implemented, cross-validated; see that section above)
   microiteration_energy.hpp             microiteration_exact_energy/microiteration_predicted_energy2
                                          (implemented, tested; see that section above)
+  bfgs_operator.hpp                     BfgsOperator, the real get_bfgs_mv + damped history update
+                                         (implemented, tested; see that section above)
 src/                                    corresponding .cpp files
 tests/
   test_pcg_trust_region.cpp             analytic smoke tests (interior/boundary/negative-curvature)
@@ -944,6 +981,8 @@ tests/
                                          implementation (see "orbital_sigma3" above) on 4 random small problems
   test_microiteration_energy.cpp        hand-computed case for microiteration_exact_energy; wiring check
                                          for microiteration_predicted_energy2
+  test_bfgs_operator.cpp                empty-history/one-history-entry hand formula checks, damping vs.
+                                         no-damping update() branches, history cap, reset_reference()
 tools/
   validate_against_python.cpp           replays real Python-captured solver instances (see "Validation
                                          against Python") -- standalone tool, not a ctest
