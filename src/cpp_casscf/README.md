@@ -35,6 +35,8 @@ retargeting onto TAMM's distributed tensor API.
 | `orbital_sigma3` (matrix-free full-space Hessian-vector product) | **Fully ported, cross-validated** against an independently-written reference implementation | helper_PFCI.py:8285-8316, 8533-8686 (`orbital_sigma3` -> `build_sigma_reduced7`) -- see "`orbital_sigma3`" below |
 | `microiteration_exact_energy`, `microiteration_predicted_energy2` | **Fully ported, tested** | helper_PFCI.py:8800-8826, 9455-9467 -- see "`microiteration_energy.hpp`/`.cpp`" below |
 | `BfgsOperator` (real `get_bfgs_mv` + damped history update) | **Fully ported, tested** | helper_PFCI.py:10857-10906 (`get_bfgs_mv`), 11128-11176 (damped update) -- see "`BfgsOperator`" below |
+| `microiteration_ci_integrals_transform` | **Fully ported, tested** | helper_PFCI.py:8689-8798 |
+| `CasscfMicroiterationOptimizationStep` (real `MicroiterationOptimizationStep`) | **Fully ported, tested** against a hand-solvable all-zero case; 3 documented deviations (QN path not wired in) | helper_PFCI.py:10908-12423 (`microiteration_optimization6`) -- see "`CasscfMicroiterationOptimizationStep`" below |
 
 ### A naming correction from the first pass of this scaffold
 
@@ -565,6 +567,125 @@ sign structure on arbitrary test data -- see the test file for the
 reasoning); the `m_history` cap correctly pops the oldest entry;
 `reset_reference()` clears history and adopts new tensors.
 
+## `CasscfMicroiterationOptimizationStep` (`microiteration_optimization_step.hpp`/`.cpp`)
+
+**The real `MicroiterationOptimizationStep`.** Faithful port of
+`microiteration_optimization6`'s outer/inner loop (helper_PFCI.py:10908-12423),
+assembling the pieces above: `build_intermediates` once per **outer**
+("microiteration") pass to fix that pass's reference point
+(`fi.A`/`fi.G`/`fi.E_core`/`fi.active_fock_core`/`fi.active_twoeint`/`fi.L`),
+then an **inner** ("orbital optimization step") loop that dispatches each
+trial step to `GltrTrustRegionSolver` (`n_negative==0`),
+`DavidsonDrivenLstrsSolver` (`n_negative>0`), or `PcgTrustRegionSolver` as a
+plain-CG stand-in for the gradient-small Newton fallback (see deviation 3
+below) -- all three driven by `orbital_sigma3` as a genuine matrix-free
+`HessianOperator`, and all three sharing one accept/reject test
+(`energy_change < 0.0 || hard_case == 2`). After the inner loop finishes for
+that outer pass, `microiteration_ci_integrals_transform`'s output (or, if
+nothing was accepted, a fallback to the outer pass's own reference point) is
+committed into `CasscfContext` and the injected `CiStateAverageSolver` is
+called exactly once.
+
+**Two real corrections to an earlier, in-progress architectural sketch of
+this class** (found only by re-reading the Python's actual indentation
+directly, not by trusting an earlier read) -- worth remembering since a
+first pass at this plan got both wrong:
+
+1. **The CI solve (`c_get_roots`) happens exactly once per OUTER
+   "microiteration" pass, not once per accepted INNER
+   ("orbital_optimization_step") step.** Confirmed by precise indentation
+   counting: the `occupied_J`/`gkl2`/`c_H_diag_cas_spin`/`c_get_roots`/
+   `build_state_average_rdms` block (helper_PFCI.py:12300-12412) sits at the
+   same indentation level as the `if qn_optimization == True: ... else: ...`
+   branch dispatch containing the *entire* inner `while` loop -- i.e. it runs
+   once, unconditionally, after the whole inner loop completes for that
+   outer pass, using whichever `(active_fock_core, active_twoeint, d_cmo,
+   E_core2)` tuple resulted (the last accepted inner step's, or a
+   convergence-time fallback to the outer pass's reference point if nothing
+   was accepted -- helper_PFCI.py:12300-12304, `if convergence == 1 and
+   count == 0:`).
+2. `MicroiterationOptimizationStep::run()`'s interface needed a
+   `CasscfContext&` parameter added (only `InternalOptimizationStep::run()`
+   had one before). Without it there's no channel to read
+   `context.J`/`K`/`H_spatial2`/`d_cmo`/`D_tu_avg` or commit
+   `context.gkl2`/`occupied_J`/`occupied_fock_core`/`occupied_d_cmo`/
+   `E_core2` before calling the CI solver. `CasscfContext` also gained a new
+   `E_core2` field (additive -- `self.E_core2` has no other home).
+
+**A design decision worth re-confirming if this is ever reviewed**:
+`microiteration_optimization6`'s local `occupied_J`/`occupied_fock_core`/
+`occupied_d_cmo`/`gkl2` (bare Python locals, confirmed via grep to be
+textually distinct from `self.occupied_J` etc., which belong to
+`internal_optimization3`) are, in this port, committed into the **same**
+`CasscfContext.occupied_J`/`occupied_fock_core`/`occupied_d_cmo`/`gkl2`
+fields `CasscfInternalOptimizationStep` also writes -- one shared
+"CI-solver input staging area," rather than two disjoint storage locations
+mirroring the Python's textual self-vs-local split. Deliberate: both Steps'
+values serve the identical physical role ("whatever occupied-restricted
+integrals `c_get_roots` should read next"), and the macroiteration call
+ordering (`internal_optimization3` always finishes, including its own final
+CI re-solve, before `microiteration_optimization6` starts; nothing reads
+`context.occupied_J` again until the next macroiteration's
+`transform_macroiteration` rebuilds it from scratch) means no stale-read can
+occur across the two Steps sharing the field -- see the class's own header
+doc comment for the full reasoning.
+
+**Three documented, intentional deviations** (see the class's own header doc
+comment for the full reasoning):
+
+1. The quasi-Newton (QN/L-BFGS) path (helper_PFCI.py:11211-11381, plus the
+   `step_norm < 0.05` activation trigger, helper_PFCI.py:12173-12182) is
+   **not implemented** -- this port behaves as if `QuasiNewtonPolicy::enabled`
+   is permanently `false`; every outer pass always takes the non-QN branch.
+   A real, load-bearing gap (once the Python's trigger would fire, this
+   changes which solve path executes for the rest of the run), not a
+   provably-equivalent substitution -- deferred because a correct, well-tested
+   non-QN core loop is the lower-risk, higher-value thing to land first (per
+   the developer's own view, `quasi_newton_policy.hpp`, that QN "doesn't
+   reliably help MCSCF convergence"). `BfgsOperator`/
+   `should_reset_bfgs_reference`/`QuasiNewtonPolicy` remain ready for whoever
+   wires the QN path in as a follow-up.
+2. The cross-microiteration hard_case==1 "warm start" shortcut inside the
+   Davidson bisection (helper_PFCI.py:11467-11500) is not re-ported --
+   inherited from `DavidsonDrivenLstrsSolver`, which already doesn't port it
+   (see that class's own doc comment); this class calls it fresh each inner
+   iteration, the same performance-only (not correctness) gap
+   `CasscfInternalOptimizationStep` documents for the analogous shortcut in
+   `internal_optimization3`.
+3. The gradient-small Newton fallback (`1e-7 < ||reduced_gradient|| <= 1e-3`):
+   the Python tries a custom `linear_equation_solve`, falling back to scipy
+   MINRES (helper_PFCI.py:12055-12073, not ported). Substituted with
+   `PcgTrustRegionSolver` at an effectively unconstrained trust radius
+   (reduces Steihaug-CG to plain CG) -- the same substitution precedent
+   `DavidsonDrivenLstrsSolver`'s own hard_case==2 gap already documents, since
+   this path is exactly that same "near-PSD, solve directly" regime;
+   `hard_case` is forced to `2` either way, matching the Python.
+
+**Tested** (`test_microiteration_optimization_step.cpp`) against the same
+kind of hand-solvable all-zero RDM/integral/context problem
+`test_internal_optimization_step.cpp` uses: all-zero inputs make
+`build_intermediates` return exactly zero `A`/`G`/`E_core`/`active_fock_core`/
+`active_twoeint`/`L`, so `zero_energy == 0` and `build_gradient` returns an
+exactly-zero `gradient_tilde` every pass -- the inner loop's
+`gradient_norm < 1e-7` break fires immediately, without ever needing to
+hand-derive a real GLTR/Davidson/PCG step, exercising the full
+`build_intermediates` -> `zero_energy` -> `build_gradient`/
+`build_hessian_diagonal` -> inner-loop small-gradient break -> reference-point
+fallback -> `commit_ci_solver_inputs` -> injected CI solver pipeline end to
+end. Two cases: (1) a generous `max_microiterations` -- since
+`current_energy` is identically `0.0` every pass, the outer loop's own
+small-energy-change convergence check fires deterministically as soon as
+it's eligible (`microiteration >= 2`, i.e. on the third pass), so the CI
+solver is called exactly twice (passes 0 and 1; pass 2 breaks before
+reaching the CI solve); (2) `max_microiterations == 1` cuts the run short
+before that convergence check could ever fire, verifying the separate
+microiteration cap terminates the loop on its own (CI solver called exactly
+once). Not yet validated against real captured Python data (would need a new
+`microiteration_optimization6`-level dump hook capturing a full
+outer-pass sequence, same kind of enhancement already noted as open for
+`CasscfInternalOptimizationStep` and `orbital_sigma3`) -- a reasonable next
+enhancement, not done here.
+
 ## What's still open
 
 - **The macroiteration/microiteration driver loop**
@@ -575,14 +696,16 @@ reasoning); the `m_history` cap correctly pops the oldest entry;
   restart branch ("RESTART MICROITERATION TO CORRECT INTERNAL ROTATION",
   helper_PFCI.py:2864-2896), and the H_spatial2/d_cmo/U_total rotation and
   accumulation, now all threaded through the shared `CasscfContext` (see
-  above) rather than the driver's own parameters/return value. `InternalOptimizationStep`
-  now has a real implementation (`CasscfInternalOptimizationStep`, see
-  above); `CiStateAverageSolver`/`MicroiterationOptimizationStep`/
+  above) rather than the driver's own parameters/return value.
+  `InternalOptimizationStep` and `MicroiterationOptimizationStep` now both
+  have real implementations (`CasscfInternalOptimizationStep`,
+  `CasscfMicroiterationOptimizationStep`, see above); `CiStateAverageSolver`/
   `IntegralTransformer` don't yet, so `test_macroiteration_driver.cpp` still
   exercises the driver's own loop shape against mocks of all four, and
-  `test_internal_optimization_step.cpp` exercises
-  `CasscfInternalOptimizationStep` against mocks of the two collaborators it
-  needs (`CiStateAverageSolver`, `IntegralTransformer`).
+  `test_internal_optimization_step.cpp`/`test_microiteration_optimization_step.cpp`
+  exercise each real Step against mocks of the collaborators they need
+  (`CiStateAverageSolver`, and for `CasscfInternalOptimizationStep` also
+  `IntegralTransformer`).
 
   Also deliberately not modeled: the fock_core/E_core rebuild that follows
   the JK transform in the Python (helper_PFCI.py:2990-3057, consumed by the
@@ -591,60 +714,21 @@ reasoning); the `m_history` cap correctly pops the oldest entry;
   `IntegralTransformer::transform_macroiteration` as an implementation
   detail operating on `context.J`/`context.K`, not threaded through
   `MacroiterationDriver::run`'s signature.
-- **Real implementations of 3 of the 4 `MacroiterationDriver` collaborator
+- **Real implementations of 2 of the 4 `MacroiterationDriver` collaborator
   interfaces** still don't exist, though the hard part underneath all of
   them (the intermediates-building math and the internal-optimization
-  helper functions, see above) is done:
-  - `MicroiterationOptimizationStep` (port target: `microiteration_optimization6`,
-    helper_PFCI.py:10908-12423): **all prerequisite pieces are now ported
-    and tested** -- `orbital_sigma3` (the matrix-free full-space
-    Hessian-vector product, see above), `microiteration_exact_energy`/
-    `microiteration_predicted_energy2`, `BfgsOperator` (`get_bfgs_mv` +
-    damped history update), `microiteration_ci_integrals_transform`, and
-    `FullBlockIntermediates`'s `E_core`/`active_fock_core`/
-    `active_twoeint`/`L` extension. The actual outer/inner loop
-    orchestration itself is **not yet written** -- it's large (~300+
-    lines) and deeply stateful (QN vs. non-QN dispatch, `n_negative`
-    sub-dispatch, one shared accept/reject test across three
-    step-computation paths, BFGS history threaded across inner-loop
-    iterations), so it was deliberately left for a dedicated pass rather
-    than rushed. **FLAGGED FOR SCRUTINY WHEN WRITTEN**: given how much
-    trust-region step-size-reduction/acceptance logic this loop carries
-    (the accept/reject test, `step_control`, the QN activation threshold
-    on step norm), this implementation should get a dedicated re-review
-    pass by a stronger reasoning model once written -- same flag already
-    placed on `bfgs_operator.hpp` and `orbital_sigma.hpp` (the latter also
-    flagged for future performance acceleration, being the hottest path in
-    the whole solver stack). The full architectural plan (every formula, every
-    interface gap found, the exact `break`/state-mutation line numbers)
-    is written up in this project's saved session memory, ready to
-    implement directly. Two concrete plans worth calling out here:
-    - `GltrTrustRegionSolver`/`DavidsonDrivenLstrsSolver` (both already
-      ported) are exactly what the `n_negative==0`/`n_negative>0`
-      branches need -- confirmed the ~500-line Davidson bisection loop
-      inside `microiteration_optimization6` is structurally the same
-      algorithm `DavidsonDrivenLstrsSolver` already covers, so it does
-      **not** need re-porting, only wiring with `orbital_sigma3` as a
-      genuine matrix-free `HessianOperator` (no unit-vector-probing
-      materialization needed in production, unlike the validation
-      harness).
-    - The QN path (`qn_optimization == True`) is planned to be **deferred**
-      in the first implementation, documented as a real (not
-      provably-equivalent) gap rather than silently absorbed -- it needs
-      substantial additional cross-iteration state (`old_reduced_gradient`/
-      `step` threading for the BFGS update, `qn_count`/`consecutive_skips`/
-      `density_norm_change`, and a *second*, separate reference-point-reset
-      predicate distinct from `should_reset_bfgs_reference` -- see
-      `BfgsOperator`'s doc comment) on top of an already-large core loop,
-      and per the developer's own view (`quasi_newton_policy.hpp`) QN
-      "doesn't reliably help MCSCF convergence" -- a correct, well-tested
-      non-QN core loop first is the lower-risk, higher-value order.
-    - **Interface fix needed first**: `MicroiterationOptimizationStep::run()`'s
-      `eigenvecs` parameter needs the same `const Matrix&` -> `Matrix&`
-      fix `InternalOptimizationStep::run()` already got, since
-      `microiteration_optimization6` calls `c_get_roots` internally (once
-      per outer iteration) and that update must propagate back to
-      `MacroiterationDriver::run()`'s local `eigenvecs`.
+  helper functions, see above) is done. `InternalOptimizationStep` and
+  `MicroiterationOptimizationStep` are both now **fully ported, tested, and
+  wired into `MacroiterationDriver`'s interface** (`CasscfInternalOptimizationStep`,
+  `CasscfMicroiterationOptimizationStep` -- see their dedicated sections
+  above for the full architecture, documented deviations, and open items,
+  including `CasscfMicroiterationOptimizationStep`'s **FLAGGED FOR SCRUTINY
+  WHEN WRITTEN** note, still unresolved: it hasn't yet had a dedicated
+  re-review pass by a stronger reasoning model, given how much trust-region
+  step-size-reduction/acceptance logic it carries -- same flag already
+  placed on `bfgs_operator.hpp` and `orbital_sigma.hpp`, the latter also
+  flagged for future performance acceleration as the hottest path in the
+  whole solver stack). What's left:
   - `CiStateAverageSolver`: needs `extern "C"` wrappers around `get_roots`/
     `build_H_diag_cas_spin` (ci_solver.c, already plain C, already
     ctypes-called from Python) plus `build_state_average_rdms`
@@ -974,7 +1058,9 @@ include/casscf/
   quasi_newton_policy.hpp               user-configurable QN activation policy
   orbital_rotation.hpp                  build_unitary_matrix (implemented, tested)
   macroiteration_driver.hpp             outer loop orchestration + 4 collaborator interfaces
-                                         (loop implemented and tested; collaborators not yet implemented --
+                                         (loop implemented and tested; InternalOptimizationStep/
+                                         MicroiterationOptimizationStep have real implementations,
+                                         CiStateAverageSolver/IntegralTransformer don't yet --
                                          see "What's still open")
   minres_solver.hpp                     faithful port of scipy.sparse.linalg.minres (implemented, tested);
                                          used by LstrsSolver's hard_case==2
@@ -1002,6 +1088,9 @@ include/casscf/
                                          (implemented, tested; see that section above)
   microiteration_ci_integrals_transform.hpp  microiteration_ci_integrals_transform
                                          (implemented, tested; see that section above)
+  microiteration_optimization_step.hpp  CasscfMicroiterationOptimizationStep, the real
+                                         MicroiterationOptimizationStep (implemented, tested;
+                                         see that section above)
 src/                                    corresponding .cpp files
 tests/
   test_pcg_trust_region.cpp             analytic smoke tests (interior/boundary/negative-curvature)
@@ -1030,6 +1119,9 @@ tests/
                                          no-damping update() branches, history cap, reset_reference()
   test_microiteration_ci_integrals_transform.cpp  U==identity no-op structural check; hand-computed
                                          E_core2 for a nontrivial U
+  test_microiteration_optimization_step.cpp  full pipeline wiring against a hand-solvable all-zero
+                                         case (natural convergence + the microiteration cap), against
+                                         a mock CiStateAverageSolver
 tools/
   validate_against_python.cpp           replays real Python-captured solver instances (see "Validation
                                          against Python") -- standalone tool, not a ctest

@@ -110,6 +110,10 @@ add_executable(test_microiteration_ci_integrals_transform tests/test_microiterat
 target_link_libraries(test_microiteration_ci_integrals_transform PRIVATE casscf_trust_region)
 add_test(NAME microiteration_ci_integrals_transform COMMAND test_microiteration_ci_integrals_transform)
 
+add_executable(test_microiteration_optimization_step tests/test_microiteration_optimization_step.cpp)
+target_link_libraries(test_microiteration_optimization_step PRIVATE casscf_trust_region)
+add_test(NAME microiteration_optimization_step COMMAND test_microiteration_optimization_step)
+
 # Standalone tool, not a ctest: replays real Python-captured solver instances
 # from a dump directory (see validation/dump_lih_case.py). Run manually:
 #   ./validate_against_python <dump_dir>
