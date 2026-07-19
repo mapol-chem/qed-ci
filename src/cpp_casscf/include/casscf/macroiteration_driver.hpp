@@ -1,5 +1,6 @@
 #pragma once
 
+#include "casscf/casscf_context.hpp"
 #include "casscf/types.hpp"
 
 namespace casscf {
@@ -26,31 +27,24 @@ public:
 
 // Corresponds to internal_optimization3(E0, eigenvecs), helper_PFCI.py:6847-7961:
 // builds the small active-inactive rotation intermediates and dispatches to
-// LstrsSolver. Like the Python -- which mutates self.U_total directly at
-// helper_PFCI.py:7805 rather than returning a step -- an implementation of
-// this is expected to update whatever orbital/integral state it owns
-// itself; the driver does not read anything back from it.
-//
-// DOCUMENTED GAP: internal_optimization3 doesn't just touch self.U_total --
-// on its own convergence (helper_PFCI.py:7787-7805) it also rotates
-// self.H_spatial2/self.d_cmo/self.J/self.K in place via its own accumulated
-// U1, *before* control returns to the macroiteration loop. MacroiterationDriver
-// has no channel for that: it threads its own H_spatial2/d_cmo/U_total
-// values through run()'s signature and only updates them for the rotations
-// it explicitly applies (the restart-branch correction and the main
-// microiteration step, helper_PFCI.py:2895/2937). A real
-// InternalOptimizationStep implementation must therefore share the *same*
-// underlying H_spatial2/d_cmo/U_total storage that the driver's caller
-// owns (e.g. via references into a shared context object) rather than
-// relying on anything passed through this interface or MacroiterationDriver::run's
-// parameters/result to carry its contribution forward.
+// LstrsSolver. Like the Python -- which mutates self.U_total (and, on
+// acceptance, self.H_spatial2/self.d_cmo/self.J/self.K/self.occupied_*)
+// directly at helper_PFCI.py:7787-7805 rather than returning a step -- an
+// implementation of this reads and mutates `context` in place; the driver
+// does not read anything back from the return value. context must be the
+// *same* CasscfContext instance the caller passed to MacroiterationDriver::run,
+// so internal_optimization3's own rotation of H_spatial2/d_cmo/U_total is
+// visible to (and composes correctly with) the rotation
+// MacroiterationDriver::run applies itself later in the same macroiteration
+// (helper_PFCI.py:2925-2937) -- see CasscfContext's doc comment for why a
+// single shared instance is required here, not per-call copies.
 //
 // Not yet implemented: needs the intermediates-building tensor contractions
 // (build_intermediates and friends). See cpp_casscf/README.md.
 class InternalOptimizationStep {
 public:
     virtual ~InternalOptimizationStep() = default;
-    virtual void run(double E0, const Matrix& eigenvecs) = 0;
+    virtual void run(CasscfContext& context, double E0, const Matrix& eigenvecs) = 0;
 };
 
 // Corresponds to microiteration_optimization6(U, eigenvecs, c_get_roots,
@@ -104,7 +98,10 @@ struct MacroiterationResult {
     double avg_energy = 0.0;
     Vector eigenvalues;
     Matrix eigenvectors;
-    Matrix U_total;
+    // No U_total field here: it lives on the CasscfContext the caller
+    // passed to run() (and is updated in place there), so it isn't
+    // duplicated into the result -- see CasscfContext's doc comment on why
+    // a single shared instance, not per-call copies, is required.
 };
 
 // Faithful port of the macroiteration while-loop *shape* at
@@ -137,11 +134,15 @@ public:
     // already available before the loop starts (computed by the caller
     // exactly like the Python's pre-loop CI solve feeds into
     // `avg_energy`/`eigenvecs`, helper_PFCI.py:2270-2275-ish).
-    // H_spatial2 / d_cmo: the one-electron Hamiltonian / PF dipole-coupling
-    // integrals in the current MO basis (self.H_spatial2 / self.d_cmo),
-    // rotated in place by this driver each macroiteration
-    // (helper_PFCI.py:2928-2935).
-    MacroiterationResult run(Matrix eigenvecs0, double avg_energy0, Matrix H_spatial2, Matrix d_cmo);
+    // context: caller-owned, caller-initialized (context.H_spatial2 /
+    // context.d_cmo set to the starting one-electron Hamiltonian / PF
+    // dipole-coupling integrals; context.U_total is reset to identity by
+    // this call, matching the Python's self.U_total = eye(nmo) at the top
+    // of the macroiteration loop). Read and mutated in place by this driver
+    // and by internal_step/microiteration_step/integral_transformer, all of
+    // which must share this same instance -- see CasscfContext's doc
+    // comment.
+    MacroiterationResult run(Matrix eigenvecs0, double avg_energy0, CasscfContext& context);
 
 private:
     MacroiterationDriverConfig config_;

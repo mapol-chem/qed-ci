@@ -66,13 +66,15 @@ private:
 
 class RecordingInternalStep final : public InternalOptimizationStep {
 public:
-    void run(double E0, const Matrix& eigenvecs) override {
+    void run(CasscfContext& context, double E0, const Matrix& eigenvecs) override {
         ++call_count;
+        last_context = &context;
         last_E0 = E0;
         last_eigenvecs = eigenvecs;
     }
 
     int call_count = 0;
+    CasscfContext* last_context = nullptr;
     double last_E0 = 0.0;
     Matrix last_eigenvecs;
 };
@@ -152,9 +154,12 @@ int main() {
         ScriptedMicroiterationStep microiteration_step({Matrix::Identity(dims.nmo, dims.nmo)});
         RecordingIntegralTransformer integral_transformer;
 
+        CasscfContext context;
+        context.H_spatial2 = Matrix::Zero(dims.nmo, dims.nmo);
+        context.d_cmo = Matrix::Zero(dims.nmo, dims.nmo);
+
         MacroiterationDriver driver(config, ci_solver, internal_step, microiteration_step, integral_transformer);
-        MacroiterationResult result = driver.run(Matrix::Identity(1, 1), -10.0,
-                                                   Matrix::Zero(dims.nmo, dims.nmo), Matrix::Zero(dims.nmo, dims.nmo));
+        MacroiterationResult result = driver.run(Matrix::Identity(1, 1), -10.0, context);
 
         expect_true(result.converged, "case1: converged");
         expect_near(result.macroiterations_run, 2, 0, "case1: macroiterations_run");
@@ -184,9 +189,12 @@ int main() {
         ScriptedMicroiterationStep microiteration_step({Matrix::Identity(dims.nmo, dims.nmo)});
         RecordingIntegralTransformer integral_transformer;
 
+        CasscfContext context;
+        context.H_spatial2 = Matrix::Zero(dims.nmo, dims.nmo);
+        context.d_cmo = Matrix::Zero(dims.nmo, dims.nmo);
+
         MacroiterationDriver driver(config, ci_solver, internal_step, microiteration_step, integral_transformer);
-        MacroiterationResult result = driver.run(Matrix::Identity(1, 1), -4.0,
-                                                   Matrix::Zero(dims.nmo, dims.nmo), Matrix::Zero(dims.nmo, dims.nmo));
+        MacroiterationResult result = driver.run(Matrix::Identity(1, 1), -4.0, context);
 
         expect_true(!result.converged, "case2: did not converge (exhausted cap)");
         expect_near(result.macroiterations_run, 3, 0, "case2: macroiterations_run == max_macroiterations");
@@ -220,10 +228,14 @@ int main() {
                       0.1, 0.3, 3.0;
         Matrix d_cmo = Matrix::Identity(3, 3) * 0.5;
 
-        MacroiterationDriver driver(config, ci_solver, internal_step, microiteration_step, integral_transformer);
-        MacroiterationResult result = driver.run(Matrix::Identity(1, 1), -1.0, H_spatial2, d_cmo);
+        CasscfContext context;
+        context.H_spatial2 = H_spatial2;
+        context.d_cmo = d_cmo;
 
-        expect_matrix_near(result.U_total, U2, tol, "case3: U_total == U2 (no restart, single iteration)");
+        MacroiterationDriver driver(config, ci_solver, internal_step, microiteration_step, integral_transformer);
+        MacroiterationResult result = driver.run(Matrix::Identity(1, 1), -1.0, context);
+
+        expect_matrix_near(context.U_total, U2, tol, "case3: U_total == U2 (no restart, single iteration)");
         expect_matrix_near(integral_transformer.last_macroiteration_U_total, U2, tol,
                             "case3: transform_macroiteration saw U_total == U2");
         expect_near(integral_transformer.internal_rotation_call_count, 0, 0, "case3: no restart triggered");
@@ -256,11 +268,12 @@ int main() {
         ScriptedMicroiterationStep microiteration_step({U2_first, U2_second});
         RecordingIntegralTransformer integral_transformer;
 
-        Matrix H_spatial2 = Matrix::Identity(3, 3);
-        Matrix d_cmo = Matrix::Identity(3, 3);
+        CasscfContext context;
+        context.H_spatial2 = Matrix::Identity(3, 3);
+        context.d_cmo = Matrix::Identity(3, 3);
 
         MacroiterationDriver driver(config, ci_solver, internal_step, microiteration_step, integral_transformer);
-        MacroiterationResult result = driver.run(Matrix::Identity(1, 1), -1.0, H_spatial2, d_cmo);
+        MacroiterationResult result = driver.run(Matrix::Identity(1, 1), -1.0, context);
 
         expect_near(microiteration_step.call_count, 2, 0, "case4: microiteration_step called twice (restart)");
         expect_near(integral_transformer.internal_rotation_call_count, 1, 0,
@@ -282,7 +295,7 @@ int main() {
                             "case4: second microiteration_step call seeded with complementary-block U_delta");
 
         Matrix expected_U_total = expected_U_delta1 * expected_U_delta2 * U2_second;
-        expect_matrix_near(result.U_total, expected_U_total, tol,
+        expect_matrix_near(context.U_total, expected_U_total, tol,
                             "case4: U_total == U_delta1 * U_delta2 * final U2");
     }
 

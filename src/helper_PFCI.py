@@ -61,8 +61,18 @@ def _dump_cpp_casscf_validation_case(kind, **arrays):
     case_dir = os.path.join(_CPP_CASSCF_VALIDATION_DIR, f"{kind}_{idx:03d}")
     os.makedirs(case_dir, exist_ok=True)
     for name, arr in arrays.items():
-        np.savetxt(os.path.join(case_dir, f"{name}.txt"),
-                   np.atleast_1d(np.asarray(arr, dtype=float)))
+        arr = np.asarray(arr, dtype=float)
+        if arr.ndim <= 2:
+            np.savetxt(os.path.join(case_dir, f"{name}.txt"), np.atleast_1d(arr))
+        else:
+            # savetxt only handles 1D/2D -- flatten (C-order, matching this
+            # array's own in-memory layout) plus a sidecar shape file so the
+            # C++ side can reshape it back. Only used by the intermediates
+            # validation dumps (rank-3/4 tensors); the trust-region solver
+            # dumps never exceed rank 2.
+            np.savetxt(os.path.join(case_dir, f"{name}.txt"), arr.ravel(order="C"))
+            with open(os.path.join(case_dir, f"{name}.shape.txt"), "w") as f:
+                f.write(" ".join(str(d) for d in arr.shape) + "\n")
 
 
 script_dir = os.path.abspath(os.path.dirname(__file__))
@@ -6977,6 +6987,23 @@ class PFHamiltonianGenerator:
             self.occupied_J,
             self.occupied_K,
         )
+        if _CPP_CASSCF_VALIDATION_DIR:
+            _internal_intermediates_dump = dict(
+                occupied_fock_core=self.occupied_fock_core,
+                occupied_d_cmo=self.occupied_d_cmo,
+                occupied_J=self.occupied_J,
+                occupied_K=self.occupied_K,
+                D_tu_avg=self.D_tu_avg.reshape((self.n_act_orb, self.n_act_orb)),
+                D_tuvw_avg=self.D_tuvw_avg.reshape(
+                    (self.n_act_orb, self.n_act_orb, self.n_act_orb, self.n_act_orb)
+                ),
+                Dpe_tu_avg=self.Dpe_tu_avg.reshape((self.n_act_orb, self.n_act_orb)),
+                off_diagonal_constant=self.calculate_off_diagonal_photon_constant(eigenvecs),
+                omega=self.omega,
+                dims=np.array([self.n_in_a, self.n_act_orb, self.n_virtual, self.nmo, self.n_occupied]),
+                A1=A1,
+                G1=G1,
+            )
 
         occupied_J = np.zeros(
             (self.n_occupied, self.n_occupied, self.n_occupied, self.n_occupied)
@@ -6998,6 +7025,14 @@ class PFHamiltonianGenerator:
         self.build_gradient_and_hessian(
             self.U, A1, G1, gradient_tilde1, hessian_tilde1, False
         )
+        if _CPP_CASSCF_VALIDATION_DIR:
+            _dump_cpp_casscf_validation_case(
+                "internal_intermediates",
+                U=self.U,
+                gradient_tilde1=gradient_tilde1,
+                hessian_tilde1=hessian_tilde1,
+                **_internal_intermediates_dump,
+            )
         gradient_tilde_ai[:, :] = gradient_tilde1[
             self.n_in_a : self.n_occupied, : self.n_in_a
         ]
@@ -10942,6 +10977,24 @@ class PFHamiltonianGenerator:
             #G_blocks = self.build_intermediates_with_blocks(eigenvecs, A, G, True)
             end = timer()
             print("build intermediates took", end - start)
+            if _CPP_CASSCF_VALIDATION_DIR:
+                _full_intermediates_dump = dict(
+                    H_spatial2=self.H_spatial2,
+                    d_cmo=self.d_cmo,
+                    J=self.J,
+                    K=self.K,
+                    D_tu_avg=self.D_tu_avg.reshape((self.n_act_orb, self.n_act_orb)),
+                    D_tuvw_avg=self.D_tuvw_avg.reshape(
+                        (self.n_act_orb, self.n_act_orb, self.n_act_orb, self.n_act_orb)
+                    ),
+                    Dpe_tu_avg=self.Dpe_tu_avg.reshape((self.n_act_orb, self.n_act_orb)),
+                    off_diagonal_constant=self.calculate_off_diagonal_photon_constant(eigenvecs),
+                    omega=self.omega,
+                    dims=np.array([self.n_in_a, self.n_act_orb, self.n_virtual, self.nmo, self.n_occupied]),
+                    A=A,
+                    G=G,
+                )
+                _dump_cpp_casscf_validation_case("full_intermediates", **_full_intermediates_dump)
             # A2[:,:] = 0.0
             # G2[:,:,:,:] = 0.0
             # self.build_intermediates2(eigenvecs, A2, G2, True)
@@ -11033,6 +11086,12 @@ class PFHamiltonianGenerator:
             # self.build_gradient2(self.U2, A, G, hessian_tilde, gradient_tilde, A_tilde2, True)
 
             print("build gradient took", end - start)
+            if _CPP_CASSCF_VALIDATION_DIR:
+                _dump_cpp_casscf_validation_case(
+                    "build_gradient",
+                    U=self.U2, A=A, G=G, A_tilde=A_tilde2, gradient_tilde=gradient_tilde,
+                    dims=np.array([self.n_in_a, self.n_act_orb, self.n_virtual, self.nmo, self.n_occupied]),
+                )
             #hessian_tilde3 = hessian_tilde.transpose(2,0,3,1)
             #hessian_tilde3 = hessian_tilde3.reshape((self.n_occupied*self.nmo, self.n_occupied*self.nmo))
 
@@ -11042,6 +11101,14 @@ class PFHamiltonianGenerator:
             self.build_hessian_diagonal(self.U2, G, A_tilde2)
             end = timer()
             print("build hessian diagonal took", end - start)
+            if _CPP_CASSCF_VALIDATION_DIR:
+                _dump_cpp_casscf_validation_case(
+                    "build_hessian_diagonal",
+                    U=self.U2, G=G, A_tilde=A_tilde2,
+                    hessian_diagonal=self.hessian_diagonal,
+                    reduced_hessian_diagonal=self.reduced_hessian_diagonal,
+                    dims=np.array([self.n_in_a, self.n_act_orb, self.n_virtual, self.nmo, self.n_occupied]),
+                )
             #reduced_hessian = np.zeros((self.index_map_size, self.index_map_size))
             index_count1 = 0
             for k in range(self.n_occupied):
@@ -15491,7 +15558,15 @@ class PFHamiltonianGenerator:
                     dim1,
                     self.idx_hessian,
                     )
-            
+            if _CPP_CASSCF_VALIDATION_DIR:
+                _dump_cpp_casscf_validation_case(
+                    "hessian_guess",
+                    U=U, sym_A_tilde=sym_A_tilde, reduced_gradient=reduced_gradient, G=G,
+                    idx=np.asarray(self.idx_hessian, dtype=float),
+                    guess_hessian=self.guess_hessian, guess_gradient=self.guess_gradient,
+                    dims=np.array([self.n_in_a, self.n_act_orb, self.n_virtual, self.nmo, self.n_occupied]),
+                )
+
             aug_eigvecs = np.zeros((dim1 + 1, dim1 + 1))
             Lmax = maxdim
             L = indim

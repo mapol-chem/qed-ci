@@ -5,6 +5,28 @@
 
 namespace casscf {
 
+// Bundles the state-averaged RDMs and physical constants that
+// build_intermediates(_internal), calculate_ci_dependent_energy, and
+// internal_optimization_exact_energy / the (future) microiteration
+// equivalent all need -- these are recomputed once per macroiteration (by
+// whatever eventually implements CiStateAverageSolver) and then read
+// (never mutated) by everything downstream in that macroiteration. A new,
+// purely additive grouping -- the already-validated build_intermediates*/
+// calculate_ci_dependent_energy signatures are deliberately left exactly as
+// tested rather than retrofitted onto this, to avoid touching passing code.
+struct StateAverageData {
+    Matrix D_tu_avg;     // (n_act_orb, n_act_orb)
+    Tensor4 D_tuvw_avg;  // (n_act_orb, n_act_orb, n_act_orb, n_act_orb)
+    Matrix Dpe_tu_avg;   // (n_act_orb, n_act_orb)
+    Vector weight;       // (davidson_roots) -- state-average weights
+    int N_p = 0;
+    int num_det = 0;
+    double omega = 0.0;
+    double Enuc = 0.0;
+    double d_c = 0.0;
+    double d_exp = 0.0;
+};
+
 // Faithful port of calculate_off_diagonal_photon_constant, helper_PFCI.py:6105-6151.
 // eigenvecs: one row per state-averaged CI root (davidson_roots rows), each
 // row the photon-number-basis-stacked CI vector of length (N_p+1)*num_det
@@ -20,6 +42,20 @@ namespace casscf {
 // products on the flat row, no actual reshape/transpose needed here.
 double calculate_off_diagonal_photon_constant(const Matrix& eigenvecs, const Vector& weight,
                                                int N_p, int num_det, double omega);
+
+// Faithful port of calculate_ci_dependent_energy, helper_PFCI.py:6047-6113.
+// Structurally the same per-root, per-photon-block loop as
+// calculate_off_diagonal_photon_constant above (same block() segment-dot
+// pattern), but with a `(d_exp - d_diag)` factor, no sign flip, and an
+// extra `photon_energy` accumulator folded into the same loop -- ported
+// separately rather than sharing code with that function since the two
+// differ in more than a sign (this one is not simply "the negation of"
+// that one). occupied_d_cmo: (n_occupied, n_occupied) or larger, only its
+// (n_in_a, n_in_a) top-left block is read (matches
+// occupied_d_cmo[:n_in_a, :n_in_a] in the Python).
+double calculate_ci_dependent_energy(const Matrix& eigenvecs, const Matrix& occupied_d_cmo,
+                                      const Vector& weight, int N_p, int num_det, double omega,
+                                      double d_exp, int n_in_a);
 
 struct SmallBlockIntermediates {
     Matrix A;   // (n_occupied, n_occupied)

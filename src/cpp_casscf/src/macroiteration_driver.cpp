@@ -17,21 +17,20 @@ MacroiterationDriver::MacroiterationDriver(MacroiterationDriverConfig config,
       microiteration_step_(&microiteration_step),
       integral_transformer_(&integral_transformer) {}
 
-MacroiterationResult MacroiterationDriver::run(Matrix eigenvecs0, double avg_energy0,
-                                                Matrix H_spatial2, Matrix d_cmo) {
+MacroiterationResult MacroiterationDriver::run(Matrix eigenvecs0, double avg_energy0, CasscfContext& context) {
     const Dimensions& dims = config_.dims;
 
     Matrix eigenvecs = std::move(eigenvecs0);
     Vector eigenvalues; // only populated once the CI solver has run at least once -- see below
 
-    // helper_PFCI.py:2390. NOTE: this only tracks the two rotations the
-    // driver itself applies below (the restart-branch internal correction
-    // and the main microiteration step, helper_PFCI.py:2895/2937) -- it does
-    // NOT include whatever internal_optimization3 does to its own U_total
-    // internally (helper_PFCI.py:7805). See InternalOptimizationStep's doc
-    // comment for why that's a documented gap of this interface shape, not
-    // an oversight here.
-    Matrix U_total = Matrix::Identity(dims.nmo, dims.nmo);
+    // helper_PFCI.py:2390. context.H_spatial2/context.d_cmo are left as the
+    // caller set them; context.U_total is reset here, matching self.U_total
+    // = eye(nmo) at the top of the macroiteration loop. Using context (not
+    // a local) means internal_step's own rotation of these on acceptance
+    // (helper_PFCI.py:7787-7805) is visible to -- and composes with -- the
+    // rotation applied below (helper_PFCI.py:2925-2937), rather than being a
+    // documented gap. See CasscfContext's doc comment.
+    context.U_total = Matrix::Identity(dims.nmo, dims.nmo);
 
     // helper_PFCI.py:2391-2393. `convergence` is intentionally never reset
     // once set -- matches the Python exactly, including the (mild) wart that
@@ -69,7 +68,7 @@ MacroiterationResult MacroiterationDriver::run(Matrix eigenvecs0, double avg_ene
 
         // helper_PFCI.py:2804-2809.
         if (macroiteration > 0 && dims.n_in_a > 0) {
-            internal_step_->run(new_avg_energy, eigenvecs);
+            internal_step_->run(context, new_avg_energy, eigenvecs);
         }
 
         // helper_PFCI.py:2841-2846.
@@ -101,7 +100,7 @@ MacroiterationResult MacroiterationDriver::run(Matrix eigenvecs0, double avg_ene
             Matrix U_delta = build_unitary_matrix(Rai, Rvi, Rva, dims);
 
             integral_transformer_->transform_internal_rotation(U_delta);
-            U_total = U_total * U_delta;
+            context.U_total = context.U_total * U_delta;
 
             Rai.setZero();
             Rvi = R.block(dims.n_occupied, 0, dims.n_virtual, dims.n_in_a);
@@ -116,19 +115,20 @@ MacroiterationResult MacroiterationDriver::run(Matrix eigenvecs0, double avg_ene
         // and fold U2 into U_total. (self.d_cmo0, the Python's pre-rotation
         // copy of d_cmo, is never read again in the ported range -- dropped
         // here as dead state.)
-        H_spatial2 = U2.transpose() * H_spatial2 * U2;
-        d_cmo = U2.transpose() * d_cmo * U2;
-        U_total = U_total * U2;
+        context.H_spatial2 = U2.transpose() * context.H_spatial2 * U2;
+        context.d_cmo = U2.transpose() * context.d_cmo * U2;
+        context.U_total = context.U_total * U2;
 
         // helper_PFCI.py:2944-2973: rebuild J/K (density-fitted or not) on
         // the accumulated U_total. fock_core/E_core bookkeeping that follows
         // in the Python (helper_PFCI.py:2990-3057, consumed by next
         // iteration's CI solve) is intentionally not modeled here -- it
         // depends on the J/K four-index tensors, which this driver never
-        // holds; it belongs behind this same call, as an implementation
-        // detail of IntegralTransformer / CiStateAverageSolver's shared
-        // state rather than something threaded through this signature.
-        integral_transformer_->transform_macroiteration(U_total);
+        // holds directly; it belongs behind this same call, as an
+        // implementation detail of IntegralTransformer / CiStateAverageSolver
+        // operating on context.J/context.K rather than something threaded
+        // through this signature.
+        integral_transformer_->transform_macroiteration(context.U_total);
     }
 
     MacroiterationResult result;
@@ -137,7 +137,6 @@ MacroiterationResult MacroiterationDriver::run(Matrix eigenvecs0, double avg_ene
     result.avg_energy = new_avg_energy;
     result.eigenvalues = eigenvalues;
     result.eigenvectors = eigenvecs;
-    result.U_total = U_total;
     return result;
 }
 

@@ -183,6 +183,40 @@ double calculate_off_diagonal_photon_constant(const Matrix& eigenvecs, const Vec
     return off_diagonal_constant;
 }
 
+double calculate_ci_dependent_energy(const Matrix& eigenvecs, const Matrix& occupied_d_cmo,
+                                      const Vector& weight, int N_p, int num_det, double omega,
+                                      double d_exp, int n_in_a) {
+    // helper_PFCI.py:6053
+    const double d_diag = 2.0 * occupied_d_cmo.topLeftCorner(n_in_a, n_in_a).trace();
+    if (N_p == 0) return 0.0; // helper_PFCI.py:6060-6061 (continue every m -> nothing accumulates)
+
+    const int np1 = N_p + 1;
+    const int davidson_roots = static_cast<int>(eigenvecs.rows());
+    double off_diagonal_constant_energy = 0.0;
+    double photon_energy = 0.0;
+
+    auto block = [&](int i, int m) { return eigenvecs.row(i).segment(m * num_det, num_det); };
+
+    for (int i = 0; i < davidson_roots; ++i) {
+        for (int m = 0; m < np1; ++m) {
+            if (m > 0 && m < N_p) {
+                off_diagonal_constant_energy +=
+                    weight(i) * std::sqrt(m * omega / 2.0) * (d_exp - d_diag) * block(i, m).dot(block(i, m - 1));
+                off_diagonal_constant_energy +=
+                    weight(i) * std::sqrt((m + 1) * omega / 2.0) * (d_exp - d_diag) * block(i, m).dot(block(i, m + 1));
+            } else if (m == N_p) {
+                off_diagonal_constant_energy +=
+                    weight(i) * std::sqrt(m * omega / 2.0) * (d_exp - d_diag) * block(i, m).dot(block(i, m - 1));
+            } else { // m == 0
+                off_diagonal_constant_energy +=
+                    weight(i) * std::sqrt((m + 1) * omega / 2.0) * (d_exp - d_diag) * block(i, m).dot(block(i, m + 1));
+            }
+            photon_energy += weight(i) * m * omega * block(i, m).dot(block(i, m));
+        }
+    }
+    return off_diagonal_constant_energy + photon_energy;
+}
+
 FullBlockIntermediates build_intermediates(const Matrix& H_spatial2, const Matrix& d_cmo,
                                             const Tensor4& J, const Tensor4& K,
                                             const Matrix& D_tu_avg, const Tensor4& D_tuvw_avg,
