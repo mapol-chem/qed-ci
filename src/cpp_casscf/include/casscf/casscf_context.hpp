@@ -52,6 +52,18 @@ struct CasscfContext {
     double E_core = 0.0;
     Matrix gkl2; // (n_act_orb, n_act_orb)
 
+    // self.E_core2: a second, distinct "core energy" scalar
+    // microiteration_optimization6 feeds into c_H_diag_cas_spin/c_get_roots'
+    // constdouble[5], alongside (not instead of) E_core/gkl2/occupied_J/
+    // occupied_fock_core/occupied_d_cmo above -- see
+    // microiteration_optimization_step.hpp's class doc comment for why
+    // MicroiterationOptimizationStep commits into these same occupied_*/gkl2
+    // fields InternalOptimizationStep also writes, and why E_core2 needed
+    // its own separate field rather than reusing E_core (helper_PFCI.py
+    // never conflates the two: E_core2 is set at 8709/12184/12304, always
+    // independently of E_core).
+    double E_core2 = 0.0;
+
     // self.H_diag3: the orbital-Hessian-diagonal guess, recomputed via
     // c_H_diag_cas_spin (a compiled extension outside this module's scope,
     // like the CI Davidson solver behind CiStateAverageSolver) each time

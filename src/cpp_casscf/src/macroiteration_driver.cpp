@@ -89,7 +89,7 @@ MacroiterationResult MacroiterationDriver::run(Matrix eigenvecs0, double avg_ene
 
         // helper_PFCI.py:2847-2850.
         const Matrix U0 = Matrix::Identity(dims.nmo, dims.nmo);
-        microiteration_step_->run(U0, eigenvecs, convergence_threshold);
+        microiteration_step_->run(context, U0, eigenvecs, convergence_threshold);
         Matrix U2 = microiteration_step_->last_U2();
 
         // helper_PFCI.py:2857-2860: check whether the microiteration step
@@ -118,7 +118,7 @@ MacroiterationResult MacroiterationDriver::run(Matrix eigenvecs0, double avg_ene
             Rva = R.block(dims.n_occupied, dims.n_in_a, dims.n_virtual, dims.n_act_orb);
             U_delta = build_unitary_matrix(Rai, Rvi, Rva, dims);
 
-            microiteration_step_->run(U_delta, eigenvecs, convergence_threshold);
+            microiteration_step_->run(context, U_delta, eigenvecs, convergence_threshold);
             U2 = microiteration_step_->last_U2();
         }
 

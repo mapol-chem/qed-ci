@@ -42,6 +42,7 @@ add_library(casscf_trust_region
     src/microiteration_energy.cpp
     src/bfgs_operator.cpp
     src/microiteration_ci_integrals_transform.cpp
+    src/microiteration_optimization_step.cpp
 )
 target_include_directories(casscf_trust_region PUBLIC include)
 target_link_libraries(casscf_trust_region PUBLIC Eigen3::Eigen)

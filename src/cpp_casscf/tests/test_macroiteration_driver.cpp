@@ -85,7 +85,7 @@ class ScriptedMicroiterationStep final : public MicroiterationOptimizationStep {
 public:
     explicit ScriptedMicroiterationStep(std::vector<Matrix> u2_sequence) : u2_sequence_(std::move(u2_sequence)) {}
 
-    void run(const Matrix& U, const Matrix& eigenvecs, double convergence_threshold) override {
+    void run(CasscfContext& /*context*/, const Matrix& U, Matrix& eigenvecs, double convergence_threshold) override {
         last_U0.push_back(U);
         last_eigenvecs = eigenvecs;
         last_convergence_threshold = convergence_threshold;

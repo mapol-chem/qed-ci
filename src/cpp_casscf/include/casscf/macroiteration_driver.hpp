@@ -79,18 +79,39 @@ public:
 };
 
 // Corresponds to microiteration_optimization6(U, eigenvecs, c_get_roots,
-// convergence_threshold), helper_PFCI.py:10843-12000+: the inner
-// microiteration loop that rebuilds intermediates each iteration and
+// convergence_threshold), helper_PFCI.py:10908-12423: the inner
+// microiteration loop that rebuilds intermediates each outer iteration and
 // dispatches to GltrTrustRegionSolver / DavidsonDrivenLstrsSolver / a
 // QN-based GLTR variant per solver_selector::select_trs_strategy.
 //
-// Not yet implemented: needs the intermediates-building tensor contractions.
-// This is the natural next home for exercising the already-ported solver
-// layer once that dependency exists.
+// eigenvecs is taken by non-const reference, not const& -- same reasoning as
+// InternalOptimizationStep::run() above: microiteration_optimization6 calls
+// c_get_roots exactly once per outer ("microiteration") loop pass (helper_PFCI.py:
+// ~12225, after the inner orbital-optimization-step loop completes for that
+// pass -- NOT once per accepted inner step), and c_get_roots mutates its
+// eigenvecs argument in place. MacroiterationDriver::run's local `eigenvecs`
+// must observe that update, since it's reused by the restart branch's second
+// microiteration_step_->run() call and by the final result.eigenvectors.
+//
+// context: same sharing requirement as InternalOptimizationStep::run() --
+// must be the same CasscfContext instance the caller passed to
+// MacroiterationDriver::run(). A real implementation reads context.J/K/
+// H_spatial2/d_cmo/D_tu_avg/D_tuvw_avg/Dpe_tu_avg (build_intermediates'
+// inputs) and, once per outer microiteration pass (see run()'s own doc
+// comment above), commits context.gkl2/occupied_J/occupied_fock_core/
+// occupied_d_cmo/E_core2/H_diag3 -- the CI-solver-input staging fields --
+// before calling the injected CiStateAverageSolver. Note these are the same
+// context fields InternalOptimizationStep commits on its own, different
+// timing/schedule within one macroiteration (see
+// microiteration_optimization_step.hpp's class doc comment for why sharing
+// those fields between the two Steps is the intended design, not an
+// accident of naming).
+//
+// See microiteration_optimization_step.hpp for the real implementation.
 class MicroiterationOptimizationStep {
 public:
     virtual ~MicroiterationOptimizationStep() = default;
-    virtual void run(const Matrix& U, const Matrix& eigenvecs, double convergence_threshold) = 0;
+    virtual void run(CasscfContext& context, const Matrix& U, Matrix& eigenvecs, double convergence_threshold) = 0;
 
     // self.U2 in the Python: the resulting orbital rotation from the call
     // just made to run(). Only valid after run() has been called at least
