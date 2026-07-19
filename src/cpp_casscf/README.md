@@ -32,6 +32,7 @@ retargeting onto TAMM's distributed tensor API.
 | `internal_transformation`, `internal_optimization_exact_energy`, `internal_optimization_predicted_energy`, `step_control` | **Fully ported, tested** (hand-computed cases) | helper_PFCI.py:6452-6517, 6734-6871, 6873-6877, 8018-8025 |
 | `calculate_ci_dependent_energy` | **Fully ported, tested** (hand-computed cases) | helper_PFCI.py:6047-6113 |
 | `CasscfInternalOptimizationStep` (real `InternalOptimizationStep`) | **Fully ported, tested** against a hand-solvable all-zero case; 2 documented deviations | helper_PFCI.py:6847-7961 (`internal_optimization3`) |
+| `orbital_sigma3` (matrix-free full-space Hessian-vector product) | **Fully ported, cross-validated** against an independently-written reference implementation | helper_PFCI.py:8285-8316, 8533-8686 (`orbital_sigma3` -> `build_sigma_reduced7`) -- see "`orbital_sigma3`" below |
 
 ### A naming correction from the first pass of this scaffold
 
@@ -439,6 +440,60 @@ sequence, not just the single already-finalized-step captures
 `internal_lstrs_NNN` provides) -- a reasonable next enhancement, not done
 here.
 
+## `orbital_sigma3` (`orbital_sigma.hpp`/`.cpp`)
+
+**Fully ported, cross-validated.** Port of `orbital_sigma3` ->
+`build_sigma_reduced7` (helper_PFCI.py:8285-8316, 8533-8686) -- the
+matrix-free "apply the full orbital Hessian to a reduced-space vector"
+operation. Every trust-region solve in `microiteration_optimization6`
+(GLTR against the exact Hessian, Davidson-driven LSTRS, and `get_bfgs_mv`'s
+own `B_0` base term) ultimately calls this, making it a hard prerequisite
+for the real `MicroiterationOptimizationStep` -- unlike everything ported
+so far this session, nothing in the existing codebase touched this
+function before now.
+
+**Why this was the riskiest single piece ported so far**: the Python
+computes it via roughly ten chained `.transpose()`/`.reshape()`/`np.dot()`
+calls on 2D/3D views of the working arrays plus three reshaped "blocks" of
+the `G` tensor (`G_ij`/`G_ti`/`G_tu`) -- exactly the kind of composed
+tensor-reshape gymnastics this module's other functions deliberately avoid
+in favor of explicit index loops (see "Intermediates building" above).
+Ported by hand-decoding each `.transpose(axes)`/`.reshape()`/`np.dot()` call
+one line at a time (same "`result[i] = original[j]` where `j[axes[k]] =
+i[k]`" method used for `internal_transformation`'s `K` formula), then
+implemented as explicit loops over named intermediate arrays
+(`R_total` -> `temp1` -> `W` -> `sigma_total`) mirroring the Python's own
+variable structure, so each block can be checked side by side against the
+source rather than as one fused expression. The **only** place two of the
+Python's separate terms were algebraically combined (the `d < n_in_a`
+branch of the `G`-block contraction: `sigma_i`'s two `np.dot` calls, both
+of the form `sum_a sum_b' temp1[a,b']*G[d,b',*,a]` over disjoint-but-
+complementary ranges of `b'` that union to exactly `[0, n_occupied)`) is
+flagged inline in `orbital_sigma.cpp`; every other term is kept exactly as
+separate as the Python computes it.
+
+**Validation**: no real captured Python data exists for this function yet
+(would need a new dump hook inside `microiteration_optimization6`, not done
+here). Instead, `test_orbital_sigma.cpp` cross-validates the production
+implementation against a second, *independently written* reference
+implementation that (a) materializes `G_ij`/`G_ti`/`G_tu` as literal
+separate matrices instead of reading `G` directly, (b) re-derives every
+step -- including the one the production code combined -- via a different
+algebraic route (plain Eigen matrix products, e.g. the four `A3_tilde`
+correction terms reduce to `A3_tilde @ R_total` and two more matrix
+products rather than explicit loops), and (c) keeps the `d < n_in_a` terms
+genuinely separate rather than trusting the combination. On 4 random small
+problems (varying which of `n_in_a`/`n_virtual` are zero, since those are
+the edge cases most likely to expose an off-by-range error), the two
+independently-coded implementations agree to ~1e-10 or better. This doesn't
+substitute for real chemistry validation (a residual risk: both
+implementations could share the same misreading of the Python, though the
+structural independence of the two derivations makes that less likely than
+an ordinary coding bug), but it is strong evidence against a transcription
+or algebra error, which was the primary risk on a function this intricate.
+A real captured-data dump hook is a reasonable next enhancement once
+`CasscfMicroiterationOptimizationStep` exists to consume it.
+
 ## What's still open
 
 - **The macroiteration/microiteration driver loop**
@@ -825,6 +880,8 @@ include/casscf/
                                          (implemented, tested; see that section above)
   internal_optimization_step.hpp        CasscfInternalOptimizationStep, the real InternalOptimizationStep
                                          (implemented, tested; see that section above)
+  orbital_sigma.hpp                     orbital_sigma3, the matrix-free full-space Hessian-vector product
+                                         (implemented, cross-validated; see that section above)
 src/                                    corresponding .cpp files
 tests/
   test_pcg_trust_region.cpp             analytic smoke tests (interior/boundary/negative-curvature)
@@ -845,6 +902,8 @@ tests/
                                          calculate_ci_dependent_energy
   test_internal_optimization_step.cpp   full pipeline wiring against a hand-solvable all-zero case, and the
                                          microiteration cap, against mocks of CiStateAverageSolver/IntegralTransformer
+  test_orbital_sigma.cpp                cross-validated against an independently-written reference
+                                         implementation (see "orbital_sigma3" above) on 4 random small problems
 tools/
   validate_against_python.cpp           replays real Python-captured solver instances (see "Validation
                                          against Python") -- standalone tool, not a ctest

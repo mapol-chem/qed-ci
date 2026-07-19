@@ -38,6 +38,7 @@ add_library(casscf_trust_region
     src/hessian_guess.cpp
     src/internal_optimization.cpp
     src/internal_optimization_step.cpp
+    src/orbital_sigma.cpp
 )
 target_include_directories(casscf_trust_region PUBLIC include)
 target_link_libraries(casscf_trust_region PUBLIC Eigen3::Eigen)
@@ -88,6 +89,10 @@ add_test(NAME internal_optimization COMMAND test_internal_optimization)
 add_executable(test_internal_optimization_step tests/test_internal_optimization_step.cpp)
 target_link_libraries(test_internal_optimization_step PRIVATE casscf_trust_region)
 add_test(NAME internal_optimization_step COMMAND test_internal_optimization_step)
+
+add_executable(test_orbital_sigma tests/test_orbital_sigma.cpp)
+target_link_libraries(test_orbital_sigma PRIVATE casscf_trust_region)
+add_test(NAME orbital_sigma COMMAND test_orbital_sigma)
 
 # Standalone tool, not a ctest: replays real Python-captured solver instances
 # from a dump directory (see validation/dump_lih_case.py). Run manually:
