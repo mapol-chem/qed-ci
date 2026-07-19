@@ -39,6 +39,8 @@ retargeting onto TAMM's distributed tensor API.
 | `CasscfMicroiterationOptimizationStep` (real `MicroiterationOptimizationStep`) | **Fully ported, tested** against a hand-solvable all-zero case; 3 documented deviations (QN path not wired in) | helper_PFCI.py:10908-12423 (`microiteration_optimization6`) -- see "`CasscfMicroiterationOptimizationStep`" below |
 | `casscf_c_backend` (ci_solver.c/orbital.c compiled + linked from source) | **Working**, smoke-tested | see "The plain-C backend" below |
 | `CasscfIntegralTransformer` (real `IntegralTransformer`) | `transform_internal_rotation` **fully ported, tested against the real compiled C backend**; `transform_macroiteration` **not implemented** (documented gap) | helper_PFCI.py:2907-2921, 7852-7865 (`full_transformation_internal_optimization` call sites) -- see "`CasscfIntegralTransformer`" below |
+| `CasscfCiSetup` | **Fully ported, tested against the real compiled C backend** (a genuine Davidson CI diagonalization, hand-solvable non-interacting test problem) | `PFHamiltonianGenerator.__init__`'s CI graph/table setup, helper_PFCI.py:1507-1613 -- see "`CasscfCiSetup`/`CasscfCiStateAverageSolver`" below |
+| `CasscfCiStateAverageSolver` (real `CiStateAverageSolver`) | **Fully ported, tested against the real compiled C backend** | helper_PFCI.py:2424-2553 -- see "`CasscfCiSetup`/`CasscfCiStateAverageSolver`" below |
 
 ### A naming correction from the first pass of this scaffold
 
@@ -728,9 +730,9 @@ own guarantee).
 `test_ci_orbital_backend_smoke.cpp` proves the link/ABI actually resolves
 inside the real CMake build (calls `get_graph` and checks it doesn't crash
 and writes something) -- not a correctness test of any CASSCF physics, just
-of the linkage itself. `CiStateAverageSolver` isn't implemented yet (see
-"What's still open"); `CasscfIntegralTransformer` (below) is the first real
-consumer of this backend.
+of the linkage itself. `CasscfIntegralTransformer` and
+`CasscfCiSetup`/`CasscfCiStateAverageSolver` (both below) are the real
+consumers of this backend.
 
 ## `CasscfIntegralTransformer` (`integral_transformer.hpp`/`.cpp`)
 
@@ -811,6 +813,97 @@ codebase actually exercises in practice. Throws `std::logic_error` if
 called; a real implementation needs a resolution to that ambiguity (and a
 `CasscfContext` extension for the full ERI tensor) first.
 
+## `CasscfCiSetup`/`CasscfCiStateAverageSolver` (`ci_setup.hpp`/`.cpp`, `ci_state_average_solver.hpp`/`.cpp`)
+
+**Both fully ported, tested against the real compiled C backend** -- the
+last of `MacroiterationDriver`'s 4 collaborator interfaces.
+`CasscfCiStateAverageSolver` is the real `CiStateAverageSolver`: the CI
+diagonalization + weighted state-average energy + RDM build that runs at
+the top of each macroiteration after the first (helper_PFCI.py:2424-2553).
+`CasscfCiSetup` bundles the CI graph/string-table setup
+(`table`/`table_creation`/`table_annihilation`/`b_array`/`Y`, via
+`get_graph`/`get_string`) and two setup-time-only derived quantities
+(`S_diag`/`S_diag_projection` via `build_S_diag`, and `index_Hdiag`) --
+`PFHamiltonianGenerator.__init__`'s CI setup block (helper_PFCI.py:
+1507-1613), computed once per active-space definition and reused for a
+whole CASSCF run, exactly the split `CasscfPhysicalConstants`/`Dimensions`
+already establish for the trust-region solvers.
+
+**A real, easy-to-miss correctness subtlety, found by exhaustive `grep`
+rather than assumed**: `self.index_Hdiag = self.H_diag3.argsort()` is
+computed **exactly once**, in `__init__`, against the *initial*
+(pre-optimization) `H_diag3` -- and is **never recomputed** inside the
+macroiteration loop, even though `self.H_diag3` itself **is** freshly
+rebuilt every macroiteration from the current rotated integrals. So
+`index_Hdiag` becomes an increasingly "stale" ordering relative to the
+current `H_diag3` as the CASSCF run progresses -- this port reproduces that
+literally (`CasscfCiSetup` derives `index_Hdiag` once at construction, from
+the caller-supplied *initial* `H_spatial2`/`J`/`K`/`E_core` snapshot;
+`CasscfCiStateAverageSolver` reuses that same, unchanging ordering on every
+subsequent `solve()` call). A related dead-weight finding from the same
+`grep`: `self.H_diag` (a *second*, distinct array `get_string` also fills
+as a side effect) is used as `get_roots`'s `Hdiag` argument at exactly ONE
+call site in the entire file (the very first, pre-optimization CI solve) --
+every other call site, including the one this module ports, always uses
+`self.H_diag3`. `CasscfCiSetup` still calls `get_string` (needed for its
+other four outputs) but discards the `H_diag` buffer it also writes into.
+
+**A second real subtlety, caught only by reading the exact per-macroiteration
+call site directly rather than trusting an earlier summary**: `get_roots`'s
+`h1e` argument for the actual CI solve is `gkl2`
+(`(n_act_orb, n_act_orb)`-shaped, `= active_fock_core - 0.5*einsum("kjjl->kl",
+active_twoeint)`) -- **not** `occupied_fock_core`
+(`(n_occupied, n_occupied)`-shaped), which is only `build_H_diag_cas_spin`'s
+`h1e` argument. Both are legitimate "h1e-like" quantities in the Python and
+easy to conflate; `CasscfContext`'s own pre-existing separate `gkl2`/
+`occupied_fock_core` fields (established by `CasscfMicroiterationOptimizationStep`'s
+`commit_ci_solver_inputs`) already anticipated this distinction, which is
+what caught the mistake in an early draft of this class before it was
+tested.
+
+**`ActiveBlockIntermediates`/`OccupiedCiBlocks`** (`ci_setup.hpp`, shared by
+both classes): `active_fock_core`/`active_twoeint` are computed via the
+*exact same formula* `FullBlockIntermediates`'s side outputs already use
+(`intermediates.cpp`, `fock_core(r,s) = H_spatial2(r,s) +
+sum_{j<n_in_a}[2*J(j,j,r,s) - K(j,j,r,s)]`, then sliced to the active-active
+block) -- but **deliberately transcribed fresh here rather than reusing
+`build_intermediates()`**: the Python's per-macroiteration CI-solve block
+(helper_PFCI.py:2424-2488) computes this inline, **without** calling
+`build_intermediates`, and critically does **not** touch `self.E_core` at
+all (unlike `build_intermediates`, which reassigns it as a side effect --
+see `FullBlockIntermediates`'s own doc comment). Reusing `build_intermediates`
+here would have introduced an unwanted `context.E_core` mutation this
+Python block never performs. `context.E_core` is read here, whatever it
+currently holds from the last `internal_optimization3`/
+`microiteration_optimization6` call in the same macroiteration, never
+recomputed by this class.
+
+**Validation**: unlike most of this port's other tests, this one exercises
+a **genuine Davidson CI diagonalization against the real compiled backend**
+(not a mock, not a hand-derived reference for the C library's own
+internals) -- but the *problem* is chosen to be exactly hand-solvable: 2
+active orbitals, `n_act_a == 1` (confirmed empirically that this sets
+*both* the alpha and beta electron count via `num_det = num_alpha^2` --
+i.e. a closed-shell, `S_z == 0`, 2-electron active space, not 1 electron as
+the name alone might suggest), a diagonal one-electron Hamiltonian
+(`H_spatial2 = diag(0, 1)`), and all two-electron integrals exactly zero --
+a genuinely non-interacting active space where each CI determinant's
+energy is just `(electron count) * (orbital energy)`, no inter-determinant
+coupling. `N_p == 0` turns off every photon-related energy term, same
+trick this project's other all-zero-style tests already use. Two cases,
+both matching the real Davidson solver's output to `1e-8`: (1) 1 root --
+ground state puts both electrons in orbital 0 (energy `0.0`), 1-RDM ==
+`diag(2, 0)`; (2) 2 equally-weighted roots -- ground (`0.0`) and first
+excited (`2*1.0 = 2.0`) states, `avg_energy == 1.0`, state-averaged 1-RDM
+== `diag(1, 1)`. Every value (eigenvalues, `avg_energy`, the full `D_tu_avg`
+matrix) matches the independently hand-derived expectation exactly, not
+just "within tolerance of some fitted number" -- strong evidence for the
+array marshaling, `gkl2`/`occupied_fock_core`/`occupied_twoeint`
+construction, `constint`/`constdouble` layout, and RDM accumulation/
+symmetrization all being correct, on top of proving the C-backend linkage
+(see "The plain-C backend") actually runs a real multi-iteration Davidson
+solve successfully end to end.
+
 ## What's still open
 
 - **The macroiteration/microiteration driver loop**
@@ -822,15 +915,19 @@ called; a real implementation needs a resolution to that ambiguity (and a
   helper_PFCI.py:2864-2896), and the H_spatial2/d_cmo/U_total rotation and
   accumulation, now all threaded through the shared `CasscfContext` (see
   above) rather than the driver's own parameters/return value.
-  `InternalOptimizationStep` and `MicroiterationOptimizationStep` now both
-  have real implementations (`CasscfInternalOptimizationStep`,
-  `CasscfMicroiterationOptimizationStep`, see above); `CiStateAverageSolver`/
-  `IntegralTransformer` don't yet, so `test_macroiteration_driver.cpp` still
-  exercises the driver's own loop shape against mocks of all four, and
-  `test_internal_optimization_step.cpp`/`test_microiteration_optimization_step.cpp`
-  exercise each real Step against mocks of the collaborators they need
-  (`CiStateAverageSolver`, and for `CasscfInternalOptimizationStep` also
-  `IntegralTransformer`).
+  **All 4 of `MacroiterationDriver`'s collaborator interfaces now have real
+  implementations** (`CasscfInternalOptimizationStep`,
+  `CasscfMicroiterationOptimizationStep`, `CasscfCiStateAverageSolver`,
+  and `CasscfIntegralTransformer` for `transform_internal_rotation` --
+  `transform_macroiteration` remains a documented gap, see below) -- but
+  none of them are wired together into `MacroiterationDriver` itself yet
+  (no code anywhere constructs a `MacroiterationDriver` with all 4 real
+  collaborators and calls `run()` -- `test_macroiteration_driver.cpp` still
+  exercises the driver's own loop shape against mocks of all four, and each
+  real Step/Solver's own test exercises it in isolation against mocks or,
+  for `CasscfIntegralTransformer`/`CasscfCiStateAverageSolver`, the real C
+  backend directly). Assembling all 4 into one working `MacroiterationDriver::run`
+  call is the natural next integration milestone.
 
   Also deliberately not modeled: the fock_core/E_core rebuild that follows
   the JK transform in the Python (helper_PFCI.py:2990-3057, consumed by the
@@ -839,55 +936,35 @@ called; a real implementation needs a resolution to that ambiguity (and a
   `IntegralTransformer::transform_macroiteration` as an implementation
   detail operating on `context.J`/`context.K`, not threaded through
   `MacroiterationDriver::run`'s signature.
-- **Real implementations of 2 of the 4 `MacroiterationDriver` collaborator
-  interfaces** still don't exist, though the hard part underneath all of
-  them (the intermediates-building math and the internal-optimization
-  helper functions, see above) is done. `InternalOptimizationStep` and
-  `MicroiterationOptimizationStep` are both now **fully ported, tested, and
-  wired into `MacroiterationDriver`'s interface** (`CasscfInternalOptimizationStep`,
-  `CasscfMicroiterationOptimizationStep` -- see their dedicated sections
-  above for the full architecture, documented deviations, and open items,
-  including `CasscfMicroiterationOptimizationStep`'s **FLAGGED FOR SCRUTINY
-  WHEN WRITTEN** note, still unresolved: it hasn't yet had a dedicated
-  re-review pass by a stronger reasoning model, given how much trust-region
-  step-size-reduction/acceptance logic it carries -- same flag already
-  placed on `bfgs_operator.hpp` and `orbital_sigma.hpp`, the latter also
-  flagged for future performance acceleration as the hottest path in the
-  whole solver stack). What's left:
-  - `IntegralTransformer`: **`transform_internal_rotation` now has a real,
-    tested implementation** (`CasscfIntegralTransformer`, see above and
-    "The plain-C backend"/"`CasscfIntegralTransformer`" sections) --
-    `full_transformation_internal_optimization` (orbital.c), compiled and
-    linked from source via the new `casscf_c_backend` target.
-    `transform_macroiteration` remains **not implemented** (documented gap,
-    needs `self.twoeint`-equivalent infrastructure this port doesn't have --
-    see that class's own header doc comment). A real implementation must
-    still be shared between `MacroiterationDriver` and
-    `CasscfInternalOptimizationStep` (both call `transform_internal_rotation`
-    -- see that method's doc comment for why they're the same operation on
-    different inputs, not two different transforms) -- not yet wired into
-    either driver's constructor call sites.
-  - `CiStateAverageSolver`: **not yet started.** Needs `extern "C"`
-    wrappers (declarations for these already exist in
-    `ci_orbital_backend.hpp`, see "The plain-C backend") around `get_roots`/
-    `build_H_diag_cas_spin` (ci_solver.c, already plain C, already
-    ctypes-called from Python) plus `build_state_average_rdms`
-    (helper_PFCI.py:7992+, itself a thin wrapper around `c_build_active_rdm`/
-    `c_build_active_photon_electron_one_rdm` C calls) -- no new numerical
-    work, just C++/C linkage. A real implementation should hold a reference
-    to the same shared `CasscfContext` internally (constructor-injected,
-    matching the pattern `CasscfInternalOptimizationStep` already uses)
-    rather than needing context threaded through `solve()`'s signature,
-    since `c_get_roots` needs `context.gkl2`/`occupied_J`/`occupied_d_cmo`/
-    `H_diag3`/`E_core`. Also needs a **new** bundle of CI-setup state this
-    port hasn't touched yet -- the graph/string tables
-    (`table`/`table_creation`/`table_annihilation`/`b_array`/`Y`, built once
-    per active-space definition via `get_graph`/`get_string`, both also
-    declared in `ci_orbital_backend.hpp`) and `H_diag3`/`S_diag`/
-    `S_diag_projection`/`index_Hdiag` (via `build_H_diag_cas_spin` +
-    `argsort` + `build_S_diag`) -- all computed once in the Python's
-    `PFHamiltonianGenerator.__init__` and reused for a whole CASSCF run, not
-    yet ported into a `CasscfCiSetup`-shaped struct here.
+- **All 4 `MacroiterationDriver` collaborator interfaces now have real
+  implementations** (`CasscfInternalOptimizationStep`,
+  `CasscfMicroiterationOptimizationStep`, `CasscfCiStateAverageSolver`,
+  `CasscfIntegralTransformer` -- see their dedicated sections above for full
+  architecture, documented deviations, and open items). What's left:
+  - `IntegralTransformer::transform_macroiteration` remains **not
+    implemented** (documented gap, needs `self.twoeint`-equivalent
+    infrastructure this port doesn't have -- see that class's own header
+    doc comment). A real `CasscfIntegralTransformer` instance must still be
+    shared between `MacroiterationDriver` and `CasscfInternalOptimizationStep`
+    (both call `transform_internal_rotation` -- see that method's doc
+    comment for why they're the same operation on different inputs, not two
+    different transforms) -- not yet wired into either driver's constructor
+    call sites; no code anywhere constructs one yet.
+  - `CasscfMicroiterationOptimizationStep`'s **FLAGGED FOR SCRUTINY WHEN
+    WRITTEN** note is still unresolved: it hasn't yet had a dedicated
+    re-review pass by a stronger reasoning model, given how much
+    trust-region step-size-reduction/acceptance logic it carries -- same
+    flag already placed on `bfgs_operator.hpp` and `orbital_sigma.hpp`, the
+    latter also flagged for future performance acceleration as the hottest
+    path in the whole solver stack.
+  - **No integration point exists yet** that constructs all 4 real
+    collaborators together and calls `MacroiterationDriver::run` end to end
+    on a real molecule -- each collaborator is currently only tested in
+    isolation (against mocks, or, for `CasscfIntegralTransformer`/
+    `CasscfCiStateAverageSolver`, the real C backend on synthetic
+    hand-solvable problems, not real chemistry). This is the natural next
+    milestone once `transform_macroiteration` is resolved (needed for the
+    driver's own per-macroiteration JK transform).
   - `HessianGuessProvider` now has a real implementation
     (`OrbitalHessianGuessProvider`, see above) -- nothing left here for it.
 
@@ -1250,6 +1327,13 @@ include/casscf/
                                          (transform_internal_rotation implemented, tested against
                                          the real C backend; transform_macroiteration not
                                          implemented -- see that section above)
+  ci_setup.hpp                          CasscfCiSetup + CasscfCiConfig + shared
+                                         ActiveBlockIntermediates/OccupiedCiBlocks helpers
+                                         (implemented, tested against the real C backend; see
+                                         "CasscfCiSetup/CasscfCiStateAverageSolver" above)
+  ci_state_average_solver.hpp           CasscfCiStateAverageSolver, the real CiStateAverageSolver
+                                         (implemented, tested against the real C backend; see
+                                         that section above)
 src/                                    corresponding .cpp files (ci_orbital_backend.hpp has no .cpp,
                                          declarations only)
 tests/
@@ -1287,6 +1371,10 @@ tests/
   test_integral_transformer.cpp         runs against the REAL compiled C backend (not a hand-derived
                                          reference): U==identity round-trip on H_spatial2/d_cmo/J/K,
                                          non-identity U checked against the direct U^T @ h @ U formula
+  test_ci_state_average_solver.cpp      runs a genuine Davidson CI diagonalization against the REAL
+                                         compiled C backend on a hand-solvable non-interacting active
+                                         space -- every value (eigenvalues, avg_energy, D_tu_avg)
+                                         matches the independently hand-derived answer exactly
 tools/
   validate_against_python.cpp           replays real Python-captured solver instances (see "Validation
                                          against Python") -- standalone tool, not a ctest

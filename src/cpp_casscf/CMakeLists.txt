@@ -90,6 +90,8 @@ add_library(casscf_trust_region
     src/microiteration_ci_integrals_transform.cpp
     src/microiteration_optimization_step.cpp
     src/integral_transformer.cpp
+    src/ci_setup.cpp
+    src/ci_state_average_solver.cpp
 )
 target_include_directories(casscf_trust_region PUBLIC include)
 target_link_libraries(casscf_trust_region PUBLIC Eigen3::Eigen casscf_c_backend)
@@ -169,6 +171,10 @@ add_test(NAME ci_orbital_backend_smoke COMMAND test_ci_orbital_backend_smoke)
 add_executable(test_integral_transformer tests/test_integral_transformer.cpp)
 target_link_libraries(test_integral_transformer PRIVATE casscf_trust_region)
 add_test(NAME integral_transformer COMMAND test_integral_transformer)
+
+add_executable(test_ci_state_average_solver tests/test_ci_state_average_solver.cpp)
+target_link_libraries(test_ci_state_average_solver PRIVATE casscf_trust_region)
+add_test(NAME ci_state_average_solver COMMAND test_ci_state_average_solver)
 
 # Standalone tool, not a ctest: replays real Python-captured solver instances
 # from a dump directory (see validation/dump_lih_case.py). Run manually:
