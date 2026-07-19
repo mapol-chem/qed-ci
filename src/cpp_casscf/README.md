@@ -33,6 +33,7 @@ retargeting onto TAMM's distributed tensor API.
 | `calculate_ci_dependent_energy` | **Fully ported, tested** (hand-computed cases) | helper_PFCI.py:6047-6113 |
 | `CasscfInternalOptimizationStep` (real `InternalOptimizationStep`) | **Fully ported, tested** against a hand-solvable all-zero case; 2 documented deviations | helper_PFCI.py:6847-7961 (`internal_optimization3`) |
 | `orbital_sigma3` (matrix-free full-space Hessian-vector product) | **Fully ported, cross-validated** against an independently-written reference implementation | helper_PFCI.py:8285-8316, 8533-8686 (`orbital_sigma3` -> `build_sigma_reduced7`) -- see "`orbital_sigma3`" below |
+| `microiteration_exact_energy`, `microiteration_predicted_energy2` | **Fully ported, tested** | helper_PFCI.py:8800-8826, 9455-9467 -- see "`microiteration_energy.hpp`/`.cpp`" below |
 
 ### A naming correction from the first pass of this scaffold
 
@@ -494,6 +495,41 @@ or algebra error, which was the primary risk on a function this intricate.
 A real captured-data dump hook is a reasonable next enhancement once
 `CasscfMicroiterationOptimizationStep` exists to consume it.
 
+## `microiteration_energy.hpp`/`.cpp`
+
+**Fully ported, tested.** `microiteration_exact_energy` (helper_PFCI.py:8800-8826):
+the full-space analog of `internal_optimization_exact_energy`'s quadratic
+model -- worked out by hand (same method as `orbital_sigma3`) to the closed
+form `E = 2*sum_{r<nmo,k<n_occupied} T(r,k)*A(r,k) + sum_{K,L<n_occupied,
+R,S<nmo} G(K,L,R,S)*T(R,K)*T(S,L)` where `T = U - I`; implemented directly
+as explicit loops since this particular derivation is an unambiguous double
+contraction once decoded (unlike `orbital_sigma3`, nothing needed to be
+kept artificially separate for transcription safety). Tested against a
+hand-computed case using a separable `G` (`G(K,L,R,S) = f(K,L)`, constant
+across `R,S`) chosen so the double contraction reduces to something
+hand-summable.
+
+`microiteration_predicted_energy2` (helper_PFCI.py:9455-9467) --
+**note**: `microiteration_predicted_energy` (9449-9453, the plain dense
+quadratic form) is referenced only in a commented-out line and never
+actually called; not ported. `microiteration_predicted_energy2` calls
+`self.orbital_sigma(...)`, which dispatches to `build_sigma_reduced4` -- a
+*different* function from `build_sigma_reduced7` (what `orbital_sigma3`
+ports), computing the matrix-free Hessian-vector product via one big
+`(nmo*n_occupied)^2` matrix multiply instead of three smaller `G_ij`/
+`G_ti`/`G_tu` block multiplies. Hand-deriving `build_sigma_reduced4`'s
+middle step shows it reduces to exactly `sum_{a,bp<n_occupied}
+temp1(a,bp)*G(d,bp,c,a)` for *every* `d` (not just `d < n_in_a`, which is
+what `orbital_sigma3`'s own `d < n_in_a` case already combines to) -- i.e.
+the two Python functions are two different implementation strategies for
+the identical operation on the same (physically-symmetric) `G`, not two
+different formulas. **Substitution**: the C++ port reuses the
+already-validated `orbital_sigma3` here instead of also porting
+`build_sigma_reduced4`, matching this module's existing precedent of not
+re-porting the LSTRS bisection loop a second time where the Python has it
+duplicated (`lstrs_bisection_core.hpp`). Tested by checking the wrapper's
+wiring (`2*g.step + sigma.step`) against the same formula computed inline.
+
 ## What's still open
 
 - **The macroiteration/microiteration driver loop**
@@ -882,6 +918,8 @@ include/casscf/
                                          (implemented, tested; see that section above)
   orbital_sigma.hpp                     orbital_sigma3, the matrix-free full-space Hessian-vector product
                                          (implemented, cross-validated; see that section above)
+  microiteration_energy.hpp             microiteration_exact_energy/microiteration_predicted_energy2
+                                         (implemented, tested; see that section above)
 src/                                    corresponding .cpp files
 tests/
   test_pcg_trust_region.cpp             analytic smoke tests (interior/boundary/negative-curvature)
@@ -904,6 +942,8 @@ tests/
                                          microiteration cap, against mocks of CiStateAverageSolver/IntegralTransformer
   test_orbital_sigma.cpp                cross-validated against an independently-written reference
                                          implementation (see "orbital_sigma3" above) on 4 random small problems
+  test_microiteration_energy.cpp        hand-computed case for microiteration_exact_energy; wiring check
+                                         for microiteration_predicted_energy2
 tools/
   validate_against_python.cpp           replays real Python-captured solver instances (see "Validation
                                          against Python") -- standalone tool, not a ctest
