@@ -595,13 +595,49 @@ reasoning); the `m_history` cap correctly pops the oldest entry;
   interfaces** still don't exist, though the hard part underneath all of
   them (the intermediates-building math and the internal-optimization
   helper functions, see above) is done:
-  - `MicroiterationOptimizationStep`: mostly plumbing at this point -- call
-    the now-ported `build_intermediates`/`build_gradient*`/
-    `build_hessian_diagonal`, dispatch to the already-tested
-    `LstrsSolver`/`GltrTrustRegionSolver`/`DavidsonDrivenLstrsSolver`/QN
-    solvers. The natural template to follow is
-    `CasscfInternalOptimizationStep` above, which just went through this
-    same exercise for the small active-inactive block.
+  - `MicroiterationOptimizationStep` (port target: `microiteration_optimization6`,
+    helper_PFCI.py:10908-12423): **all prerequisite pieces are now ported
+    and tested** -- `orbital_sigma3` (the matrix-free full-space
+    Hessian-vector product, see above), `microiteration_exact_energy`/
+    `microiteration_predicted_energy2`, `BfgsOperator` (`get_bfgs_mv` +
+    damped history update), `microiteration_ci_integrals_transform`, and
+    `FullBlockIntermediates`'s `E_core`/`active_fock_core`/
+    `active_twoeint`/`L` extension. The actual outer/inner loop
+    orchestration itself is **not yet written** -- it's large (~300+
+    lines) and deeply stateful (QN vs. non-QN dispatch, `n_negative`
+    sub-dispatch, one shared accept/reject test across three
+    step-computation paths, BFGS history threaded across inner-loop
+    iterations), so it was deliberately left for a dedicated pass rather
+    than rushed. The full architectural plan (every formula, every
+    interface gap found, the exact `break`/state-mutation line numbers)
+    is written up in this project's saved session memory, ready to
+    implement directly. Two concrete plans worth calling out here:
+    - `GltrTrustRegionSolver`/`DavidsonDrivenLstrsSolver` (both already
+      ported) are exactly what the `n_negative==0`/`n_negative>0`
+      branches need -- confirmed the ~500-line Davidson bisection loop
+      inside `microiteration_optimization6` is structurally the same
+      algorithm `DavidsonDrivenLstrsSolver` already covers, so it does
+      **not** need re-porting, only wiring with `orbital_sigma3` as a
+      genuine matrix-free `HessianOperator` (no unit-vector-probing
+      materialization needed in production, unlike the validation
+      harness).
+    - The QN path (`qn_optimization == True`) is planned to be **deferred**
+      in the first implementation, documented as a real (not
+      provably-equivalent) gap rather than silently absorbed -- it needs
+      substantial additional cross-iteration state (`old_reduced_gradient`/
+      `step` threading for the BFGS update, `qn_count`/`consecutive_skips`/
+      `density_norm_change`, and a *second*, separate reference-point-reset
+      predicate distinct from `should_reset_bfgs_reference` -- see
+      `BfgsOperator`'s doc comment) on top of an already-large core loop,
+      and per the developer's own view (`quasi_newton_policy.hpp`) QN
+      "doesn't reliably help MCSCF convergence" -- a correct, well-tested
+      non-QN core loop first is the lower-risk, higher-value order.
+    - **Interface fix needed first**: `MicroiterationOptimizationStep::run()`'s
+      `eigenvecs` parameter needs the same `const Matrix&` -> `Matrix&`
+      fix `InternalOptimizationStep::run()` already got, since
+      `microiteration_optimization6` calls `c_get_roots` internally (once
+      per outer iteration) and that update must propagate back to
+      `MacroiterationDriver::run()`'s local `eigenvecs`.
   - `CiStateAverageSolver`: needs `extern "C"` wrappers around `get_roots`/
     `build_H_diag_cas_spin` (ci_solver.c, already plain C, already
     ctypes-called from Python) plus `build_state_average_rdms`
@@ -957,6 +993,8 @@ include/casscf/
                                          (implemented, tested; see that section above)
   bfgs_operator.hpp                     BfgsOperator, the real get_bfgs_mv + damped history update
                                          (implemented, tested; see that section above)
+  microiteration_ci_integrals_transform.hpp  microiteration_ci_integrals_transform
+                                         (implemented, tested; see that section above)
 src/                                    corresponding .cpp files
 tests/
   test_pcg_trust_region.cpp             analytic smoke tests (interior/boundary/negative-curvature)
@@ -983,6 +1021,8 @@ tests/
                                          for microiteration_predicted_energy2
   test_bfgs_operator.cpp                empty-history/one-history-entry hand formula checks, damping vs.
                                          no-damping update() branches, history cap, reset_reference()
+  test_microiteration_ci_integrals_transform.cpp  U==identity no-op structural check; hand-computed
+                                         E_core2 for a nontrivial U
 tools/
   validate_against_python.cpp           replays real Python-captured solver instances (see "Validation
                                          against Python") -- standalone tool, not a ctest
