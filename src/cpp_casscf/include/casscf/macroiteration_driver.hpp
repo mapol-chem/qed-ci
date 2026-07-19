@@ -1,6 +1,7 @@
 #pragma once
 
 #include "casscf/casscf_context.hpp"
+#include "casscf/tensor_types.hpp"
 #include "casscf/types.hpp"
 
 namespace casscf {
@@ -13,6 +14,28 @@ struct CiStateAverageResult {
     Vector eigenvalues;
     Matrix eigenvectors;
     double avg_energy = 0.0;
+
+    // build_state_average_rdms(eigenvecs)'s output (helper_PFCI.py:7992+),
+    // which in the Python is written directly into the persistent
+    // self.D_tu_avg/self.D_tuvw_avg/self.Dpe_tu_avg instance attributes
+    // right after this same solve -- MacroiterationDriver::run copies these
+    // into CasscfContext (see its doc comment) so InternalOptimizationStep
+    // can read them later in the same macroiteration.
+    Matrix D_tu_avg;    // (n_act_orb, n_act_orb)
+    Tensor4 D_tuvw_avg; // (n_act_orb, n_act_orb, n_act_orb, n_act_orb)
+    Matrix Dpe_tu_avg;  // (n_act_orb, n_act_orb)
+
+    // self.constint[8] == 0 after c_get_roots (helper_PFCI.py:7699,
+    // 7712-7728-ish): whether the CI Davidson diagonalization itself
+    // converged (distinct from avg_energy's own convergence, which
+    // MacroiterationDriver checks separately). Read by
+    // InternalOptimizationStep's own convergence test
+    // (helper_PFCI.py:7808-7810: `gradient_norm < 1e-4 and
+    // self.constint[8] == 0`). Defaults to true so mocked
+    // CiStateAverageSolver implementations that don't model CI-solver
+    // convergence (e.g. test_macroiteration_driver.cpp's) don't need to set
+    // it explicitly.
+    bool ci_diagonalization_converged = true;
 };
 
 // Not yet implemented: needs the CI Davidson solver (c_get_roots) and the
@@ -39,12 +62,20 @@ public:
 // (helper_PFCI.py:2925-2937) -- see CasscfContext's doc comment for why a
 // single shared instance is required here, not per-call copies.
 //
-// Not yet implemented: needs the intermediates-building tensor contractions
-// (build_intermediates and friends). See cpp_casscf/README.md.
+// eigenvecs is taken by non-const reference (not the Matrix& elsewhere in
+// this header that stay read-only) because internal_optimization3's own
+// accept branch re-diagonalizes the CI problem and overwrites the caller's
+// `eigenvecs` array in place (c_get_roots writes into the same numpy array
+// object passed in, helper_PFCI.py:7699) -- that update must be visible to
+// MacroiterationDriver::run's local `eigenvecs` after this call returns,
+// since it's reused by the microiteration step right after
+// (helper_PFCI.py:2841-2850).
+//
+// See internal_optimization_step.hpp for the real implementation.
 class InternalOptimizationStep {
 public:
     virtual ~InternalOptimizationStep() = default;
-    virtual void run(CasscfContext& context, double E0, const Matrix& eigenvecs) = 0;
+    virtual void run(CasscfContext& context, double E0, Matrix& eigenvecs) = 0;
 };
 
 // Corresponds to microiteration_optimization6(U, eigenvecs, c_get_roots,
@@ -67,10 +98,20 @@ public:
     virtual const Matrix& last_U2() const = 0;
 };
 
-// Corresponds to the two integral-transformation call sites in the
-// macroiteration loop:
-//  - transform_internal_rotation ~ c_full_transformation_internal_optimization,
-//    called only on the "RESTART MICROITERATION" branch, helper_PFCI.py:2875-2889.
+// Corresponds to the integral-transformation call sites in the
+// macroiteration/internal-optimization loops, both wrapping
+// c_full_transformation_internal_optimization:
+//  - transform_internal_rotation ~ the "RESTART MICROITERATION" branch,
+//    helper_PFCI.py:2875-2889 (U_delta from the microiteration step's
+//    internal-rotation correction), AND internal_optimization3's own
+//    convergence, helper_PFCI.py:7803 (U_delta == self.U1, the accumulated
+//    internal-rotation-only rotation from its bisection loop) -- both are
+//    "apply an internal (active-inactive-only) integral transformation",
+//    the same operation on different rotation matrices, so they share this
+//    one interface method. A real implementation must be constructed once
+//    and shared between MacroiterationDriver and InternalOptimizationStep
+//    (see internal_optimization_step.hpp), the same sharing pattern
+//    CasscfContext already establishes for orbital/integral state.
 //  - transform_macroiteration ~ c_full_transformation_macroiteration /
 //    transform_JK_with_df (density-fitted variant), helper_PFCI.py:2944-2973,
 //    run once per macroiteration on the accumulated U_total.

@@ -66,7 +66,7 @@ private:
 
 class RecordingInternalStep final : public InternalOptimizationStep {
 public:
-    void run(CasscfContext& context, double E0, const Matrix& eigenvecs) override {
+    void run(CasscfContext& context, double E0, Matrix& eigenvecs) override {
         ++call_count;
         last_context = &context;
         last_E0 = E0;

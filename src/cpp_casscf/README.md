@@ -31,6 +31,7 @@ retargeting onto TAMM's distributed tensor API.
 | `CasscfContext` | Done (struct, no logic to test) | bundles self.H_spatial2/d_cmo/U_total/J/K/occupied_*/E_core/gkl2/H_diag3 -- see "Shared CasscfContext" below |
 | `internal_transformation`, `internal_optimization_exact_energy`, `internal_optimization_predicted_energy`, `step_control` | **Fully ported, tested** (hand-computed cases) | helper_PFCI.py:6452-6517, 6734-6871, 6873-6877, 8018-8025 |
 | `calculate_ci_dependent_energy` | **Fully ported, tested** (hand-computed cases) | helper_PFCI.py:6047-6113 |
+| `CasscfInternalOptimizationStep` (real `InternalOptimizationStep`) | **Fully ported, tested** against a hand-solvable all-zero case; 2 documented deviations | helper_PFCI.py:6847-7961 (`internal_optimization3`) |
 
 ### A naming correction from the first pass of this scaffold
 
@@ -339,14 +340,104 @@ brute-force re-derivation of the port's own formula):
   confirmed `N_p == 0` returns exactly `0.0` (the Python's `continue`-every-
   `m` early exit, helper_PFCI.py:6060-6061).
 
-Not yet done: the actual `internal_optimization3` *outer* accept/reject
-trust-region loop (helper_PFCI.py:6847-7961) that calls
-`build_intermediates_internal`/`build_gradient_and_hessian` (already
-ported, `intermediates.hpp`), dispatches to `LstrsSolver` (already ported),
-then `internal_transformation`/`internal_optimization_exact_energy`/
-`step_control` (now ported and tested above) in sequence -- these four
-pieces exist individually but aren't yet wired into one function, which is
-what a real `InternalOptimizationStep::run` needs to be.
+## `CasscfInternalOptimizationStep` (`internal_optimization_step.hpp`/`.cpp`)
+
+**The real `InternalOptimizationStep`.** Faithful port of
+`internal_optimization3`'s outer accept/reject trust-region loop
+(helper_PFCI.py:6847-7961), assembling the pieces above:
+`build_intermediates_internal`/`build_gradient_and_hessian`
+(`intermediates.hpp`) each microiteration, `LstrsSolver` for the trust-region
+subproblem, then `internal_transformation`/`internal_optimization_exact_energy`/
+`internal_optimization_predicted_energy`/`step_control`
+(`internal_optimization.hpp`) to evaluate and accept/reject the trial step,
+committing into `CasscfContext` and re-diagonalizing via the injected
+`CiStateAverageSolver` on acceptance.
+
+Needs two struct extensions to already-existing types, both additive:
+`CasscfContext` gained `D_tu_avg`/`D_tuvw_avg`/`Dpe_tu_avg` (the
+state-averaged RDMs -- `self.D_tu_avg` etc. in the Python are persistent
+instance state read here, not something threaded through a return value, so
+they belong alongside `H_spatial2`/`d_cmo`/`U_total` on `CasscfContext`
+rather than being re-passed each call), and `CiStateAverageResult` gained the
+same three fields (what `CiStateAverageSolver::solve()` actually produces,
+matching its own doc comment, which already described the RDM build as part
+of its job) plus `ci_diagonalization_converged` (`self.constint[8] == 0`,
+the CI Davidson solver's own convergence flag, read by this class's
+convergence test). `MacroiterationDriver::run` now copies the RDM fields
+from every `CiStateAverageResult` into `context` right after each solve
+call. Separately, `InternalOptimizationStep::run`'s `eigenvecs` parameter
+changed from `const Matrix&` to `Matrix&`: `c_get_roots` mutates the CI
+vector array in place in the Python (helper_PFCI.py:7699), and that update
+must be visible back in `MacroiterationDriver::run`'s local `eigenvecs`
+after this call returns, since it's reused immediately after by the
+microiteration step.
+
+**Two documented, intentional deviations** (see the class's own header doc
+comment for the full reasoning):
+
+1. Does **not** port the cross-microiteration "hard_case==1 warm start"
+   shortcut (helper_PFCI.py:7043-7076) that reuses the previous
+   microiteration's bordered-eigenproblem root components to build a step
+   algebraically instead of re-running the bisection from scratch after a
+   trust-radius shrink. `LstrsSolver`'s own doc comment already flagged this
+   shortcut as out of its scope, deferring it to "the not-yet-ported
+   microiteration driver" -- this class is that driver, and still doesn't
+   port it, because `LstrsSolver::solve()` is fully self-contained: calling
+   it again with the shrunk trust radius independently re-derives the same
+   hard-case step through the full bisection, just without the cheap
+   algebraic shortcut. A performance difference (more bisection iterations
+   on repeated hard-case rejections), not a correctness one.
+2. `ci_converged` starts `false` at the top of every `run()` call rather
+   than persisting across calls the way `self.constint[8]` does as a
+   whole-run instance attribute in the Python. There is no cross-call
+   channel for it here (and no real `CiStateAverageSolver` yet to source an
+   initial value from) -- the only case this could differ from Python is
+   satisfying the convergence check on iteration 0 before this call's own
+   first CI solve, which the convergence check's structure already
+   prevents (it only runs after the accept/reject branch has either
+   produced a fresh CI solve or left the previous, already-tested
+   gradient/`ci_converged` pair untouched).
+
+Reuses `internal_optimization_exact_energy` itself (with `E0=0`,
+`hard_case=-1` so its accept/commit path never fires) for the Python's
+initial "test energy" block (helper_PFCI.py:6884-6919, whose only real
+effect is seeding the `current_energy` ratio-test baseline) instead of
+re-deriving the identical formula a third time. The two other places the
+Python recomputes this same formula for a debug print (the "new RDM
+energy" block inside the accept branch, and the final block after
+`c_full_transformation_internal_optimization`) are **not** ported at all --
+both compute a `sum_energy` that's printed and then discarded, never fed
+back into any state the driver needs (matching this codebase's existing
+precedent of skipping debug-only `print`/`allclose` blocks with no bearing
+on returned values, e.g. `build_gradient_and_hessian`'s doc comment).
+
+The `gradient_tilde1`/`hessian_tilde1` -> `gradient_tilde_ai`/`hessian_tilde_ai`
+extraction (helper_PFCI.py:7033-7043, a `.transpose(2, 0, 3, 1)` plus a slice
+plus a C-order reshape) was worked out by hand from numpy's `transpose(axes)`
+semantics rather than assumed -- see `extract_hessian_ai`'s doc comment in
+`internal_optimization_step.cpp`.
+
+**Tested** (`test_internal_optimization_step.cpp`) against an all-zero
+RDM/integral problem, chosen because it's exactly hand-solvable end to end
+without needing real chemistry data or deriving a real LSTRS bisection
+step: all-zero inputs make `build_intermediates_internal`/
+`build_gradient_and_hessian` return exactly zero `A`/`G`/gradient/Hessian
+(both are purely linear contractions of their inputs, confirmed by
+inspection, no additive bias term), so `LstrsSolver` trivially returns a
+zero step, the trial rotation is the identity, and
+`internal_optimization_exact_energy`'s `energy_change` comes out to exactly
+`0.0` (recomputing the same `sum_energy` against unchanged inputs) --
+satisfying the accept condition on every microiteration. Two cases: (1)
+converges in exactly one microiteration when the mocked CI solver reports
+converged immediately; (2) with the mocked CI solver never reporting
+converged, the loop can only terminate via the microiteration cap --
+verified the CI solver is called exactly `max_microiterations + 1` times
+and `transform_internal_rotation` still fires exactly once, at the cap.
+Not yet validated against real captured Python data (would need a
+`internal_optimization3`-level dump hook capturing a full microiteration
+sequence, not just the single already-finalized-step captures
+`internal_lstrs_NNN` provides) -- a reasonable next enhancement, not done
+here.
 
 ## What's still open
 
@@ -358,13 +449,14 @@ what a real `InternalOptimizationStep::run` needs to be.
   restart branch ("RESTART MICROITERATION TO CORRECT INTERNAL ROTATION",
   helper_PFCI.py:2864-2896), and the H_spatial2/d_cmo/U_total rotation and
   accumulation, now all threaded through the shared `CasscfContext` (see
-  above) rather than the driver's own parameters/return value. It's built
-  entirely against the four collaborator interfaces (`CiStateAverageSolver`,
-  `InternalOptimizationStep`, `MicroiterationOptimizationStep`,
-  `IntegralTransformer`) declared in `macroiteration_driver.hpp` — none of
-  the four has a real implementation yet, so `test_macroiteration_driver.cpp`
-  exercises the loop shape against mocks of all four (updated to construct
-  and pass a `CasscfContext`).
+  above) rather than the driver's own parameters/return value. `InternalOptimizationStep`
+  now has a real implementation (`CasscfInternalOptimizationStep`, see
+  above); `CiStateAverageSolver`/`MicroiterationOptimizationStep`/
+  `IntegralTransformer` don't yet, so `test_macroiteration_driver.cpp` still
+  exercises the driver's own loop shape against mocks of all four, and
+  `test_internal_optimization_step.cpp` exercises
+  `CasscfInternalOptimizationStep` against mocks of the two collaborators it
+  needs (`CiStateAverageSolver`, `IntegralTransformer`).
 
   Also deliberately not modeled: the fock_core/E_core rebuild that follows
   the JK transform in the Python (helper_PFCI.py:2990-3057, consumed by the
@@ -373,26 +465,34 @@ what a real `InternalOptimizationStep::run` needs to be.
   `IntegralTransformer::transform_macroiteration` as an implementation
   detail operating on `context.J`/`context.K`, not threaded through
   `MacroiterationDriver::run`'s signature.
-- **Real implementations of the 4 `MacroiterationDriver` collaborator
+- **Real implementations of 3 of the 4 `MacroiterationDriver` collaborator
   interfaces** still don't exist, though the hard part underneath all of
-  them (the intermediates-building math and, now, the internal-optimization
+  them (the intermediates-building math and the internal-optimization
   helper functions, see above) is done:
-  - `InternalOptimizationStep`: needs the `internal_optimization3` outer
-    loop itself wired up -- see "`internal_optimization.hpp`/`.cpp`" above
-    for exactly what's ported-but-not-yet-assembled.
   - `MicroiterationOptimizationStep`: mostly plumbing at this point -- call
     the now-ported `build_intermediates`/`build_gradient*`/
     `build_hessian_diagonal`, dispatch to the already-tested
     `LstrsSolver`/`GltrTrustRegionSolver`/`DavidsonDrivenLstrsSolver`/QN
-    solvers.
+    solvers. The natural template to follow is
+    `CasscfInternalOptimizationStep` above, which just went through this
+    same exercise for the small active-inactive block.
   - `CiStateAverageSolver`: needs `extern "C"` wrappers around `get_roots`/
     `build_H_diag_cas_spin` (ci_solver.c, already plain C, already
     ctypes-called from Python) plus `build_state_average_rdms`
     (helper_PFCI.py:7992+, itself a thin wrapper around `c_build_active_rdm`
-    C calls) -- no new numerical work, just C++/C linkage.
+    C calls) -- no new numerical work, just C++/C linkage. A real
+    implementation should hold a reference to the same shared
+    `CasscfContext` internally (constructor-injected, matching the pattern
+    `CasscfInternalOptimizationStep` already uses) rather than needing
+    context threaded through `solve()`'s signature, since `c_get_roots`
+    needs `context.gkl2`/`occupied_J`/`occupied_d_cmo`/`H_diag3`/`E_core`.
   - `IntegralTransformer`: same story -- `c_full_transformation_macroiteration`/
     `c_full_transformation_internal_optimization` (orbital.c) are already
-    plain C, just need wrapping.
+    plain C, just need wrapping. A real implementation must be shared
+    between `MacroiterationDriver` and `CasscfInternalOptimizationStep`
+    (both call `transform_internal_rotation` -- see that method's updated
+    doc comment for why they're the same operation on different inputs, not
+    two different transforms).
   - `HessianGuessProvider` now has a real implementation
     (`OrbitalHessianGuessProvider`, see above) -- nothing left here for it.
 
@@ -722,9 +822,9 @@ include/casscf/
                                          "Shared CasscfContext" above)
   internal_optimization.hpp             internal_transformation/internal_optimization_exact_energy/
                                          internal_optimization_predicted_energy/step_control
-                                         (implemented, tested; see that section above; the
-                                         internal_optimization3 outer loop itself is not yet assembled
-                                         from these pieces)
+                                         (implemented, tested; see that section above)
+  internal_optimization_step.hpp        CasscfInternalOptimizationStep, the real InternalOptimizationStep
+                                         (implemented, tested; see that section above)
 src/                                    corresponding .cpp files
 tests/
   test_pcg_trust_region.cpp             analytic smoke tests (interior/boundary/negative-curvature)
@@ -743,6 +843,8 @@ tests/
                                          internal_optimization_exact_energy/
                                          internal_optimization_predicted_energy/step_control/
                                          calculate_ci_dependent_energy
+  test_internal_optimization_step.cpp   full pipeline wiring against a hand-solvable all-zero case, and the
+                                         microiteration cap, against mocks of CiStateAverageSolver/IntegralTransformer
 tools/
   validate_against_python.cpp           replays real Python-captured solver instances (see "Validation
                                          against Python") -- standalone tool, not a ctest

@@ -50,6 +50,17 @@ MacroiterationResult MacroiterationDriver::run(Matrix eigenvecs0, double avg_ene
             eigenvecs = ci_result.eigenvectors;
             old_avg_energy = new_avg_energy;
             new_avg_energy = ci_result.avg_energy;
+
+            // helper_PFCI.py:7992+ (build_state_average_rdms): writes
+            // directly into the persistent self.D_tu_avg/D_tuvw_avg/
+            // Dpe_tu_avg instance attributes right after the CI solve --
+            // context is this driver's equivalent of that persistent
+            // instance state, read later in this same macroiteration by
+            // InternalOptimizationStep. See CiStateAverageResult's and
+            // CasscfContext's doc comments.
+            context.D_tu_avg = ci_result.D_tu_avg;
+            context.D_tuvw_avg = ci_result.D_tuvw_avg;
+            context.Dpe_tu_avg = ci_result.Dpe_tu_avg;
         }
 
         if (std::abs(new_avg_energy - old_avg_energy) < config_.energy_convergence) {

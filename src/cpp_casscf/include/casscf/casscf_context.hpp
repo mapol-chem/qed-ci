@@ -59,6 +59,22 @@ struct CasscfContext {
     // InternalOptimizationStep has somewhere to put it once that dependency
     // exists; nothing in this module populates it yet.
     Vector H_diag3;
+
+    // self.D_tu_avg / self.D_tuvw_avg / self.Dpe_tu_avg: the state-averaged
+    // RDMs built by build_state_average_rdms (helper_PFCI.py:7992+) once
+    // per macroiteration, right after the CI diagonalization that produces
+    // `eigenvecs` -- i.e. exactly what CiStateAverageResult (see
+    // macroiteration_driver.hpp) is meant to carry out of
+    // CiStateAverageSolver::solve(). Belongs here (not just on
+    // CiStateAverageResult) because, like H_spatial2/d_cmo/U_total/J/K
+    // above, these are read afterward by InternalOptimizationStep across
+    // that same macroiteration -- MacroiterationDriver::run copies them
+    // from each CiStateAverageResult into context right after every solve()
+    // call, matching how self.D_tu_avg etc. are persistent instance state
+    // in the Python, not something threaded through a return value.
+    Matrix D_tu_avg;    // (n_act_orb, n_act_orb)
+    Tensor4 D_tuvw_avg; // (n_act_orb, n_act_orb, n_act_orb, n_act_orb)
+    Matrix Dpe_tu_avg;  // (n_act_orb, n_act_orb)
 };
 
 } // namespace casscf
