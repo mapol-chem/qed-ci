@@ -37,6 +37,8 @@ retargeting onto TAMM's distributed tensor API.
 | `BfgsOperator` (real `get_bfgs_mv` + damped history update) | **Fully ported, tested** | helper_PFCI.py:10857-10906 (`get_bfgs_mv`), 11128-11176 (damped update) -- see "`BfgsOperator`" below |
 | `microiteration_ci_integrals_transform` | **Fully ported, tested** | helper_PFCI.py:8689-8798 |
 | `CasscfMicroiterationOptimizationStep` (real `MicroiterationOptimizationStep`) | **Fully ported, tested** against a hand-solvable all-zero case; 3 documented deviations (QN path not wired in) | helper_PFCI.py:10908-12423 (`microiteration_optimization6`) -- see "`CasscfMicroiterationOptimizationStep`" below |
+| `casscf_c_backend` (ci_solver.c/orbital.c compiled + linked from source) | **Working**, smoke-tested | see "The plain-C backend" below |
+| `CasscfIntegralTransformer` (real `IntegralTransformer`) | `transform_internal_rotation` **fully ported, tested against the real compiled C backend**; `transform_macroiteration` **not implemented** (documented gap) | helper_PFCI.py:2907-2921, 7852-7865 (`full_transformation_internal_optimization` call sites) -- see "`CasscfIntegralTransformer`" below |
 
 ### A naming correction from the first pass of this scaffold
 
@@ -686,6 +688,129 @@ outer-pass sequence, same kind of enhancement already noted as open for
 `CasscfInternalOptimizationStep` and `orbital_sigma3`) -- a reasonable next
 enhancement, not done here.
 
+## The plain-C backend (`casscf_c_backend`, `ci_orbital_backend.hpp`)
+
+`CiStateAverageSolver`/`IntegralTransformer` (the last 2 of `MacroiterationDriver`'s
+4 collaborator interfaces) need this codebase's existing plain-C CI Davidson
+solver / RDM builder / integral-transformation extension (`ci_solver.c`/
+`orbital.c`, one level up in `qed-ci/src/`), which the Python driver already
+calls via `ctypes` (see the top-level `qed-ci/README.md`'s "Compile the code
+with intel compiler" step). Rather than linking against a prebuilt
+`cfunctions.so` (an untracked build artifact that can drift out of sync with
+the tracked `.c` sources, and whose `nm -D` shows unresolved `cblas_*`/
+`LAPACKE_dsyev`/`__kmpc_*` symbols relying on the Python process having
+already loaded MKL/Intel-OpenMP globally -- not something a standalone
+CMake-built executable gets for free), `CMakeLists.txt` compiles
+`ci_solver.c`/`orbital.c` **directly from their tracked source** as a small
+static library (`casscf_c_backend`), linked against MKL (`libmkl_rt`, found
+via `MKLROOT` or `CMAKE_PREFIX_PATH` -- both `.c` files call `cblas_*`/
+`LAPACKE_dsyev`) and an OpenMP runtime (`find_package(OpenMP)`, for their
+`#pragma omp parallel for` loops). Confirmed empirically that compiling with
+plain `gcc -fopenmp` (not `icx -qopenmp`, the documented Python-build
+recipe) works fine and avoids needing to match the prebuilt `.so`'s
+Intel-OpenMP-runtime (`libiomp5`) ABI -- any *self-consistent* OpenMP
+runtime works since these two files are compiled together from source here,
+not mixed with a separately-compiled binary.
+
+`ci_orbital_backend.hpp` declares the `extern "C"` signatures needed
+(`get_graph`/`get_string`/`build_H_diag_cas_spin`/`build_S_diag`/`get_roots`/
+`build_active_rdm`/`build_active_photon_electron_one_rdm` from `ci_solver.c`,
+`full_transformation_macroiteration`/`full_transformation_internal_optimization`
+from `orbital.c`) -- transcribed from `ci_solver.h`/`orbital.h` directly,
+**not** from the Python `ctypes.argtypes` declarations, which sometimes use
+looser types than the real C header (e.g. `get_graph`'s first two
+parameters are `size_t` in the real header, `c_int32` in the Python ctypes
+call -- easy to miss if only the Python side is read, and a real ABI risk if
+gotten wrong, though in practice small nonnegative literals happen to
+survive the mismatch on x86-64 by implementation accident, not by the ABI's
+own guarantee).
+
+`test_ci_orbital_backend_smoke.cpp` proves the link/ABI actually resolves
+inside the real CMake build (calls `get_graph` and checks it doesn't crash
+and writes something) -- not a correctness test of any CASSCF physics, just
+of the linkage itself. `CiStateAverageSolver` isn't implemented yet (see
+"What's still open"); `CasscfIntegralTransformer` (below) is the first real
+consumer of this backend.
+
+## `CasscfIntegralTransformer` (`integral_transformer.hpp`/`.cpp`)
+
+**`transform_internal_rotation`: fully ported, tested against the real
+compiled C backend** (not a hand-derived reference or an independently-coded
+second implementation, like most of this port's other tests -- this one
+calls the actual `full_transformation_internal_optimization` from
+`orbital.c`, so a passing test is direct evidence about the production C
+code, not just about this wrapper's marshaling layer). Wraps the single C
+function backing both Python call sites `IntegralTransformer::
+transform_internal_rotation`'s doc comment (`macroiteration_driver.hpp`)
+already documents as "the same operation on different rotation matrices":
+the "RESTART MICROITERATION" branch's `U_delta` (helper_PFCI.py:2907-2921)
+and `internal_optimization3`'s own `U1` (helper_PFCI.py:7852-7865).
+
+**Marshaling**: `context.J`/`context.K` (already row-major `Tensor4`
+storage) are passed to the C function directly, no copy, and mutated truly
+in place. `context.H_spatial2`/`context.d_cmo` (column-major
+`Eigen::MatrixXd`) are marshaled through a row-major temporary and copied
+back afterward -- same reasoning `tensor_types.hpp`'s `matrix_to_tensor2`
+documents for the analogous `Tensor2` case, just applied inline here rather
+than via a shared helper (only two call sites, not worth factoring out
+yet). `index_map_ab`/`index_map_kl` (upper-triangular pair enumerations of
+the virtual-virtual/occupied-occupied blocks, helper_PFCI.py:2376-2402) are
+built once per `Dimensions` in the constructor -- **not** the same thing as
+`build_index_map()` (`tensor_types.hpp`), which enumerates a completely
+different set of pairs (the non-redundant orbital-*rotation* parameters,
+skipping same-block pairs) for the trust-region solvers; see this class's
+own header doc comment for the distinction, since the naming collision risk
+is real.
+
+**A real physical precondition, discovered empirically while writing this
+class's own test**: `full_transformation_internal_optimization` exploits
+real two-electron-integral index-permutation symmetry to avoid redundant
+work, and does **not** produce correct output for `J`/`K` tensors that
+don't satisfy it -- confirmed directly: an arbitrary (non-physically-
+symmetric) `J`/`K` makes even a `U == identity` call **not** a no-op,
+because index combinations the algorithm reconstructs by symmetry (rather
+than reading independently) don't equal their "expected" value for
+unphysical input. The correct relationship, given one full
+8-fold-symmetric two-electron-integral tensor `I(a,b,c,d) = S(a,b)*S(c,d)`
+(`S` an `(nmo,nmo)` symmetric matrix): `J(k,l,p,q) = I(k,l,p,q)` is the
+Coulomb integral `(kl|pq)`, and **`K(k,l,p,q) = I(k,p,l,q)` is the
+*exchange* integral `(kp|lq)`** -- a genuinely different index permutation
+of the same underlying tensor, not another instance of `J`'s own
+`(i<->j),(k<->l)` pair symmetry (using `J`'s own formula for `K` too, an
+easy mistake, fails the same way). Also discovered a second, unrelated trap
+while iterating toward this: a symmetric but **rank-deficient/indefinite**
+`S` (eigenvalues `[-0.276, ~1e-17, 6.58]`, arising from an
+affine-in-`(i+j)` fill collapsing under symmetrization) also fails the
+round-trip, even with the correct `J`/`K` formula -- almost certainly
+because some of `orbital.c`'s handwritten index bookkeeping doesn't handle
+coincidentally-equal array entries robustly, a degeneracy no physically
+real molecular integral matrix would ever exhibit. `test_integral_
+transformer.cpp` documents both findings in its own comments; the final
+test data is a genuine, well-conditioned, diagonally-dominant symmetric
+matrix, and both checks (the `U == identity` round-trip on `H_spatial2`/
+`d_cmo`/`J`/`K`, and a non-identity `U`'s `H_spatial2`/`d_cmo` against the
+direct `U^T @ h @ U` formula -- hand-verifiable independently of the more
+intricate partial-block `J`/`K` algorithm, confirmed via
+`orbital.c:869-881`) pass to exact machine precision (`0.0` diff, not just
+"within tolerance").
+
+**`transform_macroiteration`: not implemented.** Would wrap
+`full_transformation_macroiteration` (`orbital.c`), whose `h2e` argument
+needs the full `(nmo,nmo,nmo,nmo)` two-electron integral tensor
+(`self.twoeint` in the Python) -- infrastructure this port has never needed
+before (`CasscfContext` only carries the occupied-restricted `J`/`K`,
+`(n_occupied,n_occupied,nmo,nmo)`) and doesn't build here. Also worth
+flagging: every live call site of this function in `helper_PFCI.py` is
+gated by `if self.density_fitting == False:` (e.g. helper_PFCI.py:2976),
+and `self.twoeint`'s own runtime shape at those call sites looks
+inconsistent with what this C function's `ndim=4` `ctypes` argtype
+requires (`self.twoeint` is set as a 2D-reshaped array by `build2DSO`,
+helper_PFCI.py:3510-3512, never reshaped back to 4D anywhere found) -- i.e.
+this call path may be effectively dead under the density-fitted path this
+codebase actually exercises in practice. Throws `std::logic_error` if
+called; a real implementation needs a resolution to that ambiguity (and a
+`CasscfContext` extension for the full ERI tensor) first.
+
 ## What's still open
 
 - **The macroiteration/microiteration driver loop**
@@ -729,23 +854,40 @@ enhancement, not done here.
   placed on `bfgs_operator.hpp` and `orbital_sigma.hpp`, the latter also
   flagged for future performance acceleration as the hottest path in the
   whole solver stack). What's left:
-  - `CiStateAverageSolver`: needs `extern "C"` wrappers around `get_roots`/
+  - `IntegralTransformer`: **`transform_internal_rotation` now has a real,
+    tested implementation** (`CasscfIntegralTransformer`, see above and
+    "The plain-C backend"/"`CasscfIntegralTransformer`" sections) --
+    `full_transformation_internal_optimization` (orbital.c), compiled and
+    linked from source via the new `casscf_c_backend` target.
+    `transform_macroiteration` remains **not implemented** (documented gap,
+    needs `self.twoeint`-equivalent infrastructure this port doesn't have --
+    see that class's own header doc comment). A real implementation must
+    still be shared between `MacroiterationDriver` and
+    `CasscfInternalOptimizationStep` (both call `transform_internal_rotation`
+    -- see that method's doc comment for why they're the same operation on
+    different inputs, not two different transforms) -- not yet wired into
+    either driver's constructor call sites.
+  - `CiStateAverageSolver`: **not yet started.** Needs `extern "C"`
+    wrappers (declarations for these already exist in
+    `ci_orbital_backend.hpp`, see "The plain-C backend") around `get_roots`/
     `build_H_diag_cas_spin` (ci_solver.c, already plain C, already
     ctypes-called from Python) plus `build_state_average_rdms`
-    (helper_PFCI.py:7992+, itself a thin wrapper around `c_build_active_rdm`
-    C calls) -- no new numerical work, just C++/C linkage. A real
-    implementation should hold a reference to the same shared
-    `CasscfContext` internally (constructor-injected, matching the pattern
-    `CasscfInternalOptimizationStep` already uses) rather than needing
-    context threaded through `solve()`'s signature, since `c_get_roots`
-    needs `context.gkl2`/`occupied_J`/`occupied_d_cmo`/`H_diag3`/`E_core`.
-  - `IntegralTransformer`: same story -- `c_full_transformation_macroiteration`/
-    `c_full_transformation_internal_optimization` (orbital.c) are already
-    plain C, just need wrapping. A real implementation must be shared
-    between `MacroiterationDriver` and `CasscfInternalOptimizationStep`
-    (both call `transform_internal_rotation` -- see that method's updated
-    doc comment for why they're the same operation on different inputs, not
-    two different transforms).
+    (helper_PFCI.py:7992+, itself a thin wrapper around `c_build_active_rdm`/
+    `c_build_active_photon_electron_one_rdm` C calls) -- no new numerical
+    work, just C++/C linkage. A real implementation should hold a reference
+    to the same shared `CasscfContext` internally (constructor-injected,
+    matching the pattern `CasscfInternalOptimizationStep` already uses)
+    rather than needing context threaded through `solve()`'s signature,
+    since `c_get_roots` needs `context.gkl2`/`occupied_J`/`occupied_d_cmo`/
+    `H_diag3`/`E_core`. Also needs a **new** bundle of CI-setup state this
+    port hasn't touched yet -- the graph/string tables
+    (`table`/`table_creation`/`table_annihilation`/`b_array`/`Y`, built once
+    per active-space definition via `get_graph`/`get_string`, both also
+    declared in `ci_orbital_backend.hpp`) and `H_diag3`/`S_diag`/
+    `S_diag_projection`/`index_Hdiag` (via `build_H_diag_cas_spin` +
+    `argsort` + `build_S_diag`) -- all computed once in the Python's
+    `PFHamiltonianGenerator.__init__` and reused for a whole CASSCF run, not
+    yet ported into a `CasscfCiSetup`-shaped struct here.
   - `HessianGuessProvider` now has a real implementation
     (`OrbitalHessianGuessProvider`, see above) -- nothing left here for it.
 
@@ -771,6 +913,17 @@ cd build && ctest --output-on-failure
 
 If Eigen lives somewhere else, point `CMAKE_PREFIX_PATH` at that prefix (or
 `Eigen3_DIR` directly at its `share/eigen3/cmake` directory).
+
+**Also needs MKL + an OpenMP runtime** (see "The plain-C backend"):
+`ci_solver.c`/`orbital.c` are compiled from source and linked in as part of
+this build (not a prebuilt `.so`), and need `<mkl.h>`/`libmkl_rt` (found via
+the `MKLROOT` env var, or under the same `CMAKE_PREFIX_PATH` prefixes probed
+for Eigen -- both an oneAPI `mkl/<version>` install and a conda env that
+ships `libmkl_rt.so` work) plus `find_package(OpenMP)`. Set `MKLROOT` (e.g.
+`/home/nvu12/intel/oneapi/mkl/2024.1`) if MKL lives somewhere neither probe
+finds it. Override the location of `ci_solver.c`/`orbital.c` themselves
+(default: one directory up from here) with
+`-DCASSCF_C_BACKEND_DIR=/path/to/qed-ci/src`.
 
 ## Validation against Python
 
@@ -1091,7 +1244,14 @@ include/casscf/
   microiteration_optimization_step.hpp  CasscfMicroiterationOptimizationStep, the real
                                          MicroiterationOptimizationStep (implemented, tested;
                                          see that section above)
-src/                                    corresponding .cpp files
+  ci_orbital_backend.hpp                extern "C" declarations for ci_solver.c/orbital.c
+                                         (see "The plain-C backend" above)
+  integral_transformer.hpp              CasscfIntegralTransformer, the real IntegralTransformer
+                                         (transform_internal_rotation implemented, tested against
+                                         the real C backend; transform_macroiteration not
+                                         implemented -- see that section above)
+src/                                    corresponding .cpp files (ci_orbital_backend.hpp has no .cpp,
+                                         declarations only)
 tests/
   test_pcg_trust_region.cpp             analytic smoke tests (interior/boundary/negative-curvature)
   test_lstrs_solver.cpp                 cross-validated against PCG on the same 3 problems
@@ -1122,6 +1282,11 @@ tests/
   test_microiteration_optimization_step.cpp  full pipeline wiring against a hand-solvable all-zero
                                          case (natural convergence + the microiteration cap), against
                                          a mock CiStateAverageSolver
+  test_ci_orbital_backend_smoke.cpp     proves casscf_c_backend's link/ABI resolves inside the real
+                                         CMake build (calls get_graph) -- not a physics test
+  test_integral_transformer.cpp         runs against the REAL compiled C backend (not a hand-derived
+                                         reference): U==identity round-trip on H_spatial2/d_cmo/J/K,
+                                         non-identity U checked against the direct U^T @ h @ U formula
 tools/
   validate_against_python.cpp           replays real Python-captured solver instances (see "Validation
                                          against Python") -- standalone tool, not a ctest

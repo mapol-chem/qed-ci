@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.16)
-project(casscf_trust_region CXX)
+project(casscf_trust_region CXX C)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -18,6 +18,52 @@ if(DEFINED ENV{CONDA_PREFIX})
 endif()
 
 find_package(Eigen3 3.3 REQUIRED NO_MODULE)
+
+# --- Plain-C CASSCF backend (ci_solver.c / orbital.c, one level up in
+# qed-ci/src/) --- the existing CI Davidson solver / RDM builder /
+# integral-transformation C extension this Python codebase already calls
+# via ctypes (see the top-level qed-ci/README.md "Compile the code with
+# intel compiler" step, and cpp_casscf/README.md's CiStateAverageSolver/
+# IntegralTransformer sections). Compiled directly from these tracked .c
+# files here (not linked against a prebuilt cfunctions.so) so the C++ port
+# depends on exactly the same source everything else does, not a build
+# artifact that can silently drift out of sync with it.
+#
+# Both files call cblas_*/LAPACKE_dsyev (need MKL) and use
+# `#pragma omp parallel for` (need an OpenMP runtime) -- override
+# MKLROOT if MKL lives somewhere other than the oneAPI/conda locations
+# probed below.
+set(CASSCF_C_BACKEND_DIR "${CMAKE_CURRENT_SOURCE_DIR}/.." CACHE PATH
+    "Directory containing ci_solver.c/orbital.c (the plain-C CASSCF backend)")
+
+find_path(MKL_INCLUDE_DIR mkl.h
+    HINTS ENV MKLROOT
+    PATHS ${CMAKE_PREFIX_PATH} /opt/intel/oneapi/mkl/latest /home/nvu12/intel/oneapi/mkl/2024.1
+    PATH_SUFFIXES include)
+find_library(MKL_RT_LIBRARY NAMES mkl_rt
+    HINTS ENV MKLROOT
+    PATHS ${CMAKE_PREFIX_PATH} /opt/intel/oneapi/mkl/latest /home/nvu12/intel/oneapi/mkl/2024.1
+    PATH_SUFFIXES lib lib/intel64)
+
+if(NOT MKL_INCLUDE_DIR OR NOT MKL_RT_LIBRARY)
+    message(FATAL_ERROR "MKL not found (need mkl.h and libmkl_rt) -- "
+        "ci_solver.c/orbital.c call cblas_*/LAPACKE_dsyev. Set MKLROOT or "
+        "CMAKE_PREFIX_PATH to an MKL install (e.g. an oneAPI mkl/<ver> "
+        "directory, or a conda env that ships libmkl_rt.so).")
+endif()
+
+find_package(OpenMP REQUIRED COMPONENTS C)
+
+add_library(casscf_c_backend STATIC
+    ${CASSCF_C_BACKEND_DIR}/ci_solver.c
+    ${CASSCF_C_BACKEND_DIR}/orbital.c
+)
+target_include_directories(casscf_c_backend PUBLIC ${CASSCF_C_BACKEND_DIR} ${MKL_INCLUDE_DIR})
+target_link_libraries(casscf_c_backend PUBLIC ${MKL_RT_LIBRARY} OpenMP::OpenMP_C)
+target_compile_options(casscf_c_backend PRIVATE -fPIC)
+# No -Wall -Wextra here: this is existing, unmodified C we're linking
+# against (already covered by the top-level qed-ci Python test suite),
+# not code this port is writing or reviewing line by line.
 
 add_library(casscf_trust_region
     src/pcg_trust_region_solver.cpp
@@ -43,9 +89,10 @@ add_library(casscf_trust_region
     src/bfgs_operator.cpp
     src/microiteration_ci_integrals_transform.cpp
     src/microiteration_optimization_step.cpp
+    src/integral_transformer.cpp
 )
 target_include_directories(casscf_trust_region PUBLIC include)
-target_link_libraries(casscf_trust_region PUBLIC Eigen3::Eigen)
+target_link_libraries(casscf_trust_region PUBLIC Eigen3::Eigen casscf_c_backend)
 target_compile_options(casscf_trust_region PRIVATE -Wall -Wextra)
 
 enable_testing()
@@ -113,6 +160,15 @@ add_test(NAME microiteration_ci_integrals_transform COMMAND test_microiteration_
 add_executable(test_microiteration_optimization_step tests/test_microiteration_optimization_step.cpp)
 target_link_libraries(test_microiteration_optimization_step PRIVATE casscf_trust_region)
 add_test(NAME microiteration_optimization_step COMMAND test_microiteration_optimization_step)
+
+add_executable(test_ci_orbital_backend_smoke tests/test_ci_orbital_backend_smoke.cpp)
+target_include_directories(test_ci_orbital_backend_smoke PRIVATE include)
+target_link_libraries(test_ci_orbital_backend_smoke PRIVATE casscf_c_backend)
+add_test(NAME ci_orbital_backend_smoke COMMAND test_ci_orbital_backend_smoke)
+
+add_executable(test_integral_transformer tests/test_integral_transformer.cpp)
+target_link_libraries(test_integral_transformer PRIVATE casscf_trust_region)
+add_test(NAME integral_transformer COMMAND test_integral_transformer)
 
 # Standalone tool, not a ctest: replays real Python-captured solver instances
 # from a dump directory (see validation/dump_lih_case.py). Run manually:
