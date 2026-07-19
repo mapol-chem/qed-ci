@@ -256,6 +256,23 @@ FullBlockIntermediates build_intermediates(const Matrix& H_spatial2, const Matri
             for (int r = 0; r < rot_dim; ++r)
                 for (int s = 0; s < rot_dim; ++s)
                     L(p, j, r, s) = 4.0 * K(p, j, r, s) - K(p, j, s, r) - J(p, j, r, s);
+    result.L = L;
+
+    // helper_PFCI.py:5955-5969 -- the remaining reference-point side
+    // outputs (E_core, active_fock_core, active_twoeint), computed
+    // directly from H_spatial2/fock_core/J, all already in scope above.
+    {
+        double e_core = 0.0;
+        for (int j = 0; j < n_in_a; ++j) e_core += H_spatial2(j, j) + fock_core(j, j);
+        result.E_core = e_core;
+    }
+    result.active_fock_core = fock_core.block(n_in_a, n_in_a, n_act, n_act);
+    result.active_twoeint = Tensor4(n_act, n_act, n_act, n_act);
+    for (int t = 0; t < n_act; ++t)
+        for (int u = 0; u < n_act; ++u)
+            for (int v = 0; v < n_act; ++v)
+                for (int w = 0; w < n_act; ++w)
+                    result.active_twoeint(t, u, v, w) = J(n_in_a + t, n_in_a + u, n_in_a + v, n_in_a + w);
 
     // fock_general(r,s) = fock_core(r,s)
     //   + sum_tu D_tu_avg(t,u)*(J(n_in_a+t,n_in_a+u,r,s) - 0.5*K(n_in_a+t,n_in_a+u,r,s))

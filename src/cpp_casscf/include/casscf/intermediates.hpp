@@ -94,7 +94,25 @@ struct FullBlockIntermediates {
     Matrix A;          // (nmo, nmo)
     Tensor4 G;         // (n_occupied, n_occupied, nmo, nmo)
     Matrix fock_core;  // (nmo, nmo) -- side output, not consumed by build_gradient itself but
-                        // needed by the (not-yet-ported) energy bookkeeping around it
+                        // needed by the energy bookkeeping around it
+
+    // Additional side outputs of build_intermediates, helper_PFCI.py:5947-5976
+    // (self.E_core/self.active_fock_core/self.active_twoeint/self.L,
+    // computed immediately before the A/G computation this struct's other
+    // fields already covered) -- easy to miss on a first read since
+    // they're assigned directly onto `self` rather than returned, and
+    // nothing downstream of build_intermediates in the Python needs them
+    // until microiteration_ci_integrals_transform / the zero_energy
+    // reference-point bookkeeping in microiteration_optimization6. Added
+    // when that bookkeeping was ported; purely additive, doesn't touch
+    // the already-validated A/G computation above.
+    double E_core = 0.0;     // sum_j H_spatial2(j,j) + fock_core(j,j), j < n_in_a
+    Matrix active_fock_core; // (n_act_orb, n_act_orb) -- fock_core's active-active block
+    Tensor4 active_twoeint;  // (n_act_orb)^4 -- J's active-active-active-active block
+    Tensor4 L;               // (n_occupied, n_in_a, nmo, nmo) -- 4*K - K^T(last two axes) - J,
+                              // restricted to the first n_occupied/n_in_a axes; needed by
+                              // microiteration_ci_integrals_transform's E_core2/active_fock_core
+                              // update (helper_PFCI.py:8701-8762)
 };
 
 // Faithful port of build_intermediates, helper_PFCI.py:5748-5929, with
