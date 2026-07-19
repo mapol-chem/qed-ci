@@ -608,7 +608,14 @@ reasoning); the `m_history` cap correctly pops the oldest entry;
     sub-dispatch, one shared accept/reject test across three
     step-computation paths, BFGS history threaded across inner-loop
     iterations), so it was deliberately left for a dedicated pass rather
-    than rushed. The full architectural plan (every formula, every
+    than rushed. **FLAGGED FOR SCRUTINY WHEN WRITTEN**: given how much
+    trust-region step-size-reduction/acceptance logic this loop carries
+    (the accept/reject test, `step_control`, the QN activation threshold
+    on step norm), this implementation should get a dedicated re-review
+    pass by a stronger reasoning model once written -- same flag already
+    placed on `bfgs_operator.hpp` and `orbital_sigma.hpp` (the latter also
+    flagged for future performance acceleration, being the hottest path in
+    the whole solver stack). The full architectural plan (every formula, every
     interface gap found, the exact `break`/state-mutation line numbers)
     is written up in this project's saved session memory, ready to
     implement directly. Two concrete plans worth calling out here:

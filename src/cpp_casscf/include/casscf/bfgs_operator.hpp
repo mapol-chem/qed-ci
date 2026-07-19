@@ -1,5 +1,9 @@
 #pragma once
 
+// FLAGGED FOR RE-REVIEW: written under time pressure by an LLM in one
+// session; recommend a dedicated scrutiny pass by a stronger reasoning
+// model before trusting for production chemistry results.
+
 #include "casscf/tensor_types.hpp"
 #include "casscf/types.hpp"
 

@@ -1,5 +1,15 @@
 #pragma once
 
+// FLAGGED FOR FUTURE ACCELERATION: this is the hottest path in the whole
+// solver stack (called once per Hessian-vector product from GLTR,
+// DavidsonDrivenLstrsSolver, and BfgsOperator alike). Currently explicit
+// O(n^4)-ish nested loops, chosen for transcription safety over a function
+// this intricate (see the derivation note below) -- worth revisiting for
+// BLAS-backed Eigen matrix ops (or the G_ij/G_ti/G_tu block decomposition
+// the Python itself uses for performance) once correctness is fully
+// settled. Also flagged for re-review by a stronger reasoning model, same
+// as bfgs_operator.hpp.
+
 #include "casscf/tensor_types.hpp"
 #include "casscf/types.hpp"
 
