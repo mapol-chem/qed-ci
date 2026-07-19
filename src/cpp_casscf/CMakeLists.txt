@@ -41,6 +41,7 @@ add_library(casscf_trust_region
     src/orbital_sigma.cpp
     src/microiteration_energy.cpp
     src/bfgs_operator.cpp
+    src/microiteration_ci_integrals_transform.cpp
 )
 target_include_directories(casscf_trust_region PUBLIC include)
 target_link_libraries(casscf_trust_region PUBLIC Eigen3::Eigen)
@@ -103,6 +104,10 @@ add_test(NAME microiteration_energy COMMAND test_microiteration_energy)
 add_executable(test_bfgs_operator tests/test_bfgs_operator.cpp)
 target_link_libraries(test_bfgs_operator PRIVATE casscf_trust_region)
 add_test(NAME bfgs_operator COMMAND test_bfgs_operator)
+
+add_executable(test_microiteration_ci_integrals_transform tests/test_microiteration_ci_integrals_transform.cpp)
+target_link_libraries(test_microiteration_ci_integrals_transform PRIVATE casscf_trust_region)
+add_test(NAME microiteration_ci_integrals_transform COMMAND test_microiteration_ci_integrals_transform)
 
 # Standalone tool, not a ctest: replays real Python-captured solver instances
 # from a dump directory (see validation/dump_lih_case.py). Run manually:
