@@ -10,13 +10,16 @@ namespace casscf {
 
 // Faithful port of microiteration_optimization6(U, eigenvecs, c_get_roots,
 // convergence_threshold), helper_PFCI.py:10908-12423 -- the real
-// MicroiterationOptimizationStep. NOT the QN (quasi-Newton/BFGS) path: see
-// "DOCUMENTED DEVIATIONS" below.
+// MicroiterationOptimizationStep, including the QN (quasi-Newton/BFGS) path
+// (see "DOCUMENTED DEVIATIONS" below for exactly what's ported vs.
+// intentionally omitted there).
 //
 // STRUCTURE (confirmed by reading the Python's actual indentation, not
 // assumed from its variable names -- an earlier read of this function had
 // mis-placed the CI-solve call inside the inner accept branch; it is not
-// there):
+// there). This describes the non-QN branch specifically -- see
+// "DOCUMENTED DEVIATIONS" for the separate QN flat block that steps 3-4
+// dispatch to instead, once qn_optimization has activated:
 //
 //   outer "microiteration" loop (while microiteration < N_microiterations):
 //     1. build_intermediates once -- sets this outer iteration's *fixed
@@ -33,9 +36,9 @@ namespace casscf {
 //     4. inner "orbital optimization step" loop (while orbital_optimization_step
 //        < N_orbital_optimization_steps): gradient-norm break checks: solve
 //        via GltrTrustRegionSolver (n_negative==0) / DavidsonDrivenLstrsSolver
-//        (n_negative>0) / PcgTrustRegionSolver-as-plain-CG (||g||<=1e-3,
-//        documented substitution, same precedent as
-//        DavidsonDrivenLstrsSolver's own hard_case==2 gap) : rotation-generator
+//        (n_negative>0) / linear_equation_solve with a real minres_solve
+//        fallback (||g||<=1e-3, a faithful port, not a substitution -- see
+//        "DOCUMENTED DEVIATIONS") : rotation-generator
 //        unpack -> build_unitary_matrix -> trial energy via
 //        microiteration_exact_energy : single shared accept/reject test
 //        (energy_change < 0.0 || hard_case == 2). On accept: commit U2,

@@ -725,6 +725,51 @@ comment for the full reasoning):
    `QuasiNewtonPolicy{enabled=false}` -- via `run_macroiteration_driver
    --disable-qn` -- still reproduces this port's exact pre-QN behavior).
 
+   **On richer systems, per-macroiteration trajectories can diverge from
+   Python by as much as ~1e-2 mid-run (converged final energy still agrees
+   to ~1e-9-1e-12) -- confirmed to be the GLTR gradient-noise mechanism
+   itself, not a wiring bug**, via `validation/compare_macroiterations.sh`
+   (a later addition, see that script's own header). Found on a larger,
+   more strongly-coupled H2O/6-31G case (4,4 active space, 2 photons, an
+   off-axis `lambda_vector`, stretched/bent geometry) where the reduced
+   Hessian evidently has more near-degenerate curvature directions than
+   this port's earlier LiH/small-H2O validation configs -- exactly the
+   regime `solve_gltr_trust_region`/`solve_gltr_with_operator`'s own
+   `np.random.randn` noise draw (see "Sweep findings" below) exists to
+   perturb away from. Confirmed via a controlled 2x2 experiment (noise
+   on/off crossed on both sides, each combination reversible via a
+   temporary one-line edit -- `GltrConfig{..., /*add_noise=*/false}` in
+   `microiteration_optimization_step.cpp`; `noise = np.zeros(n)` at both
+   `np.random.randn(n)` call sites in `helper_PFCI.py`, both reverted via
+   `git checkout`/re-editing after each run, confirmed clean via `git
+   diff`):
+
+   | noise: Python / C++ | max mid-trajectory energy diff | macroiterations (Python / C++) |
+   |---|---|---|
+   | on / on (production default, independent draws) | ~1.2e-2 | 7 / 7 |
+   | off / on | ~2.6e-2 (worse) | 4 / 7 (mismatched) |
+   | on / off | ~3.1e-2 (worse) | 7 / 4 (mismatched) |
+   | off / off | ~1e-7 | 4 / 4 (exact match) |
+
+   The first naive test (disabling noise on only one side) looks like it
+   *disproves* the noise hypothesis -- divergence gets worse, not better --
+   but that's because it compares a noise-free trajectory against a
+   still-independently-noised one; it takes the full 2x2 to see that
+   *mismatched* noise state (either direction) is what's bad, and
+   noise-free-vs-noise-free recovers near-exact agreement at every single
+   macroiteration, not just the final energy. Confirmed via direct repeated
+   runs, not assumed: Python itself, run twice with an identical command
+   (production noise on both times, just two different unseeded draws),
+   shows the same ~1e-2-scale mid-trajectory spread against itself that it
+   shows against C++ -- while C++ run repeatedly against the same fixed
+   input is reproducible to ~1e-8 (attributable to `ci_solver.c`/`orbital.c`'s
+   `#pragma omp parallel for` reduction-order non-associativity, not to
+   `GltrConfig`'s own noise, which is fully deterministic given its fixed
+   default `random_seed = 0`). **Practical takeaway**: on systems in this
+   regime, don't expect the per-macroiteration trajectory (or even the
+   exact macroiteration count) to match between any two independent runs --
+   Python vs Python included -- only the converged energy.
+
 2. The cross-microiteration hard_case==1 "warm start" shortcut inside the
    Davidson bisection (helper_PFCI.py:11467-11500) is not re-ported --
    inherited from `DavidsonDrivenLstrsSolver`, which already doesn't port it
