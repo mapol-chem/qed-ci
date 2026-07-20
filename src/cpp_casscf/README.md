@@ -36,7 +36,7 @@ retargeting onto TAMM's distributed tensor API.
 | `microiteration_exact_energy`, `microiteration_predicted_energy2` | **Fully ported, tested** | helper_PFCI.py:8800-8826, 9455-9467 -- see "`microiteration_energy.hpp`/`.cpp`" below |
 | `BfgsOperator` (real `get_bfgs_mv` + damped history update) | **Fully ported, tested** | helper_PFCI.py:10857-10906 (`get_bfgs_mv`), 11128-11176 (damped update) -- see "`BfgsOperator`" below |
 | `microiteration_ci_integrals_transform` | **Fully ported, tested** | helper_PFCI.py:8689-8798 |
-| `CasscfMicroiterationOptimizationStep` (real `MicroiterationOptimizationStep`) | **Fully ported, tested** against a hand-solvable all-zero case; 3 documented deviations (QN path not wired in) | helper_PFCI.py:10908-12423 (`microiteration_optimization6`) -- see "`CasscfMicroiterationOptimizationStep`" below |
+| `CasscfMicroiterationOptimizationStep` (real `MicroiterationOptimizationStep`) | **Fully ported, tested**, including the QN/BFGS path -- 2 remaining documented deviations, neither QN-related | helper_PFCI.py:10908-12423 (`microiteration_optimization6`) -- see "`CasscfMicroiterationOptimizationStep`" below |
 | `casscf_c_backend` (ci_solver.c/orbital.c compiled + linked from source) | **Working**, smoke-tested | see "The plain-C backend" below |
 | `CasscfIntegralTransformer` (real `IntegralTransformer`) | **Both `transform_internal_rotation` and `transform_macroiteration` fully ported, tested against the real compiled C backend** | helper_PFCI.py:2907-2921, 7852-7865 (`full_transformation_internal_optimization`), 2976-3134 (`full_transformation_macroiteration` + the fock_core/E_core/occupied_* rebuild that follows it) -- see "`CasscfIntegralTransformer`" below |
 | `CasscfCiSetup` | **Fully ported, tested against the real compiled C backend** (a genuine Davidson CI diagonalization, hand-solvable non-interacting test problem) | `PFHamiltonianGenerator.__init__`'s CI graph/table setup, helper_PFCI.py:1507-1613 -- see "`CasscfCiSetup`/`CasscfCiStateAverageSolver`" below |
@@ -558,9 +558,10 @@ same as the *reference-point-reset* condition
 (helper_PFCI.py:11180-11187, 12183-12187: the same three clauses but
 **without** `consecutive_skips>=3`). `BfgsOperator::reset_reference()` is
 purely mechanical (adopt new tensors, clear history); deciding *when* to
-call it needs a second, separate predicate that
-`CasscfMicroiterationOptimizationStep` must implement itself, not reuse of
-`should_reset_bfgs_reference()`.
+call it is a second, separate predicate -- `should_reset_bfgs_reference_point()`
+(`solver_selector.hpp`/`.cpp`), ported alongside `should_reset_bfgs_reference()`
+and now wired into `CasscfMicroiterationOptimizationStep::run()`'s
+top-of-outer-pass reset check (see that class's own section below).
 
 Tested (`test_bfgs_operator.cpp`): `apply()` with empty history reduces to
 plain `orbital_sigma3`; `apply()` with one hand-appended history entry
@@ -571,25 +572,44 @@ is genuinely exercised regardless of `orbital_sigma3`'s not-hand-predictable
 sign structure on arbitrary test data -- see the test file for the
 reasoning); the `m_history` cap correctly pops the oldest entry;
 `reset_reference()` clears history and adopts new tensors.
+`should_activate_qn`/`should_reset_bfgs_reference`/`should_reset_bfgs_reference_point`
+themselves (the small pure decision functions in `quasi_newton_policy.hpp`/
+`solver_selector.hpp`) have their own dedicated exact-truth-table test,
+`test_quasi_newton_decisions.cpp` -- added alongside the QN wiring since
+none of these three had any direct test coverage before (only exercised, if
+at all, indirectly through solver-selection tests unrelated to QN).
 
 ## `CasscfMicroiterationOptimizationStep` (`microiteration_optimization_step.hpp`/`.cpp`)
 
-**The real `MicroiterationOptimizationStep`.** Faithful port of
-`microiteration_optimization6`'s outer/inner loop (helper_PFCI.py:10908-12423),
-assembling the pieces above: `build_intermediates` once per **outer**
-("microiteration") pass to fix that pass's reference point
+**The real `MicroiterationOptimizationStep`, now including the QN/BFGS
+path.** Faithful port of `microiteration_optimization6`'s outer/inner loop
+(helper_PFCI.py:10908-12423), assembling the pieces above: `build_intermediates`
+once per **outer** ("microiteration") pass to fix that pass's reference point
 (`fi.A`/`fi.G`/`fi.E_core`/`fi.active_fock_core`/`fi.active_twoeint`/`fi.L`),
-then an **inner** ("orbital optimization step") loop that dispatches each
-trial step to `GltrTrustRegionSolver` (`n_negative==0`),
-`DavidsonDrivenLstrsSolver` (`n_negative>0`), or `PcgTrustRegionSolver` as a
-plain-CG stand-in for the gradient-small Newton fallback (see deviation 3
-below) -- all three driven by `orbital_sigma3` as a genuine matrix-free
-`HessianOperator`, and all three sharing one accept/reject test
-(`energy_change < 0.0 || hard_case == 2`). After the inner loop finishes for
-that outer pass, `microiteration_ci_integrals_transform`'s output (or, if
-nothing was accepted, a fallback to the outer pass's own reference point) is
-committed into `CasscfContext` and the injected `CiStateAverageSolver` is
-called exactly once.
+then a dispatch on `qn_optimization` (a run()-scope-persistent flag, starts
+`false`, latches permanently `true` once activated -- see deviation 1 below)
+to either:
+- the **non-QN inner** ("orbital optimization step") loop, unchanged from
+  before this session: `GltrTrustRegionSolver` (`n_negative==0`),
+  `DavidsonDrivenLstrsSolver` (`n_negative>0`), or the gradient-small Newton
+  fallback (`linear_equation_solve`, falling back to real `minres_solve` --
+  see below) for `1e-7 < ||reduced_gradient|| <= 1e-3` -- all three driven by
+  `orbital_sigma3` as a genuine matrix-free `HessianOperator`, sharing one
+  accept/reject test (`energy_change < 0.0 || hard_case == 2`); or
+- the **QN flat block** (new this session): exactly one trial step per outer
+  pass, computed via `GltrTrustRegionSolver` against either the exact reduced
+  Hessian at a frozen `BfgsOperator` reference point or the running
+  `BfgsOperator` approximation itself (dispatched by
+  `should_reset_bfgs_reference()`), unconditionally accepted (no accept/reject
+  test -- `hard_case` forced to `0`).
+
+After either path finishes for that outer pass, `microiteration_ci_integrals_transform`'s
+output (or, if nothing was accepted, a fallback to the outer pass's own
+reference point) is committed into `CasscfContext` and the injected
+`CiStateAverageSolver` is called exactly once, with its Davidson
+threshold/maxiter overridden to a looser `0.1*||reduced_gradient||`/`10000`
+once `qn_count > 0` (helper_PFCI.py:12399-12404, plumbed via
+`CiStateAverageSolver::solve()`'s two new optional override parameters).
 
 **Two real corrections to an earlier, in-progress architectural sketch of
 this class** (found only by re-reading the Python's actual indentation
@@ -635,21 +655,76 @@ CI re-solve, before `microiteration_optimization6` starts; nothing reads
 occur across the two Steps sharing the field -- see the class's own header
 doc comment for the full reasoning.
 
-**Three documented, intentional deviations** (see the class's own header doc
+**Two documented, intentional deviations** (see the class's own header doc
 comment for the full reasoning):
 
-1. The quasi-Newton (QN/L-BFGS) path (helper_PFCI.py:11211-11381, plus the
-   `step_norm < 0.05` activation trigger, helper_PFCI.py:12173-12182) is
-   **not implemented** -- this port behaves as if `QuasiNewtonPolicy::enabled`
-   is permanently `false`; every outer pass always takes the non-QN branch.
-   A real, load-bearing gap (once the Python's trigger would fire, this
-   changes which solve path executes for the rest of the run), not a
-   provably-equivalent substitution -- deferred because a correct, well-tested
-   non-QN core loop is the lower-risk, higher-value thing to land first (per
-   the developer's own view, `quasi_newton_policy.hpp`, that QN "doesn't
-   reliably help MCSCF convergence"). `BfgsOperator`/
-   `should_reset_bfgs_reference`/`QuasiNewtonPolicy` remain ready for whoever
-   wires the QN path in as a follow-up.
+1. ~~The quasi-Newton (QN/L-BFGS) path is not implemented~~ -- **resolved this
+   session.** The QN flat block (helper_PFCI.py:11258-11428) is now
+   implemented, gated by `QuasiNewtonPolicy::enabled` (default `true`),
+   activated by the `step_norm < 0.05` trigger inside the non-QN accept
+   branch (helper_PFCI.py:12222-12228, via `should_activate_qn()`). Several
+   pieces of Python state confirmed dead/inert by direct grep are
+   deliberately NOT reinvented into "working" behavior, matching this
+   codebase's existing precedent (e.g. `s_history`/`y_history`,
+   `build_intermediates2`): `consecutive_skips` (never incremented in the
+   active path), and the activation-time reference-point capture at
+   helper_PFCI.py:12229-12233 (provably superseded before any read by the
+   very next outer pass's top-of-loop reset, which fires unconditionally
+   whenever `qn_count==1` -- so this port has only the one top-of-loop reset
+   call site, via `should_reset_bfgs_reference_point()`, gated on
+   `qn_optimization` as a behavior-preserving optimization to avoid
+   speculative `BfgsOperator` construction on every non-QN pass -- see the
+   class's own header doc comment for the full argument). Two further
+   Python-state subtleties, needed for the CI-solve-input-staging fallback
+   to remain correct once QN is active, were also corrected as part of this
+   work: `accepted_count` (Python's bare local `count`) and
+   `small_gradient_convergence` (Python's bare local `convergence`) are
+   **not** reset every outer pass in the real Python (confirmed by direct
+   trace: `count = 0` appears exactly once, at the top of the non-QN branch;
+   `convergence` is initialized once before the whole outer loop and never
+   reset back to `false`) -- both are now run()-scope-persistent locals
+   here too, not re-declared inside the outer loop the way an earlier,
+   QN-less version of this port had them (harmless before QN existed, since
+   every pass took the non-QN branch and reset both anyway).
+
+   Also fixed alongside the QN wiring, in already-shipped, previously-validated
+   code: every GLTR call inside `microiteration_optimization6` (including
+   the pre-existing non-QN one) explicitly overrides
+   `solve_gltr_trust_region`'s own defaults with `tol=1e-7, max_iter=1000`
+   (helper_PFCI.py:11504-11505) -- the existing C++ call previously passed no
+   `GltrConfig`, silently using the looser `tol=1e-4, max_iter=100` defaults.
+   Invisible against prior validation (GLTR is convergent; a looser tolerance
+   rarely changes the accepted step enough to fail those tolerances) but
+   real; and the CI-solve threshold/maxiter for this class's own call site
+   are now passed explicitly every pass (`1e-9`/`5`, matching
+   helper_PFCI.py:12399-12401's unconditional per-pass reset, overridden to
+   `0.1*||reduced_gradient||`/`10000` once `qn_count > 0`) rather than
+   silently falling through to `nullopt`/the constructor-time
+   `CasscfCiConfig` default, which didn't match either Python value.
+
+   A previously-unported, shared (not QN-specific) break sitting directly in
+   the code QN reactivates was also ported now rather than left on
+   "probably inert" reasoning: the `current_residual`/`total_norm`
+   outer-loop break (helper_PFCI.py:11243-11256, no `microiteration>=2`
+   guard, unlike the small-energy-change break) -- needs
+   `CiStateAverageResult::residual_norm` (new field, sourced from
+   `constdouble(4)` after `get_roots()`, confirmed via `ci_solver.c` to be a
+   genuine output: an input Davidson threshold on the way in, overwritten
+   with the achieved RMS residual before return).
+
+   Validated against real chemistry, not just unit tests: after this
+   session's changes, `sweep_macroiterations.sh`'s 8-system sweep matches
+   Python's macroiteration count **exactly** on all 8 configs (previously,
+   with QN disabled on both sides for an apples-to-apples comparison, one
+   config -- `lih_631g_4_4` -- had an accepted off-by-one at the convergence
+   boundary; with QN enabled on both sides, matching Python's real default,
+   that discrepancy is gone too) and to ~1e-12-1e-15 energy agreement. See
+   `validation/sweep_macroiterations.sh`'s own header comment for the full
+   before/after fixture story (the pre-QN-wiring fixtures are kept, renamed
+   `dumps_macro_sweep_<name>_qn_disabled/`, as a regression check that
+   `QuasiNewtonPolicy{enabled=false}` -- via `run_macroiteration_driver
+   --disable-qn` -- still reproduces this port's exact pre-QN behavior).
+
 2. The cross-microiteration hard_case==1 "warm start" shortcut inside the
    Davidson bisection (helper_PFCI.py:11467-11500) is not re-ported --
    inherited from `DavidsonDrivenLstrsSolver`, which already doesn't port it
@@ -657,17 +732,18 @@ comment for the full reasoning):
    iteration, the same performance-only (not correctness) gap
    `CasscfInternalOptimizationStep` documents for the analogous shortcut in
    `internal_optimization3`.
-3. The gradient-small Newton fallback (`1e-7 < ||reduced_gradient|| <= 1e-3`):
-   the Python tries a custom `linear_equation_solve`, falling back to scipy
-   MINRES (helper_PFCI.py:12055-12073, not ported). Substituted with
-   `PcgTrustRegionSolver` at an effectively unconstrained trust radius
-   (reduces Steihaug-CG to plain CG) -- the same substitution precedent
-   `DavidsonDrivenLstrsSolver`'s own hard_case==2 gap already documents, since
-   this path is exactly that same "near-PSD, solve directly" regime;
-   `hard_case` is forced to `2` either way, matching the Python.
 
-**Tested** (`test_microiteration_optimization_step.cpp`) against the same
-kind of hand-solvable all-zero RDM/integral/context problem
+The gradient-small Newton fallback (`1e-7 < ||reduced_gradient|| <= 1e-3`) is
+**not** a deviation (a previous session's `PcgTrustRegionSolver` substitution
+was already superseded before this session started): it's a faithful port of
+the Python's own `linear_equation_solve` (`LinearRMSolver`-based), falling
+back to real `minres_solve` on non-convergence -- see
+`linear_equation_solve.hpp`'s own doc comment for the one remaining,
+inherent (not fixable) non-reproducibility (the random initial-probe draw,
+always exercised at this call site).
+
+**Tested** (`test_microiteration_optimization_step.cpp`, 3 cases): cases 1-2
+against the same kind of hand-solvable all-zero RDM/integral/context problem
 `test_internal_optimization_step.cpp` uses: all-zero inputs make
 `build_intermediates` return exactly zero `A`/`G`/`E_core`/`active_fock_core`/
 `active_twoeint`/`L`, so `zero_energy == 0` and `build_gradient` returns an
@@ -677,19 +753,44 @@ hand-derive a real GLTR/Davidson/PCG step, exercising the full
 `build_intermediates` -> `zero_energy` -> `build_gradient`/
 `build_hessian_diagonal` -> inner-loop small-gradient break -> reference-point
 fallback -> `commit_ci_solver_inputs` -> injected CI solver pipeline end to
-end. Two cases: (1) a generous `max_microiterations` -- since
-`current_energy` is identically `0.0` every pass, the outer loop's own
-small-energy-change convergence check fires deterministically as soon as
-it's eligible (`microiteration >= 2`, i.e. on the third pass), so the CI
-solver is called exactly twice (passes 0 and 1; pass 2 breaks before
-reaching the CI solve); (2) `max_microiterations == 1` cuts the run short
-before that convergence check could ever fire, verifying the separate
-microiteration cap terminates the loop on its own (CI solver called exactly
-once). Not yet validated against real captured Python data (would need a new
-`microiteration_optimization6`-level dump hook capturing a full
-outer-pass sequence, same kind of enhancement already noted as open for
-`CasscfInternalOptimizationStep` and `orbital_sigma3`) -- a reasonable next
-enhancement, not done here.
+end. Case 1: a generous `max_microiterations` -- since `current_energy` is
+identically `0.0` every pass, the outer loop's own small-energy-change
+convergence check fires deterministically as soon as it's eligible
+(`microiteration >= 2`, i.e. on the third pass), so the CI solver is called
+exactly twice (passes 0 and 1; pass 2 breaks before reaching the CI solve).
+Case 2: `max_microiterations == 1` cuts the run short before that
+convergence check could ever fire, verifying the separate microiteration cap
+terminates the loop on its own (CI solver called exactly once).
+
+Case 3 (new this session) exercises the QN wiring specifically: a small,
+genuinely nonzero but deliberately tiny gradient (from a small nonzero
+`H_spatial2` with `J=K=0`, `N_p=0` isolating everything else) keeps
+microiteration 0 in the gradient-small Newton-fallback regime, where
+`hard_case` is forced to `2` and the very first inner-loop trial is
+unconditionally accepted regardless of `energy_change`'s sign --
+deterministic, without needing to hand-derive a real GLTR/Davidson step. The
+resulting step turns out small enough to activate QN on that same first
+pass (confirmed empirically, not assumed). This deliberately does not
+hand-verify the GLTR step used on the QN pass that follows -- unlike cases
+1-2, this problem is *reachable* by the QN wiring, not hand-solvable end to
+end. What it verifies instead is the wiring itself, via a black-box trace
+of the CI-solve threshold-override value passed on every call (which flips
+from the pre-QN 1e-9/5 pair to the post-QN `0.1*||g||`/`10000` formula
+exactly when `qn_count` transitions from `0`, without needing access to the
+class's private `qn_optimization`/`qn_count`/`BfgsOperator` state): (a) QN
+activates on the pass this construction predicts; (b) the `BfgsOperator`
+reference-point construction and the QN branch's own
+`should_reset_bfgs_reference` dispatch to the exact-Hessian-at-reference
+GLTR sub-branch both run without crashing or producing NaN/garbage; (c) the
+resulting `U2` is still a genuine orthogonal rotation after two passes
+through this new code path. Not yet validated against real captured Python
+data at the class level (would need a new `microiteration_optimization6`-level
+dump hook capturing a full outer-pass sequence, same kind of enhancement
+already noted as open for `CasscfInternalOptimizationStep` and
+`orbital_sigma3`) -- a reasonable next enhancement, not done here; the
+`sweep_macroiterations.sh` end-to-end chemistry comparison above is this
+session's actual real-data validation for the QN wiring, at the
+macroiteration-driver level rather than this one class in isolation.
 
 ## The plain-C backend (`casscf_c_backend`, `ci_orbital_backend.hpp`)
 
@@ -1465,17 +1566,16 @@ investigating, not something to wave through by default.
     RNG-determinism tooling (`--random-seed` on `dump_lih_case.py`,
     `random_seed` on `linear_equation_solve`) remain available for any
     future investigation of this kind.
-  - The QN/BFGS path (`CasscfMicroiterationOptimizationStep`'s deviation 1)
-    remains a real, separate gap regardless -- Python's production
-    behavior does activate it (confirmed: 6 times in the reference LiH
-    run), so a fully faithful port should implement it eventually, even
-    though it's now confirmed NOT to have been what was driving the
-    (now-fixed) iteration-count gap above.
-    `BfgsOperator`/`QuasiNewtonPolicy`/`should_reset_bfgs_reference`
-    are already ported and tested, ready for whoever wires the QN branch
-    dispatch, the `step_norm < 0.05` activation trigger, and the *second*,
-    separate reference-point-reset predicate (see `BfgsOperator`'s own doc
-    comment) into the outer/inner loop.
+  - **The QN/BFGS path is now wired in** (`CasscfMicroiterationOptimizationStep`'s
+    former deviation 1) -- see that class's own section above for the full
+    story. Python's production behavior does activate it (confirmed: 6 times
+    in the reference LiH run), and it's now confirmed NOT to have been what
+    was driving the (already-fixed) iteration-count gap above, either.
+    Validated against real chemistry via `sweep_macroiterations.sh`'s
+    QN-enabled fixtures: all 8 configs now match Python's macroiteration
+    count *exactly* (better than before QN was wired in, when the
+    comparison had to run with QN disabled on both sides for an
+    apples-to-apples baseline and still had one accepted off-by-one).
   - The residual architectural note previously here
     (`CasscfInternalOptimizationStep`'s inner-loop CI solves vs. the real
     Python's separate small-space staging) is now resolved -- see

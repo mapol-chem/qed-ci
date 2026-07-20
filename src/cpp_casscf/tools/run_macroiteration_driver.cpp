@@ -8,8 +8,16 @@
 //
 // Standalone tool, not a ctest -- needs an external dump directory as
 // input, same reasoning as validate_against_python.cpp. Usage:
-//   ./run_macroiteration_driver <dump_dir>   (defaults to
-//   ../validation/dumps_macro_lih)
+//   ./run_macroiteration_driver <dump_dir> [--disable-qn]   (dump_dir
+//   defaults to ../validation/dumps_macro_lih)
+//
+// --disable-qn constructs CasscfMicroiterationOptimizationStep with
+// QuasiNewtonPolicy{enabled=false} instead of the class's own default
+// (enabled=true) -- lets sweep_macroiterations.sh regression-check that
+// disabling QN reproduces this port's pre-QN-wiring behavior exactly
+// against the older dumps_macro_sweep_* fixtures (captured with Python's
+// own QN trigger patched off), while the default (QN enabled) run compares
+// against fixtures captured from Python's real, QN-enabled default.
 //
 // Generate the dump with (from cpp_casscf/validation/):
 //   python dump_lih_case.py --dump-dir dumps_macro_lih
@@ -96,7 +104,16 @@ Dimensions load_dims(const fs::path& path) {
 } // namespace
 
 int main(int argc, char** argv) {
-    fs::path dump_dir = (argc > 1) ? fs::path(argv[1]) : fs::path("../validation/dumps_macro_lih");
+    fs::path dump_dir = fs::path("../validation/dumps_macro_lih");
+    bool disable_qn = false;
+    for (int i = 1; i < argc; ++i) {
+        const std::string arg = argv[i];
+        if (arg == "--disable-qn") {
+            disable_qn = true;
+        } else {
+            dump_dir = fs::path(arg);
+        }
+    }
     fs::path case_dir = dump_dir / "macroiteration_bootstrap_000";
     fs::path convergence_dir = dump_dir / "macroiteration_convergence_000";
 
@@ -204,7 +221,11 @@ int main(int argc, char** argv) {
     CasscfCiStateAverageSolver ci_solver(dims, ci_config, constants, setup, context);
     CasscfIntegralTransformer integral_transformer(context, dims);
     CasscfInternalOptimizationStep internal_step(dims, constants, ci_solver, integral_transformer);
-    CasscfMicroiterationOptimizationStep microiteration_step(dims, constants, ci_solver);
+    QuasiNewtonPolicy qn_policy;
+    qn_policy.enabled = !disable_qn;
+    std::printf("QuasiNewtonPolicy::enabled=%d (%s)\n", qn_policy.enabled, disable_qn ? "--disable-qn passed" : "default");
+    CasscfMicroiterationOptimizationStep microiteration_step(dims, constants, ci_solver, /*max_microiterations=*/20,
+                                                              qn_policy);
 
     MacroiterationDriverConfig driver_config;
     driver_config.dims = dims;

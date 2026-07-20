@@ -24,6 +24,7 @@
 
 #include <cmath>
 #include <cstdio>
+#include <vector>
 
 using namespace casscf;
 
@@ -61,11 +62,90 @@ public:
         result.D_tuvw_avg = Tensor4(1, 1, 1, 1);
         result.D_tuvw_avg.setZero();
         result.Dpe_tu_avg = Matrix::Zero(1, 1);
+        // helper_PFCI.py:11003's own current_residual=1 sentinel -- this mock
+        // has no real Davidson residual to report, so it holds the total_norm
+        // break (helper_PFCI.py:11243-11256) at its Python-matching initial
+        // value instead of defaulting to 0.0, which would make that break
+        // fire a pass early and change what this test is actually exercising
+        // (the small-energy-change break in Step 2, not the total-norm break).
+        result.residual_norm = 1.0;
         return result;
     }
 
     int call_count = 0;
 };
+
+// --- QN/BFGS wiring test -------------------------------------------------
+//
+// Records every davidson_threshold_override this class passes, instead of
+// hand-deriving a real GLTR/Davidson step (this system is deliberately NOT
+// hand-solvable the way the all-zero problem above is): the override value
+// is exactly 1e-9 while qn_count == 0 and exactly 0.1*||reduced_gradient||
+// once qn_count > 0 (helper_PFCI.py:12399-12404) -- a call-by-call trace of
+// this value is therefore a direct, black-box witness of when qn_count
+// transitions from 0 to > 0, without needing access to the class's private
+// qn_optimization/qn_count/BfgsOperator state.
+class RecordingCiSolver final : public CiStateAverageSolver {
+public:
+    CiStateAverageResult solve(const Matrix& eigenvecs_guess, bool use_staged_inputs = false,
+                                std::optional<double> davidson_threshold_override = std::nullopt,
+                                std::optional<int> davidson_maxiter_override = std::nullopt) override {
+        (void)use_staged_inputs;
+        recorded_thresholds.push_back(davidson_threshold_override.value_or(-1.0));
+        recorded_maxiters.push_back(davidson_maxiter_override.value_or(-1));
+        ++call_count;
+        CiStateAverageResult result;
+        result.eigenvectors = eigenvecs_guess;
+        result.eigenvalues = Vector::Zero(1);
+        result.avg_energy = 0.0;
+        result.D_tu_avg = Matrix::Zero(1, 1);
+        result.D_tuvw_avg = Tensor4(1, 1, 1, 1);
+        result.D_tuvw_avg.setZero();
+        result.Dpe_tu_avg = Matrix::Zero(1, 1);
+        result.residual_norm = 1.0; // see MockCiSolver's own comment above
+        return result;
+    }
+
+    int call_count = 0;
+    std::vector<double> recorded_thresholds;
+    std::vector<int> recorded_maxiters;
+};
+
+// dims: n_in_a=1, n_act_orb=1, n_virtual=1 (nmo=3, n_occupied=2) --
+// index_map_size == 3 (one inactive-active, one inactive-virtual, one
+// active-virtual rotation parameter), small enough to keep GLTR/Davidson
+// cheap but big enough that n_negative == 0 is plausible (not asserted
+// directly -- see below).
+CasscfContext make_small_nonzero_gradient_context() {
+    CasscfContext context;
+    // J == K == 0 and N_p == 0 (see constants below) together zero out
+    // every two-electron and photon-coupling contribution to A/gradient_tilde,
+    // leaving A_ri == 2*F_ri == 2*H_spatial2[r,i] (since D_tu_avg == 0 too,
+    // from the mocked CI solver's all-zero RDMs) -- a small, deliberately
+    // tiny off-diagonal H_spatial2 is therefore the only source of a
+    // nonzero gradient in this test, and its magnitude directly controls
+    // the resulting gradient norm.
+    context.H_spatial2 = Matrix(3, 3);
+    context.H_spatial2 << 0.0, 1.0e-4, 2.0e-4, 1.0e-4, 0.5, 3.0e-4, 2.0e-4, 3.0e-4, 1.0;
+    context.d_cmo = Matrix::Zero(3, 3);
+    context.U_total = Matrix::Identity(3, 3);
+    context.J = Tensor4(2, 2, 3, 3);
+    context.J.setZero();
+    context.K = Tensor4(2, 2, 3, 3);
+    context.K.setZero();
+    context.occupied_h1 = Matrix::Zero(2, 2);
+    context.occupied_d_cmo = Matrix::Zero(2, 2);
+    context.occupied_fock_core = Matrix::Zero(2, 2);
+    context.occupied_J = Tensor4(2, 2, 2, 2);
+    context.occupied_J.setZero();
+    context.occupied_K = Tensor4(2, 2, 2, 2);
+    context.occupied_K.setZero();
+    context.D_tu_avg = Matrix::Zero(1, 1);
+    context.D_tuvw_avg = Tensor4(1, 1, 1, 1);
+    context.D_tuvw_avg.setZero();
+    context.Dpe_tu_avg = Matrix::Zero(1, 1);
+    return context;
+}
 
 CasscfContext make_all_zero_context() {
     CasscfContext context;
@@ -154,6 +234,107 @@ int main() {
                     "case2: CI solver called exactly once before the microiteration cap fires");
         expect_matrix_near(step.last_U2(), Matrix::Identity(2, 2), tol,
                             "case2: U2 stays identity");
+    }
+
+    // --- Case 3: QN activation + wiring. A small, genuinely nonzero (but
+    //     deliberately tiny) gradient keeps microiteration 0 in the
+    //     gradient-small Newton-fallback regime (1e-7 < ||g|| <= 1e-3, see
+    //     RecordingCiSolver's own comment) -- hard_case is FORCED to 2
+    //     there, so the very first inner-loop trial is unconditionally
+    //     accepted regardless of energy_change's sign, deterministically
+    //     without needing to hand-derive a real GLTR/Davidson step. The
+    //     resulting step is small enough (well under the 0.05 QN-activation
+    //     threshold) that QN activates on this same first inner iteration --
+    //     confirmed empirically (not just assumed): activation happens
+    //     BEFORE this pass's own CI-solve tail call
+    //     (helper_PFCI.py:12222-12228 sits well before the CI-solve block),
+    //     so BOTH of this run's CI-solve calls (pass 0's own tail call
+    //     included) observe qn_count > 0, not just pass 1's. Both recorded
+    //     thresholds are therefore asserted to be the post-activation
+    //     override, not the pre-activation base value -- there is no pass in
+    //     THIS construction where the base 1e-9/5 threshold would ever be
+    //     used, since the gradient is small enough to trigger both the
+    //     Newton-fallback's forced accept AND QN activation on the very
+    //     first inner iteration ever attempted. (should_activate_qn's own
+    //     truth table, including cases that do NOT activate, is covered
+    //     directly and exactly in test_quasi_newton_decisions.cpp -- this
+    //     test's job is to confirm the surrounding wiring calls it
+    //     correctly, not to re-derive its logic.) max_microiterations == 2
+    //     keeps the run short enough that the outer loop's own
+    //     small-energy-change convergence check (only eligible at
+    //     microiteration >= 2) can never fire and cut the run short before
+    //     both passes complete.
+    //
+    //     This deliberately does NOT hand-verify the GLTR step used on pass
+    //     1 (the QN branch's own "exact Hessian at reference" GLTR solve) --
+    //     unlike the all-zero case above, this problem was chosen to be
+    //     *reachable* by the QN wiring, not hand-solvable end to end. What
+    //     it verifies instead is the wiring itself: (a) QN activates on the
+    //     pass this construction predicts, evidenced by the CI-solve
+    //     threshold-override trace departing from the pre-QN 1e-9/5 pair
+    //     (helper_PFCI.py:12399-12404); (b) the BfgsOperator reference-point
+    //     construction (via top-of-loop should_reset_bfgs_reference_point)
+    //     and the QN branch's own should_reset_bfgs_reference dispatch to
+    //     the exact-Hessian-at-reference GLTR sub-branch both run without
+    //     crashing or producing NaN/garbage; (c) the resulting U2 is still a
+    //     genuine rotation (orthogonal) after two passes through this new
+    //     code path.
+    {
+        Dimensions dims3;
+        dims3.n_in_a = 1;
+        dims3.n_act_orb = 1;
+        dims3.n_virtual = 1;
+        dims3.nmo = 3;
+        dims3.n_occupied = 2;
+
+        CasscfPhysicalConstants constants3;
+        constants3.N_p = 0;
+        constants3.num_det = 1;
+        constants3.omega = 0.1;
+        constants3.Enuc = 0.0;
+        constants3.d_c = 0.0;
+        constants3.d_exp = 0.0;
+        constants3.weight = Vector::Constant(1, 1.0);
+
+        RecordingCiSolver ci_solver;
+        CasscfMicroiterationOptimizationStep step(dims3, constants3, ci_solver, /*max_microiterations=*/2);
+
+        CasscfContext context = make_small_nonzero_gradient_context();
+        Matrix eigenvecs = Matrix::Zero(1, 1);
+        step.run(context, /*U=*/Matrix::Identity(3, 3), eigenvecs, /*convergence_threshold=*/1e-4);
+
+        expect_near(ci_solver.call_count, 2, 0, "case3: CI solver called exactly twice (both passes complete)");
+        if (static_cast<int>(ci_solver.recorded_thresholds.size()) == 2) {
+            // Both calls, not just the second: activation happens inside
+            // pass 0's own inner loop, before that same pass's CI-solve
+            // tail call -- see this case's own comment above.
+            for (int i = 0; i < 2; ++i) {
+                const bool is_qn_override = ci_solver.recorded_thresholds[i] > 0.0 &&
+                                             std::abs(ci_solver.recorded_thresholds[i] - 1e-9) > 1e-12;
+                if (is_qn_override) {
+                    std::printf("PASS: case3: pass %d uses the post-activation QN override threshold "
+                                "(%.6e != 1e-9)\n",
+                                i, ci_solver.recorded_thresholds[i]);
+                } else {
+                    std::printf("FAIL: case3: pass %d threshold %.6e -- expected the QN override (!= 1e-9); QN "
+                                "did not activate as this test's construction requires\n",
+                                i, ci_solver.recorded_thresholds[i]);
+                    ++failures;
+                }
+                expect_near(ci_solver.recorded_maxiters[i], 10000, 0,
+                            "case3: pass uses the QN override davidson maxiter");
+            }
+        } else {
+            std::printf("FAIL: case3: expected exactly 2 recorded CI-solve calls, got %zu\n",
+                        ci_solver.recorded_thresholds.size());
+            ++failures;
+        }
+
+        const Matrix& U2 = step.last_U2();
+        expect_matrix_near(U2.transpose() * U2, Matrix::Identity(3, 3), 1e-8,
+                            "case3: U2 remains a genuine (orthogonal) rotation after QN activation + one QN pass");
+        expect_near((U2 - Matrix::Identity(3, 3)).norm() > 1e-8 ? 1.0 : 0.0, 1.0, 0.0,
+                    "case3: U2 differs from identity (a rotation was actually applied both passes)");
     }
 
     if (failures == 0) {

@@ -8,27 +8,38 @@
 #
 # Unlike sweep.sh, this script does NOT regenerate dumps itself. It reads
 # from the dumps_macro_sweep_<name>/ fixtures already checked into this
-# directory. Those were generated with Python's QN/BFGS activation trigger
-# temporarily disabled (`if step_norm < 0.05:` -> `if False and
-# step_norm < 0.05:` in helper_PFCI.py's microiteration_optimization6,
-# reverted immediately after via `git checkout` -- confirmed clean via
-# `git diff`) -- CasscfMicroiterationOptimizationStep deliberately does not
-# implement the QN/BFGS path (a real, documented, separate gap; see
-# README.md), and QN's activation is known to shift the exact
-# macroiteration count and intermediate trajectory without being a bug
-# (confirmed this session on two separate systems by disabling QN in
-# Python directly and re-comparing). Comparing against Python's literal
-# default (QN-enabled) behavior would fail here for a reason that has
-# nothing to do with this driver's own correctness.
+# directory, generated from Python's real, literal default (QN/BFGS
+# activation trigger left as-is -- `if step_norm < 0.05:`,
+# helper_PFCI.py's microiteration_optimization6) now that
+# CasscfMicroiterationOptimizationStep implements the QN/BFGS path (see
+# README.md's "CasscfMicroiterationOptimizationStep" section). Compared
+# with QuasiNewtonPolicy at its own default (enabled=true): all 8 configs
+# match Python's macroiteration count *exactly* (including
+# lih_631g_4_4, which previously -- QN-disabled on both sides -- had a
+# documented, accepted off-by-one at the convergence boundary) and to
+# ~1e-12-1e-15 energy agreement, tighter than this script's own
+# ENERGY_TOL by several orders of magnitude.
 #
-# To regenerate these fixtures (e.g. after changing the config list),
-# reuse this exact pattern: apply the one-line QN-disable edit above,
-# generate all dumps_macro_sweep_<name>/ directories with
+# dumps_macro_sweep_<name>_qn_disabled/ (NOT read by this script's own
+# `names` list below, but kept checked in) are the OLDER fixtures this
+# directory held before QN was wired in -- generated with Python's QN
+# trigger temporarily patched to `if False and step_norm < 0.05:`,
+# reverted immediately after via `git checkout` -- and now serve as a
+# regression check that `run_macroiteration_driver --disable-qn` (which
+# constructs CasscfMicroiterationOptimizationStep with
+# QuasiNewtonPolicy{enabled=false}) still reproduces this port's
+# pre-QN-wiring behavior exactly. Confirmed via the same 8 configs: all
+# PASS at the same tolerances as this script's own, with the one
+# previously-documented off-by-one (lih_631g_4_4) still present and still
+# within MAX_MACRO_SLACK -- i.e. disabling QN reproduces the old behavior,
+# not just "some" behavior.
+#
+# To regenerate the default (QN-enabled) fixtures (e.g. after changing the
+# config list), generate all dumps_macro_sweep_<name>/ directories with
 # `python dump_lih_case.py <config args> --random-seed 0 --dump-dir
-# dumps_macro_sweep_<name>`, then revert the edit via `git checkout --
-# helper_PFCI.py` and confirm `git diff` is empty before committing.
-# This script only ever reads macroiteration_bootstrap_000/ and
-# macroiteration_convergence_000/ out of each dump directory -- unlike
+# dumps_macro_sweep_<name>` against Python's real, unpatched default (no
+# edit needed). This script only ever reads macroiteration_bootstrap_000/
+# and macroiteration_convergence_000/ out of each dump directory -- unlike
 # sweep.sh, it has no use for the hundreds of individual per-solver-call
 # dump directories dump_lih_case.py also produces (dominated by the H2O
 # configs, ~80MB each full vs ~1MB pruned), so prune everything else

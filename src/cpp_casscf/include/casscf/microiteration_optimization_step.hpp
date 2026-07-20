@@ -95,21 +95,69 @@ namespace casscf {
 // inherent (not fixable) non-reproducibility flagged on that function
 // itself, not repeated here):
 //
-// 1. The quasi-Newton (QN/L-BFGS) path (helper_PFCI.py:11211-11381, the
-//    `if qn_optimization == True:` branch, and the `step_norm < 0.05`
-//    activation trigger inside the non-QN accept branch that would flip
-//    qn_optimization on) is NOT implemented. This port behaves as if
-//    QuasiNewtonPolicy::enabled is permanently false: the `step_norm < 0.05`
-//    QN-activation check (helper_PFCI.py:12173-12182) is simply not ported,
-//    so qn_optimization never turns on and every outer iteration always
-//    takes the non-QN branch. A real, load-bearing gap (once the Python's
-//    trigger would fire, this changes which solve path executes for the
-//    rest of the run) -- not a provably-equivalent substitution -- per the
-//    developer's own view (quasi_newton_policy.hpp) that QN "doesn't
-//    reliably help MCSCF convergence," a correct non-QN core loop is the
-//    lower-risk, higher-value thing to land first. BfgsOperator/
-//    should_reset_bfgs_reference/QuasiNewtonPolicy remain ready for whoever
-//    wires the QN path in as a follow-up.
+// 1. The quasi-Newton (QN/L-BFGS) path (helper_PFCI.py:11258-11428, the
+//    `if qn_optimization == True:` branch) IS implemented, gated by
+//    `QuasiNewtonPolicy::enabled` (default true, matching the Python's
+//    de-facto behavior once the `step_norm < 0.05` activation trigger,
+//    helper_PFCI.py:12222-12228, fires inside the non-QN accept branch).
+//    The QN branch is a flat block (not wrapped in the inner
+//    orbital-optimization-step while loop): it computes and unconditionally
+//    accepts exactly one trial step per outer pass, dispatching via
+//    should_reset_bfgs_reference() to either the exact reduced Hessian at a
+//    frozen BFGS reference point (U_zero/A_tilde_zero/G_zero, via
+//    orbital_sigma3) or the running BfgsOperator approximation, both fed
+//    through GltrTrustRegionSolver -- confirmed the Python's QN branch
+//    exclusively uses GLTR, never Davidson/LSTRS or the Newton fallback.
+//    Several pieces of Python state confirmed dead/inert by direct grep
+//    across this whole function are deliberately NOT reinvented into
+//    "working" behavior, matching this codebase's existing precedent for
+//    Python dead code: `consecutive_skips` (never incremented anywhere in
+//    the active path -- the reset-to-0 inside the QN branch's own
+//    exact-Hessian sub-branch is ported for faithfulness, but it's a no-op
+//    either way), `s_history`/`y_history` (populated with `[]` at function
+//    entry, never appended to or read -- `bfgs_history`, via BfgsOperator,
+//    is the real mechanism), and the activation-time reference-point
+//    capture at helper_PFCI.py:12229-12233 (provably superseded before any
+//    read: nothing reads self.U_zero/A_tilde_zero/G_blocks_zero/
+//    reduced_hessian_diagonal_zero between that write and the very next
+//    outer pass's top-of-loop reset, helper_PFCI.py:11227-11235, which
+//    fires unconditionally on that next pass since qn_count==1 -- so this
+//    port only has the one top-of-loop reset call site).
+//
+//    The top-of-loop reference-point-refresh check (helper_PFCI.py:11227,
+//    should_reset_bfgs_reference_point()) is gated here on `qn_optimization`
+//    even though the Python evaluates it unconditionally every pass
+//    (including pre-activation ones, since `predicted_energy` starts at the
+//    sentinel 10 > 0): this is a behavior-preserving optimization, not a
+//    deviation -- nothing reads U_zero/A_tilde_zero/G_zero/
+//    reduced_hessian_diagonal_zero until the QN branch itself does, and the
+//    very first QN pass always has qn_count==1, which unconditionally
+//    forces a fresh reset that pass regardless of what any earlier,
+//    pre-activation reset attempt would have produced. Gating just avoids
+//    speculatively constructing/copying a BfgsOperator on every pass of
+//    every non-QN run.
+//
+//    Two further Python-state subtleties, confirmed by direct trace rather
+//    than assumed, needed for the CI-solve-input-staging fallback
+//    (`accepted_count == 0`, at the end of run()'s per-pass tail) to remain
+//    correct once QN is active: `accepted_count` (Python's bare local
+//    `count`) and the small-gradient-convergence flag (Python's bare local
+//    `convergence`) are NOT reset every outer pass -- `count = 0` only
+//    appears once in the Python, at the top of the non-QN branch itself
+//    (helper_PFCI.py:11438); `convergence` is initialized once before the
+//    whole outer loop (helper_PFCI.py:11002) and never reset back to 0
+//    anywhere. Both are therefore promoted to run()-scope-persistent locals
+//    here (not re-declared inside the outer while loop, as an earlier,
+//    QN-less version of this port had them) -- `accepted_count` reset to 0
+//    only at the top of the non-QN branch, `small_gradient_convergence`
+//    latched true forever once either inner-loop gradient-norm break fires.
+//    In practice this only changes observable behavior for edge cases
+//    reachable after QN activates (the QN branch always accepts, so
+//    `accepted_count` only grows from there and the fallback naturally
+//    never fires again in QN mode); confirmed to reproduce the existing
+//    all-zero-gradient regression test's behavior unchanged, since that
+//    test hits the gradient-small break on every single pass regardless of
+//    the reset timing.
 //
 // 2. The cross-microiteration hard_case==1 "warm start" shortcut inside the
 //    Davidson bisection (helper_PFCI.py:11467-11500, reusing the *previous*
@@ -131,7 +179,8 @@ namespace casscf {
 class CasscfMicroiterationOptimizationStep final : public MicroiterationOptimizationStep {
 public:
     CasscfMicroiterationOptimizationStep(Dimensions dims, CasscfPhysicalConstants constants,
-                                          CiStateAverageSolver& ci_solver, int max_microiterations = 20);
+                                          CiStateAverageSolver& ci_solver, int max_microiterations = 20,
+                                          QuasiNewtonPolicy qn_policy = {});
 
     void run(CasscfContext& context, const Matrix& U, Matrix& eigenvecs, double convergence_threshold) override;
 
@@ -142,6 +191,7 @@ private:
     CasscfPhysicalConstants constants_;
     CiStateAverageSolver* ci_solver_;
     int max_microiterations_;
+    QuasiNewtonPolicy qn_policy_;
     Matrix U2_;
 };
 

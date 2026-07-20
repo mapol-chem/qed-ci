@@ -1,5 +1,6 @@
 #include "casscf/microiteration_optimization_step.hpp"
 
+#include "casscf/bfgs_operator.hpp"
 #include "casscf/davidson_driven_lstrs_solver.hpp"
 #include "casscf/gltr_trust_region_solver.hpp"
 #include "casscf/hessian_guess.hpp"
@@ -12,11 +13,14 @@
 #include "casscf/minres_solver.hpp"
 #include "casscf/orbital_rotation.hpp"
 #include "casscf/orbital_sigma.hpp"
+#include "casscf/quasi_newton_policy.hpp"
+#include "casscf/solver_selector.hpp"
 
 #include <algorithm>
 #include <cmath>
 #include <functional>
 #include <memory>
+#include <optional>
 #include <utility>
 
 namespace casscf {
@@ -196,9 +200,10 @@ void commit_ci_solver_inputs(const CiInputStaging& staging, const Dimensions& di
 CasscfMicroiterationOptimizationStep::CasscfMicroiterationOptimizationStep(Dimensions dims,
                                                                              CasscfPhysicalConstants constants,
                                                                              CiStateAverageSolver& ci_solver,
-                                                                             int max_microiterations)
+                                                                             int max_microiterations,
+                                                                             QuasiNewtonPolicy qn_policy)
     : dims_(dims), constants_(std::move(constants)), ci_solver_(&ci_solver),
-      max_microiterations_(max_microiterations) {}
+      max_microiterations_(max_microiterations), qn_policy_(qn_policy) {}
 
 void CasscfMicroiterationOptimizationStep::run(CasscfContext& context, const Matrix& U, Matrix& eigenvecs,
                                                 double convergence_threshold) {
@@ -235,6 +240,30 @@ void CasscfMicroiterationOptimizationStep::run(CasscfContext& context, const Mat
     // own two GLTR calls, which need the same config).
     const GltrConfig gltr_config{/*tol=*/1e-7, /*max_iter=*/1000};
 
+    // QN/BFGS state -- helper_PFCI.py:10980-11012. Several of these are
+    // nominally self.-prefixed in the Python (self.consecutive_skips,
+    // self.density_norm_change, self.predicted_energy), but all are reset
+    // unconditionally at the top of this same function every call, so they
+    // behave identically to a plain run()-scope local here.
+    bool qn_optimization = false;
+    int qn_count = 0;
+    int consecutive_skips = 0;      // confirmed dead: never incremented in the active Python path
+    double density_norm_change = 0.0;
+    double predicted_energy = 10.0; // helper_PFCI.py:10985 sentinel
+    double current_residual = 1.0;  // helper_PFCI.py:11003
+    // Python's bare `count`/`convergence` locals -- NOT reset every outer
+    // pass, see header doc comment (deviation 1). accepted_count is reset to
+    // 0 only at the top of the non-QN branch (helper_PFCI.py:11438);
+    // small_gradient_convergence latches true forever once either
+    // inner-loop gradient-norm break fires (never reset back to false).
+    int accepted_count = 0;
+    bool small_gradient_convergence = false;
+    Vector reduced_gradient = Vector::Zero(dims.index_map_size());
+    Vector old_reduced_gradient = Vector::Zero(dims.index_map_size());
+    Vector last_accepted_step;      // Python's bare `step`; read only once qn_count > 1
+    Vector reduced_hessian_diagonal_zero;
+    std::optional<BfgsOperator> bfgs;
+
     int microiteration = 0;
     while (microiteration < N_microiterations) {
         // helper_PFCI.py:11019: trust_radius reset to 0.5 once per OUTER
@@ -248,6 +277,9 @@ void CasscfMicroiterationOptimizationStep::run(CasscfContext& context, const Mat
         // direct side-by-side trace comparison against the real Python on
         // real LiH chemistry, not by re-reading the Python alone -- see
         // this project's session notes for how the discrepancy was found).
+        // In the QN branch, this same reset applies but is never adjusted
+        // afterward (QN's single trial step is unconditionally accepted, no
+        // step_control call).
         double trust_radius = 0.5;
 
         // Step 1: build_intermediates, once per outer iteration -- sets this
@@ -271,141 +303,265 @@ void CasscfMicroiterationOptimizationStep::run(CasscfContext& context, const Mat
         old_energy = new_current_energy;
         current_energy = new_current_energy;
 
+        // helper_PFCI.py:11128: capture the previous pass's end-of-pass
+        // reduced_gradient before this pass's rebuild -- read by the BFGS
+        // history update just below.
+        old_reduced_gradient = reduced_gradient;
+
         // Step 3: gradient / hessian diagonal / reduced_gradient / n_negative.
         GradientResult gr = build_gradient(U2_, fi.A, fi.G, dims);
         Matrix A_tilde_full = embed_A_tilde_full(gr.A_tilde, dims);
         HessianDiagonalResult hd = build_hessian_diagonal(U2_, fi.G, A_tilde_full, dims);
-        Vector reduced_gradient = extract_reduced_gradient(gr.gradient_tilde, index_map);
+        reduced_gradient = extract_reduced_gradient(gr.gradient_tilde, index_map);
         int n_negative = static_cast<int>((hd.reduced_hessian_diagonal.array() < 0.0).count());
 
-        // Step 4: inner orbital-optimization-step loop (non-QN only; see
-        // header doc comment, deviation 1).
-        int orbital_optimization_step = 0;
-        int accepted_count = 0;
-        bool small_gradient_convergence = false;
+        // helper_PFCI.py:11175-11223: damped-BFGS history update, using the
+        // step accepted on the PREVIOUS pass (either branch) and the
+        // just-rebuilt vs. previous-pass-end reduced_gradient. Gated
+        // qn_count > 1 -- the first QN pass (qn_count == 1) has no prior
+        // BFGS-era step/gradient pair to form y/s from yet.
+        if (qn_count > 1 && bfgs) {
+            bfgs->update(last_accepted_step, reduced_gradient - old_reduced_gradient);
+        }
 
-        auto hessian_op = std::make_shared<MatrixFreeHessianOperator>(
-            [&](const Vector& v) { return orbital_sigma3(U2_, A_tilde_full, fi.G, v, dims); },
-            dims.index_map_size());
-
-        while (orbital_optimization_step < N_orbital_optimization_steps) {
-            const double gradient_norm = reduced_gradient.norm();
-            if (gradient_norm < 0.1 * convergence_threshold && microiteration > 0) {
-                small_gradient_convergence = true;
-                break;
-            }
-            if (gradient_norm < 1e-7) {
-                small_gradient_convergence = true;
-                break;
-            }
-
-            Vector step;
-            int hard_case = 0;
-            if (gradient_norm > 1e-3) {
-                if (n_negative == 0) {
-                    GltrTrustRegionSolver solver(hessian_op, hd.reduced_hessian_diagonal, gltr_config);
-                    TrustRegionResult result = solver.solve(reduced_gradient, trust_radius);
-                    step = result.step;
-                    hard_case = 0;
-                } else {
-                    Matrix sym_A_tilde = embed_and_symmetrize_A_tilde(gr.A_tilde, dims);
-                    auto guess_provider = std::make_shared<OrbitalHessianGuessProvider>(
-                        U2_, sym_A_tilde, reduced_gradient, fi.G, index_map, dims.n_occupied);
-                    DavidsonDrivenLstrsSolver solver(hessian_op, guess_provider, hd.reduced_hessian_diagonal);
-                    TrustRegionResult result = solver.solve(reduced_gradient, trust_radius);
-                    step = result.step;
-                    hard_case = (result.reason == TerminationReason::SuccessInteriorSolution) ? 2 : 0;
-                }
+        // helper_PFCI.py:11227-11235: top-of-loop BFGS reference-point
+        // refresh. `ref_state` snapshots density_norm_change/predicted_energy/
+        // qn_count/consecutive_skips as they stood BEFORE this pass's own
+        // updates -- the same snapshot the QN branch's own dispatch below
+        // reads (helper_PFCI.py:11262 reads the identical, still-unmodified
+        // self.* values). Gated on qn_optimization here even though the
+        // Python evaluates it unconditionally every pass -- see header doc
+        // comment (deviation 1) for why this is behavior-preserving.
+        const BfgsReferenceState ref_state{density_norm_change, predicted_energy, qn_count, consecutive_skips};
+        if (qn_optimization && should_reset_bfgs_reference_point(ref_state, qn_optimization)) {
+            if (!bfgs) {
+                bfgs.emplace(U2_, A_tilde_full, fi.G, dims);
             } else {
-                // helper_PFCI.py:12103-12137: gradient-small Newton fallback
-                // -- linear_equation_solve (LinearRMSolver), falling back to
-                // real MINRES on non-convergence. See linear_equation_solve.hpp's
-                // own doc comment for the one remaining, inherent (not
-                // fixable) non-reproducibility (the random initial-probe
-                // draw, always exercised at this call site).
-                LinearEquationSolveResult solve_result = linear_equation_solve(
-                    U2_, A_tilde_full, fi.G, reduced_gradient, hd.reduced_hessian_diagonal,
-                    /*max_iter=*/20, /*conv_thresh=*/1e-6, dims);
-                if (solve_result.converged) {
-                    step = solve_result.solution;
-                } else {
-                    Matrix dense_hessian = materialize_dense_hessian(
-                        [&](const Vector& v) { return orbital_sigma3(U2_, A_tilde_full, fi.G, v, dims); },
-                        dims.index_map_size());
-                    MinresResult minres_result = minres_solve(dense_hessian, -reduced_gradient, /*rtol=*/1e-6);
-                    step = minres_result.x;
-                }
-                hard_case = 2;
+                bfgs->reset_reference(U2_, A_tilde_full, fi.G);
             }
+            reduced_hessian_diagonal_zero = hd.reduced_hessian_diagonal;
+        }
+
+        // helper_PFCI.py:11243-11256: shared (not QN-specific) total-norm
+        // break -- unconditional, unlike the small-energy-change break in
+        // Step 2 (no microiteration >= 2 guard).
+        const double total_norm =
+            std::sqrt(reduced_gradient.squaredNorm() + current_residual * current_residual);
+        if (total_norm < convergence_threshold) break;
+
+        // Step 4: dispatch -- QN flat block (helper_PFCI.py:11258-11428) or
+        // the non-QN inner orbital-optimization-step loop (see header doc
+        // comment, deviation 1).
+        if (qn_optimization) {
+            accepted_count = 0;
+
+            const bool solve_against_exact_hessian = should_reset_bfgs_reference(ref_state, qn_optimization);
+            Vector step;
+            if (solve_against_exact_hessian) {
+                // "solve step for original hessian", helper_PFCI.py:11263-11298:
+                // the exact reduced Hessian evaluated at the frozen BFGS
+                // reference point (U_zero/A_tilde_zero/G_zero), NOT the live
+                // U2_/A_tilde_full/fi.G.
+                auto exact_hessian_op = std::make_shared<MatrixFreeHessianOperator>(
+                    [&](const Vector& v) {
+                        return orbital_sigma3(bfgs->U_zero(), bfgs->A_tilde_zero(), bfgs->G_zero(), v, dims);
+                    },
+                    dims.index_map_size());
+                GltrTrustRegionSolver solver(exact_hessian_op, reduced_hessian_diagonal_zero, gltr_config);
+                step = solver.solve(reduced_gradient, trust_radius).step;
+                consecutive_skips = 0; // helper_PFCI.py:11298 (dead: never read again)
+            } else {
+                // "solve bfgs for updated hessian", helper_PFCI.py:11300-11337.
+                auto bfgs_hessian_op = std::make_shared<MatrixFreeHessianOperator>(
+                    [&](const Vector& v) { return bfgs->apply(v); }, dims.index_map_size());
+                GltrTrustRegionSolver solver(bfgs_hessian_op, reduced_hessian_diagonal_zero, gltr_config);
+                step = solver.solve(reduced_gradient, trust_radius).step;
+            }
+            const int hard_case = 0; // helper_PFCI.py:11346 -- forced, QN doesn't solve the exact subproblem
+
+            const double predicted_energy2 =
+                microiteration_predicted_energy2(U2_, reduced_gradient, A_tilde_full, fi.G, step, dims);
+            predicted_energy = predicted_energy2; // helper_PFCI.py:11361/11404 -- same value written twice
 
             Matrix Rai, Rvi, Rva;
             step_to_rotation_blocks(step, index_map, dims, Rai, Rvi, Rva);
             Matrix U_delta = build_unitary_matrix(Rai, Rvi, Rva, dims);
-            Matrix U3 = U2_ * U_delta;
+            // helper_PFCI.py:11380: self.U3 = einsum(self.U3, self.U_delta) --
+            // self.U3 is never reset to self.U2 anywhere in the QN branch,
+            // but it is provably always equal to self.U2 at this point: at
+            // QN activation (in the non-QN branch, where self.U3 IS reset
+            // every inner iteration) the accepted step updates both self.U2
+            // and self.U3 by the identical U_delta starting from the
+            // identical value, so the two are equal the moment QN takes
+            // over; each subsequent QN pass preserves that equality the
+            // same way (both updated by the same U_delta again). U2_ *
+            // U_delta is therefore the exact translation, not merely an
+            // equivalent substitution.
+            const Matrix U3 = U2_ * U_delta;
+            (void)hard_case;
 
             const double second_order_energy_change = microiteration_exact_energy(U3, fi.A, fi.G, dims);
-            const double energy_change = zero_energy + second_order_energy_change - current_energy;
-            const double predicted_energy2 =
-                microiteration_predicted_energy2(U2_, reduced_gradient, A_tilde_full, fi.G, step, dims);
 
-            // helper_PFCI.py:12169-12172: unconditional on the very first
-            // inner iteration overall, whether or not this trial is accepted.
-            if (microiteration == 0 && orbital_optimization_step == 0) {
-                convergence_threshold = std::min(0.01 * gradient_norm, gradient_norm * gradient_norm);
-            }
+            ++qn_count;
+            U2_ = U3;
+            last_accepted_step = step;
 
-            if (energy_change < 0.0 || hard_case == 2) {
-                // Accept.
-                U2_ = U3;
+            MicroiterationCiIntegralsResult ci_int = microiteration_ci_integrals_transform(
+                U2_, fi.E_core, fi.fock_core, fi.L, context.J, context.K, fi.active_twoeint, context.d_cmo, dims);
+            staging.active_fock_core = ci_int.active_fock_core;
+            staging.active_twoeint = ci_int.active_twoeint;
+            staging.d_cmo = ci_int.d_cmo;
+            staging.E_core2 = ci_int.E_core2;
 
-                if (microiteration == 0 && orbital_optimization_step == 0) {
-                    const double step_norm = step.norm();
-                    if (step_norm > 0.1) {
-                        N_microiterations = 5;
-                        N_orbital_optimization_steps = 4;
-                    } else if (step_norm > 0.05) {
-                        N_microiterations = 7;
-                        N_orbital_optimization_steps = 3;
-                    }
+            ++accepted_count;
+            current_energy = zero_energy + second_order_energy_change;
+        } else {
+            accepted_count = 0; // helper_PFCI.py:11438
+            int orbital_optimization_step = 0;
+
+            auto hessian_op = std::make_shared<MatrixFreeHessianOperator>(
+                [&](const Vector& v) { return orbital_sigma3(U2_, A_tilde_full, fi.G, v, dims); },
+                dims.index_map_size());
+
+            while (orbital_optimization_step < N_orbital_optimization_steps) {
+                const double gradient_norm = reduced_gradient.norm();
+                if (gradient_norm < 0.1 * convergence_threshold && microiteration > 0) {
+                    small_gradient_convergence = true;
+                    break;
                 }
-                ++orbital_optimization_step;
+                if (gradient_norm < 1e-7) {
+                    small_gradient_convergence = true;
+                    break;
+                }
 
-                const double ratio = energy_change / predicted_energy2;
-                // helper_PFCI.py:12267: trust_radius carries forward across
-                // inner ("orbital_optimization_step") iterations within one
-                // outer pass, updated by step_control on every accept (and
-                // halved on every reject, below) -- NOT reset to 0.5 fresh
-                // each inner solve. See this loop's own trust_radius
-                // declaration comment for how this was found and corrected.
-                trust_radius = step_control(ratio, trust_radius);
+                Vector step;
+                int hard_case = 0;
+                if (gradient_norm > 1e-3) {
+                    if (n_negative == 0) {
+                        GltrTrustRegionSolver solver(hessian_op, hd.reduced_hessian_diagonal, gltr_config);
+                        TrustRegionResult result = solver.solve(reduced_gradient, trust_radius);
+                        step = result.step;
+                        hard_case = 0;
+                    } else {
+                        Matrix sym_A_tilde = embed_and_symmetrize_A_tilde(gr.A_tilde, dims);
+                        auto guess_provider = std::make_shared<OrbitalHessianGuessProvider>(
+                            U2_, sym_A_tilde, reduced_gradient, fi.G, index_map, dims.n_occupied);
+                        DavidsonDrivenLstrsSolver solver(hessian_op, guess_provider, hd.reduced_hessian_diagonal);
+                        TrustRegionResult result = solver.solve(reduced_gradient, trust_radius);
+                        step = result.step;
+                        hard_case = (result.reason == TerminationReason::SuccessInteriorSolution) ? 2 : 0;
+                    }
+                } else {
+                    // helper_PFCI.py:12103-12137: gradient-small Newton fallback
+                    // -- linear_equation_solve (LinearRMSolver), falling back to
+                    // real MINRES on non-convergence. See linear_equation_solve.hpp's
+                    // own doc comment for the one remaining, inherent (not
+                    // fixable) non-reproducibility (the random initial-probe
+                    // draw, always exercised at this call site).
+                    LinearEquationSolveResult solve_result = linear_equation_solve(
+                        U2_, A_tilde_full, fi.G, reduced_gradient, hd.reduced_hessian_diagonal,
+                        /*max_iter=*/20, /*conv_thresh=*/1e-6, dims);
+                    if (solve_result.converged) {
+                        step = solve_result.solution;
+                    } else {
+                        Matrix dense_hessian = materialize_dense_hessian(
+                            [&](const Vector& v) { return orbital_sigma3(U2_, A_tilde_full, fi.G, v, dims); },
+                            dims.index_map_size());
+                        MinresResult minres_result = minres_solve(dense_hessian, -reduced_gradient, /*rtol=*/1e-6);
+                        step = minres_result.x;
+                    }
+                    hard_case = 2;
+                }
 
-                // Rebuild gradient/hessian/reduced_gradient on the SAME
-                // fi.A/fi.G (not a fresh build_intermediates call).
-                gr = build_gradient(U2_, fi.A, fi.G, dims);
-                A_tilde_full = embed_A_tilde_full(gr.A_tilde, dims);
-                hd = build_hessian_diagonal(U2_, fi.G, A_tilde_full, dims);
-                reduced_gradient = extract_reduced_gradient(gr.gradient_tilde, index_map);
+                Matrix Rai, Rvi, Rva;
+                step_to_rotation_blocks(step, index_map, dims, Rai, Rvi, Rva);
+                Matrix U_delta = build_unitary_matrix(Rai, Rvi, Rva, dims);
+                Matrix U3 = U2_ * U_delta;
 
-                MicroiterationCiIntegralsResult ci_int = microiteration_ci_integrals_transform(
-                    U2_, fi.E_core, fi.fock_core, fi.L, context.J, context.K, fi.active_twoeint, context.d_cmo, dims);
-                staging.active_fock_core = ci_int.active_fock_core;
-                staging.active_twoeint = ci_int.active_twoeint;
-                staging.d_cmo = ci_int.d_cmo;
-                staging.E_core2 = ci_int.E_core2;
+                const double step_norm = step.norm();
+                const double second_order_energy_change = microiteration_exact_energy(U3, fi.A, fi.G, dims);
+                const double energy_change = zero_energy + second_order_energy_change - current_energy;
+                const double predicted_energy2 =
+                    microiteration_predicted_energy2(U2_, reduced_gradient, A_tilde_full, fi.G, step, dims);
+                predicted_energy = predicted_energy2; // helper_PFCI.py:12206 -- unconditional every trial
 
-                ++accepted_count;
-                current_energy = zero_energy + second_order_energy_change;
-            } else {
-                // Reject: helper_PFCI.py:12339 -- trust_radius is halved
-                // and carries forward into the next inner iteration (same
-                // trust_radius variable the accept branch updates above);
-                // nothing else changes, loop continues with the same
-                // reduced_gradient.
-                trust_radius = 0.5 * trust_radius;
+                // helper_PFCI.py:12169-12172: unconditional on the very first
+                // inner iteration overall, whether or not this trial is accepted.
+                if (microiteration == 0 && orbital_optimization_step == 0) {
+                    convergence_threshold = std::min(0.01 * gradient_norm, gradient_norm * gradient_norm);
+                }
+
+                if (energy_change < 0.0 || hard_case == 2) {
+                    // helper_PFCI.py:12222-12228: QN activation check, BEFORE
+                    // self.U2 is updated below. helper_PFCI.py:12229-12233
+                    // (the qn_count==1 reference-point capture) is NOT
+                    // ported -- provably dead, see header doc comment.
+                    if (qn_policy_.enabled && should_activate_qn(qn_policy_, energy_change, hard_case, step_norm)) {
+                        qn_optimization = true;
+                        ++qn_count;
+                        N_microiterations = 20;
+                        N_orbital_optimization_steps = 1;
+                    }
+
+                    U2_ = U3; // helper_PFCI.py:12240, after the activation check above
+
+                    if (microiteration == 0 && orbital_optimization_step == 0) {
+                        if (step_norm > 0.1) {
+                            N_microiterations = 5;
+                            N_orbital_optimization_steps = 4;
+                        } else if (step_norm > 0.05) {
+                            N_microiterations = 7;
+                            N_orbital_optimization_steps = 3;
+                        }
+                    }
+                    ++orbital_optimization_step;
+
+                    const double ratio = energy_change / predicted_energy2;
+                    // helper_PFCI.py:12267: trust_radius carries forward across
+                    // inner ("orbital_optimization_step") iterations within one
+                    // outer pass, updated by step_control on every accept (and
+                    // halved on every reject, below) -- NOT reset to 0.5 fresh
+                    // each inner solve. See this loop's own trust_radius
+                    // declaration comment for how this was found and corrected.
+                    trust_radius = step_control(ratio, trust_radius);
+
+                    // helper_PFCI.py:12263: gated qn_count == 0 -- once QN
+                    // has activated (qn_count just became 1 above, on this
+                    // very pass), this rebuild is skipped for the remainder
+                    // of this pass (harmless: N_orbital_optimization_steps
+                    // was just forced to 1, so the inner loop exits right
+                    // after this iteration regardless, and Step 3 rebuilds
+                    // gradient/hessian fresh at the top of the next pass).
+                    if (qn_count == 0) {
+                        gr = build_gradient(U2_, fi.A, fi.G, dims);
+                        A_tilde_full = embed_A_tilde_full(gr.A_tilde, dims);
+                        hd = build_hessian_diagonal(U2_, fi.G, A_tilde_full, dims);
+                        reduced_gradient = extract_reduced_gradient(gr.gradient_tilde, index_map);
+                    }
+
+                    MicroiterationCiIntegralsResult ci_int = microiteration_ci_integrals_transform(
+                        U2_, fi.E_core, fi.fock_core, fi.L, context.J, context.K, fi.active_twoeint, context.d_cmo, dims);
+                    staging.active_fock_core = ci_int.active_fock_core;
+                    staging.active_twoeint = ci_int.active_twoeint;
+                    staging.d_cmo = ci_int.d_cmo;
+                    staging.E_core2 = ci_int.E_core2;
+
+                    ++accepted_count;
+                    current_energy = zero_energy + second_order_energy_change;
+                    last_accepted_step = step;
+                } else {
+                    // Reject: helper_PFCI.py:12339 -- trust_radius is halved
+                    // and carries forward into the next inner iteration (same
+                    // trust_radius variable the accept branch updates above);
+                    // nothing else changes, loop continues with the same
+                    // reduced_gradient.
+                    trust_radius = 0.5 * trust_radius;
+                }
             }
         }
 
-        // Step 5: after the inner loop, unconditionally once per outer pass.
+        // Step 5: after the QN block / inner loop, unconditionally once per
+        // outer pass.
         if (small_gradient_convergence && accepted_count == 0) {
             // helper_PFCI.py:12300-12304.
             staging.active_fock_core = fi.active_fock_core;
@@ -416,11 +572,23 @@ void CasscfMicroiterationOptimizationStep::run(CasscfContext& context, const Mat
 
         commit_ci_solver_inputs(staging, dims, context);
 
-        CiStateAverageResult ci_result = ci_solver_->solve(eigenvecs, /*use_staged_inputs=*/true);
+        // helper_PFCI.py:12399-12404: threshold/maxiter reset to 1e-9/5
+        // every pass by default, overridden to a looser
+        // 0.1*||reduced_gradient||/10000 once qn_count > 0.
+        const std::optional<double> davidson_threshold_override =
+            qn_count > 0 ? std::optional<double>(0.1 * reduced_gradient.norm()) : std::optional<double>(1e-9);
+        const std::optional<int> davidson_maxiter_override =
+            qn_count > 0 ? std::optional<int>(10000) : std::optional<int>(5);
+
+        const Matrix D_tu_avg_old = context.D_tu_avg;
+        CiStateAverageResult ci_result = ci_solver_->solve(eigenvecs, /*use_staged_inputs=*/true,
+                                                            davidson_threshold_override, davidson_maxiter_override);
         eigenvecs = ci_result.eigenvectors;
         context.D_tu_avg = ci_result.D_tu_avg;
         context.D_tuvw_avg = ci_result.D_tuvw_avg;
         context.Dpe_tu_avg = ci_result.Dpe_tu_avg;
+        density_norm_change = (context.D_tu_avg - D_tu_avg_old).norm(); // helper_PFCI.py:12449
+        current_residual = ci_result.residual_norm;                    // helper_PFCI.py:12433
 
         ++microiteration;
     }
