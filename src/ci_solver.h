@@ -18,14 +18,14 @@ void build_H_diag(double* h1e, double* h2e, double* H_diag, int N_p, int num_alp
 void build_H_diag_cas(double* h1e, double* h2e, double* H_diag, int N_p, int num_alpha, int nmo, int n_act_a,int n_act_orb,int n_in_a, double E_core, double omega, double Enuc, double dc, int* Y); 
 void build_H_diag_cas_spin(double* h1e, double* h2e, double* H_diag, int N_p, int num_alpha, int nmo, int n_act_a,int n_act_orb,
 		int n_in_a, double E_core, double omega, double Enuc, double dc, int* Y, double target_spin); 
-void sigma3(double* h2e, double* c_vectors, double* c1_vectors, int* table, int* table_creation, int* table_annihilation, 
-		 int N_ac, int n_o_ac, int n_o_in, int nmo, int photon_p, int state_p, int num_photon); 
+void sigma3(double* h2e, double* c_vectors, double* c1_vectors, int* table, int* table_creation, int* table_annihilation,
+		 int N_ac, int n_o_ac, int n_o_in, int nmo, int photon_p, int state_p, int num_photon, int parallel_inner);
 
 
 void sigma12(double* h1e, double* h2e, double* c_vectors, double* c1_vectors, int num_alpha, int num_links, int* table, int nmo, int n_o_ac, int n_o_in,
-	       	int photon_p, int state_p, int num_photon);  
+	       	int photon_p, int state_p, int num_photon, int parallel_inner);
 void sigma_dipole(double* h1e, double* c_vectors,double* c1_vectors,int num_alpha,int num_links, int* table, int n_o_ac, int n_o_in,
-		 double someconstant, int photon_p1, int photon_p2, int state_p, int num_photon);
+		 double someconstant, int photon_p1, int photon_p2, int state_p, int num_photon, int parallel_inner);
 void constant_terms_contraction(double* c_vectors,double* c1_vectors,int num_alpha, double someconstant, int photon_p1, int photon_p2, int state_p, int num_photon);
 void build_sigma(double* h1e, double* h2e, double* d_cmo, double* c_vectors, double *c1_vectors, 
 		 int* table, int* table_creation, int* table_annihilation, int N_ac, int n_o_ac, int n_o_in, int nmo, 

@@ -447,7 +447,7 @@ void single_replacement_list(int num_alpha, int N_ac, int n_o_ac, int* Y,int* ta
 void build_H_diag(double* h1e, double* h2e, double* H_diag, int N_p, int num_alpha,int nmo, int n_act_a,int n_act_orb,int n_in_a, double omega, double Enuc, double dc, int* Y) {
     size_t num_dets = num_alpha * num_alpha;
     int np1 = N_p + 1;
-    #pragma omp parallel for num_threads(16)
+    #pragma omp parallel for
     for (size_t index_photon_det = 0; index_photon_det < np1*num_dets; index_photon_det++) {
         size_t Idet = index_photon_det%num_dets;	
         int m = (index_photon_det-Idet)/num_dets;	
@@ -535,7 +535,7 @@ void build_H_diag_cas(double* h1e, double* h2e, double* H_diag, int N_p, int num
     size_t num_dets = num_alpha * num_alpha;
     int np1 = N_p + 1;
     int n_occupied = n_act_orb + n_in_a;
-    #pragma omp parallel for num_threads(16)
+    #pragma omp parallel for
     for (size_t index_photon_det = 0; index_photon_det < np1*num_dets; index_photon_det++) {
         size_t Idet = index_photon_det%num_dets;	
         int m = (index_photon_det-Idet)/num_dets;	
@@ -625,7 +625,7 @@ void build_H_diag_cas_spin(double* h1e, double* h2e, double* H_diag, int N_p, in
     size_t num_dets = num_alpha * num_alpha;
     int np1 = N_p + 1;
     int n_occupied = n_act_orb + n_in_a;
-    #pragma omp parallel for num_threads(16)
+    #pragma omp parallel for
     for (size_t index_photon_det = 0; index_photon_det < np1*num_dets; index_photon_det++) {
     	//printf("%d\n", index_photon_det);
         size_t Idet = index_photon_det%num_dets;	
@@ -776,103 +776,126 @@ void get_string(double* h1e, double* h2e, double* H_diag, int* b_array, int* tab
 
 
 
-void build_sigma(double* h1e, double* h2e, double* d_cmo, double* c_vectors, double *c1_vectors, 
-    int* table, int* table_creation, int* table_annihilation, int N_ac, int n_o_ac, int n_o_in, int nmo, 
+void build_sigma(double* h1e, double* h2e, double* d_cmo, double* c_vectors, double *c1_vectors,
+    int* table, int* table_creation, int* table_annihilation, int N_ac, int n_o_ac, int n_o_in, int nmo,
     int num_state, int N_p, double Enuc, double dc, double omega, double d_exp, double E_core, bool break_degeneracy) {
-    
+
     int num_alpha = binomialCoeff(n_o_ac, N_ac);
     int num_links = N_ac * (n_o_ac-N_ac) + N_ac;
     int np1 = N_p + 1;
-    #pragma omp parallel for num_threads(12) collapse(2)
+    // Adaptive parallelization: num_state is the CURRENT Davidson subspace
+    // size (grows toward davidson_maxdim -- can be large for demanding
+    // calculations with many roots/a generous subspace), so num_state*np1
+    // is this loop's own trip count. Each (n,m) task is fully independent
+    // (a different trial vector/photon block, no data dependency between
+    // tasks) -- when that count is enough to keep every thread busy,
+    // parallelize HERE exactly as before, with sigma3/sigma12/sigma_dipole
+    // running serially inside (no BLAS-nesting risk at all). Otherwise
+    // (few roots, small subspace -- the common case when the active space
+    // itself is large and N_p is small), parallelize INSIDE those three
+    // functions over num_alpha instead, which scales with active-space
+    // size rather than subspace size.
+    int outer_units = num_state * np1;
+    int use_outer_parallel = (outer_units >= omp_get_max_threads());
+    int parallel_inner = !use_outer_parallel;
+    #pragma omp parallel for collapse(2) if(use_outer_parallel)
     for (int n = 0; n < num_state; n++) {
         for (int m = 0; m < np1; m++) {
-            sigma12(h1e, h2e, c_vectors, c1_vectors, num_alpha, num_links, table, nmo, n_o_ac, n_o_in, m, n, np1); 
-            sigma3(h2e, c_vectors, c1_vectors, table, table_creation, table_annihilation, 
-       	   N_ac, n_o_ac, n_o_in, nmo, m, n, np1);
+            sigma12(h1e, h2e, c_vectors, c1_vectors, num_alpha, num_links, table, nmo, n_o_ac, n_o_in, m, n, np1, parallel_inner);
+            sigma3(h2e, c_vectors, c1_vectors, table, table_creation, table_annihilation,
+       	   N_ac, n_o_ac, n_o_in, nmo, m, n, np1, parallel_inner);
             double someconstant = m * omega + Enuc + dc + E_core;
             if (break_degeneracy == true) {
                someconstant = m * (omega + 1) + Enuc + dc + E_core;
             }
-            constant_terms_contraction(c_vectors, c1_vectors, num_alpha, someconstant, m, m, n, np1);    
+            constant_terms_contraction(c_vectors, c1_vectors, num_alpha, someconstant, m, m, n, np1);
 	    if (N_p == 0) continue;
             if ((0 < m) && (m < N_p)) {
                 someconstant = -sqrt(m * omega/2);
-                sigma_dipole(d_cmo, c_vectors, c1_vectors, num_alpha, num_links, table, n_o_ac, n_o_in, someconstant, m-1, m, n, np1);  
-                constant_terms_contraction(c_vectors, c1_vectors, num_alpha, -d_exp * someconstant, m-1, m, n, np1);    
+                sigma_dipole(d_cmo, c_vectors, c1_vectors, num_alpha, num_links, table, n_o_ac, n_o_in, someconstant, m-1, m, n, np1, parallel_inner);
+                constant_terms_contraction(c_vectors, c1_vectors, num_alpha, -d_exp * someconstant, m-1, m, n, np1);
                 someconstant = -sqrt((m+1) * omega/2);
-                sigma_dipole(d_cmo, c_vectors, c1_vectors, num_alpha, num_links, table, n_o_ac, n_o_in, someconstant, m+1, m, n, np1);  
-                constant_terms_contraction(c_vectors, c1_vectors, num_alpha, -d_exp * someconstant, m+1, m, n, np1);    
+                sigma_dipole(d_cmo, c_vectors, c1_vectors, num_alpha, num_links, table, n_o_ac, n_o_in, someconstant, m+1, m, n, np1, parallel_inner);
+                constant_terms_contraction(c_vectors, c1_vectors, num_alpha, -d_exp * someconstant, m+1, m, n, np1);
             }
             else if (m == N_p) {
                 someconstant = -sqrt(m * omega/2);
-                sigma_dipole(d_cmo, c_vectors, c1_vectors, num_alpha, num_links, table, n_o_ac, n_o_in, someconstant, m-1, m, n, np1);  
-                constant_terms_contraction(c_vectors, c1_vectors, num_alpha, -d_exp * someconstant, m-1, m, n, np1);   
+                sigma_dipole(d_cmo, c_vectors, c1_vectors, num_alpha, num_links, table, n_o_ac, n_o_in, someconstant, m-1, m, n, np1, parallel_inner);
+                constant_terms_contraction(c_vectors, c1_vectors, num_alpha, -d_exp * someconstant, m-1, m, n, np1);
             }
             else {
                 someconstant = -sqrt((m+1) * omega/2);
-                sigma_dipole(d_cmo, c_vectors, c1_vectors, num_alpha, num_links, table, n_o_ac, n_o_in, someconstant, m+1, m, n, np1);  
-                constant_terms_contraction(c_vectors, c1_vectors, num_alpha, -d_exp * someconstant, m+1, m, n, np1);   
+                sigma_dipole(d_cmo, c_vectors, c1_vectors, num_alpha, num_links, table, n_o_ac, n_o_in, someconstant, m+1, m, n, np1, parallel_inner);
+                constant_terms_contraction(c_vectors, c1_vectors, num_alpha, -d_exp * someconstant, m+1, m, n, np1);
             }
         }
     }
 }
-       
-void build_sigma_2(double* h1e, double* h2e, double* d_cmo, double* c_vectors, double *c1_vectors, 
-    int* table, int* table_creation, int* table_annihilation, int N_ac, int n_o_ac, int n_o_in, int nmo, 
+
+void build_sigma_2(double* h1e, double* h2e, double* d_cmo, double* c_vectors, double *c1_vectors,
+    int* table, int* table_creation, int* table_annihilation, int N_ac, int n_o_ac, int n_o_in, int nmo,
     int num_state, int N_p, double Enuc, double dc, double omega1, double omega2, double d_exp, double E_core, bool break_degeneracy) {
-    
+
     int num_alpha = binomialCoeff(n_o_ac, N_ac);
     int num_links = N_ac * (n_o_ac-N_ac) + N_ac;
     int np1 = N_p + 1;
-    #pragma omp parallel for num_threads(12) collapse(2)
+    // See build_sigma's own comment -- identical adaptive-dispatch reasoning.
+    int outer_units = num_state * np1;
+    int use_outer_parallel = (outer_units >= omp_get_max_threads());
+    int parallel_inner = !use_outer_parallel;
+    #pragma omp parallel for collapse(2) if(use_outer_parallel)
     for (int n = 0; n < num_state; n++) {
         for (int m = 0; m < np1; m++) {
-            sigma12(h1e, h2e, c_vectors, c1_vectors, num_alpha, num_links, table, nmo, n_o_ac, n_o_in, m, n, np1); 
-            sigma3(h2e, c_vectors, c1_vectors, table, table_creation, table_annihilation, 
-       	   N_ac, n_o_ac, n_o_in, nmo, m, n, np1);
+            sigma12(h1e, h2e, c_vectors, c1_vectors, num_alpha, num_links, table, nmo, n_o_ac, n_o_in, m, n, np1, parallel_inner);
+            sigma3(h2e, c_vectors, c1_vectors, table, table_creation, table_annihilation,
+       	   N_ac, n_o_ac, n_o_in, nmo, m, n, np1, parallel_inner);
             double someconstant = m * omega1 + Enuc + dc + E_core;
             if (break_degeneracy == true) {
                someconstant = m * (omega1 + 1) + Enuc + dc + E_core;
             }
-            constant_terms_contraction(c_vectors, c1_vectors, num_alpha, someconstant, m, m, n, np1);    
+            constant_terms_contraction(c_vectors, c1_vectors, num_alpha, someconstant, m, m, n, np1);
 	    if (N_p == 0) continue;
             if ((0 < m) && (m < N_p)) {
                 someconstant = -sqrt(m * omega2/2);
-                sigma_dipole(d_cmo, c_vectors, c1_vectors, num_alpha, num_links, table, n_o_ac, n_o_in, someconstant, m-1, m, n, np1);  
-                constant_terms_contraction(c_vectors, c1_vectors, num_alpha, -d_exp * someconstant, m-1, m, n, np1);    
+                sigma_dipole(d_cmo, c_vectors, c1_vectors, num_alpha, num_links, table, n_o_ac, n_o_in, someconstant, m-1, m, n, np1, parallel_inner);
+                constant_terms_contraction(c_vectors, c1_vectors, num_alpha, -d_exp * someconstant, m-1, m, n, np1);
                 someconstant = -sqrt((m+1) * omega2/2);
-                sigma_dipole(d_cmo, c_vectors, c1_vectors, num_alpha, num_links, table, n_o_ac, n_o_in, someconstant, m+1, m, n, np1);  
-                constant_terms_contraction(c_vectors, c1_vectors, num_alpha, -d_exp * someconstant, m+1, m, n, np1);    
+                sigma_dipole(d_cmo, c_vectors, c1_vectors, num_alpha, num_links, table, n_o_ac, n_o_in, someconstant, m+1, m, n, np1, parallel_inner);
+                constant_terms_contraction(c_vectors, c1_vectors, num_alpha, -d_exp * someconstant, m+1, m, n, np1);
             }
             else if (m == N_p) {
                 someconstant = -sqrt(m * omega2/2);
-                sigma_dipole(d_cmo, c_vectors, c1_vectors, num_alpha, num_links, table, n_o_ac, n_o_in, someconstant, m-1, m, n, np1);  
-                constant_terms_contraction(c_vectors, c1_vectors, num_alpha, -d_exp * someconstant, m-1, m, n, np1);   
+                sigma_dipole(d_cmo, c_vectors, c1_vectors, num_alpha, num_links, table, n_o_ac, n_o_in, someconstant, m-1, m, n, np1, parallel_inner);
+                constant_terms_contraction(c_vectors, c1_vectors, num_alpha, -d_exp * someconstant, m-1, m, n, np1);
             }
             else {
                 someconstant = -sqrt((m+1) * omega2/2);
-                sigma_dipole(d_cmo, c_vectors, c1_vectors, num_alpha, num_links, table, n_o_ac, n_o_in, someconstant, m+1, m, n, np1);  
-                constant_terms_contraction(c_vectors, c1_vectors, num_alpha, -d_exp * someconstant, m+1, m, n, np1);   
+                sigma_dipole(d_cmo, c_vectors, c1_vectors, num_alpha, num_links, table, n_o_ac, n_o_in, someconstant, m+1, m, n, np1, parallel_inner);
+                constant_terms_contraction(c_vectors, c1_vectors, num_alpha, -d_exp * someconstant, m+1, m, n, np1);
             }
         }
     }
 }
  
 
-void sigma3(double* h2e, double* c_vectors, double* c1_vectors, int* table,  int* table_creation, int* table_annihilation, 
-		 int N_ac, int n_o_ac, int n_o_in, int nmo, int photon_p, int state_p, int num_photon) {
+void sigma3(double* h2e, double* c_vectors, double* c1_vectors, int* table,  int* table_creation, int* table_annihilation,
+		 int N_ac, int n_o_ac, int n_o_in, int nmo, int photon_p, int state_p, int num_photon, int parallel_inner) {
     int num_alpha = binomialCoeff(n_o_ac, N_ac);
     int num_alpha1 = binomialCoeff(n_o_ac, N_ac-1);
     size_t num_dets = num_alpha * num_alpha;
-    
+
     int num_links = N_ac * (n_o_ac-N_ac) + N_ac;
     int num_links1 = n_o_ac-N_ac+1;
     int num_links2 = N_ac;
     int n_occupied = n_o_ac + n_o_in;
     double* D = (double*) malloc(num_alpha1 * n_o_ac * num_alpha*sizeof(double));
     memset(D, 0, num_alpha1 * n_o_ac * num_alpha * sizeof(double));
+    // Phase 1: each index_ka writes only to D[...*num_alpha1 + index_ka] --
+    // index_ka is D's fastest-varying index, so different index_ka
+    // iterations never touch the same element. Embarrassingly parallel.
+    #pragma omp parallel for if(parallel_inner)
     for (int index_ka = 0; index_ka < num_alpha1; index_ka++) {
-	int stride = index_ka * num_links1;    	
+	int stride = index_ka * num_links1;
         for (int creation = 0; creation < num_links1; creation++) {
 	    int index_ja = table_creation[(stride+creation)*3+0];
 	    int sign = table_creation[(stride+creation)*3+1];
@@ -885,23 +908,36 @@ void sigma3(double* h2e, double* c_vectors, double* c1_vectors, int* table,  int
 
 	    }
 	}
-		
+
     }
 
     double* T = (double*) malloc(num_alpha1 * n_o_ac * num_alpha*sizeof(double));
     memset(T, 0, num_alpha1 * n_o_ac * num_alpha * sizeof(double));
+    // Phase 2: each index_ib owns its own contiguous block
+    // T[index_ib*n_o_ac*num_alpha1 .. ], only reading the now-complete D
+    // (built in phase 1) -- embarrassingly parallel across index_ib. Each
+    // iteration calls cblas_dgemm, so MKL is pinned to 1 thread for the
+    // duration of this region to avoid nested-threading oversubscription
+    // (same reasoning as sigma12/sigma_dipole -- self-contained here too,
+    // safe to call standalone regardless of caller).
+    int mkl_threads_saved = 0;
+    if (parallel_inner) {
+        mkl_threads_saved = mkl_get_max_threads();
+        mkl_set_num_threads(1);
+    }
+    #pragma omp parallel for if(parallel_inner)
     for (int index_ib = 0; index_ib < num_alpha; index_ib++) {
         int stride = index_ib * num_links;
         for (int excitation = 0; excitation < num_links; excitation++) {
             int index_jb = table[(stride + excitation)*4+0];
             int sign = table[(stride + excitation)*4+1];
-            int k = table[(stride + excitation)*4+2]; 
-            int l = table[(stride + excitation)*4+3]; 
+            int k = table[(stride + excitation)*4+2];
+            int l = table[(stride + excitation)*4+3];
             int kl = (k+n_o_in) * n_occupied + (l+n_o_in);
-            cblas_dgemm(CblasRowMajor, CblasNoTrans, CblasNoTrans, n_o_ac, num_alpha1, n_o_ac, sign, h2e+kl*n_occupied*n_occupied+n_o_in*n_occupied+n_o_in, 
-               	  n_occupied, D+index_jb*n_o_ac*num_alpha1, num_alpha1, 1.0, 
+            cblas_dgemm(CblasRowMajor, CblasNoTrans, CblasNoTrans, n_o_ac, num_alpha1, n_o_ac, sign, h2e+kl*n_occupied*n_occupied+n_o_in*n_occupied+n_o_in,
+               	  n_occupied, D+index_jb*n_o_ac*num_alpha1, num_alpha1, 1.0,
             	  T+index_ib*n_o_ac*num_alpha1, num_alpha1);
-   
+
             //for (int index_ka = 0; index_ka < num_alpha1; index_ka++) {
             //    for (int i = 0; i < n_o_ac; i++) {
             //        for (int j = 0; j < n_o_ac; j++) {
@@ -914,11 +950,18 @@ void sigma3(double* h2e, double* c_vectors, double* c1_vectors, int* table,  int
 
         }
     }
+    if (parallel_inner) {
+        mkl_set_num_threads(mkl_threads_saved);
+    }
 
 
+    // Phase 3: each index_ia owns its own contiguous block of c1_vectors,
+    // only reading the now-complete T (built in phase 2). Embarrassingly
+    // parallel across index_ia, no BLAS calls here so no MKL concern.
     //printf("\n");
+    #pragma omp parallel for if(parallel_inner)
     for (int index_ia = 0; index_ia < num_alpha; index_ia++) {
-        int stride = index_ia * num_links2;    	
+        int stride = index_ia * num_links2;
         for (int annihilation = 0; annihilation < num_links2; annihilation++) {
             int index_ka = table_annihilation[(stride+annihilation)*3+0];
             int sign = table_annihilation[(stride+annihilation)*3+1];
@@ -929,7 +972,7 @@ void sigma3(double* h2e, double* c_vectors, double* c1_vectors, int* table,  int
                 T[(index_ib * n_o_ac + i) * num_alpha1 + index_ka];
             }
         }
-        	
+
     }
 //    for (int index_ib = 0; index_ib < num_alpha; index_ib++) {
 //        int stride = index_ib * num_links;
@@ -997,56 +1040,78 @@ void sigma3(double* h2e, double* c_vectors, double* c1_vectors, int* table,  int
 
 
 
-void sigma12(double* h1e, double* h2e, double* c_vectors, double* c1_vectors, int num_alpha, int num_links, int* table, int nmo, int n_o_ac, int n_o_in, 
-		int photon_p, int state_p, int num_photon) {
+void sigma12(double* h1e, double* h2e, double* c_vectors, double* c1_vectors, int num_alpha, int num_links, int* table, int nmo, int n_o_ac, int n_o_in,
+		int photon_p, int state_p, int num_photon, int parallel_inner) {
     size_t num_dets = num_alpha * num_alpha;
-    double* F = (double*) malloc(num_alpha*sizeof(double));
-
-    double* s_resize = (double*) malloc(num_alpha*sizeof(double));
     int n_occupied = n_o_ac + n_o_in;
 
-    for (int index_ib = 0; index_ib < num_alpha; index_ib++) {
-        memset(F, 0, num_alpha*sizeof(double));
-        int stride1 = index_ib * num_links;
-        for (int excitation1 = 0; excitation1 < num_links; excitation1++) {
-            int index_kb = table[(stride1 + excitation1)*4+0];
-            int sign1 = table[(stride1 + excitation1)*4+1];
-            int k = table[(stride1 + excitation1)*4+2]; 
-            int l = table[(stride1 + excitation1)*4+3]; 
-            F[index_kb] += sign1 * h1e[k*n_o_ac+l];
-            int kl = (k + n_o_in) * n_occupied + (l + n_o_in);
-            int stride2 = index_kb * num_links;
-            for (int excitation2 = 0; excitation2 < num_links; excitation2++) {
-                int index_jb = table[(stride2 + excitation2)*4+0];
-                int sign2 = table[(stride2 + excitation2)*4+1];
-                int i = table[(stride2 + excitation2)*4+2]; 
-                int j = table[(stride2 + excitation2)*4+3]; 
-                int ij = (i + n_o_in) * n_occupied + (j + n_o_in);
-                F[index_jb] += 0.5 * sign1 * sign2 * h2e[ij*n_occupied*n_occupied+kl];
+    // Both loops below call cblas_dgemm once per outer iteration; pin MKL
+    // to 1 thread for the duration when running with per-iteration OpenMP
+    // parallelism, to avoid nested-threading oversubscription (build_sigma/
+    // build_sigma_2 make the same on/off decision for the whole call, this
+    // just applies it locally too so sigma12 is safe to call standalone).
+    int mkl_threads_saved = 0;
+    if (parallel_inner) {
+        mkl_threads_saved = mkl_get_max_threads();
+        mkl_set_num_threads(1);
+    }
+
+    // First loop: each index_ib computes its own local F (read-only inputs:
+    // table/h1e/h2e) and writes to c1_vectors at indices {index_ib,
+    // num_alpha+index_ib, 2*num_alpha+index_ib, ...} -- disjoint across
+    // different index_ib values, so embarrassingly parallel. F/s_resize
+    // become per-thread (allocated once per team member, not once per
+    // function call) instead of one buffer reused serially across
+    // iterations -- required once multiple threads touch this loop at
+    // once, and numerically identical to the old shared-buffer version
+    // either way (each iteration still memsets its own F to zero before
+    // building it fresh).
+    #pragma omp parallel if(parallel_inner)
+    {
+        double* F = (double*) malloc(num_alpha*sizeof(double));
+        double* s_resize = (double*) malloc(num_alpha*sizeof(double));
+
+        #pragma omp for
+        for (int index_ib = 0; index_ib < num_alpha; index_ib++) {
+            memset(F, 0, num_alpha*sizeof(double));
+            int stride1 = index_ib * num_links;
+            for (int excitation1 = 0; excitation1 < num_links; excitation1++) {
+                int index_kb = table[(stride1 + excitation1)*4+0];
+                int sign1 = table[(stride1 + excitation1)*4+1];
+                int k = table[(stride1 + excitation1)*4+2];
+                int l = table[(stride1 + excitation1)*4+3];
+                F[index_kb] += sign1 * h1e[k*n_o_ac+l];
+                int kl = (k + n_o_in) * n_occupied + (l + n_o_in);
+                int stride2 = index_kb * num_links;
+                for (int excitation2 = 0; excitation2 < num_links; excitation2++) {
+                    int index_jb = table[(stride2 + excitation2)*4+0];
+                    int sign2 = table[(stride2 + excitation2)*4+1];
+                    int i = table[(stride2 + excitation2)*4+2];
+                    int j = table[(stride2 + excitation2)*4+3];
+                    int ij = (i + n_o_in) * n_occupied + (j + n_o_in);
+                    F[index_jb] += 0.5 * sign1 * sign2 * h2e[ij*n_occupied*n_occupied+kl];
+                }
+            }
+
+            memset(s_resize, 0, num_alpha*sizeof(double));
+            cblas_dgemm(CblasRowMajor, CblasNoTrans, CblasNoTrans, num_alpha, 1, num_alpha, 1.0, c_vectors
+       		 + (state_p * num_photon + photon_p) * num_dets, num_alpha, F, 1, 0.0, s_resize, 1);
+            for (int index_ia = 0; index_ia < num_alpha; index_ia++) {
+                int index_I = index_ia * num_alpha + index_ib;
+                c1_vectors[(state_p * num_photon + photon_p) * num_dets + index_I] += s_resize[index_ia];
             }
         }
 
-        memset(s_resize, 0, num_alpha*sizeof(double));
-        cblas_dgemm(CblasRowMajor, CblasNoTrans, CblasNoTrans, num_alpha, 1, num_alpha, 1.0, c_vectors 
-       		 + (state_p * num_photon + photon_p) * num_dets, num_alpha, F, 1, 0.0, s_resize, 1);
-        for (int index_ia = 0; index_ia < num_alpha; index_ia++) {
-            int index_I = index_ia * num_alpha + index_ib;
-            c1_vectors[(state_p * num_photon + photon_p) * num_dets + index_I] += s_resize[index_ia];
-        }
-        //for (int index_jb = 0; index_jb < num_alpha; index_jb++) {
-        //    for (int index_ia = 0; index_ia < num_alpha; index_ia++) {
-        //        int index_I = index_ia * num_alpha + index_ib;
-        //        int index_J = index_ia * num_alpha + index_jb;
-        //        c1_vectors[(state_p * num_photon + photon_p) * num_dets + index_I] += F[index_jb] * c_vectors[
-        //       	 (state_p * num_photon + photon_p) * num_dets + index_J];
-        //    }
-        //}
-
+        free(F);
+        free(s_resize);
     }
 
 
     double* c_resize = (double*) malloc(num_dets*sizeof(double));
-    
+
+    // Plain transpose into c_resize -- disjoint writes per index_ja, no
+    // BLAS, safe to parallelize with no MKL concern.
+    #pragma omp parallel for if(parallel_inner)
     for (int index_ja = 0; index_ja < num_alpha; index_ja++) {
         for (int index_ib = 0; index_ib < num_alpha; index_ib++) {
             int index_J = index_ja * num_alpha + index_ib;
@@ -1055,92 +1120,100 @@ void sigma12(double* h1e, double* h2e, double* c_vectors, double* c1_vectors, in
        	 (state_p * num_photon + photon_p) * num_dets + index_J];
         }
     }
-    
-    
-    
-    for (int index_ia = 0; index_ia < num_alpha; index_ia++) {
-        memset(F, 0, num_alpha*sizeof(double));
-        int stride1 = index_ia * num_links;
-        for (int excitation1 = 0; excitation1 < num_links; excitation1++) {
-            int index_ka = table[(stride1 + excitation1)*4+0];
-            int sign1 = table[(stride1 + excitation1)*4+1];
-            int k = table[(stride1 + excitation1)*4+2]; 
-            int l = table[(stride1 + excitation1)*4+3]; 
-            F[index_ka] += sign1 * h1e[k*n_o_ac+l];
-            //print(index_kb,sign1,k,l)
-            int kl = (k + n_o_in) * n_occupied + (l + n_o_in);
-            int stride2 = index_ka * num_links;
-            for (int excitation2 = 0; excitation2 < num_links; excitation2++) {
-                int index_ja = table[(stride2 + excitation2)*4+0];
-                int sign2 = table[(stride2 + excitation2)*4+1];
-                int i = table[(stride2 + excitation2)*4+2]; 
-                int j = table[(stride2 + excitation2)*4+3]; 
-                int ij = (i + n_o_in) * n_occupied + (j + n_o_in);
-                F[index_ja] += 0.5 * sign1 * sign2 * h2e[ij*n_occupied*n_occupied+kl];
+
+
+
+    // Second loop: same shape as the first, over index_ia this time, each
+    // iteration owning the contiguous block c1_vectors[...+index_ia*num_alpha ..].
+    // Must run after the first loop (accumulates via beta=1.0 on what it
+    // wrote), but is itself embarrassingly parallel across index_ia.
+    #pragma omp parallel if(parallel_inner)
+    {
+        double* F = (double*) malloc(num_alpha*sizeof(double));
+
+        #pragma omp for
+        for (int index_ia = 0; index_ia < num_alpha; index_ia++) {
+            memset(F, 0, num_alpha*sizeof(double));
+            int stride1 = index_ia * num_links;
+            for (int excitation1 = 0; excitation1 < num_links; excitation1++) {
+                int index_ka = table[(stride1 + excitation1)*4+0];
+                int sign1 = table[(stride1 + excitation1)*4+1];
+                int k = table[(stride1 + excitation1)*4+2];
+                int l = table[(stride1 + excitation1)*4+3];
+                F[index_ka] += sign1 * h1e[k*n_o_ac+l];
+                //print(index_kb,sign1,k,l)
+                int kl = (k + n_o_in) * n_occupied + (l + n_o_in);
+                int stride2 = index_ka * num_links;
+                for (int excitation2 = 0; excitation2 < num_links; excitation2++) {
+                    int index_ja = table[(stride2 + excitation2)*4+0];
+                    int sign2 = table[(stride2 + excitation2)*4+1];
+                    int i = table[(stride2 + excitation2)*4+2];
+                    int j = table[(stride2 + excitation2)*4+3];
+                    int ij = (i + n_o_in) * n_occupied + (j + n_o_in);
+                    F[index_ja] += 0.5 * sign1 * sign2 * h2e[ij*n_occupied*n_occupied+kl];
+                }
             }
-        }
-        cblas_dgemm(CblasRowMajor, CblasNoTrans, CblasNoTrans, num_alpha,1,num_alpha, 1.0, c_resize, num_alpha, F, 1, 1.0,
+            cblas_dgemm(CblasRowMajor, CblasNoTrans, CblasNoTrans, num_alpha,1,num_alpha, 1.0, c_resize, num_alpha, F, 1, 1.0,
        		 c1_vectors+(state_p * num_photon + photon_p) * num_dets+index_ia*num_alpha, 1);
+        }
 
-
-        //for (int index_ja = 0; index_ja < num_alpha; index_ja++) {
-        //    for (int index_ib = 0; index_ib < num_alpha; index_ib++) {
-        //        int index_I = index_ia * num_alpha + index_ib;
-        //        int index_J = index_ja * num_alpha + index_ib;
-        //        c1_vectors[(state_p * num_photon + photon_p) * num_dets + index_I] += F[index_ja] * c_vectors[
-        //       	 (state_p * num_photon + photon_p) * num_dets + index_J];
-        //    }
-        //}
-
+        free(F);
     }
-    free(F); 
-    free(c_resize); 
-    free(s_resize);
-    
+
+    if (parallel_inner) {
+        mkl_set_num_threads(mkl_threads_saved);
+    }
+    free(c_resize);
+
 }
-void sigma_dipole(double* h1e, double* c_vectors,double* c1_vectors,int num_alpha,int num_links, int* table, int n_o_ac, int n_o_in, double someconstant, int photon_p1, int photon_p2, int state_p, int num_photon) {
+void sigma_dipole(double* h1e, double* c_vectors,double* c1_vectors,int num_alpha,int num_links, int* table, int n_o_ac, int n_o_in, double someconstant, int photon_p1, int photon_p2, int state_p, int num_photon, int parallel_inner) {
 
      size_t num_dets = num_alpha * num_alpha;
      int n_occupied = n_o_ac + n_o_in;
-     double* F = (double*) malloc(num_alpha*sizeof(double));
 
-     double* s_resize = (double*) malloc(num_alpha*sizeof(double));
-
-     for (int index_ib = 0; index_ib < num_alpha; index_ib++) {
-         memset(F, 0, num_alpha*sizeof(double));
-         int stride1 = index_ib * num_links;
-         for (int excitation1 = 0; excitation1 < num_links; excitation1++) {
-             int index_kb = table[(stride1 + excitation1)*4+0];
-             int sign1 = table[(stride1 + excitation1)*4+1];
-             int k = table[(stride1 + excitation1)*4+2]; 
-             int l = table[(stride1 + excitation1)*4+3];
-	     int kl = (k + n_o_in) * n_occupied + l + n_o_in; 
-             F[index_kb] += sign1 * h1e[kl];
-	 }
-
-
-         memset(s_resize, 0, num_alpha*sizeof(double));
-         cblas_dgemm(CblasRowMajor, CblasNoTrans, CblasNoTrans, num_alpha, 1, num_alpha, someconstant, c_vectors 
-	        	 + (state_p * num_photon + photon_p1) * num_dets, num_alpha, F, 1, 0.0, s_resize, 1);
-         for (int index_ia = 0; index_ia < num_alpha; index_ia++) {
-             int index_I = index_ia * num_alpha + index_ib;
-             c1_vectors[(state_p * num_photon + photon_p2) * num_dets + index_I] += s_resize[index_ia];
-	 }
-
-         //for (int index_jb = 0; index_jb < num_alpha; index_jb++) {
-         //    for (int index_ia = 0; index_ia < num_alpha; index_ia++) {
-         //        int index_I = index_ia * num_alpha + index_ib;
-         //        int index_J = index_ia * num_alpha + index_jb;
-         //        c1_vectors[(state_p * num_photon + photon_p2) * num_dets + index_I] += someconstant * F[index_jb] * c_vectors[
-	 //       	 (state_p * num_photon + photon_p1) * num_dets + index_J];
-
-	 //    }
-	 //}
-
+     // Same shape/reasoning as sigma12 -- see that function's comments.
+     int mkl_threads_saved = 0;
+     if (parallel_inner) {
+         mkl_threads_saved = mkl_get_max_threads();
+         mkl_set_num_threads(1);
      }
-     
+
+     #pragma omp parallel if(parallel_inner)
+     {
+         double* F = (double*) malloc(num_alpha*sizeof(double));
+         double* s_resize = (double*) malloc(num_alpha*sizeof(double));
+
+         #pragma omp for
+         for (int index_ib = 0; index_ib < num_alpha; index_ib++) {
+             memset(F, 0, num_alpha*sizeof(double));
+             int stride1 = index_ib * num_links;
+             for (int excitation1 = 0; excitation1 < num_links; excitation1++) {
+                 int index_kb = table[(stride1 + excitation1)*4+0];
+                 int sign1 = table[(stride1 + excitation1)*4+1];
+                 int k = table[(stride1 + excitation1)*4+2];
+                 int l = table[(stride1 + excitation1)*4+3];
+	         int kl = (k + n_o_in) * n_occupied + l + n_o_in;
+                 F[index_kb] += sign1 * h1e[kl];
+	     }
+
+
+             memset(s_resize, 0, num_alpha*sizeof(double));
+             cblas_dgemm(CblasRowMajor, CblasNoTrans, CblasNoTrans, num_alpha, 1, num_alpha, someconstant, c_vectors
+	        	 + (state_p * num_photon + photon_p1) * num_dets, num_alpha, F, 1, 0.0, s_resize, 1);
+             for (int index_ia = 0; index_ia < num_alpha; index_ia++) {
+                 int index_I = index_ia * num_alpha + index_ib;
+                 c1_vectors[(state_p * num_photon + photon_p2) * num_dets + index_I] += s_resize[index_ia];
+	     }
+
+         }
+
+         free(F);
+         free(s_resize);
+     }
+
      double* c_resize = (double*) malloc(num_dets*sizeof(double));
-     
+
+     #pragma omp parallel for if(parallel_inner)
      for (int index_ja = 0; index_ja < num_alpha; index_ja++) {
          for (int index_ib = 0; index_ib < num_alpha; index_ib++) {
              int index_J = index_ja * num_alpha + index_ib;
@@ -1150,35 +1223,34 @@ void sigma_dipole(double* h1e, double* c_vectors,double* c1_vectors,int num_alph
          }
      }
 
-     for (int index_ia = 0; index_ia < num_alpha; index_ia++) {
-         memset(F, 0, num_alpha*sizeof(double));
-         int stride1 = index_ia * num_links;
-         for (int excitation1 = 0; excitation1 < num_links; excitation1++) {
-             int index_ka = table[(stride1 + excitation1)*4+0];
-             int sign1 = table[(stride1 + excitation1)*4+1];
-             int k = table[(stride1 + excitation1)*4+2]; 
-             int l = table[(stride1 + excitation1)*4+3]; 
-	     int kl = (k + n_o_in) * n_occupied + l + n_o_in; 
-             F[index_ka] += sign1 * h1e[kl];
-	 }
-         cblas_dgemm(CblasRowMajor, CblasNoTrans, CblasNoTrans, num_alpha,1,num_alpha, someconstant, c_resize, num_alpha, F, 1, 1.0,
+     #pragma omp parallel if(parallel_inner)
+     {
+         double* F = (double*) malloc(num_alpha*sizeof(double));
+
+         #pragma omp for
+         for (int index_ia = 0; index_ia < num_alpha; index_ia++) {
+             memset(F, 0, num_alpha*sizeof(double));
+             int stride1 = index_ia * num_links;
+             for (int excitation1 = 0; excitation1 < num_links; excitation1++) {
+                 int index_ka = table[(stride1 + excitation1)*4+0];
+                 int sign1 = table[(stride1 + excitation1)*4+1];
+                 int k = table[(stride1 + excitation1)*4+2];
+                 int l = table[(stride1 + excitation1)*4+3];
+	         int kl = (k + n_o_in) * n_occupied + l + n_o_in;
+                 F[index_ka] += sign1 * h1e[kl];
+	     }
+             cblas_dgemm(CblasRowMajor, CblasNoTrans, CblasNoTrans, num_alpha,1,num_alpha, someconstant, c_resize, num_alpha, F, 1, 1.0,
 			 c1_vectors+(state_p * num_photon + photon_p2) * num_dets+index_ia*num_alpha, 1);
 
-         //for (int index_ja = 0; index_ja < num_alpha; index_ja++) {
-         //    for (int index_ib = 0; index_ib < num_alpha; index_ib++) {
-         //        int index_I = index_ia * num_alpha + index_ib;
-         //        int index_J = index_ja * num_alpha + index_ib;
-         //        c1_vectors[(state_p * num_photon + photon_p2) * num_dets + index_I] += someconstant * F[index_ja] * c_vectors[
-	 //       	 (state_p * num_photon + photon_p1) * num_dets + index_J];
+         }
 
-	 //    }
-	 //}
-
+         free(F);
      }
 
-     free(F); 
-     free(c_resize); 
-     free(s_resize); 
+     if (parallel_inner) {
+         mkl_set_num_threads(mkl_threads_saved);
+     }
+     free(c_resize);
 
 }
 void constant_terms_contraction(double* c_vectors,double* c1_vectors,int num_alpha, double someconstant, int photon_p1, int photon_p2, int state_p, int num_photon) {
@@ -2310,7 +2382,7 @@ void build_two_rdm(double* z_vector, double* eigvec, double* D, int* table, int 
     memset(D_tuvw, 0.0, n_o_ac*n_o_ac*n_o_ac*n_o_ac*sizeof(double));
 
 
-    #pragma omp parallel for num_threads(16)
+    #pragma omp parallel for
     for (int index_ka = 0; index_ka < num_alpha; index_ka++) {
         int stride = index_ka * num_links;
         for (int excitation = 0; excitation < num_links; excitation++) {
@@ -2329,7 +2401,7 @@ void build_two_rdm(double* z_vector, double* eigvec, double* D, int* table, int 
             }
         }
     }
-    #pragma omp parallel for num_threads(16)
+    #pragma omp parallel for
     for (int index_kb = 0; index_kb < num_alpha; index_kb++) {
         int stride = index_kb * num_links;
         for (int excitation = 0; excitation < num_links; excitation++) {
@@ -2354,7 +2426,7 @@ void build_two_rdm(double* z_vector, double* eigvec, double* D, int* table, int 
         	    temp1, n_o_ac*n_o_ac, 0.0, D_tu, n_o_ac*n_o_ac);
     double* temp2 = (double*) malloc(num_dets*num_photon*n_o_ac*n_o_ac*sizeof(double));
     memset(temp2, 0.0, num_dets*num_photon*n_o_ac*n_o_ac*sizeof(double));
-    #pragma omp parallel for num_threads(16)
+    #pragma omp parallel for
     for (int index_ka = 0; index_ka < num_alpha; index_ka++) {
         int stride = index_ka * num_links;
         for (int excitation = 0; excitation < num_links; excitation++) {
@@ -2373,7 +2445,7 @@ void build_two_rdm(double* z_vector, double* eigvec, double* D, int* table, int 
             }
         }
     }
-    #pragma omp parallel for num_threads(16)
+    #pragma omp parallel for
     for (int index_kb = 0; index_kb < num_alpha; index_kb++) {
         int stride = index_kb * num_links;
         for (int excitation = 0; excitation < num_links; excitation++) {
@@ -2396,7 +2468,7 @@ void build_two_rdm(double* z_vector, double* eigvec, double* D, int* table, int 
         	    temp2, n_o_ac*n_o_ac,
         	    temp1, n_o_ac*n_o_ac, 0.0, 
     		    D_tuvw, n_o_ac*n_o_ac);
-    #pragma omp parallel for num_threads(16)
+    #pragma omp parallel for
     for (int p = 0; p < n_o_ac; p++) {
         for (int r = 0; r < n_o_ac; r++) {
             for (int q = 0; q < n_o_ac; q++) {
@@ -2655,7 +2727,7 @@ void build_active_rdm(double* eigvec, double* D_tu, double* D_tuvw, int* table, 
     memset(temp0, 0.0, n_o_ac*n_o_ac*sizeof(double));
    
 
-    #pragma omp parallel for num_threads(16)
+    #pragma omp parallel for
     for (int index_ka = 0; index_ka < num_alpha; index_ka++) {
         int stride = index_ka * num_links;
         for (int excitation = 0; excitation < num_links; excitation++) {
@@ -2674,7 +2746,7 @@ void build_active_rdm(double* eigvec, double* D_tu, double* D_tuvw, int* table, 
             }
         }
     }
-    #pragma omp parallel for num_threads(16)
+    #pragma omp parallel for
     for (int index_kb = 0; index_kb < num_alpha; index_kb++) {
         int stride = index_kb * num_links;
         for (int excitation = 0; excitation < num_links; excitation++) {
@@ -2702,7 +2774,7 @@ void build_active_rdm(double* eigvec, double* D_tu, double* D_tuvw, int* table, 
         	    temp1, n_o_ac*n_o_ac, 1.0, D_tu, n_o_ac*n_o_ac);
     double* temp2 = (double*) malloc(num_dets*num_photon*n_o_ac*n_o_ac*sizeof(double));
     memset(temp2, 0.0, num_dets*num_photon*n_o_ac*n_o_ac*sizeof(double));
-    #pragma omp parallel for num_threads(16)
+    #pragma omp parallel for
     for (int index_ka = 0; index_ka < num_alpha; index_ka++) {
         int stride = index_ka * num_links;
         for (int excitation = 0; excitation < num_links; excitation++) {
@@ -2721,7 +2793,7 @@ void build_active_rdm(double* eigvec, double* D_tu, double* D_tuvw, int* table, 
             }
         }
     }
-    #pragma omp parallel for num_threads(16)
+    #pragma omp parallel for
     for (int index_kb = 0; index_kb < num_alpha; index_kb++) {
         int stride = index_kb * num_links;
         for (int excitation = 0; excitation < num_links; excitation++) {
@@ -2965,7 +3037,7 @@ void build_active_rdm_z(double* z_vector, double* eigvec, double* D_tu, double* 
     memset(temp0, 0.0, n_o_ac*n_o_ac*sizeof(double));
    
 
-    #pragma omp parallel for num_threads(16)
+    #pragma omp parallel for
     for (int index_ka = 0; index_ka < num_alpha; index_ka++) {
         int stride = index_ka * num_links;
         for (int excitation = 0; excitation < num_links; excitation++) {
@@ -2984,7 +3056,7 @@ void build_active_rdm_z(double* z_vector, double* eigvec, double* D_tu, double* 
             }
         }
     }
-    #pragma omp parallel for num_threads(16)
+    #pragma omp parallel for
     for (int index_kb = 0; index_kb < num_alpha; index_kb++) {
         int stride = index_kb * num_links;
         for (int excitation = 0; excitation < num_links; excitation++) {
@@ -3012,7 +3084,7 @@ void build_active_rdm_z(double* z_vector, double* eigvec, double* D_tu, double* 
         	    temp1, n_o_ac*n_o_ac, 1.0, D_tu, n_o_ac*n_o_ac);
     double* temp2 = (double*) malloc(num_dets*num_photon*n_o_ac*n_o_ac*sizeof(double));
     memset(temp2, 0.0, num_dets*num_photon*n_o_ac*n_o_ac*sizeof(double));
-    #pragma omp parallel for num_threads(16)
+    #pragma omp parallel for
     for (int index_ka = 0; index_ka < num_alpha; index_ka++) {
         int stride = index_ka * num_links;
         for (int excitation = 0; excitation < num_links; excitation++) {
@@ -3031,7 +3103,7 @@ void build_active_rdm_z(double* z_vector, double* eigvec, double* D_tu, double* 
             }
         }
     }
-    #pragma omp parallel for num_threads(16)
+    #pragma omp parallel for
     for (int index_kb = 0; index_kb < num_alpha; index_kb++) {
         int stride = index_kb * num_links;
         for (int excitation = 0; excitation < num_links; excitation++) {
@@ -3370,7 +3442,7 @@ void build_S_diag(double* S_diag, int num_alpha, int nmo, int N_ac,int n_o_ac,in
     get_graph(N_ac,n_o_ac,Y);
 
   
-    #pragma omp parallel for num_threads(16)
+    #pragma omp parallel for
     for (size_t Idet = 0; Idet < num_dets; Idet++) {
         int index_b = Idet%num_alpha;
         int index_a = (Idet-index_b)/num_alpha;
@@ -3475,7 +3547,7 @@ void build_sigma_s_square_diagonal(double* c_vectors, double* c1_vectors, double
 
 void build_sigma_s_square(double* c_vectors, double *c1_vectors, double* S_diag, int* b_array, int* table1, int num_links, int n_o_ac, int num_alpha, int num_state, int N_p, double scale) {
     int np1 = N_p + 1;
-    #pragma omp parallel for num_threads(12) collapse(2)
+    #pragma omp parallel for collapse(2)
     for (int n = 0; n < num_state; n++) {
         for (int m = 0; m < np1; m++) {
             build_sigma_s_square_off_diagonal(c_vectors, c1_vectors, b_array, table1, num_alpha, num_links, n_o_ac, m, n, m, n, np1, scale);		
@@ -3491,7 +3563,7 @@ void build_sigma_s_fourth_power(double* c_vectors, double *c1_vectors, double* S
 
 
     //printf("total dim %d", num_alpha*num_alpha*num_state*np1);
-    //#pragma omp parallel for num_threads(12) collapse(2)
+    //#pragma omp parallel for collapse(2)
     for (int n = 0; n < num_state; n++) {
         for (int m = 0; m < np1; m++) {
             memset(sigma_s_square, 0, num_dets*sizeof(double));

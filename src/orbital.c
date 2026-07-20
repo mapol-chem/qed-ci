@@ -27,7 +27,7 @@ void full_transformation_macroiteration(double* U, double* h2e, double* J, doubl
     //}
 
 
-    #pragma omp parallel for num_threads(16)
+    #pragma omp parallel for
     for (size_t pq_up = 0; pq_up < nmo_t*(nmo_t+1)/2; pq_up++) {
 	size_t stride = pq_up * 2;
         size_t p = index_map_pq[stride];
@@ -43,7 +43,7 @@ void full_transformation_macroiteration(double* U, double* h2e, double* J, doubl
 	    }
 	}
     }
-    #pragma omp parallel for num_threads(16)
+    #pragma omp parallel for
     for (size_t pq_up = 0; pq_up < nmo_t*(nmo_t+1)/2; pq_up++) {
         size_t stride = pq_up * 2;
         size_t p = index_map_pq[stride];
@@ -87,7 +87,7 @@ void full_transformation_macroiteration(double* U, double* h2e, double* J, doubl
     //memset(temp4, 0, nmo_t *(nmo_t+1)/2 * n_occupied_t * n_occupied_t * sizeof(double));
     // when matrix is transposed, in cblas_dgemm, m,n,k are the physical size of transposed matrix
     // but lda,ldb are leading dimensions (strides to next row) of original matrices (number of columns)
-    #pragma omp parallel for num_threads(16)
+    #pragma omp parallel for
     for (size_t pq_up = 0; pq_up < nmo_t*(nmo_t+1)/2; pq_up++) {
         //size_t stride = pq_up * 2;
         //size_t p = index_map_pq[stride];
@@ -129,7 +129,7 @@ void full_transformation_macroiteration(double* U, double* h2e, double* J, doubl
     double* temp6 = (double*) malloc((size_t)n_occupied_t *(n_occupied_t+1)/2 * nmo_t * nmo_t * sizeof(double));
     memset(temp6, 0, n_occupied_t *(n_occupied_t+1)/2 * nmo_t * nmo_t * sizeof(double));
     
-    #pragma omp parallel for num_threads(16)
+    #pragma omp parallel for
     for (size_t kl_up = 0; kl_up < n_occupied_t*(n_occupied_t+1)/2; kl_up++) {
 	size_t stride = kl_up * 2;
         size_t k = index_map_kl[stride];
@@ -145,7 +145,7 @@ void full_transformation_macroiteration(double* U, double* h2e, double* J, doubl
 	    temp5[kl_up * nmo_t * nmo_t + qp] = temp5[kl_up * nmo_t * nmo_t + pq];
 	}
     }
-    #pragma omp parallel for num_threads(16)
+    #pragma omp parallel for
     for (size_t kl_up = 0; kl_up < n_occupied_t*(n_occupied_t+1)/2; kl_up++) {
 	//size_t stride = kl_up * 2;
         //size_t k = index_map_kl[stride];
@@ -190,7 +190,7 @@ void full_transformation_macroiteration(double* U, double* h2e, double* J, doubl
     memset(temp8, 0, n_occupied_t *(n_occupied_t+1)/2 * nmo_t * nmo_t * sizeof(double));
     //double* temp9 = (double*) malloc(n_occupied_t *(n_occupied_t+1)/2 * nmo_t * nmo_t * sizeof(double));
     //memset(temp9, 0, n_occupied_t *(n_occupied_t+1)/2 * nmo_t * nmo_t * sizeof(double));
-    #pragma omp parallel for num_threads(16)
+    #pragma omp parallel for
     for (size_t kl_up = 0; kl_up < n_occupied_t*(n_occupied_t+1)/2; kl_up++) {
 	//size_t stride = kl_up * 2;
         //size_t k = index_map_kl[stride];
@@ -240,7 +240,7 @@ void full_transformation_macroiteration(double* U, double* h2e, double* J, doubl
     //fflush(stdout);
  
 
-    #pragma omp parallel for num_threads(16)
+    #pragma omp parallel for
     for (size_t kl_up = 0; kl_up < n_occupied_t*(n_occupied_t+1)/2; kl_up++) {
 	size_t stride = kl_up * 2;
         size_t k = index_map_kl[stride];
@@ -370,7 +370,7 @@ void full_transformation_macroiteration(double* U, double* h2e, double* J, doubl
 
 
     //build K
-    #pragma omp parallel for num_threads(16)
+    #pragma omp parallel for
     for (size_t pq_up = 0; pq_up < nmo_t*(nmo_t+1)/2; pq_up++) {
         //size_t stride = pq_up * 2;
         //size_t p = index_map_pq[stride];
@@ -444,7 +444,7 @@ void full_transformation_macroiteration(double* U, double* h2e, double* J, doubl
     //    }
     //}
 
-    #pragma omp parallel for num_threads(16)
+    #pragma omp parallel for
     for (size_t kl_up = 0; kl_up < n_occupied_t*(n_occupied_t+1)/2; kl_up++) {
 	size_t stride = kl_up * 2;
         size_t k = index_map_kl[stride];
@@ -461,7 +461,7 @@ void full_transformation_macroiteration(double* U, double* h2e, double* J, doubl
 	    temp5[kl_up * nmo_t * nmo_t + qp] = temp3[pq_up * n_occupied_t * n_occupied_t + lk];
 	}
     }
-    #pragma omp parallel for num_threads(16)
+    #pragma omp parallel for
     for (size_t kl_up = 0; kl_up < n_occupied_t*(n_occupied_t+1)/2; kl_up++) {
 	//size_t stride = kl_up * 2;
         //size_t k = index_map_kl[stride];
@@ -500,7 +500,7 @@ void full_transformation_macroiteration(double* U, double* h2e, double* J, doubl
     //        }
     //    }
     //}
-    #pragma omp parallel for num_threads(16)
+    #pragma omp parallel for
     for (size_t kl_up = 0; kl_up < n_occupied_t*(n_occupied_t+1)/2; kl_up++) {
 	//size_t stride = kl_up * 2;
         //size_t k = index_map_kl[stride];
@@ -540,7 +540,7 @@ void full_transformation_macroiteration(double* U, double* h2e, double* J, doubl
     //        }
     //    }
     //}
-    #pragma omp parallel for num_threads(16)
+    #pragma omp parallel for
     for (size_t kl_up = 0; kl_up < n_occupied_t*(n_occupied_t+1)/2; kl_up++) {
 	size_t stride = kl_up * 2;
         size_t k = index_map_kl[stride];
@@ -614,7 +614,7 @@ void full_transformation_internal_optimization(double* U, double* J, double *K, 
     //}
 
 
-    #pragma omp parallel for num_threads(16)
+    #pragma omp parallel for
     for (size_t ab_up = 0; ab_up < n_virtual_t*(n_virtual_t+1)/2; ab_up++) {
 	size_t stride = ab_up * 2;
         size_t a = index_map_ab[stride];
@@ -628,7 +628,7 @@ void full_transformation_internal_optimization(double* U, double* J, double *K, 
 	    }
 	}
     }
-    #pragma omp parallel for num_threads(16)
+    #pragma omp parallel for
     for (size_t ab_up = 0; ab_up < n_virtual_t*(n_virtual_t+1)/2; ab_up++) {
 	size_t stride = ab_up * 2;
         size_t a = index_map_ab[stride];
@@ -639,7 +639,7 @@ void full_transformation_internal_optimization(double* U, double* J, double *K, 
                   temp1+ab_up*n_occupied_t*n_occupied_t, n_occupied_t);
     }
 
-    #pragma omp parallel for num_threads(16)
+    #pragma omp parallel for
     for (size_t ab_up = 0; ab_up < n_virtual_t*(n_virtual_t+1)/2; ab_up++) {
 	size_t stride = ab_up * 2;
         size_t a = index_map_ab[stride];
@@ -649,7 +649,7 @@ void full_transformation_internal_optimization(double* U, double* J, double *K, 
                   nmo_t, temp1+ab_up*n_occupied_t*n_occupied_t, n_occupied_t, 0.0,
                   temp2+ab_up*n_occupied_t*n_occupied_t, n_occupied_t);
     }
-    #pragma omp parallel for num_threads(16)
+    #pragma omp parallel for
     for (size_t ab_up = 0; ab_up < n_virtual_t*(n_virtual_t+1)/2; ab_up++) {
 	size_t stride1 = ab_up * 2;
         size_t a = index_map_ab[stride1];
@@ -671,7 +671,7 @@ void full_transformation_internal_optimization(double* U, double* J, double *K, 
     memset(temp3, 0, nmo_t * n_occupied_t *  n_occupied_t *  n_occupied_t * sizeof(double));
     double* temp4 = (double*) malloc((size_t)nmo_t * n_occupied_t * n_occupied_t *  n_occupied_t * sizeof(double));
     memset(temp4, 0, nmo_t * n_occupied_t *  n_occupied_t *  n_occupied_t * sizeof(double));
-    #pragma omp parallel for num_threads(16)
+    #pragma omp parallel for
     for (size_t p = 0; p < nmo_t; p++) {
         for (size_t m = 0; m < n_occupied_t; m++) {
             size_t pm = p * n_occupied_t + m;
@@ -683,13 +683,13 @@ void full_transformation_internal_optimization(double* U, double* J, double *K, 
 	    }
 	}
     }
-    #pragma omp parallel for num_threads(16)
+    #pragma omp parallel for
     for (size_t pm = 0; pm < nmo_t * n_occupied_t; pm++) {
         cblas_dgemm(CblasRowMajor, CblasNoTrans, CblasNoTrans, n_occupied_t, n_occupied_t, n_occupied_t, 1.0, temp3+pm*n_occupied_t*n_occupied_t,
                   n_occupied_t, U, nmo_t, 0.0,
                   temp4+pm*n_occupied_t*n_occupied_t, n_occupied_t);
     }
-    #pragma omp parallel for num_threads(16)
+    #pragma omp parallel for
     for (size_t pm = 0; pm < nmo_t * n_occupied_t; pm++) {
         cblas_dgemm(CblasRowMajor, CblasTrans, CblasNoTrans, n_occupied_t, n_occupied_t, n_occupied_t, 1.0, U,
                   nmo_t, temp4+pm*n_occupied_t*n_occupied_t, n_occupied_t, 0.0,
@@ -700,7 +700,7 @@ void full_transformation_internal_optimization(double* U, double* J, double *K, 
     memset(temp5, 0, nmo_t * n_occupied_t * n_occupied_t * (n_occupied_t+1)/2 * sizeof(double));
     double* temp6 = (double*) malloc((size_t)nmo_t * n_occupied_t * n_occupied_t * (n_occupied_t+1)/2 * sizeof(double));
     memset(temp6, 0, nmo_t * n_occupied_t * n_occupied_t * (n_occupied_t+1)/2 * sizeof(double));   
-    #pragma omp parallel for num_threads(16)
+    #pragma omp parallel for
     for (size_t kl_up = 0; kl_up < n_occupied_t*(n_occupied_t+1)/2; kl_up++) {
         size_t stride2 = kl_up * 2;
         size_t k = index_map_kl[stride2];
@@ -711,20 +711,20 @@ void full_transformation_internal_optimization(double* U, double* J, double *K, 
             temp5[kl_up * nmo_t * n_occupied_t + pm] = temp3[pm * n_occupied_t * n_occupied_t + kl];
 	}
     }
-    #pragma omp parallel for num_threads(16)
+    #pragma omp parallel for
     for (size_t kl_up = 0; kl_up < n_occupied_t*(n_occupied_t+1)/2; kl_up++) {
         cblas_dgemm(CblasRowMajor, CblasNoTrans, CblasNoTrans, nmo_t, n_occupied_t, n_occupied_t, 1.0, temp5+kl_up*nmo_t*n_occupied_t,
                   n_occupied_t, U, nmo_t, 0.0,
                   temp6+kl_up*nmo_t*n_occupied_t, n_occupied_t);
     }
     cblas_dcopy( (size_t)nmo_t * n_occupied_t * n_occupied_t * (n_occupied_t+1)/2,temp6,1,temp5,1);
-    #pragma omp parallel for num_threads(16)
+    #pragma omp parallel for
     for (size_t kl_up = 0; kl_up < n_occupied_t*(n_occupied_t+1)/2; kl_up++) {
         cblas_dgemm(CblasRowMajor, CblasTrans, CblasNoTrans, n_occupied_t, n_occupied_t, n_occupied_t, 1.0, U,
                   nmo_t, temp5+kl_up*nmo_t*n_occupied_t, n_occupied_t, 0.0,
                   temp6+kl_up*nmo_t*n_occupied_t, n_occupied_t);
     }
-    #pragma omp parallel for num_threads(16)
+    #pragma omp parallel for
     for (size_t kl_up = 0; kl_up < n_occupied_t*(n_occupied_t+1)/2; kl_up++) {
         size_t stride2 = kl_up * 2;
         size_t k = index_map_kl[stride2];
@@ -748,7 +748,7 @@ void full_transformation_internal_optimization(double* U, double* J, double *K, 
 	    }
 	}
     }
-    #pragma omp parallel for num_threads(16)
+    #pragma omp parallel for
     for (size_t ab_up = 0; ab_up < n_virtual_t*(n_virtual_t+1)/2; ab_up++) {
 	size_t stride = ab_up * 2;
         size_t a = index_map_ab[stride];
@@ -762,7 +762,7 @@ void full_transformation_internal_optimization(double* U, double* J, double *K, 
 	    }
 	}
     }
-    #pragma omp parallel for num_threads(16)
+    #pragma omp parallel for
     for (size_t ab_up = 0; ab_up < n_virtual_t*(n_virtual_t+1)/2; ab_up++) {
 	size_t stride = ab_up * 2;
         size_t a = index_map_ab[stride];
@@ -773,7 +773,7 @@ void full_transformation_internal_optimization(double* U, double* J, double *K, 
                   temp1+ab_up*n_occupied_t*n_occupied_t, n_occupied_t);
     }
 
-    #pragma omp parallel for num_threads(16)
+    #pragma omp parallel for
     for (size_t ab_up = 0; ab_up < n_virtual_t*(n_virtual_t+1)/2; ab_up++) {
 	size_t stride = ab_up * 2;
         size_t a = index_map_ab[stride];
@@ -783,7 +783,7 @@ void full_transformation_internal_optimization(double* U, double* J, double *K, 
                   nmo_t, temp1+ab_up*n_occupied_t*n_occupied_t, n_occupied_t, 0.0,
                   temp2+ab_up*n_occupied_t*n_occupied_t, n_occupied_t);
     }
-    #pragma omp parallel for num_threads(16)
+    #pragma omp parallel for
     for (size_t ab_up = 0; ab_up < n_virtual_t*(n_virtual_t+1)/2; ab_up++) {
 	size_t stride1 = ab_up * 2;
         size_t a = index_map_ab[stride1];
@@ -907,14 +907,14 @@ void build_sigma_reduced(double* U, double* A_tilde, int* index_map, double* G, 
     //print("index_map_size %d\n",index_map_size); 
     double* A3 = (double*) malloc(nmo_t * nmo_t * sizeof(double));
     memset(A3, 0, nmo_t * nmo_t * sizeof(double));
-    #pragma omp parallel for num_threads(16)
+    #pragma omp parallel for
     for (size_t p = 0; p < nmo_t; p++) {
         for (size_t q = 0; q < nmo_t; q++) {
 	    A3[p * nmo_t + q] = A_tilde[p * nmo_t + q] + A_tilde[q * nmo_t + p];
 	}
     }
     
-    #pragma omp parallel for num_threads(16)
+    #pragma omp parallel for
     for (size_t j = 0; j < index_map_size; j++) {
         size_t r = index_map[j * 2 + 0]; 
         size_t k = index_map[j * 2 + 1];
@@ -925,7 +925,7 @@ void build_sigma_reduced(double* U, double* A_tilde, int* index_map, double* G, 
     } 
      
     
-    #pragma omp parallel for num_threads(16)
+    #pragma omp parallel for
     for (size_t i = 0; i < num_states; i++) {
         double* R = (double*) malloc(nmo_t * n_occupied_t * sizeof(double));
         memset(R, 0, nmo_t * n_occupied_t * sizeof(double));
@@ -1117,7 +1117,7 @@ void build_sigma_reduced(double* U, double* A_tilde, int* index_map, double* G, 
         //free(sigma2);
     } 
    
-    #pragma omp parallel for num_threads(16)
+    #pragma omp parallel for
     for (size_t j = 0; j < index_map_size; j++) {
         size_t r = index_map[j * 2 + 0]; 
         size_t k = index_map[j * 2 + 1]; 
