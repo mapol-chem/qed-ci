@@ -177,9 +177,11 @@ differs only in:
    internal_optimization3 calls `scipy.sparse.linalg.minres` directly on the
    dense `hessian_tilde_ai`; microiteration_optimization6 calls a custom
    `linear_equation_solve` with a MINRES fallback on a matrix-free operator.
-   Both are iterative, not a direct solve -- `LstrsSolver`'s C++ port now
+   Both are iterative, not a direct solve -- `LstrsSolver`'s C++ port
    matches the former exactly (`minres_solve`, see below); `DavidsonDrivenLstrsSolver`
-   still substitutes plain CG for the latter (documented gap, unchanged), and
+   originally substituted plain CG for the latter but now also matches it
+   exactly (`linear_equation_solve` with a real MINRES fallback -- see
+   below, gap closed), and
 3. the quadratic-model evaluation for the hard_case==3 "quasi-optimal" test
    (dense vs. matrix-free Hessian application -- same formula either way).
 
@@ -191,15 +193,16 @@ problem where the Davidson guess subspace is forced to cover the whole
 space (so its eigenpairs are exact, not approximate), `DavidsonDrivenLstrsSolver`
 reproduces `LstrsSolver`'s step to floating-point exactness.
 
-`DavidsonDrivenLstrsSolver` has one remaining documented gap relative to the
-Python (see its header doc comment for detail):
-
-- **hard_case==2 uses plain matrix-free CG, not `linear_equation_solve`/MINRES.**
-  The Python's custom `LinearRMSolver` (in `residual_minimization.py`,
-  unread) with a MINRES fallback is replaced by reusing the already-tested
-  `PcgTrustRegionSolver` at an effectively-unconstrained trust radius --
-  mathematically the right substitute given hard_case==2 implies a
-  (near-)PSD Hessian, but not a literal port.
+`DavidsonDrivenLstrsSolver`'s hard_case==2 gap is now closed (see
+`linear_equation_solve.hpp`'s doc comment and "`LinearRMSolver`/
+`linear_equation_solve`" below for the full story): it originally used
+plain matrix-free CG (`PcgTrustRegionSolver` at an effectively-unconstrained
+trust radius) in place of the Python's custom `LinearRMSolver` +
+MINRES-fallback (`residual_minimization.py`) -- mathematically a reasonable
+substitute given hard_case==2 implies a (near-)PSD Hessian, but not a
+literal port. It now calls the ported `linear_equation_solve` directly,
+with a real `minres_solve` fallback for the rare case that doesn't converge
+within its iteration cap.
 
 Tested with a genuinely small guess subspace on a larger problem (forcing
 real expansion iterations, not just "converges in iteration 1"), confirmed
