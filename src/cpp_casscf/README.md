@@ -1964,6 +1964,52 @@ own pre-existing, separately documented gap, see
 `davidson_driven_lstrs_solver.hpp`), unaffected by this session's changes.
 See `validation/sweep.sh` to reproduce.
 
+**Follow-up (later session, after the hard_case==2 gap above was actually
+closed -- see "`LinearRMSolver`/`linear_equation_solve`" above): dug into
+`sweep.sh`'s two remaining `davidson_lstrs` "vs dense LSTRS" cross-check
+failures directly, confirming both are still non-actionable, but now for
+two *distinct*, precisely characterized reasons** (temporary debug tracing
+in `lstrs_bisection_core.cpp`/`validate_against_python.cpp`, reverted
+after):
+
+- **`lih_631g_2_2`'s `davidson_lstrs_002`** (`hard_case==2`, step error
+  `~1.9e-3`): now that `DavidsonDrivenLstrsSolver`'s own hard_case==2
+  branch is Python-exact (`linear_equation_solve`, not plain CG), its step
+  matches Python's real captured step to `6.9e-16` -- essentially bit-exact.
+  The *reference* side of this specific cross-check (`LstrsSolver`) is the
+  one that doesn't match Python here: its own hard_case==2 resolution is a
+  direct dense `minres_solve(H, -gradient, 1e-5)`, a different algorithm
+  from what Python/`DavidsonDrivenLstrsSolver` both use
+  (`linear_equation_solve`, max 20 iterations, `conv_thresh=1e-6`, THEN a
+  matrix-free MINRES fallback) -- confirmed by checking `python_step` vs.
+  `LstrsSolver`'s reference step directly: they disagree by the same
+  `1.9e-3`, i.e. the FAIL is scoring `DavidsonDrivenLstrsSolver` against a
+  reference that itself doesn't reproduce Python on this near-singular
+  interior system, not evidence either port is wrong.
+- **`lih_631g_4_4`'s `davidson_lstrs_002`** (a *different* dump than the
+  one above -- same case name, different molecule/active-space config;
+  `hard_case==3`/`4` depending on the specific dump regeneration, both seen
+  across sessions): traced the full bisection trajectory of both solvers
+  side by side. `beta`/`alpha_l`/`alpha_u`/`mu0`/`mu1` matched to 10
+  decimal places at every one of the 3 iterations, and both exited via the
+  identical hard-case branch at the identical iteration -- but `mu0` and
+  `mu1` at the exit point differ by only `~1.8e-8`, a near-coalescing
+  eigenvalue pair. Even with eigenvalues agreeing that closely, the
+  corresponding eigenvectors are acutely sensitive to floating-point-level
+  differences between the two matrices being diagonalized -- mathematically
+  equivalent (`DavidsonDrivenLstrsSolver`'s permuted/projected Davidson
+  basis vs. `LstrsSolver`'s directly-assembled dense bordered Hessian) but
+  not bit-identical -- so the two solvers pick different vectors within
+  that near-degenerate 2D eigenspace. Both landed exactly on the trust
+  boundary (`||step|| == trust_radius` to all printed digits) but ~109°
+  apart (`cos(theta) ~= -0.33`, from the reported step norms and their
+  difference) -- this is the concrete numerical anatomy behind the
+  "degenerate-eigenvector-sign sensitivity" already noted above as
+  pre-existing and unrelated to any change in either session; not fixable
+  by a code change in either language, since it's inherent to diagonalizing
+  two differently-constructed-but-equivalent matrices right at a
+  near-degenerate eigenvalue.
+
 **Result as of last run** (LiH/STO-3G, 2 electrons in 2 active orbitals, QED-coupled,
 `omega=0.1`, small `lambda`, 1 state, converged in 4 macroiterations): all
 26 strict pass/fail cases (3 `internal_lstrs`, 3 `gltr`, 2 `davidson_lstrs`
