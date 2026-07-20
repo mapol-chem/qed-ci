@@ -4,6 +4,7 @@
 #include "casscf/tensor_types.hpp"
 #include "casscf/types.hpp"
 
+#include <functional>
 #include <optional>
 
 namespace casscf {
@@ -204,6 +205,17 @@ struct MacroiterationDriverConfig {
     double internal_rotation_restart_threshold = 1e-4;   // helper_PFCI.py:2865
     double first_iteration_convergence_threshold = 1e-3; // helper_PFCI.py:2843
     double later_iteration_convergence_threshold = 1e-4; // helper_PFCI.py:2845
+
+    // Optional progress hook, called once per outer loop pass with
+    // (macroiteration, old_avg_energy, new_avg_energy) at the exact point
+    // Python's own `print("Macroiteration", macroiteration, "old CI energy",
+    // old_avg_energy, "new CI energy", new_avg_energy, flush=True)`
+    // (helper_PFCI.py:2597-2600) fires -- same values, same call site
+    // relative to the convergence check, so a caller that formats this
+    // identically to that Python print can diff/tabulate the two directly.
+    // Not used by run(); purely observational. Default no-op.
+    std::function<void(int macroiteration, double old_avg_energy, double new_avg_energy)> on_macroiteration_end =
+        nullptr;
 };
 
 struct MacroiterationResult {

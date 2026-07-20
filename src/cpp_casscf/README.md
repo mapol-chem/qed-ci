@@ -2157,9 +2157,21 @@ validation/
   dump_lih_case.py                      runs a real LiH or H2O SA-QED-CASSCF through helper_PFCI.py with
                                          the validation dump hooks on (--molecule/--bond-length/--basis/
                                          --nact-orbs/--nact-els/--davidson-roots/--davidson-maxdim/
-                                         --davidson-indim/--omega/--dump-dir); also produces the
-                                         macroiteration_bootstrap_000/macroiteration_convergence_000
+                                         --davidson-indim/--omega/--lambda-vector/--n-photons/
+                                         --h2o-oh-bond-length/--h2o-hoh-angle/--dump-dir); also produces
+                                         the macroiteration_bootstrap_000/macroiteration_convergence_000
                                          dumps run_macroiteration_driver.cpp consumes
+  compare_macroiterations.py/.sh        runs a single config through Python (real QN default) and this
+                                         C++ port (QN on and off, via run_macroiteration_driver's
+                                         --disable-qn) and tabulates the per-macroiteration energy from
+                                         all three side by side (compare_macroiterations.sh
+                                         <case-name> [dump_lih_case.py args...]) -- uses
+                                         MacroiterationDriverConfig::on_macroiteration_end (a
+                                         purely-observational progress hook mirroring Python's own
+                                         per-macroiteration print) to get per-iteration energies out of
+                                         the C++ side without threading new state through run()'s
+                                         return value; dumps_compare_<name>/, logs_compare_<name>/
+                                         output is untracked, regenerate via this script
   dumps_lih/                            captured (hessian, gradient, trust_radius, step) instances from
                                          the last dump_lih_case.py run
   dumps_macro_lih/                      captured end-to-end bootstrap/convergence state from the last

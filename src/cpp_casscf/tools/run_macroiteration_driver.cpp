@@ -229,6 +229,14 @@ int main(int argc, char** argv) {
 
     MacroiterationDriverConfig driver_config;
     driver_config.dims = dims;
+    // Matches Python's own per-macroiteration print exactly (helper_PFCI.py:
+    // 2597-2600, "Macroiteration %d old CI energy %f new CI energy %f") so a
+    // caller can grep/diff the two logs directly -- see
+    // validation/compare_macroiterations.py.
+    driver_config.on_macroiteration_end = [](int macroiteration, double old_avg_energy, double new_avg_energy) {
+        std::printf("Macroiteration %d old CI energy %.12f new CI energy %.12f\n", macroiteration, old_avg_energy,
+                    new_avg_energy);
+    };
 
     MacroiterationDriver driver(driver_config, ci_solver, internal_step, microiteration_step, integral_transformer);
 

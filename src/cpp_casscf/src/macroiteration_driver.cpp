@@ -63,6 +63,12 @@ MacroiterationResult MacroiterationDriver::run(Matrix eigenvecs0, double avg_ene
             context.Dpe_tu_avg = ci_result.Dpe_tu_avg;
         }
 
+        // helper_PFCI.py:2597-2600's print call site, same values, same
+        // position relative to the convergence check below.
+        if (config_.on_macroiteration_end) {
+            config_.on_macroiteration_end(macroiteration, old_avg_energy, new_avg_energy);
+        }
+
         if (std::abs(new_avg_energy - old_avg_energy) < config_.energy_convergence) {
             convergence = true;
         }

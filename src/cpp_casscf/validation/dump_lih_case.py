@@ -13,7 +13,9 @@ These dumps are then replayed through the corresponding ported C++ solvers
 match -- validating the ported solver logic against real chemistry, without
 requiring the (still-unported) intermediates-building code to be ported.
 
-Run from this directory: python dump_lih_case.py [--molecule lih|h2o] [--bond-length R] [--dump-dir NAME] ...
+Run from this directory: python dump_lih_case.py [--molecule lih|h2o] [--bond-length R]
+[--h2o-oh-bond-length R] [--h2o-hoh-angle DEG] [--omega W] [--lambda-vector LX LY LZ]
+[--n-photons N] [--dump-dir NAME] ...
 """
 import argparse
 import os
@@ -29,6 +31,16 @@ parser.add_argument("--davidson-roots", type=int, default=1)
 parser.add_argument("--davidson-maxdim", type=int, default=8, help="multiplied by davidson-roots; must stay below H_dim/roots or the C solver sys.exit()s")
 parser.add_argument("--davidson-indim", type=int, default=6, help="multiplied by davidson-roots; must stay below H_dim/roots or the C solver sys.exit()s")
 parser.add_argument("--omega", type=float, default=0.1)
+parser.add_argument("--lambda-vector", type=float, nargs=3, default=(0.0, 0.0, 0.01), metavar=("LX", "LY", "LZ"),
+                     help="cavity coupling (lambda) vector, lab-frame Cartesian, atomic units. Default (0,0,0.01) "
+                          "matches this script's previous hardcoded value.")
+parser.add_argument("--n-photons", type=int, default=1, help="number_of_photons (Fock-space truncation)")
+parser.add_argument("--h2o-oh-bond-length", type=float, default=1.0,
+                     help="O-H bond length in Angstrom (h2o only). Default 1.0 matches this script's previous "
+                          "hardcoded geometry.")
+parser.add_argument("--h2o-hoh-angle", type=float, default=104.5,
+                     help="H-O-H bond angle in degrees (h2o only). Default 104.5 matches this script's previous "
+                          "hardcoded geometry.")
 parser.add_argument("--dump-dir", default="dumps_lih", help="subdirectory (under this script's directory) to write dumps into")
 parser.add_argument("--random-seed", type=int, default=None,
                      help="TEMPORARY, for controlled comparison against the cpp_casscf port only -- seeds "
@@ -65,12 +77,30 @@ no_reorient
 nocom
 """
 else:
-    # Same geometry as examples/h2o_grad.py.
-    mol_str = """
+    # Parametric water geometry: O on the z axis, both H atoms placed
+    # symmetrically in the yz plane (the same C2-axis-along-z, molecule-in-
+    # the-yz-plane convention the previous hardcoded geometry used) -- this
+    # orientation matters physically here, not just the internal bond
+    # length/angle, since --lambda-vector's default points along z (the QED
+    # coupling depends on the molecular dipole's orientation relative to the
+    # lab-fixed cavity polarization). O is placed at the origin rather than
+    # the previous hardcoded geometry's slightly-offset z (-0.068516...):
+    # with `nocom`/`no_reorient` set (no auto-recentering), any Cartesian
+    # dipole computed here is the CI dipole of a *neutral* molecule, which is
+    # origin-independent, and psi4's own electronic-structure energies are
+    # manifestly translation-invariant regardless -- so this offset was never
+    # physically load-bearing, and --h2o-oh-bond-length 1.0 --h2o-hoh-angle
+    # 104.5 (the defaults) reproduce the exact same physics as the old
+    # hardcoded string, just rigidly translated along z.
+    _half_angle = np.radians(args.h2o_hoh_angle / 2.0)
+    _r = args.h2o_oh_bond_length
+    _h_y = _r * np.sin(_half_angle)
+    _h_z = _r * np.cos(_half_angle)
+    mol_str = f"""
 0 1
-   O            0.000000000000     0.000000000000    -0.068516219320
-   H            0.000000000000    -0.790689573744     0.543701060715
-   H            0.000000000000     0.790689573744     0.543701060715
+   O            0.000000000000     0.000000000000     0.000000000000
+   H            0.000000000000    {-_h_y:.12f}    {_h_z:.12f}
+   H            0.000000000000     {_h_y:.12f}    {_h_z:.12f}
 symmetry c1
 no_reorient
 nocom
@@ -85,10 +115,10 @@ options_dict = {
 
 cavity_options = {
     "omega_value": args.omega,
-    "lambda_vector": np.array([0.0, 0.0, 0.01]),
+    "lambda_vector": np.array(args.lambda_vector),
     "ci_level": "cas",
     "ignore_coupling": False,
-    "number_of_photons": 1,
+    "number_of_photons": args.n_photons,
     "natural_orbitals": False,
     "photon_number_basis": False,
     "canonical_mos": False,
@@ -109,7 +139,12 @@ psi4.core.set_output_file(os.path.join(_here, "dump_lih.out"), False)
 psi4.geometry(mol_str)
 
 print(f"Dumping validation cases to {_dump_dir}")
-print(f"molecule={args.molecule} R={args.bond_length} basis={args.basis} "
-      f"active=({args.nact_els},{args.nact_orbs}) roots={args.davidson_roots}")
+if args.molecule == "lih":
+    print(f"molecule={args.molecule} R={args.bond_length} basis={args.basis} "
+          f"active=({args.nact_els},{args.nact_orbs}) roots={args.davidson_roots}")
+else:
+    print(f"molecule={args.molecule} OH={args.h2o_oh_bond_length} HOH_angle={args.h2o_hoh_angle} "
+          f"basis={args.basis} active=({args.nact_els},{args.nact_orbs}) roots={args.davidson_roots}")
+print(f"omega={args.omega} lambda_vector={list(args.lambda_vector)} n_photons={args.n_photons}")
 pf = PFHamiltonianGenerator(mol_str, options_dict, cavity_options)
 print("Done. CASSCF converged:", getattr(pf, "casscf_converged", None))
