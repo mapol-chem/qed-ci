@@ -1315,6 +1315,73 @@ coverage. `CasscfInternalOptimizationStep`'s inner-loop CI solves now read
 `self.occupied_d_cmo`/`self.E_core` usage at helper_PFCI.py:7748-7752
 exactly, rather than continuing to read stale `context.H_spatial2`/`J`/`K`.
 
+**Per-macroiteration energy checked, not just the final converged value**
+(user-requested follow-up, using `grep "avg energy final"`/`"avg en"`,
+Python's own log patterns for this): the single-LiH-case check above only
+compares `macroiterations_run` and the final `avg_energy`. Tracing every
+macroiteration's own `avg_energy` (the value `CiStateAverageResult`
+returns from `MacroiterationDriver`'s own fresh CI resolve, plus the
+separate, further-refined value after `CasscfInternalOptimizationStep`
+runs) against Python's matching prints revealed a real, non-negligible
+(`~5e-6`) discrepancy on the *default* (QN-enabled) Python run, growing to
+a `~4%` difference in a diagnostic quantity (`norm of internal step`,
+printed right where the "RESTART MICROITERATION" branch fires). Traced
+this to the same already-documented QN/BFGS gap, not a new bug: Python's
+default run activates QN partway through the very first macroiteration's
+orbital optimization (confirmed via `"activate qn optimization"` in the
+log), and from that point on takes a genuinely different numerical path
+than this port's QN-less implementation. Confirmed by disabling QN in
+Python for a controlled, apples-to-apples re-comparison: `norm of internal
+step` then matched to 5 significant figures (`0.0031309` vs `0.0031307`,
+was off by ~4%), and the macroiteration-1 discrepancy shrank from `5e-6`
+to `~1e-8`, consistent with ordinary floating-point noise once QN is
+matched on both sides.
+
+## Multi-system macroiteration-level sweep (`validation/sweep_macroiterations.sh`)
+
+Extends the single-LiH-case end-to-end check above (and the per-solver-call
+`sweep.sh`/`validate_against_python` harness) to a full `MacroiterationDriver::run`
+comparison across 8 geometries/active-spaces/molecules -- the same config
+list `sweep.sh` uses, reusing the `macroiteration_bootstrap_000`/
+`macroiteration_convergence_000` dump hooks every `dump_lih_case.py` run
+already produces as a side effect.
+
+**Methodology**: since QN activation is a confirmed, real (if benign)
+source of trajectory divergence (see above), and this port deliberately
+doesn't implement it yet, the fixture dumps (`dumps_macro_sweep_<name>/`)
+were generated with Python's QN-activation trigger temporarily disabled
+(`if step_norm < 0.05:` -> `if False and step_norm < 0.05:` in
+`microiteration_optimization6`, reverted immediately after via
+`git checkout`, confirmed clean via `git diff`) -- comparing against
+Python's literal QN-enabled default would fail for a reason unrelated to
+this driver's own correctness, as demonstrated directly above. Only
+`macroiteration_bootstrap_000`/`macroiteration_convergence_000` are kept
+in each committed fixture (pruned from the hundreds of individual
+per-solver-call dump directories `dump_lih_case.py` also produces, which
+this script has no use for -- shrinks the two H2O configs from ~80MB each
+to ~1MB).
+
+**Result: 8/8 configs pass.** 7 of 8 match Python's macroiteration count
+*exactly*, with final energies agreeing to `~1e-12`-`1e-14`. The eighth
+(`lih_631g_4_4`, CAS(4,4), the largest active space swept) converges one
+macroiteration earlier than Python (`5` vs `6`) with energy still agreeing
+to `~3.4e-11` -- confirmed via direct per-macroiteration delta tracing to
+be a genuine near-convergence-boundary sensitivity, not a bug: both
+trajectories' successive-macroiteration energy deltas shrink monotonically
+and consistently (Python: `9.8e-4 -> 1.8e-6 -> 6.1e-10 -> 4.3e-11 ->
+4.3e-14`; C++ tracks the same shape one step ahead:
+`... -> 6.1e-10 -> 4.3e-11`, already below the `1e-10` `energy_convergence`
+threshold Python needs one more macroiteration to cross) -- consistent
+with ordinary floating-point-level trajectory differences compounding
+slightly differently over a larger, more numerically-intensive active
+space, occasionally crossing a tight threshold one iteration apart, not a
+qualitative difference like the `CasscfCiStateAverageSolver` bug above
+(which showed a persistent quantity, `context.D_tu_avg`, simply failing to
+update at all -- a completely different, unambiguous signature).
+`sweep_macroiterations.sh` treats a macroiteration-count mismatch of more
+than 1 (or any energy difference beyond `1e-8`) as a real failure worth
+investigating, not something to wave through by default.
+
 ## What's still open
 
 - **The macroiteration/microiteration driver loop**
@@ -1860,4 +1927,12 @@ validation/
                                          dump_lih_case.py + validate_against_python and reports
                                          per-config pass/fail (dumps_sweep_*/ output is gitignored,
                                          regenerate via this script -- see "Sweep findings")
+  sweep_macroiterations.sh              runs run_macroiteration_driver (the full driver, not
+                                         individual solver calls) against the dumps_macro_sweep_<name>/
+                                         fixtures below and reports per-config pass/fail -- see
+                                         "Multi-system macroiteration-level sweep"
+  dumps_macro_sweep_<name>/             committed fixtures for sweep_macroiterations.sh, one per
+                                         config (pruned to just macroiteration_bootstrap_000/
+                                         macroiteration_convergence_000 -- see that script's header
+                                         comment for how they were generated and how to regenerate)
 ```
