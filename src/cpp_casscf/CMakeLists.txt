@@ -181,3 +181,10 @@ add_test(NAME ci_state_average_solver COMMAND test_ci_state_average_solver)
 #   ./validate_against_python <dump_dir>
 add_executable(validate_against_python tools/validate_against_python.cpp)
 target_link_libraries(validate_against_python PRIVATE casscf_trust_region)
+
+# Standalone tool, not a ctest: wires all 4 real MacroiterationDriver
+# collaborators together and runs the whole thing end to end against real
+# captured LiH chemistry (see validation/dump_lih_case.py). Run manually:
+#   ./run_macroiteration_driver <dump_dir>
+add_executable(run_macroiteration_driver tools/run_macroiteration_driver.cpp)
+target_link_libraries(run_macroiteration_driver PRIVATE casscf_trust_region)

@@ -52,6 +52,8 @@ struct CasscfCiConfig {
 // reassign context.E_core as an unwanted side effect -- see
 // ci_state_average_solver.cpp for where this matters.
 struct ActiveBlockIntermediates {
+    Matrix fock_core;        // (nmo, nmo) -- full-space fock_core active_fock_core is sliced from
+    double E_core = 0.0;     // sum_j H_spatial2(j,j) + fock_core(j,j), j < n_in_a
     Matrix active_fock_core; // (n_act_orb, n_act_orb)
     Tensor4 active_twoeint;  // (n_act_orb)^4
 };

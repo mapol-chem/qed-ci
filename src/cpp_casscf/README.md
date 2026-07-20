@@ -38,7 +38,7 @@ retargeting onto TAMM's distributed tensor API.
 | `microiteration_ci_integrals_transform` | **Fully ported, tested** | helper_PFCI.py:8689-8798 |
 | `CasscfMicroiterationOptimizationStep` (real `MicroiterationOptimizationStep`) | **Fully ported, tested** against a hand-solvable all-zero case; 3 documented deviations (QN path not wired in) | helper_PFCI.py:10908-12423 (`microiteration_optimization6`) -- see "`CasscfMicroiterationOptimizationStep`" below |
 | `casscf_c_backend` (ci_solver.c/orbital.c compiled + linked from source) | **Working**, smoke-tested | see "The plain-C backend" below |
-| `CasscfIntegralTransformer` (real `IntegralTransformer`) | `transform_internal_rotation` **fully ported, tested against the real compiled C backend**; `transform_macroiteration` **not implemented** (documented gap) | helper_PFCI.py:2907-2921, 7852-7865 (`full_transformation_internal_optimization` call sites) -- see "`CasscfIntegralTransformer`" below |
+| `CasscfIntegralTransformer` (real `IntegralTransformer`) | **Both `transform_internal_rotation` and `transform_macroiteration` fully ported, tested against the real compiled C backend** | helper_PFCI.py:2907-2921, 7852-7865 (`full_transformation_internal_optimization`), 2976-3134 (`full_transformation_macroiteration` + the fock_core/E_core/occupied_* rebuild that follows it) -- see "`CasscfIntegralTransformer`" below |
 | `CasscfCiSetup` | **Fully ported, tested against the real compiled C backend** (a genuine Davidson CI diagonalization, hand-solvable non-interacting test problem) | `PFHamiltonianGenerator.__init__`'s CI graph/table setup, helper_PFCI.py:1507-1613 -- see "`CasscfCiSetup`/`CasscfCiStateAverageSolver`" below |
 | `CasscfCiStateAverageSolver` (real `CiStateAverageSolver`) | **Fully ported, tested against the real compiled C backend** | helper_PFCI.py:2424-2553 -- see "`CasscfCiSetup`/`CasscfCiStateAverageSolver`" below |
 
@@ -796,22 +796,74 @@ intricate partial-block `J`/`K` algorithm, confirmed via
 `orbital.c:869-881`) pass to exact machine precision (`0.0` diff, not just
 "within tolerance").
 
-**`transform_macroiteration`: not implemented.** Would wrap
-`full_transformation_macroiteration` (`orbital.c`), whose `h2e` argument
-needs the full `(nmo,nmo,nmo,nmo)` two-electron integral tensor
-(`self.twoeint` in the Python) -- infrastructure this port has never needed
-before (`CasscfContext` only carries the occupied-restricted `J`/`K`,
-`(n_occupied,n_occupied,nmo,nmo)`) and doesn't build here. Also worth
-flagging: every live call site of this function in `helper_PFCI.py` is
-gated by `if self.density_fitting == False:` (e.g. helper_PFCI.py:2976),
-and `self.twoeint`'s own runtime shape at those call sites looks
-inconsistent with what this C function's `ndim=4` `ctypes` argtype
-requires (`self.twoeint` is set as a 2D-reshaped array by `build2DSO`,
-helper_PFCI.py:3510-3512, never reshaped back to 4D anywhere found) -- i.e.
-this call path may be effectively dead under the density-fitted path this
-codebase actually exercises in practice. Throws `std::logic_error` if
-called; a real implementation needs a resolution to that ambiguity (and a
-`CasscfContext` extension for the full ERI tensor) first.
+**`transform_macroiteration`: fully ported, tested against the real
+compiled C backend, and validated end to end on real LiH chemistry**
+(see "End-to-end integration" below). Wraps
+`full_transformation_macroiteration` (`orbital.c`), run once per
+macroiteration on the fully-accumulated `context.U_total`
+(helper_PFCI.py:2976-2991, `if self.density_fitting == False:`). Unlike
+`transform_internal_rotation`, `context.J`/`context.K` are pure OUTPUTS
+here (not also inputs): recomputed fully fresh from `context.twoeint` (the
+FIXED, never-mutated AO-derived two-electron-integral tensor -- new
+`CasscfContext::twoeint` field, `RowMajorMatrix`, `(nmo*nmo, nmo*nmo)`) and
+the *full* accumulated rotation, not incrementally from the previous `J`/`K`.
+
+**Two corrections to earlier, mistaken conclusions from a prior session**
+(both worth flagging explicitly, since they were previously documented
+here as real gaps and shaped several already-committed files):
+
+1. This call path is **NOT dead code under density fitting** -- confirmed
+   directly: `self.density_fitting` has no default and is only ever set
+   `True` if `"df_basis_scf"` is a key in the caller's `psi4_options_dict`
+   (helper_PFCI.py:4100-4103, 4266-4267); grepping every driver/example/test
+   script in this repo (including `dump_lih_case.py`) shows **none** of them
+   set that key, so `density_fitting == False` (this function's branch) is
+   the *only* path any real run in this repo actually takes -- the
+   density-fitted alternative (`transform_JK_with_df`,
+   helper_PFCI.py:6688-6732) is the unused dead weight, not the other way
+   around. The apparent `h2e` `ndim` mismatch that led to the earlier
+   "possibly dead code" conclusion was simply a misreading of which
+   `ctypes` `argtypes`-list entry corresponds to which C parameter --
+   re-checked directly against helper_PFCI.py:345-354: `h2e`'s argtype
+   really is `ndim=2` (matching `self.twoeint`'s real, persistent
+   `(nmo*nmo, nmo*nmo)` shape exactly); only `J`/`K` are `ndim=4`.
+2. **`CasscfContext::occupied_J`/`occupied_K`'s documented shape was
+   wrong.** They are genuinely `(n_occupied, n_occupied, n_occupied,
+   n_occupied)`-shaped in the real Python, **not**
+   `(n_occupied, n_occupied, nmo, nmo)` matching `J`/`K`'s own shape --
+   confirmed against 3 separate `self.occupied_J = self.J[:, :,
+   :n_occupied, :n_occupied]` assignment sites (helper_PFCI.py:1434-1438,
+   1663-1667, 3123-3126) and `self.occupied_J3 = self.occupied_J.reshape(
+   n_occupied**2, n_occupied**2)`, which only makes dimensional sense at
+   `n_occupied**4` total elements. There are no "virtual-orbital columns"
+   that ever carry forward. Every existing write to these fields
+   (`commit_ci_solver_inputs` in `microiteration_optimization_step.cpp`,
+   `internal_optimization_exact_energy` in `internal_optimization.cpp`)
+   stays within the `n_occupied`-bounded region regardless of which shape
+   is used, so the correction is safe against all previously-committed
+   code -- no existing test caught this because every one of them has
+   `nmo == n_occupied` (no virtual orbitals), where the two shapes
+   coincide numerically. See `CasscfContext::occupied_J`'s own doc comment
+   for the full citation trail.
+
+Also performs the occupied-restricted refresh that immediately follows
+the JK rebuild in the Python (helper_PFCI.py:3041-3069):
+`context.occupied_J`/`occupied_K`/`occupied_h1`/`occupied_d_cmo`/
+`occupied_fock_core`/`E_core` are all recomputed from the freshly-transformed
+`J`/`K`/`H_spatial2` (reusing `compute_active_block_intermediates`,
+`ci_setup.hpp` -- here we *do* want its `E_core` reassignment, unlike
+`CasscfCiStateAverageSolver`'s own use of that same helper, where
+reassigning `context.E_core` would be wrong -- see `ActiveBlockIntermediates`'s
+doc comment). `MacroiterationDriver::run`'s own doc comment had already
+anticipated this belongs here ("an implementation detail of
+`IntegralTransformer`... operating on `context.J`/`context.K`"). **Found to
+be load-bearing, not optional bookkeeping**: `context.E_core` is read by
+`CasscfCiStateAverageSolver`/`CasscfCiSetup` (which deliberately do *not*
+recompute it themselves), so without this refresh it silently goes stale
+after the first macroiteration -- confirmed to be the dominant cause of a
+real, wild energy oscillation (`~-0.08` vs. the correct `~-7.88` Hartree)
+observed during the first end-to-end LiH run, before this refresh was added
+(see "End-to-end integration" below for the full story).
 
 ## `CasscfCiSetup`/`CasscfCiStateAverageSolver` (`ci_setup.hpp`/`.cpp`, `ci_state_average_solver.hpp`/`.cpp`)
 
@@ -904,6 +956,134 @@ symmetrization all being correct, on top of proving the C-backend linkage
 (see "The plain-C backend") actually runs a real multi-iteration Davidson
 solve successfully end to end.
 
+## End-to-end integration (`tools/run_macroiteration_driver.cpp`)
+
+**All 4 real collaborators wired together and run end to end against real
+LiH chemistry, converging to the real Python's answer to `~1e-11`.**
+
+**How to reproduce**: generate a bootstrap dump (from `cpp_casscf/validation/`):
+```sh
+python dump_lih_case.py --dump-dir dumps_macro_lih
+```
+then, from `cpp_casscf/build/`:
+```sh
+./run_macroiteration_driver ../validation/dumps_macro_lih
+```
+
+**New dump hooks** (`helper_PFCI.py`, same `_dump_cpp_casscf_validation_case`/
+`CPP_CASSCF_VALIDATION_DIR` mechanism the trust-region-solver dumps already
+use): `macroiteration_bootstrap_000` captures the full state
+`MacroiterationDriver::run` needs right before `while macroiteration < 1000:`
+starts (`H_spatial2`/`d_cmo`/`J`/`K`/`twoeint`/the initial `eigenvecs`/
+`avg_energy`/`E_core`/`D_tu_avg`/`D_tuvw_avg`/`Dpe_tu_avg`/`weight`, plus
+`dims`/`config_int`/`config_double` scalar bundles covering every
+`Dimensions`/`CasscfCiConfig`/`CasscfPhysicalConstants` field) --
+helper_PFCI.py:2421-2425 is the exact insertion point, chosen because every
+one of these quantities has its final pre-loop value there (see the
+dump-hook code itself for the full list, with citations for where each
+quantity was last set). `macroiteration_convergence_000` captures Python's
+own converged `avg_energy` and macroiteration count at its convergence
+break (helper_PFCI.py:2607-2611), for comparison.
+
+`tools/run_macroiteration_driver.cpp` loads this dump (same
+`load_text_matrix`/`load_tensor4`/`load_dims`-style conventions as
+`validate_against_python.cpp`), constructs `CasscfContext`/
+`CasscfPhysicalConstants`/`CasscfCiConfig`/`Dimensions`, then `CasscfCiSetup`
+-> `CasscfCiStateAverageSolver` -> `CasscfIntegralTransformer` ->
+`CasscfInternalOptimizationStep` -> `CasscfMicroiterationOptimizationStep`
+-> `MacroiterationDriver`, and calls `run()`.
+
+**Two real bugs found and fixed by actually running this, not by more code
+reading** -- both a direct payoff of the "run it end to end" exercise:
+
+1. **Segfault on the very first `CasscfMicroiterationOptimizationStep::run()`
+   call.** `context.occupied_J`/`occupied_K` are written via in-place
+   `operator()` (`commit_ci_solver_inputs`), not full reassignment, so they
+   must already be sized before the driver's first pass --
+   `MacroiterationDriver::run()` itself has no way to know this (it never
+   touches these fields), and no doc comment on `run()`/`CasscfContext`
+   said so explicitly before this. A default-constructed (0-sized) `Tensor4`
+   here is a real, silent trap for any future caller, not just this tool --
+   fixed the immediate crash by pre-sizing them in
+   `run_macroiteration_driver.cpp`, and this investigation is *also* what
+   surfaced correction #2 in "`CasscfIntegralTransformer`" above
+   (`occupied_J`/`occupied_K`'s real shape).
+2. **Wild energy oscillation** (`avg_energy` swinging between the correct
+   `~-7.88` Hartree and a wrong `~-0.08` Hartree every few macroiterations,
+   never satisfying `MacroiterationDriver`'s own `energy_convergence` check,
+   running to the full 1000-macroiteration cap instead of converging) --
+   traced to `context.E_core` going stale after the first macroiteration
+   (nothing refreshed it once `transform_macroiteration` finished being
+   "just the JK rebuild" and not yet the full refresh described above).
+   Fixed by completing `transform_macroiteration`'s occupied-restricted/
+   `E_core` refresh (see "`CasscfIntegralTransformer`" above) -- after the
+   fix, the energy trajectory is smooth and monotonic, `converged == true`,
+   and the final energy matches Python's to `1.1e-11`.
+
+**Result** (LiH, sto-3g, CAS(2,2), 1 photon mode, `davidson_roots=1`,
+`omega=0.1`): `converged=true`, `macroiterations_run=9` (vs. Python's `4`),
+final `avg_energy = -7.880892718167` vs. Python's `-7.880892718178`
+(`|diff| = 1.131e-11`).
+
+**The `9` vs. `4` macroiteration-count gap was investigated properly, not
+waved off as "documented gaps explain it"** (an earlier draft of this
+section did exactly that, and was wrong to). Two real steps taken:
+
+1. **Tested, not assumed, that `CasscfInternalOptimizationStep`'s known
+   staleness gap (below) was the cause.** `internal_step` only runs when
+   `n_in_a > 0` (`MacroiterationDriver`'s own guard) -- so a second LiH
+   case with `n_in_a == 0` (`--nact-orbs 3 --nact-els 4`, all occupied
+   orbitals active) makes that code path never execute at all. If it were
+   the cause, the gap should shrink or vanish there. **It didn't** -- same
+   `9` vs. Python's `4`, same `~1.2e-11` final agreement. This directly
+   disproves that the internal-step staleness note (still real, still
+   documented below) is what's driving the iteration-count difference.
+2. **Traced the actual mechanism with temporary instrumentation** (not
+   left in the tree): Python's own outer "macroiteration" and this port's
+   outer "macroiteration" are not the same unit of work. Each
+   `CasscfMicroiterationOptimizationStep::run()` call runs its own inner
+   loop (Python's "MICROITERATION" prints) -- Python's first call runs *7*
+   inner passes before its own gradient/energy exit condition fires; this
+   port's exits after *3*. Summed across the whole run, Python's total
+   inner-pass count is `~20` (`7+5+5+3`); this port's is `~27`
+   (`9 outer x ~3 each`) -- comparable, not wildly different; the raw
+   `9` vs `4` outer-macroiteration comparison was simply the wrong unit to
+   compare, making the two look further apart than they are. Most of this
+   port's accepted inner steps in the trace show `hard_case == 2` (the
+   "near-PSD, solve directly" regime) -- exactly the path where this class
+   already has a documented substitution
+   (`PcgTrustRegionSolver`/plain CG in place of Python's own
+   `LinearRMSolver`/MINRES fallback, see deviation 3 in this class's own
+   header doc comment). A more decisive per-step solve there is the most
+   likely concrete driver of the faster-per-call inner-loop exit, though
+   this hasn't been pinned down with full certainty (would need
+   instrumenting Python's own CG-vs-MINRES step sizes side by side, not
+   done here) -- what's established is that it does **not** point to a
+   hidden correctness bug: final energies agree to `1e-11`, and total
+   inner-pass work is comparable, not smaller.
+
+**A separate, residual, lower-priority architectural note, not yet
+resolved** (real, but confirmed by the `n_in_a == 0` test above to NOT be
+the cause of the iteration-count gap): `CasscfInternalOptimizationStep`'s
+own inner accept/reject loop calls `ci_solver_->solve()` (the *same*
+injected `CasscfCiStateAverageSolver` instance `MacroiterationDriver`
+itself uses) potentially many times before its own
+`transform_internal_rotation` call (which only happens once, at
+convergence/exit) ever updates `context.H_spatial2`/`J`/`K` -- so those
+inner-loop CI solves read integrals that don't yet reflect the internal
+rotation being accumulated *within that same call*, unlike the real
+Python's `internal_optimization3`, which stages and reads its *own* small
+active-inactive-restricted quantities (`gkl2`/`occupied_J`/`occupied_d_cmo`)
+that update incrementally every accepted inner step, specifically to avoid
+the cost of a full `H_spatial2`/`J`/`K` transform on every inner iteration.
+`CasscfCiStateAverageSolver` was designed and tested for the *other*
+call site (`MacroiterationDriver`'s own top-of-macroiteration solve, which
+genuinely does want fresh `H_spatial2`/`J`/`K` every time) and doesn't
+distinguish between the two uses. A correct fix would need
+`internal_optimization3`'s own small-space CI-solve staging ported as a
+genuinely separate mechanism from `CasscfCiStateAverageSolver`, not
+attempted here.
+
 ## What's still open
 
 - **The macroiteration/microiteration driver loop**
@@ -916,40 +1096,37 @@ solve successfully end to end.
   accumulation, now all threaded through the shared `CasscfContext` (see
   above) rather than the driver's own parameters/return value.
   **All 4 of `MacroiterationDriver`'s collaborator interfaces now have real
-  implementations** (`CasscfInternalOptimizationStep`,
-  `CasscfMicroiterationOptimizationStep`, `CasscfCiStateAverageSolver`,
-  and `CasscfIntegralTransformer` for `transform_internal_rotation` --
-  `transform_macroiteration` remains a documented gap, see below) -- but
-  none of them are wired together into `MacroiterationDriver` itself yet
-  (no code anywhere constructs a `MacroiterationDriver` with all 4 real
-  collaborators and calls `run()` -- `test_macroiteration_driver.cpp` still
-  exercises the driver's own loop shape against mocks of all four, and each
-  real Step/Solver's own test exercises it in isolation against mocks or,
-  for `CasscfIntegralTransformer`/`CasscfCiStateAverageSolver`, the real C
-  backend directly). Assembling all 4 into one working `MacroiterationDriver::run`
-  call is the natural next integration milestone.
+  implementations, wired together, and validated end to end against real
+  LiH chemistry** (`CasscfInternalOptimizationStep`,
+  `CasscfMicroiterationOptimizationStep`, `CasscfCiStateAverageSolver`, and
+  `CasscfIntegralTransformer` -- both `transform_internal_rotation` *and*
+  `transform_macroiteration`, see above) -- see "End-to-end integration"
+  above for the full story, the two real bugs that run surfaced and fixed,
+  and one residual lower-priority architectural note that remains
+  (`CasscfInternalOptimizationStep`'s own inner-loop CI solves not
+  reflecting the internal rotation being accumulated within that same
+  call). `tools/run_macroiteration_driver.cpp` is the reference wiring;
+  `test_macroiteration_driver.cpp` still separately exercises the driver's
+  own loop shape against mocks of all four (kept as-is -- a fast, real-C-backend-
+  free regression test of the orchestration logic itself).
 
-  Also deliberately not modeled: the fock_core/E_core rebuild that follows
-  the JK transform in the Python (helper_PFCI.py:2990-3057, consumed by the
-  next iteration's CI solve) — it depends on the J/K four-index ERI
-  tensors, which this driver never holds directly. It belongs behind
-  `IntegralTransformer::transform_macroiteration` as an implementation
-  detail operating on `context.J`/`context.K`, not threaded through
-  `MacroiterationDriver::run`'s signature.
+  The fock_core/E_core rebuild that follows the JK transform in the Python
+  (helper_PFCI.py:3041-3069, consumed by the next iteration's CI solve) is
+  now modeled, behind `IntegralTransformer::transform_macroiteration` as an
+  implementation detail operating on `context.J`/`context.K` -- not
+  threaded through `MacroiterationDriver::run`'s signature, matching what
+  this section previously anticipated.
 - **All 4 `MacroiterationDriver` collaborator interfaces now have real
   implementations** (`CasscfInternalOptimizationStep`,
   `CasscfMicroiterationOptimizationStep`, `CasscfCiStateAverageSolver`,
   `CasscfIntegralTransformer` -- see their dedicated sections above for full
   architecture, documented deviations, and open items). What's left:
-  - `IntegralTransformer::transform_macroiteration` remains **not
-    implemented** (documented gap, needs `self.twoeint`-equivalent
-    infrastructure this port doesn't have -- see that class's own header
-    doc comment). A real `CasscfIntegralTransformer` instance must still be
-    shared between `MacroiterationDriver` and `CasscfInternalOptimizationStep`
-    (both call `transform_internal_rotation` -- see that method's doc
-    comment for why they're the same operation on different inputs, not two
-    different transforms) -- not yet wired into either driver's constructor
-    call sites; no code anywhere constructs one yet.
+  - The residual architectural note from "End-to-end integration" above
+    (`CasscfInternalOptimizationStep`'s inner-loop CI solves vs. the real
+    Python's separate small-space staging) -- confirmed not to be the
+    dominant source of error for LiH, but not resolved, and could matter
+    more on a harder system (larger internal rotations needed, more inner
+    iterations before convergence).
   - `CasscfMicroiterationOptimizationStep`'s **FLAGGED FOR SCRUTINY WHEN
     WRITTEN** note is still unresolved: it hasn't yet had a dedicated
     re-review pass by a stronger reasoning model, given how much
@@ -957,14 +1134,6 @@ solve successfully end to end.
     flag already placed on `bfgs_operator.hpp` and `orbital_sigma.hpp`, the
     latter also flagged for future performance acceleration as the hottest
     path in the whole solver stack.
-  - **No integration point exists yet** that constructs all 4 real
-    collaborators together and calls `MacroiterationDriver::run` end to end
-    on a real molecule -- each collaborator is currently only tested in
-    isolation (against mocks, or, for `CasscfIntegralTransformer`/
-    `CasscfCiStateAverageSolver`, the real C backend on synthetic
-    hand-solvable problems, not real chemistry). This is the natural next
-    milestone once `transform_macroiteration` is resolved (needed for the
-    driver's own per-macroiteration JK transform).
   - `HessianGuessProvider` now has a real implementation
     (`OrbitalHessianGuessProvider`, see above) -- nothing left here for it.
 
@@ -1378,13 +1547,20 @@ tests/
 tools/
   validate_against_python.cpp           replays real Python-captured solver instances (see "Validation
                                          against Python") -- standalone tool, not a ctest
+  run_macroiteration_driver.cpp         wires all 4 real MacroiterationDriver collaborators together
+                                         and runs the whole thing end to end against real LiH chemistry
+                                         (see "End-to-end integration") -- standalone tool, not a ctest
 validation/
   dump_lih_case.py                      runs a real LiH or H2O SA-QED-CASSCF through helper_PFCI.py with
                                          the validation dump hooks on (--molecule/--bond-length/--basis/
                                          --nact-orbs/--nact-els/--davidson-roots/--davidson-maxdim/
-                                         --davidson-indim/--omega/--dump-dir)
+                                         --davidson-indim/--omega/--dump-dir); also produces the
+                                         macroiteration_bootstrap_000/macroiteration_convergence_000
+                                         dumps run_macroiteration_driver.cpp consumes
   dumps_lih/                            captured (hessian, gradient, trust_radius, step) instances from
                                          the last dump_lih_case.py run
+  dumps_macro_lih/                      captured end-to-end bootstrap/convergence state from the last
+                                         dump_lih_case.py run used with run_macroiteration_driver
   sweep.sh                              runs a set of geometries/active-spaces/molecules through
                                          dump_lih_case.py + validate_against_python and reports
                                          per-config pass/fail (dumps_sweep_*/ output is gitignored,

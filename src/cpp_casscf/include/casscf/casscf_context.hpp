@@ -35,15 +35,50 @@ struct CasscfContext {
     Tensor4 J;
     Tensor4 K;
 
+    // self.twoeint: the full AO-basis-derived two-electron integral tensor
+    // in the CURRENT MO basis, (nmo*nmo, nmo*nmo)-shaped (helper_PFCI.py:
+    // 3510-3511 -- NOT (nmo,nmo,nmo,nmo), despite that being the natural
+    // rank; the Python reshapes to this flat 2D form once and never back).
+    // Unlike H_spatial2/d_cmo/U_total/J/K, this is FIXED for the whole
+    // CASSCF run -- built once from the original AO integrals (self.twoeint1
+    // + the DSE dipole-dipole term if not ignore_dse_terms, build2DSO(),
+    // called before any macroiteration) and never mutated afterward.
+    // IntegralTransformer::transform_macroiteration reads it (never writes
+    // it) together with the FULL accumulated U_total to recompute J/K fully
+    // fresh each macroiteration (full_transformation_macroiteration,
+    // orbital.c) -- not incrementally from the previous J/K, avoiding
+    // numerical error accumulation across many small rotations. This port
+    // does not build twoeint itself (no AO-integral pipeline exists here);
+    // the caller must supply it, same as H_spatial2/d_cmo/the initial J/K.
+    // RowMajorMatrix (not Matrix), since it crosses the ci_orbital_backend.hpp
+    // FFI boundary on every read and is too large to want to re-marshal from
+    // column-major on every macroiteration (see tensor_types.hpp).
+    RowMajorMatrix twoeint;
+
     // --- Occupied-occupied-restricted state committed by
     // internal_optimization_exact_energy on step acceptance
-    // (helper_PFCI.py:6816-6856) ---
-    // occupied_J / occupied_K share J/K's (n_occupied, n_occupied, nmo, nmo)
-    // shape -- internal_optimization_exact_energy only ever writes their
-    // [:, :, :n_occupied, :n_occupied] sub-block (see
-    // InternalOptimizationEnergyResult's doc comment in
-    // internal_optimization.hpp); the remaining virtual-orbital columns
-    // carry forward untouched from the last transform_macroiteration call.
+    // (helper_PFCI.py:6816-6856) and refreshed once per macroiteration by
+    // IntegralTransformer::transform_macroiteration (helper_PFCI.py:
+    // 3041-3069, immediately after the JK rebuild) ---
+    // CORRECTION to an earlier, mistaken assumption from a prior session
+    // (worth flagging explicitly, since it shaped this doc comment and
+    // several call sites that read it): occupied_J/occupied_K are
+    // genuinely (n_occupied, n_occupied, n_occupied, n_occupied)-shaped in
+    // the real Python, NOT (n_occupied, n_occupied, nmo, nmo) matching
+    // J/K's own shape -- confirmed directly against 3 separate
+    // self.occupied_J = self.J[:, :, :n_occupied, :n_occupied] assignment
+    // sites (helper_PFCI.py:1434-1438, 1663-1667, 3123-3126) and
+    // self.occupied_J3 = self.occupied_J.reshape(n_occupied**2,
+    // n_occupied**2) (helper_PFCI.py:1672-1674), which only makes
+    // dimensional sense if occupied_J truly has n_occupied**4 total
+    // elements. There are no "virtual-orbital columns" that ever carry
+    // forward -- every write (including internal_optimization_exact_energy's
+    // own, InternalOptimizationEnergyResult's doc comment in
+    // internal_optimization.hpp) stays within the n_occupied-bounded region
+    // regardless of which of the two shapes is used, so this correction is
+    // safe against all existing committed code (none of it happened to
+    // notice, since every existing test has nmo == n_occupied, where the
+    // two shapes coincide numerically).
     Tensor4 occupied_J;
     Tensor4 occupied_K;
     Matrix occupied_h1;         // (n_occupied, n_occupied)

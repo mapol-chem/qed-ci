@@ -2423,6 +2423,48 @@ class PFHamiltonianGenerator:
                         old_avg_energy = 0
                         new_avg_energy = avg_energy
                         convergence = 0
+                        _dump_cpp_casscf_validation_case(
+                            "macroiteration_bootstrap",
+                            H_spatial2=self.H_spatial2,
+                            d_cmo=self.d_cmo,
+                            J=self.J,
+                            K=self.K,
+                            twoeint=self.twoeint,
+                            eigenvecs=eigenvecs,
+                            avg_energy=np.array([avg_energy]),
+                            E_core=np.array([self.E_core]),
+                            D_tu_avg=self.D_tu_avg.reshape((self.n_act_orb, self.n_act_orb)),
+                            D_tuvw_avg=self.D_tuvw_avg.reshape(
+                                (self.n_act_orb, self.n_act_orb, self.n_act_orb, self.n_act_orb)
+                            ),
+                            Dpe_tu_avg=self.Dpe_tu_avg.reshape((self.n_act_orb, self.n_act_orb)),
+                            weight=self.weight,
+                            dims=np.array(
+                                [self.n_in_a, self.n_act_orb, self.n_virtual, self.nmo, self.n_occupied]
+                            ),
+                            config_int=np.array(
+                                [
+                                    self.n_act_a,
+                                    self.N_p,
+                                    self.num_det,
+                                    self.davidson_roots,
+                                    self.davidson_indim,
+                                    self.davidson_maxdim,
+                                    self.davidson_maxiter,
+                                    1 if self.ignore_dse_terms else 0,
+                                ]
+                            ),
+                            config_double=np.array(
+                                [
+                                    self.omega,
+                                    self.Enuc,
+                                    self.d_c,
+                                    self.d_exp,
+                                    self.davidson_threshold,
+                                    self.target_spin,
+                                ]
+                            ),
+                        )
                         while macroiteration < 1000:
                             if macroiteration > 0:
                                 # print("U total")
@@ -2563,9 +2605,14 @@ class PFHamiltonianGenerator:
                                 print(f"WARNING: SA-CASSCF did NOT converge after 30 iterations")
  
                             if macroiteration > 0 and convergence == 1:
-                                self.casscf_converged = True 
+                                self.casscf_converged = True
                                 self.CASSCFeigs = eigenvals
                                 self.CASSCFvecs = eigenvecs
+                                _dump_cpp_casscf_validation_case(
+                                    "macroiteration_convergence",
+                                    avg_energy=np.array([new_avg_energy]),
+                                    macroiteration=np.array([macroiteration]),
+                                )
 
                                 print(
                                     "\nACTIVE PART OF DETERMINANTS THAT HAVE THE MOST IMPORTANT CONTRIBUTIONS"

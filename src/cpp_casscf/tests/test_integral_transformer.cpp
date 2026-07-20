@@ -1,12 +1,13 @@
 // Tests for CasscfIntegralTransformer (the real IntegralTransformer,
-// wrapping orbital.c's full_transformation_internal_optimization). Unlike
-// most of this port's other tests, this one runs against the REAL compiled
-// ci_solver.c/orbital.c (casscf_c_backend, see CMakeLists.txt) -- not a
-// hand-derived reference or a second independently-coded implementation --
-// so a passing test here is evidence about the actual production C code
-// this wrapper calls, not just about the C++ marshaling layer in isolation.
+// wrapping orbital.c's full_transformation_internal_optimization AND
+// full_transformation_macroiteration). Unlike most of this port's other
+// tests, this one runs against the REAL compiled ci_solver.c/orbital.c
+// (casscf_c_backend, see CMakeLists.txt) -- not a hand-derived reference or
+// a second independently-coded implementation -- so a passing test here is
+// evidence about the actual production C code this wrapper calls, not just
+// about the C++ marshaling layer in isolation.
 //
-// Two checks:
+// transform_internal_rotation, cases 1-2:
 // 1. U == identity must be a no-op on every array element the C function
 //    touches (H_spatial2/d_cmo, via a direct U^T @ h @ U formula check --
 //    see case 2 below for why this one also gets an independent formula
@@ -28,6 +29,27 @@
 //    re-deriving orbital_sigma3's full derivation inside its own test file
 //    a second time -- the point of linking the real C backend is precisely
 //    to avoid needing an independent from-scratch re-derivation).
+//
+// transform_macroiteration, cases 3-4: unlike transform_internal_rotation,
+// this function recomputes J/K FULLY FRESH from context.twoeint + the full
+// U each call (no partial-block/aliasing subtlety), and its exact
+// extraction formula is directly readable from build_JK()'s real
+// (uncommented) code (helper_PFCI.py:5488-5510): J(k,l,p,q) =
+// twoeint4d(k,l,p,q) for k,l<n_occupied; K = twoeint4d[:,:n_occupied,:,:
+// n_occupied].transpose(1,3,0,2), which works out to K(a,b,c,d) =
+// twoeint4d(c,a,d,b) for a,b<n_occupied. For the factorized
+// I(p,q,r,s)=S(p,q)*S(r,s) construction already used for cases 1-2, this
+// reduces to the exact same J/K formulas make_J/make_K already compute
+// (J(k,l,p,q)=S(k,l)*S(p,q), K(a,b,c,d)=S(a,c)*S(b,d) -- reusable directly,
+// confirmed by direct substitution). Case 3: U == identity should exactly
+// reproduce make_J(S)/make_K(S) (the direct twoeint extraction, no
+// rotation). Case 4: for a non-identity U, since twoeint's factorized form
+// makes it a genuine tensor product transforming identically to S itself
+// under a similarity transform (sum_pq U(p,p')U(q,q')S(p,q) = (U^T S U)
+// (p',q'), and the same for the (r,s) pair), the rotated result is exactly
+// make_J(U^T @ S @ U)/make_K(U^T @ S @ U) -- confirmed by direct experiment
+// before adopting this as the test's expected-value formula, both cases
+// matching to exact machine precision on the real solver's first run.
 #include "casscf/integral_transformer.hpp"
 
 #include <cmath>
@@ -123,15 +145,35 @@ Tensor4 make_K(const Matrix& S, int n_occupied, int nmo) {
 // representative stand-in for a real one-electron overlap-like matrix and
 // round-trips to exact machine precision (confirmed independently, outside
 // this test file, before adopting it here).
-CasscfContext make_context(const Dimensions& dims) {
-    Matrix S(dims.nmo, dims.nmo);
+// helper_PFCI.py:3510-3511: self.twoeint is the full (nmo,nmo,nmo,nmo)
+// tensor reshaped to (nmo*nmo, nmo*nmo) and never reshaped back -- see
+// CasscfContext::twoeint's own doc comment. RowMajor flattening of
+// I(p,q,r,s)=S(p,q)*S(r,s) into (nmo^2,nmo^2): row index p*nmo+q, column
+// index r*nmo+s.
+RowMajorMatrix make_twoeint(const Matrix& S, int nmo) {
+    RowMajorMatrix twoeint(nmo * nmo, nmo * nmo);
+    for (int p = 0; p < nmo; ++p)
+        for (int q = 0; q < nmo; ++q)
+            for (int r = 0; r < nmo; ++r)
+                for (int s = 0; s < nmo; ++s) twoeint(p * nmo + q, r * nmo + s) = S(p, q) * S(r, s);
+    return twoeint;
+}
+
+Matrix make_S(int nmo) {
+    Matrix S(nmo, nmo);
     S << 1.0, 0.2, 0.3, 0.2, 0.9, 0.4, 0.3, 0.4, 1.1;
+    return S;
+}
+
+CasscfContext make_context(const Dimensions& dims) {
+    Matrix S = make_S(dims.nmo);
 
     CasscfContext context;
     context.H_spatial2 = make_matrix(dims.nmo, dims.nmo, 1.0);
     context.d_cmo = make_matrix(dims.nmo, dims.nmo, 0.5);
     context.J = make_J(S, dims.n_occupied, dims.nmo);
     context.K = make_K(S, dims.n_occupied, dims.nmo);
+    context.twoeint = make_twoeint(S, dims.nmo);
     return context;
 }
 
@@ -182,6 +224,42 @@ int main() {
 
         expect_matrix_near(context.H_spatial2, expected_H, tol, "case2: H_spatial2 == U^T @ h @ U");
         expect_matrix_near(context.d_cmo, expected_d_cmo, tol, "case2: d_cmo == U^T @ d_cmo @ U");
+    }
+
+    // --- Case 3: transform_macroiteration, U == identity -- J/K must
+    //     exactly reproduce a direct extraction from context.twoeint (no
+    //     rotation). ---
+    {
+        CasscfContext context = make_context(dims);
+        Matrix S = make_S(dims.nmo);
+
+        CasscfIntegralTransformer transformer(context, dims);
+        transformer.transform_macroiteration(Matrix::Identity(dims.nmo, dims.nmo));
+
+        expect_tensor_near(context.J, make_J(S, dims.n_occupied, dims.nmo), tol,
+                            "case3: J == direct twoeint extraction under U=I");
+        expect_tensor_near(context.K, make_K(S, dims.n_occupied, dims.nmo), tol,
+                            "case3: K == direct twoeint extraction under U=I");
+    }
+
+    // --- Case 4: transform_macroiteration, non-identity U -- J/K must
+    //     match the direct twoeint extraction using the rotated S' = U^T @
+    //     S @ U (see this file's top doc comment for the derivation). ---
+    {
+        CasscfContext context = make_context(dims);
+        Matrix S = make_S(dims.nmo);
+
+        Matrix U(dims.nmo, dims.nmo);
+        U << 0.8, 0.1, 0.05, -0.2, 0.9, 0.15, 0.1, -0.05, 0.95;
+        Matrix S_rotated = U.transpose() * S * U;
+
+        CasscfIntegralTransformer transformer(context, dims);
+        transformer.transform_macroiteration(U);
+
+        expect_tensor_near(context.J, make_J(S_rotated, dims.n_occupied, dims.nmo), tol,
+                            "case4: J == twoeint extraction of U^T @ S @ U");
+        expect_tensor_near(context.K, make_K(S_rotated, dims.n_occupied, dims.nmo), tol,
+                            "case4: K == twoeint extraction of U^T @ S @ U");
     }
 
     if (failures == 0) {

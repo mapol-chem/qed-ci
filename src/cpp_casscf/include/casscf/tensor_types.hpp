@@ -18,6 +18,16 @@ using Tensor2 = Eigen::Tensor<double, 2, Eigen::RowMajor>;
 using Tensor3 = Eigen::Tensor<double, 3, Eigen::RowMajor>;
 using Tensor4 = Eigen::Tensor<double, 4, Eigen::RowMajor>;
 
+// Row-major Eigen::MatrixXd -- for any 2D array that crosses the
+// ci_orbital_backend.hpp FFI boundary. Eigen::MatrixXd (Matrix) is
+// column-major by default; the plain-C backend (ci_solver.c/orbital.c)
+// expects C-contiguous/row-major 2D buffers throughout. Used both as a
+// marshaling temporary (assignment between the two storage orders is a
+// correct element-wise copy, not a raw memcpy) and, where a quantity is
+// fixed for a whole run and read many times (e.g. CasscfContext::twoeint),
+// as the primary storage type to avoid re-marshaling on every read.
+using RowMajorMatrix = Eigen::Matrix<double, Eigen::Dynamic, Eigen::Dynamic, Eigen::RowMajor>;
+
 // Explicit element-wise copy from an Eigen::MatrixXd (ColMajor storage) to
 // a Tensor2 (RowMajor storage) -- deliberately not a raw-memory TensorMap
 // alias, since the storage orders differ and aliasing would silently

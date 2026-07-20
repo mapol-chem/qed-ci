@@ -2,15 +2,12 @@
 
 #include "casscf/ci_orbital_backend.hpp"
 
-#include <Eigen/Dense>
 #include <cstdint>
 #include <utility>
 #include <vector>
 
 namespace casscf {
 namespace {
-
-using RowMajorMatrix = Eigen::Matrix<double, Eigen::Dynamic, Eigen::Dynamic, Eigen::RowMajor>;
 
 // ci_solver.h's C signatures don't mark these read-only ("const") array
 // parameters const -- confirmed by reading the actual bodies that none of

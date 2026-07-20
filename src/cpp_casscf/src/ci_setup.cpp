@@ -2,14 +2,11 @@
 
 #include "casscf/ci_orbital_backend.hpp"
 
-#include <Eigen/Dense>
 #include <algorithm>
 #include <numeric>
 
 namespace casscf {
 namespace {
-
-using RowMajorMatrix = Eigen::Matrix<double, Eigen::Dynamic, Eigen::Dynamic, Eigen::RowMajor>;
 
 // C++17 has no std::comb (C++20 doesn't add one either, only <ranges>-style
 // utilities elsewhere) -- math.comb(n, k), computed with the usual
@@ -48,6 +45,12 @@ ActiveBlockIntermediates compute_active_block_intermediates(const Matrix& H_spat
     }
 
     ActiveBlockIntermediates result;
+    result.fock_core = fock_core;
+    {
+        double e_core = 0.0;
+        for (int j = 0; j < n_in_a; ++j) e_core += H_spatial2(j, j) + fock_core(j, j);
+        result.E_core = e_core;
+    }
     result.active_fock_core = fock_core.block(n_in_a, n_in_a, n_act, n_act);
     result.active_twoeint = Tensor4(n_act, n_act, n_act, n_act);
     for (int t = 0; t < n_act; ++t)

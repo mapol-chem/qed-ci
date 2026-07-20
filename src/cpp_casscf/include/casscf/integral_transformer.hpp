@@ -45,23 +45,48 @@ public:
     // C-contiguous/row-major 2D arrays -- see integral_transformer.cpp).
     void transform_internal_rotation(const Matrix& U_delta) override;
 
-    // NOT YET IMPLEMENTED. Would wrap full_transformation_macroiteration
-    // (orbital.c), whose `h2e` argument needs the full (nmo,nmo,nmo,nmo)
-    // two-electron integral tensor (self.twoeint in the Python,
-    // helper_PFCI.py:5495) -- infrastructure this port has never needed
-    // before (CasscfContext only carries the occupied-restricted J/K,
-    // (n_occupied,n_occupied,nmo,nmo), not the full 4-index ERI tensor) and
-    // doesn't build here. Also worth noting: every live call site of this
-    // function in helper_PFCI.py is gated by `if self.density_fitting ==
-    // False:` (e.g. helper_PFCI.py:2976), and self.twoeint's own runtime
-    // shape at those call sites looks inconsistent with what this C
-    // function's `ndim=4` ctypes argtype requires (self.twoeint is set as a
-    // 2D-reshaped array by build2DSO, helper_PFCI.py:3510-3512, never
-    // reshaped back to 4D) -- i.e. this call path may be effectively dead
-    // under the density-fitted path this codebase actually exercises in
-    // practice. Throws std::logic_error if called; a real implementation
-    // needs a resolution to that ambiguity (and a CasscfContext extension
-    // for the full ERI tensor) before it can be written faithfully.
+    // Wraps full_transformation_macroiteration (orbital.c) -- run once per
+    // macroiteration on the fully-accumulated context.U_total
+    // (helper_PFCI.py:2976-2991, the `if self.density_fitting == False:`
+    // branch). Unlike transform_internal_rotation, context.J/context.K are
+    // pure OUTPUTS here (not also inputs): this recomputes them fully fresh
+    // from context.twoeint (the FIXED, never-mutated AO-derived
+    // two-electron-integral tensor -- see CasscfContext::twoeint's doc
+    // comment) and the *full* accumulated rotation, not incrementally from
+    // the previous J/K.
+    //
+    // CORRECTION to an earlier, mistaken conclusion from a prior session
+    // (worth flagging explicitly, since it was previously documented here
+    // and in the README as a real gap): this call path is NOT dead code
+    // under density fitting. Confirmed directly: `density_fitting` has no
+    // default and is only ever set True if `"df_basis_scf"` is a key in the
+    // caller's psi4_options_dict (helper_PFCI.py:4100-4103, 4266-4267) --
+    // grepping every driver/example/test script in this repo (including
+    // cpp_casscf/validation/dump_lih_case.py) shows none of them set that
+    // key, so `density_fitting == False` (this function's branch) is the
+    // ONLY path any real run in this repo actually takes; the
+    // density-fitted alternative (`transform_JK_with_df`,
+    // helper_PFCI.py:6688-6732) is unused dead weight in practice, not the
+    // other way around. The apparent `h2e` ndim mismatch that led to the
+    // earlier "possibly dead code" conclusion was simply a misreading of
+    // which ctypes argtypes-list entry corresponds to which C parameter --
+    // re-checked directly against helper_PFCI.py:345-354: `h2e`'s argtype
+    // really is `ndim=2` (matching self.twoeint's real, persistent
+    // (nmo*nmo, nmo*nmo) shape exactly, set once at helper_PFCI.py:
+    // 3510-3511 and never reshaped back to 4D); only `J`/`K` (the 3rd/4th
+    // argtypes-list entries) are `ndim=4`. This function is real, live,
+    // and correctly-shaped as written in the Python.
+    //
+    // Also performs the occupied_J/K/h1/d_cmo/fock_core/E_core refresh that
+    // immediately follows the JK rebuild in the Python (helper_PFCI.py:
+    // 3041-3069) -- MacroiterationDriver::run's own doc comment already
+    // anticipated this belongs here ("an implementation detail of
+    // IntegralTransformer... operating on context.J/context.K"). Found to
+    // be load-bearing, not optional bookkeeping: context.E_core is read by
+    // CasscfCiStateAverageSolver/CasscfCiSetup (which deliberately do NOT
+    // recompute it themselves -- see ActiveBlockIntermediates's doc
+    // comment), so without this refresh it would silently go stale after
+    // the first macroiteration.
     void transform_macroiteration(const Matrix& U_total) override;
 
 private:
@@ -69,6 +94,7 @@ private:
     Dimensions dims_;
     std::vector<int32_t> index_map_ab_; // (n_virtual*(n_virtual+1)/2, 2), flat row-major
     std::vector<int32_t> index_map_kl_; // (n_occupied*(n_occupied+1)/2, 2), flat row-major
+    std::vector<int32_t> index_map_pq_; // (nmo*(nmo+1)/2, 2), flat row-major
 };
 
 } // namespace casscf
