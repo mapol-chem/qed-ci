@@ -88,7 +88,12 @@ namespace casscf {
 // (self.E_core2 -- yes, an actual `self.` attribute here, unlike the other
 // four -- has no other home).
 //
-// DOCUMENTED DEVIATIONS from the Python (all intentional, all flagged):
+// DOCUMENTED DEVIATIONS from the Python (both intentional, both flagged;
+// the gradient-small Newton fallback that used to be a third, documented
+// substitution here is now a faithful port -- see
+// linear_equation_solve.hpp/linear_rm_solver.hpp -- with one remaining,
+// inherent (not fixable) non-reproducibility flagged on that function
+// itself, not repeated here):
 //
 // 1. The quasi-Newton (QN/L-BFGS) path (helper_PFCI.py:11211-11381, the
 //    `if qn_optimization == True:` branch, and the `step_norm < 0.05`
@@ -115,16 +120,14 @@ namespace casscf {
 //    same performance-only (not correctness) gap CasscfInternalOptimizationStep
 //    already documents for the analogous shortcut in internal_optimization3.
 //
-// 3. gradient-small Newton fallback (||reduced_gradient|| in (1e-7, 1e-3],
-//    having already survived the two gradient-norm break checks above it):
-//    the Python tries a custom `linear_equation_solve`, falling back to
-//    scipy MINRES (helper_PFCI.py:12055-12073, not yet read in detail, not
-//    ported). Substituted with PcgTrustRegionSolver at an effectively
-//    unconstrained trust radius (reduces Steihaug-CG to plain CG) --
-//    mathematically the appropriate substitute the same way
-//    DavidsonDrivenLstrsSolver's own hard_case==2 gap already documents (this
-//    path is exactly that same "near-PSD, solve directly" regime; hard_case
-//    is forced to 2 either way, matching the Python).
+// The gradient-small Newton fallback (||reduced_gradient|| in (1e-7, 1e-3],
+// having already survived the two gradient-norm break checks above it) is
+// now a faithful port of the Python's own `linear_equation_solve`
+// (LinearRMSolver-based) falling back to real `minres_solve` on
+// non-convergence (helper_PFCI.py:12103-12137) -- previously substituted
+// with `PcgTrustRegionSolver` at an effectively unconstrained trust radius,
+// which is no longer needed. `hard_case` is still forced to `2` either way,
+// matching the Python.
 class CasscfMicroiterationOptimizationStep final : public MicroiterationOptimizationStep {
 public:
     CasscfMicroiterationOptimizationStep(Dimensions dims, CasscfPhysicalConstants constants,

@@ -6,19 +6,42 @@
 #include "casscf/hessian_operator.hpp"
 #include "casscf/internal_optimization.hpp" // step_control
 #include "casscf/intermediates.hpp"
+#include "casscf/linear_equation_solve.hpp"
 #include "casscf/microiteration_ci_integrals_transform.hpp"
 #include "casscf/microiteration_energy.hpp"
+#include "casscf/minres_solver.hpp"
 #include "casscf/orbital_rotation.hpp"
 #include "casscf/orbital_sigma.hpp"
-#include "casscf/pcg_trust_region_solver.hpp"
 
 #include <algorithm>
 #include <cmath>
+#include <functional>
 #include <memory>
 #include <utility>
 
 namespace casscf {
 namespace {
+
+// helper_PFCI.py:12111-12119: dense materialization of the matrix-free
+// operator via unit-vector probing, needed because minres_solve (this
+// port's faithful scipy.sparse.linalg.minres port, see minres_solver.hpp)
+// only accepts a dense matrix -- same materialization approach already
+// used elsewhere in this codebase for a matrix-free operator feeding a
+// dense-only routine (e.g. validate_against_python.cpp's qn_gltr/qn_bfgs
+// cases). Flagged here, same as orbital_sigma3's own doc comment, as
+// worth revisiting for performance once correctness is settled: this is
+// O(index_map_size) calls to the already-expensive orbital_sigma3, only
+// reached on the (rare) gradient-small-Newton fallback when
+// linear_equation_solve itself didn't converge.
+Matrix materialize_dense_hessian(const std::function<Vector(const Vector&)>& apply, int n) {
+    Matrix H(n, n);
+    for (int i = 0; i < n; ++i) {
+        Vector e_i = Vector::Zero(n);
+        e_i(i) = 1.0;
+        H.col(i) = apply(e_i);
+    }
+    return H;
+}
 
 StateAverageData make_state_average_data(const CasscfContext& context, const CasscfPhysicalConstants& constants) {
     StateAverageData sad;
@@ -201,6 +224,19 @@ void CasscfMicroiterationOptimizationStep::run(CasscfContext& context, const Mat
 
     int microiteration = 0;
     while (microiteration < N_microiterations) {
+        // helper_PFCI.py:11019: trust_radius reset to 0.5 once per OUTER
+        // ("microiteration") pass -- NOT once per inner
+        // ("orbital_optimization_step") solve. Threaded forward across
+        // inner iterations below via step_control on accept / *0.5 on
+        // reject (helper_PFCI.py:12267, 12339) -- a real, previously
+        // mistaken assumption in this class corrected here (an earlier
+        // version reset to 0.5 at every inner solve and discarded
+        // step_control's return value entirely; found and fixed via a
+        // direct side-by-side trace comparison against the real Python on
+        // real LiH chemistry, not by re-reading the Python alone -- see
+        // this project's session notes for how the discrepancy was found).
+        double trust_radius = 0.5;
+
         // Step 1: build_intermediates, once per outer iteration -- sets this
         // iteration's fixed reference point.
         const double off_diagonal_constant =
@@ -255,7 +291,7 @@ void CasscfMicroiterationOptimizationStep::run(CasscfContext& context, const Mat
             if (gradient_norm > 1e-3) {
                 if (n_negative == 0) {
                     GltrTrustRegionSolver solver(hessian_op, hd.reduced_hessian_diagonal);
-                    TrustRegionResult result = solver.solve(reduced_gradient, 0.5);
+                    TrustRegionResult result = solver.solve(reduced_gradient, trust_radius);
                     step = result.step;
                     hard_case = 0;
                 } else {
@@ -263,16 +299,29 @@ void CasscfMicroiterationOptimizationStep::run(CasscfContext& context, const Mat
                     auto guess_provider = std::make_shared<OrbitalHessianGuessProvider>(
                         U2_, sym_A_tilde, reduced_gradient, fi.G, index_map, dims.n_occupied);
                     DavidsonDrivenLstrsSolver solver(hessian_op, guess_provider, hd.reduced_hessian_diagonal);
-                    TrustRegionResult result = solver.solve(reduced_gradient, 0.5);
+                    TrustRegionResult result = solver.solve(reduced_gradient, trust_radius);
                     step = result.step;
                     hard_case = (result.reason == TerminationReason::SuccessInteriorSolution) ? 2 : 0;
                 }
             } else {
-                // helper_PFCI.py:12055-12073: gradient-small Newton fallback
-                // -- see header doc comment, deviation 3.
-                PcgTrustRegionSolver solver(hessian_op, hd.reduced_hessian_diagonal, /*tol=*/1e-8, /*max_iter=*/200);
-                TrustRegionResult result = solver.solve(reduced_gradient, /*trust_radius=*/1e10);
-                step = result.step;
+                // helper_PFCI.py:12103-12137: gradient-small Newton fallback
+                // -- linear_equation_solve (LinearRMSolver), falling back to
+                // real MINRES on non-convergence. See linear_equation_solve.hpp's
+                // own doc comment for the one remaining, inherent (not
+                // fixable) non-reproducibility (the random initial-probe
+                // draw, always exercised at this call site).
+                LinearEquationSolveResult solve_result = linear_equation_solve(
+                    U2_, A_tilde_full, fi.G, reduced_gradient, hd.reduced_hessian_diagonal,
+                    /*max_iter=*/20, /*conv_thresh=*/1e-6, dims);
+                if (solve_result.converged) {
+                    step = solve_result.solution;
+                } else {
+                    Matrix dense_hessian = materialize_dense_hessian(
+                        [&](const Vector& v) { return orbital_sigma3(U2_, A_tilde_full, fi.G, v, dims); },
+                        dims.index_map_size());
+                    MinresResult minres_result = minres_solve(dense_hessian, -reduced_gradient, /*rtol=*/1e-6);
+                    step = minres_result.x;
+                }
                 hard_case = 2;
             }
 
@@ -309,18 +358,13 @@ void CasscfMicroiterationOptimizationStep::run(CasscfContext& context, const Mat
                 ++orbital_optimization_step;
 
                 const double ratio = energy_change / predicted_energy2;
-                // trust_radius is reset to 0.5 at the top of every inner
-                // solve above (matching the Python's `trust_radius = 0.5`
-                // reset at the top of every outer pass -- within one outer
-                // pass, step_control's output feeds nothing back into the
-                // next inner solve call in the non-QN branch, since the
-                // Python re-derives its own local `trust_radius` variable
-                // used inside the Davidson bisection loop fresh at 0.5 each
-                // GLTR/Davidson call too). step_control's return value here
-                // exists only to mirror the Python's own (unread past this
-                // point) bookkeeping -- ported for fidelity, not because a
-                // later step depends on it.
-                (void)step_control(ratio, 0.5);
+                // helper_PFCI.py:12267: trust_radius carries forward across
+                // inner ("orbital_optimization_step") iterations within one
+                // outer pass, updated by step_control on every accept (and
+                // halved on every reject, below) -- NOT reset to 0.5 fresh
+                // each inner solve. See this loop's own trust_radius
+                // declaration comment for how this was found and corrected.
+                trust_radius = step_control(ratio, trust_radius);
 
                 // Rebuild gradient/hessian/reduced_gradient on the SAME
                 // fi.A/fi.G (not a fresh build_intermediates call).
@@ -339,11 +383,12 @@ void CasscfMicroiterationOptimizationStep::run(CasscfContext& context, const Mat
                 ++accepted_count;
                 current_energy = zero_energy + second_order_energy_change;
             } else {
-                // Reject: trust_radius shrinkage is internal to each solver
-                // call (reset to 0.5 fresh next inner iteration, same
-                // reasoning as the accept branch's step_control comment
-                // above) -- nothing else changes; loop continues with the
-                // same reduced_gradient.
+                // Reject: helper_PFCI.py:12339 -- trust_radius is halved
+                // and carries forward into the next inner iteration (same
+                // trust_radius variable the accept branch updates above);
+                // nothing else changes, loop continues with the same
+                // reduced_gradient.
+                trust_radius = 0.5 * trust_radius;
             }
         }
 
