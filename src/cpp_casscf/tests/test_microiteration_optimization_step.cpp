@@ -46,7 +46,8 @@ void expect_matrix_near(const Matrix& actual, const Matrix& expected, double tol
 
 class MockCiSolver final : public CiStateAverageSolver {
 public:
-    CiStateAverageResult solve(const Matrix& eigenvecs_guess) override {
+    CiStateAverageResult solve(const Matrix& eigenvecs_guess, bool use_staged_inputs = false) override {
+        (void)use_staged_inputs;
         ++call_count;
         CiStateAverageResult result;
         result.eigenvectors = eigenvecs_guess; // pass-through, arbitrary for this test

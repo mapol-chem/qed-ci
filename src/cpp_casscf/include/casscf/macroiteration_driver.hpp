@@ -42,10 +42,36 @@ struct CiStateAverageResult {
 // state-averaged RDM machinery (build_state_average_rdms), neither of which
 // is part of this trust-region-solver module. See cpp_casscf/README.md,
 // "What's still open".
+//
+// use_staged_inputs distinguishes this interface's two genuinely different
+// call sites (confirmed by reading the real Python's own two distinct
+// c_get_roots/c_H_diag_cas_spin call sites, not assumed):
+//  - false (default): MacroiterationDriver's own top-of-macroiteration
+//    solve (helper_PFCI.py:2424-2521) -- integrals recomputed fresh from
+//    context.H_spatial2/J/K, which are correct and current at that exact
+//    point (right after IntegralTransformer::transform_macroiteration).
+//  - true: InternalOptimizationStep's and MicroiterationOptimizationStep's
+//    own inner accept/reject-loop calls (helper_PFCI.py:7748,
+//    internal_optimization3; 12418, microiteration_optimization6) -- both
+//    real Python call sites read LOCAL/self.-prefixed staged quantities
+//    (self.gkl2/occupied_J/occupied_fock_core/occupied_d_cmo, plus a
+//    core-energy scalar -- self.E_core for internal_optimization3,
+//    self.E_core2 for microiteration_optimization6) that reflect the
+//    orbital rotation accumulated *within that same call*, not
+//    self.H_spatial2/J/K (which don't update until each function's own
+//    convergence). An implementation honoring this flag must read
+//    context.gkl2/occupied_J/occupied_fock_core/occupied_d_cmo/E_core2
+//    instead of recomputing from context.H_spatial2/J/K -- callers using
+//    `true` are responsible for having already committed the correct
+//    per-call-site values into those same context fields (matching
+//    InternalOptimizationStep's own occupied_J/K commit and
+//    MicroiterationOptimizationStep's commit_ci_solver_inputs) before
+//    calling solve(), including staging context.E_core2 with whichever
+//    core-energy scalar their own Python call site actually uses.
 class CiStateAverageSolver {
 public:
     virtual ~CiStateAverageSolver() = default;
-    virtual CiStateAverageResult solve(const Matrix& eigenvecs_guess) = 0;
+    virtual CiStateAverageResult solve(const Matrix& eigenvecs_guess, bool use_staged_inputs = false) = 0;
 };
 
 // Corresponds to internal_optimization3(E0, eigenvecs), helper_PFCI.py:6847-7961:

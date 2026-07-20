@@ -17,28 +17,46 @@ namespace casscf {
 // string tables it bundles live in a separate, setup-once object rather
 // than on CasscfContext itself).
 //
-// Does NOT read or write CasscfContext's occupied_fock_core/occupied_J/
-// gkl2/occupied_d_cmo "CI-solver input staging" fields (the ones
-// CasscfInternalOptimizationStep/CasscfMicroiterationOptimizationStep
-// commit before calling their OWN CiStateAverageSolver::solve()) --
-// confirmed by direct reading of the Python: this specific block
-// (helper_PFCI.py:2424-2488) recomputes its own local occupied_fock_core/
-// occupied_J/gkl2/E_core-independent quantities fresh from
-// self.H_spatial2/self.J/self.K every call, never reading or writing the
-// self.occupied_*/self.gkl2 attributes those OTHER two call sites use. This
-// class mirrors that: it reads context.H_spatial2/J/K/d_cmo/E_core (E_core
-// read-only, NOT recomputed -- see ci_setup.hpp's ActiveBlockIntermediates
-// doc comment for why) and context.D_tu_avg/D_tuvw_avg/Dpe_tu_avg (needed
-// nowhere in THIS class actually -- build_state_average_rdms only WRITES
-// state-average RDMs, via CiStateAverageResult's return value, matching
-// MacroiterationDriver::run's existing convention of copying them from
-// each CiStateAverageResult into context right after every solve() call).
+// Two distinct input modes, selected by solve()'s use_staged_inputs
+// parameter (see CiStateAverageSolver's own doc comment for the full
+// reasoning and the real Python line numbers backing each mode):
+//  - use_staged_inputs=false (default): recomputes occupied_fock_core/
+//    occupied_J/gkl2 fresh from context.H_spatial2/J/K every call --
+//    matches MacroiterationDriver's own top-of-macroiteration solve
+//    (helper_PFCI.py:2424-2488). Does NOT read CasscfContext's
+//    occupied_fock_core/occupied_J/gkl2/occupied_d_cmo "CI-solver input
+//    staging" fields in this mode.
+//  - use_staged_inputs=true: reads context.gkl2/occupied_J/
+//    occupied_fock_core/occupied_d_cmo/E_core2 directly instead of
+//    recomputing -- matches InternalOptimizationStep's and
+//    MicroiterationOptimizationStep's own inner-loop CI-solve call sites
+//    (helper_PFCI.py:7748/12418), both of which read locally-staged
+//    quantities reflecting the orbital rotation accumulated within that
+//    same call, not self.H_spatial2/J/K. **Real bug this mode fixes**:
+//    before it existed, both of those call sites used the false-mode
+//    behavior unconditionally (the only mode that existed), so their own
+//    inner-loop CI re-solves silently ignored the very rotation staging
+//    those classes were computing and committing -- confirmed via a
+//    direct trace comparison against real Python (context.D_tu_avg's norm
+//    was bit-identical across successive MicroiterationOptimizationStep
+//    outer passes despite a substantial accumulated rotation, where
+//    Python's own gradient jumps from ~5e-5 to ~1e-2 at the same
+//    transition -- see README.md's "End-to-end integration" section).
+//
+// Either mode reads context.H_spatial2/J/K/d_cmo (E_core or E_core2
+// depending on mode -- NOT recomputed, see ci_setup.hpp's
+// ActiveBlockIntermediates doc comment for why) and context.D_tu_avg/
+// D_tuvw_avg/Dpe_tu_avg (needed nowhere in THIS class actually --
+// build_state_average_rdms only WRITES state-average RDMs, via
+// CiStateAverageResult's return value, matching MacroiterationDriver::run's
+// existing convention of copying them from each CiStateAverageResult into
+// context right after every solve() call).
 class CasscfCiStateAverageSolver final : public CiStateAverageSolver {
 public:
     CasscfCiStateAverageSolver(Dimensions dims, CasscfCiConfig config, CasscfPhysicalConstants constants,
                                  CasscfCiSetup& setup, CasscfContext& context);
 
-    CiStateAverageResult solve(const Matrix& eigenvecs_guess) override;
+    CiStateAverageResult solve(const Matrix& eigenvecs_guess, bool use_staged_inputs = false) override;
 
 private:
     Dimensions dims_;

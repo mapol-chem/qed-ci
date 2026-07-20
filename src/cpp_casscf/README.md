@@ -1092,10 +1092,12 @@ reading** -- both a direct payoff of the "run it end to end" exercise:
    and the final energy matches Python's to `1.1e-11`.
 
 **Result** (LiH, sto-3g, CAS(2,2), 1 photon mode, `davidson_roots=1`,
-`omega=0.1`): `converged=true`, `macroiterations_run=10` (vs. Python's `4`),
-final `avg_energy` matches Python's to `~3e-12` (see "Determinism" below
-for why these are now stable, reproducible numbers rather than varying
-run to run).
+`omega=0.1`): `converged=true`, `macroiterations_run=4` -- an **exact match
+to Python's own `4`** (see item 6 below for how the earlier `10`-vs-`4` gap
+was actually closed; earlier drafts of this section reported `10` before
+that fix). Final `avg_energy` matches Python's to `~3e-12` (see
+"Determinism" below for why these are now stable, reproducible numbers
+rather than varying run to run).
 
 **The macroiteration-count gap was investigated properly across multiple
 rounds, not waved off as "documented gaps explain it"** (an earlier draft
@@ -1184,24 +1186,73 @@ of this section did exactly that, and was wrong to):
    consistent with ordinary floating-point-level divergence compounding
    through a chain of nonlinear trust-region solves (each inner step's
    result feeds the next `trust_radius`/gradient/Hessian-diagonal inputs),
-   not a further distinguishable logic bug. As of this writing, **the root
-   cause of the iteration-count gap remains unidentified** -- every
-   specific hypothesis tested so far (internal-step staleness, both
-   `hard_case==2` substitutions, QN activation, the `hard_case==1`
-   warm-start shortcut) has been directly disproved, and the one genuine
-   bug found via trace comparison (this `trust_radius` threading fix),
-   while real and now fixed, does not explain it either. The trajectories
-   now agree exactly through the first two inner steps and diverge only at
-   ordinary floating-point scale after that -- this is consistent with
-   nonlinear trust-region iteration being genuinely sensitive to
-   last-ULP-level differences (a well-understood property of this class of
-   algorithm, not evidence of a remaining logic bug), rather than there
-   being one more single "smoking gun" substitution left to find. Both
-   sides still converge to the same physical answer (`~3e-12`), which is
-   the correctness bar that actually matters; matching Python's exact
-   iteration count trajectory step-for-step is a much stronger bar that a
-   faithful-but-not-bit-identical floating-point port is not expected to
-   clear.
+   not a further distinguishable logic bug on its own -- but this
+   observation is what motivated pushing the trace one level deeper (item
+   6 below), rather than stopping here as "inherent sensitivity."
+6. **Root cause found and fixed: `CasscfCiStateAverageSolver` was reading
+   the wrong integrals at both of this module's inner-loop CI-solve call
+   sites.** Prompted by the user's request to keep tracing exactly where
+   the trajectories diverge (microiteration/sub-microiteration counts,
+   gradient norms, etc.), a targeted trace of `context.D_tu_avg`'s norm at
+   the top of every outer (`microiteration`) pass showed it **bit-identical
+   across passes** in this port (`1.9991486078e+00` unchanged from
+   `micro=0` to `micro=1`), even though `U2` had rotated substantially
+   (step norms ~0.5-0.6) across `micro=0`'s 4 accepted inner steps.
+   Meanwhile Python's own `gradient_norm` jumps from `~5e-5` (end of its
+   first outer pass) to `~1e-2` (start of its second) at the exact same
+   transition -- a real, informative gradient from re-resolving the CI
+   problem against the newly-rotated orbitals. Reading the real Python
+   confirmed the mechanism directly: `microiteration_optimization6`'s own
+   `c_get_roots` call (helper_PFCI.py:12418) feeds LOCAL variables
+   (`gkl2`/`occupied_J`/`occupied_fock_core`/`occupied_d_cmo`, refreshed
+   after every accepted inner step by `microiteration_ci_integrals_transform`,
+   reflecting `U2`'s accumulated rotation) -- but
+   `CasscfCiStateAverageSolver::solve()` (the shared class both
+   `MacroiterationDriver`'s own top-level solve AND this class's inner-loop
+   solve were calling, unconditionally, with a single code path) always
+   recomputed its integrals fresh from `context.H_spatial2`/`J`/`K`
+   instead -- the macroiteration-level integrals that only change once per
+   `MacroiterationDriver` pass, never reflecting any rotation accumulated
+   *within* a `CasscfMicroiterationOptimizationStep::run()` or
+   `CasscfInternalOptimizationStep::run()` call. Every one of this port's
+   inner-loop CI re-solves was silently a near-no-op relative to the
+   accumulated orbital rotation -- exactly the architectural note flagged
+   (but left unconfirmed, and mis-attributed as "lower priority") in an
+   earlier session, now directly confirmed as the actual cause via this
+   trace and fixed. **Fix**: `CiStateAverageSolver::solve()` gained a
+   `use_staged_inputs` parameter (default `false`, preserving
+   `MacroiterationDriver`'s own already-validated fresh-recompute
+   behavior). When `true`, `CasscfCiStateAverageSolver::solve()` reads
+   `context.gkl2`/`occupied_J`/`occupied_fock_core`/`occupied_d_cmo`/
+   `E_core2` directly instead of recomputing from `H_spatial2`/`J`/`K` --
+   both `CasscfMicroiterationOptimizationStep` (which already correctly
+   staged these fields via `commit_ci_solver_inputs`, but the solver never
+   read them) and `CasscfInternalOptimizationStep` (same underlying gap,
+   confirmed via the analogous real Python call site,
+   helper_PFCI.py:7748-7752, which reads `self.gkl2`/`self.occupied_J`/
+   `self.occupied_fock_core`/`self.occupied_d_cmo`/`self.E_core` -- staged
+   into `context.E_core2` for this call site specifically, one new line,
+   since `E_core2` is a shared slot both step classes' own Python call
+   sites use with their own distinct core-energy scalar) now call
+   `solve(eigenvecs, /*use_staged_inputs=*/true)`. One related bug caught
+   in the same pass: `occupied_d_cmo` had the identical fresh-vs-staged
+   split (Python's fresh-mode call slices `self.d_cmo` directly, but both
+   staged-mode call sites read a locally-rotated `occupied_d_cmo` instead)
+   -- easy to miss since the two happen to coincide numerically in fresh
+   mode, which is exactly why it wasn't caught by the original,
+   fresh-mode-only implementation or its tests. **Result: `macroiterations_run`
+   dropped from `10` to `4`, an exact match to Python**, confirmed on both
+   the primary seeded LiH case and the independent `n_in_a == 0` case
+   (`dumps_macro_lih_nina0`) and stable across repeated runs with the real
+   (unseeded) random probe active. This is what finally explains the
+   entire `10`-vs-`4` gap this session's earlier five disproved hypotheses
+   (items 1-4 above) and the real-but-insufficient `trust_radius` fix
+   (item 5) had been chasing. Interface change: the three test mocks
+   (`test_internal_optimization_step.cpp`, `test_macroiteration_driver.cpp`,
+   `test_microiteration_optimization_step.cpp`) needed their `solve()`
+   override signatures updated to match (ignore the new parameter --
+   mocked CI solves don't model this distinction); all 20 ctest targets
+   still pass unchanged.
 
 **Determinism** (temporary tooling, for controlled comparison -- not a
 permanent behavior change to either side): both sides had genuine,
@@ -1243,27 +1294,26 @@ this session never touched -- a stable regression from this session's
 changes would reproduce identically, not shift identity between runs of
 the same input.
 
-**A separate, residual, lower-priority architectural note, not yet
-resolved** (confirmed by the `n_in_a == 0` test above to NOT be the cause
-of the iteration-count gap either): `CasscfInternalOptimizationStep`'s own
-inner accept/reject loop calls `ci_solver_->solve()` (the *same* injected
-`CasscfCiStateAverageSolver` instance `MacroiterationDriver` itself uses)
-potentially many times before its own `transform_internal_rotation` call
-(which only happens once, at convergence/exit) ever updates
-`context.H_spatial2`/`J`/`K` -- so those inner-loop CI solves read
-integrals that don't yet reflect the internal rotation being accumulated
-*within that same call*, unlike the real Python's `internal_optimization3`,
-which stages and reads its *own* small active-inactive-restricted
-quantities (`gkl2`/`occupied_J`/`occupied_d_cmo`) that update incrementally
-every accepted inner step, specifically to avoid the cost of a full
-`H_spatial2`/`J`/`K` transform on every inner iteration.
-`CasscfCiStateAverageSolver` was designed and tested for the *other* call
-site (`MacroiterationDriver`'s own top-of-macroiteration solve, which
-genuinely does want fresh `H_spatial2`/`J`/`K` every time) and doesn't
-distinguish between the two uses. A correct fix would need
-`internal_optimization3`'s own small-space CI-solve staging ported as a
-genuinely separate mechanism from `CasscfCiStateAverageSolver`, not
-attempted here.
+**Re-run again after the `CiStateAverageSolver` fix (item 6 above)**: same
+pattern -- `davidson_lstrs_002`/`davidson_lstrs_006`/`internal_lstrs_01x`/
+`gltr_026`-style failures, shifting identity between individual sweep runs
+exactly as before. Structurally this fix cannot be responsible even in
+principle: `sweep.sh`/`validate_against_python` replay individually-dumped
+Python solver instances directly against `LstrsSolver`/
+`GltrTrustRegionSolver`/`DavidsonDrivenLstrsSolver` in isolation -- neither
+`CasscfCiStateAverageSolver` nor `MacroiterationDriver` is ever
+instantiated in that harness at all.
+
+**The architectural note above is now resolved, not just flagged** -- see
+item 6 above for the fix (`CiStateAverageSolver::solve()`'s
+`use_staged_inputs` parameter) and the sweep re-run below for regression
+coverage. `CasscfInternalOptimizationStep`'s inner-loop CI solves now read
+`context.gkl2`/`occupied_J`/`occupied_fock_core`/`occupied_d_cmo`/
+`E_core2` (which its own accept branch was already correctly staging) via
+`solve(eigenvecs, /*use_staged_inputs=*/true)`, matching the real Python's
+`self.gkl2`/`self.occupied_J`/`self.occupied_fock_core`/
+`self.occupied_d_cmo`/`self.E_core` usage at helper_PFCI.py:7748-7752
+exactly, rather than continuing to read stale `context.H_spatial2`/`J`/`K`.
 
 ## What's still open
 
@@ -1285,23 +1335,31 @@ attempted here.
   above for the full story: two real bugs the run surfaced and fixed, both
   documented `hard_case==2` substitutions in this solver stack closed for
   real (`LinearRMSolver`/`linear_equation_solve`, see above), and a
-  multi-round investigation into a remaining macroiteration-count gap
-  (`10` for this port vs. Python's `4` on the reference LiH case) that
-  directly disproved five hypotheses in turn (internal-step staleness,
-  both `hard_case==2` substitutions, the un-ported QN/BFGS path, and the
-  `hard_case==1` warm-start shortcut -- the QN and warm-start tests done
-  by disabling each in Python directly and confirming Python's own
-  macroiteration count is unaffected), and found + fixed one genuine bug
-  via a detailed per-step trace comparison (`trust_radius` not threading
-  forward across inner iterations in
-  `CasscfMicroiterationOptimizationStep`) that, while confirmed correct at
-  the source (brought the first two inner steps into exact agreement with
-  Python), still didn't close the gap. **The root cause remains
-  unidentified as of this writing** -- the trajectories now diverge only
-  at ordinary floating-point scale starting at the third inner step,
-  consistent with inherent trust-region sensitivity to last-ULP-level
-  differences rather than one more specific substitution left to find; see
-  "End-to-end integration" above for the full trace evidence.
+  multi-round investigation into what was, for most of this investigation,
+  a `10`-vs-`4` macroiteration-count gap against Python on the reference
+  LiH case. Five hypotheses were directly disproved in turn (internal-step
+  staleness, both `hard_case==2` substitutions, the un-ported QN/BFGS path,
+  and the `hard_case==1` warm-start shortcut -- the QN and warm-start tests
+  done by disabling each in Python directly and confirming Python's own
+  macroiteration count is unaffected), and one genuine, real bug
+  (`trust_radius` not threading forward across inner iterations in
+  `CasscfMicroiterationOptimizationStep`) was found and fixed via a
+  detailed per-step trace comparison but still didn't close the gap on its
+  own. **The actual root cause was then found and fixed**: pushing that
+  same trace comparison one level deeper (tracking `context.D_tu_avg`'s
+  norm across outer passes) showed `CasscfCiStateAverageSolver::solve()`
+  was silently reading stale, macroiteration-level integrals
+  (`context.H_spatial2`/`J`/`K`) at both `CasscfInternalOptimizationStep`'s
+  and `CasscfMicroiterationOptimizationStep`'s own inner-loop CI-solve call
+  sites, instead of the locally-staged, rotation-reflecting integrals both
+  classes were already correctly computing and committing into
+  `context.gkl2`/`occupied_J`/`occupied_fock_core`/`occupied_d_cmo` --
+  every inner-loop CI re-solve was silently a near-no-op relative to the
+  accumulated orbital rotation. Fixed via a `use_staged_inputs` parameter
+  on `CiStateAverageSolver::solve()`. **`macroiterations_run` now matches
+  Python exactly (`4`)** on both the primary seeded LiH case and the
+  independent `n_in_a == 0` case; see "End-to-end integration" above (item
+  6) for the full trace evidence and fix details.
   `tools/run_macroiteration_driver.cpp` is the reference wiring;
   `test_macroiteration_driver.cpp` still separately exercises the driver's
   own loop shape against mocks of all four (kept as-is -- a fast, real-C-backend-
@@ -1318,42 +1376,43 @@ attempted here.
   `CasscfMicroiterationOptimizationStep`, `CasscfCiStateAverageSolver`,
   `CasscfIntegralTransformer` -- see their dedicated sections above for full
   architecture, documented deviations, and open items). What's left:
-  - **The root cause of the `10`-vs-`4` macroiteration-count gap (see
-    "End-to-end integration" above) is still unidentified.** Confirmed to
-    NOT be: `CasscfInternalOptimizationStep`'s inner-loop staleness (below),
-    either of this solver stack's `hard_case==2` substitutions (both now
-    fixed anyway), the un-ported QN/BFGS path, or the `hard_case==1`
-    warm-start shortcut -- the latter two disproven directly by disabling
-    each in Python and confirming Python still converges in 4
-    macroiterations without them. One genuine bug (`trust_radius` not
-    threading forward across inner iterations in
-    `CasscfMicroiterationOptimizationStep`, found via a detailed per-step
-    trace comparison) was found and fixed along the way -- confirmed
-    correct at the source, but it didn't close the gap either; the two
-    sides' trajectories now diverge only at ordinary floating-point scale
-    a couple of inner steps in, which is consistent with inherent
-    trust-region sensitivity rather than a further logic bug, but isn't
-    proof one doesn't exist. Worth investigating further before assuming
-    any other specific cause; the `n_in_a == 0` LiH case
-    (`dumps_macro_lih_nina0/`) and the RNG-determinism tooling
-    (`--random-seed` on `dump_lih_case.py`, `random_seed` on
-    `linear_equation_solve`) make repeat investigation tractable.
+  - **The `10`-vs-`4` macroiteration-count gap is resolved** (see
+    "End-to-end integration" above, item 6, for the full story): the root
+    cause was `CasscfCiStateAverageSolver::solve()` silently reading stale
+    macroiteration-level integrals at both `CasscfInternalOptimizationStep`'s
+    and `CasscfMicroiterationOptimizationStep`'s own inner-loop CI-solve
+    call sites, rather than the locally-staged, rotation-reflecting
+    integrals those classes were already correctly committing into
+    `context`. Fixed via a `use_staged_inputs` parameter on
+    `CiStateAverageSolver::solve()`. `macroiterations_run` now matches
+    Python exactly (`4`) on both the primary seeded LiH case and the
+    independent `n_in_a == 0` case, stable across repeated runs. Five other
+    hypotheses (internal-step staleness in the old sense, both
+    `hard_case==2` substitutions, the un-ported QN/BFGS path, the
+    `hard_case==1` warm-start shortcut) were directly disproved along the
+    way and remain correctly documented as NOT the cause; one further real
+    bug (`trust_radius` not threading forward across inner iterations in
+    `CasscfMicroiterationOptimizationStep`) was also found and fixed, real
+    and worth keeping but not itself sufficient to close the gap. The
+    `n_in_a == 0` LiH case (`dumps_macro_lih_nina0/`) and the
+    RNG-determinism tooling (`--random-seed` on `dump_lih_case.py`,
+    `random_seed` on `linear_equation_solve`) remain available for any
+    future investigation of this kind.
   - The QN/BFGS path (`CasscfMicroiterationOptimizationStep`'s deviation 1)
     remains a real, separate gap regardless -- Python's production
     behavior does activate it (confirmed: 6 times in the reference LiH
     run), so a fully faithful port should implement it eventually, even
-    though it's now confirmed NOT to be what's driving the iteration-count
-    gap above. `BfgsOperator`/`QuasiNewtonPolicy`/`should_reset_bfgs_reference`
+    though it's now confirmed NOT to have been what was driving the
+    (now-fixed) iteration-count gap above.
+    `BfgsOperator`/`QuasiNewtonPolicy`/`should_reset_bfgs_reference`
     are already ported and tested, ready for whoever wires the QN branch
     dispatch, the `step_norm < 0.05` activation trigger, and the *second*,
     separate reference-point-reset predicate (see `BfgsOperator`'s own doc
     comment) into the outer/inner loop.
-  - The residual architectural note from "End-to-end integration" above
+  - The residual architectural note previously here
     (`CasscfInternalOptimizationStep`'s inner-loop CI solves vs. the real
-    Python's separate small-space staging) -- confirmed by a controlled
-    `n_in_a == 0` test to NOT be the dominant source of error for LiH, but
-    not resolved, and could matter more on a harder system (larger
-    internal rotations needed, more inner iterations before convergence).
+    Python's separate small-space staging) is now resolved -- see
+    "End-to-end integration" above, item 6.
   - `CasscfMicroiterationOptimizationStep`'s **FLAGGED FOR SCRUTINY WHEN
     WRITTEN** note is still unresolved: it hasn't yet had a dedicated
     re-review pass by a stronger reasoning model, given how much

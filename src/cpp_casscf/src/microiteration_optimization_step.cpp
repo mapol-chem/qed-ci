@@ -403,7 +403,7 @@ void CasscfMicroiterationOptimizationStep::run(CasscfContext& context, const Mat
 
         commit_ci_solver_inputs(staging, dims, context);
 
-        CiStateAverageResult ci_result = ci_solver_->solve(eigenvecs);
+        CiStateAverageResult ci_result = ci_solver_->solve(eigenvecs, /*use_staged_inputs=*/true);
         eigenvecs = ci_result.eigenvectors;
         context.D_tu_avg = ci_result.D_tu_avg;
         context.D_tuvw_avg = ci_result.D_tuvw_avg;

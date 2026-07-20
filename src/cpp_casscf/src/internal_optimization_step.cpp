@@ -159,9 +159,19 @@ void CasscfInternalOptimizationStep::run(CasscfContext& context, double /*E0*/, 
             context.gkl2 = er.gkl2;
             current_energy += er.energy_change;
 
+            // helper_PFCI.py:7740: internal_optimization3's own c_get_roots
+            // call feeds self.E_core (just committed above, reflecting the
+            // internal rotation accumulated so far) into constdouble[5] --
+            // stage it into context.E_core2, the shared slot
+            // CiStateAverageSolver::solve(use_staged_inputs=true) reads
+            // uniformly for both this class's and
+            // MicroiterationOptimizationStep's own staged-mode calls (see
+            // that field's own doc comment in casscf_context.hpp).
+            context.E_core2 = context.E_core;
+
             // helper_PFCI.py:7699-7728: re-diagonalize the CI problem and
             // refresh the state-averaged RDMs.
-            CiStateAverageResult ci_result = ci_solver_->solve(eigenvecs);
+            CiStateAverageResult ci_result = ci_solver_->solve(eigenvecs, /*use_staged_inputs=*/true);
             eigenvecs = ci_result.eigenvectors;
             context.D_tu_avg = ci_result.D_tu_avg;
             context.D_tuvw_avg = ci_result.D_tuvw_avg;

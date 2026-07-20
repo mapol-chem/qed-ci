@@ -29,7 +29,7 @@ CasscfCiStateAverageSolver::CasscfCiStateAverageSolver(Dimensions dims, CasscfCi
     : dims_(dims), config_(std::move(config)), constants_(std::move(constants)), setup_(&setup),
       context_(&context) {}
 
-CiStateAverageResult CasscfCiStateAverageSolver::solve(const Matrix& eigenvecs_guess) {
+CiStateAverageResult CasscfCiStateAverageSolver::solve(const Matrix& eigenvecs_guess, bool use_staged_inputs) {
     CasscfContext& context = *context_;
     const Dimensions& dims = dims_;
     const int n_act = dims.n_act_orb;
@@ -38,44 +38,66 @@ CiStateAverageResult CasscfCiStateAverageSolver::solve(const Matrix& eigenvecs_g
     const int H_dim = setup_->H_dim();
     const int davidson_roots = config_.davidson_roots;
 
-    // helper_PFCI.py:2424-2488: active_fock_core/active_twoeint/gkl2/
-    // occupied_fock_core/occupied_J recomputed fresh from
-    // self.H_spatial2/self.J/self.K every macroiteration -- NOT read from
-    // context's occupied_*/gkl2 staging fields (see this class's header
-    // doc comment).
-    ActiveBlockIntermediates active = compute_active_block_intermediates(context.H_spatial2, context.J,
-                                                                            context.K, dims);
-    OccupiedCiBlocks occupied = build_occupied_ci_blocks(active, dims);
+    // Two modes -- see this class's own header doc comment (and
+    // CiStateAverageSolver::solve()'s) for the full reasoning and real
+    // Python line numbers behind each.
+    RowMajorMatrix gkl2_rm;
+    Tensor4 occupied_twoeint;
+    RowMajorMatrix occupied_fock_core_rm;
+    double core_energy = 0.0;
 
-    // gkl2(k,l) = active_fock_core(k,l) - 0.5 * sum_j active_twoeint(k,j,j,l)
-    // helper_PFCI.py:2487-2488 -- NOT zero-padded to occupied size (unlike
-    // occupied_fock_core): get_roots's h1e argument is genuinely
-    // (n_act_orb, n_act_orb)-shaped here, confirmed against get_roots's own
-    // documented argtypes (h1e = self.gkl2, (n_act_orb, n_act_orb)) --
-    // distinct from build_H_diag_cas_spin's h1e, which IS the occupied-sized
-    // occupied_fock_core. Easy to conflate the two since both are called
-    // "h1e"-like inputs in the Python and this project's own earlier
-    // CasscfContext.gkl2/occupied_fock_core fields already establish they're
-    // separate quantities for exactly this reason.
-    Matrix gkl2(n_act, n_act);
-    for (int k = 0; k < n_act; ++k) {
-        for (int l = 0; l < n_act; ++l) {
-            double acc = 0.0;
-            for (int j = 0; j < n_act; ++j) acc += active.active_twoeint(k, j, j, l);
-            gkl2(k, l) = active.active_fock_core(k, l) - 0.5 * acc;
+    if (use_staged_inputs) {
+        // helper_PFCI.py:7748-7752 (internal_optimization3) /
+        // helper_PFCI.py:12379-12396 (microiteration_optimization6): both
+        // read locally-staged self.gkl2/occupied_J/occupied_fock_core, and
+        // an E_core-like scalar (self.E_core / self.E_core2 respectively)
+        // that InternalOptimizationStep/MicroiterationOptimizationStep have
+        // already committed into context before calling solve(true).
+        gkl2_rm = context.gkl2;
+        occupied_twoeint = context.occupied_J;
+        occupied_fock_core_rm = context.occupied_fock_core;
+        core_energy = context.E_core2;
+    } else {
+        // helper_PFCI.py:2424-2488: active_fock_core/active_twoeint/gkl2/
+        // occupied_fock_core/occupied_J recomputed fresh from
+        // self.H_spatial2/self.J/self.K every macroiteration -- NOT read
+        // from context's occupied_*/gkl2 staging fields.
+        ActiveBlockIntermediates active = compute_active_block_intermediates(context.H_spatial2, context.J,
+                                                                                context.K, dims);
+        OccupiedCiBlocks occupied = build_occupied_ci_blocks(active, dims);
+
+        // gkl2(k,l) = active_fock_core(k,l) - 0.5 * sum_j active_twoeint(k,j,j,l)
+        // helper_PFCI.py:2487-2488 -- NOT zero-padded to occupied size
+        // (unlike occupied_fock_core): get_roots's h1e argument is
+        // genuinely (n_act_orb, n_act_orb)-shaped here, confirmed against
+        // get_roots's own documented argtypes (h1e = self.gkl2,
+        // (n_act_orb, n_act_orb)) -- distinct from build_H_diag_cas_spin's
+        // h1e, which IS the occupied-sized occupied_fock_core. Easy to
+        // conflate the two since both are called "h1e"-like inputs in the
+        // Python and this project's own earlier CasscfContext.gkl2/
+        // occupied_fock_core fields already establish they're separate
+        // quantities for exactly this reason.
+        Matrix gkl2(n_act, n_act);
+        for (int k = 0; k < n_act; ++k) {
+            for (int l = 0; l < n_act; ++l) {
+                double acc = 0.0;
+                for (int j = 0; j < n_act; ++j) acc += active.active_twoeint(k, j, j, l);
+                gkl2(k, l) = active.active_fock_core(k, l) - 0.5 * acc;
+            }
         }
+        gkl2_rm = gkl2;
+        occupied_twoeint = occupied.occupied_twoeint;
+        occupied_fock_core_rm = occupied.occupied_fock_core;
+        core_energy = context.E_core;
     }
-    RowMajorMatrix gkl2_rm = gkl2;
 
-    // helper_PFCI.py:2494-2510: H_diag3 rebuilt fresh every macroiteration
-    // (unlike index_Hdiag, which CasscfCiSetup froze once -- see that
-    // class's header doc comment).
-    RowMajorMatrix occupied_fock_core_rm = occupied.occupied_fock_core;
+    // helper_PFCI.py:2494-2510: H_diag3 rebuilt fresh every call (unlike
+    // index_Hdiag, which CasscfCiSetup froze once -- see that class's
+    // header doc comment).
     Vector H_diag3 = Vector::Zero(H_dim);
-    build_H_diag_cas_spin(occupied_fock_core_rm.data(), occupied.occupied_twoeint.data(), H_diag3.data(),
-                            constants_.N_p, setup_->num_alpha(), nmo, config_.n_act_a, n_act, n_in_a,
-                            context.E_core, constants_.omega, constants_.Enuc, constants_.d_c,
-                            mutable_ptr(setup_->Y()), config_.target_spin);
+    build_H_diag_cas_spin(occupied_fock_core_rm.data(), occupied_twoeint.data(), H_diag3.data(), constants_.N_p,
+                            setup_->num_alpha(), nmo, config_.n_act_a, n_act, n_in_a, core_energy, constants_.omega,
+                            constants_.Enuc, constants_.d_c, mutable_ptr(setup_->Y()), config_.target_spin);
 
     // helper_PFCI.py:1913-1932, 2511-2518: constint/constdouble. Built
     // fully fresh here every call rather than mirroring the Python's own
@@ -100,13 +122,24 @@ CiStateAverageResult CasscfCiStateAverageSolver::solve(const Matrix& eigenvecs_g
     constdouble(2) = constants_.omega;
     constdouble(3) = constants_.d_exp - d_diag;
     constdouble(4) = config_.davidson_threshold;
-    constdouble(5) = context.E_core;
+    constdouble(5) = core_energy;
 
-    RowMajorMatrix occupied_d_cmo_rm = context.d_cmo.topLeftCorner(dims.n_occupied, dims.n_occupied);
+    // helper_PFCI.py:2526-2528 (fresh mode) slices self.d_cmo, unrotated
+    // within this call site's own scope -- but helper_PFCI.py:7751
+    // (internal_optimization3) / 12377-12378 (microiteration_optimization6)
+    // both read the locally-staged, rotation-reflecting occupied_d_cmo
+    // instead (context.occupied_d_cmo, already committed by the caller in
+    // staged mode -- same reasoning as gkl2/occupied_J/occupied_fock_core
+    // above; missed on an earlier pass of this class, since occupied_d_cmo
+    // happens to equal context.d_cmo's own slice in fresh mode, masking
+    // that this quantity needed the same mode split as the other three).
+    RowMajorMatrix occupied_d_cmo_rm = use_staged_inputs
+                                            ? RowMajorMatrix(context.occupied_d_cmo)
+                                            : RowMajorMatrix(context.d_cmo.topLeftCorner(dims.n_occupied, dims.n_occupied));
     Vector eigenvals = Vector::Zero(davidson_roots);
     RowMajorMatrix eigenvecs_rm = eigenvecs_guess;
 
-    get_roots(gkl2_rm.data(), occupied.occupied_twoeint.data(), occupied_d_cmo_rm.data(), H_diag3.data(),
+    get_roots(gkl2_rm.data(), occupied_twoeint.data(), occupied_d_cmo_rm.data(), H_diag3.data(),
                mutable_ptr(setup_->S_diag()), mutable_ptr(setup_->S_diag_projection()), eigenvals.data(),
                eigenvecs_rm.data(), mutable_ptr(setup_->table()), mutable_ptr(setup_->table_creation()),
                mutable_ptr(setup_->table_annihilation()), mutable_ptr(setup_->b_array()), constint.data(),
