@@ -418,8 +418,18 @@ DavidsonIterationResult DavidsonAugmentedHessianSolver::run_expansion_loop(
                 if (check_root_usable(full_eigvecs.row(0).transpose(), theta(0), reduced_gradient, trust_radius)) {
                     result.converged = true;
                     result.hard_case = false;
-                    result.eigenvalues = Vector::Constant(1, theta(0));
-                    result.eigenvectors = full_eigvecs.row(0).transpose();
+                    // helper_PFCI.py:16138-16140: Python unconditionally
+                    // overwrites aug_hessian_eigenvals[:]/[:,:] with
+                    // theta[:nroots_target]/full_eigvecs.T on every
+                    // exit_solver=True exit (nroots_target is always 2, see
+                    // line 15563), regardless of which branch triggered the
+                    // exit -- so root 1's already-computed theta(1)/
+                    // full_eigvecs.row(1) is what a real Easy Case exit
+                    // actually returns, not a placeholder. Keep both
+                    // entries here to match (see README.md's "Davidson
+                    // subspace expansion loop" section, bug #3).
+                    result.eigenvalues = theta.head(2);
+                    result.eigenvectors = full_eigvecs.topRows(2).transpose();
                     exit_solver = true;
                 } else {
                     root_0_locked = true;

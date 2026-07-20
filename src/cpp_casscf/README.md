@@ -83,8 +83,9 @@ beta-bisection sequence -- `DavidsonDrivenLstrsSolver` constructs exactly
 one and reuses it for every bisection step, matching how the Python's
 caller threads `guess_vector`/`restart` through repeated calls.
 
-**Two real bugs were caught by testing this against a dense reference**
-(both now fixed, see the git history / commit for detail if useful):
+**Three real bugs were caught by testing this against a dense reference**
+(the first two fixed in an earlier session, see the git history / commit
+for detail if useful; the third confirmed but **not yet fixed**, see below):
 
 1. The Python's "converged in iteration 1" exit paths return the
    *unit-vector* basis `Q` (rebuilt unconditionally after the exit check,
@@ -107,12 +108,58 @@ caller threads `guess_vector`/`restart` through repeated calls.
    that's what gave it away) specifically in the subspace *collapse* (soft
    restart) path, since that's the one place the corrupted sigma values fed
    into a subsequent eigendecomposition rather than just a residual check.
+3. **The "Easy Case" exit (`nroots==1`, root 0 converged and usable --
+   `davidson_augmented_hessian_solver.cpp:416-423`) discards the second
+   Ritz value instead of keeping it, unlike Python's real algorithm.**
+   Found via `validation/compare_macroiterations.sh` on a richer H2O config
+   (see the `CasscfMicroiterationOptimizationStep` section below for the
+   full discovery story) as a `DavidsonDrivenLstrsSolver`-vs-`LstrsSolver`
+   cross-check mismatch (`~1.6e-4` step error on `davidson_lstrs_006` in
+   `sweep.sh`'s H2O/6-31G config), then root-caused by driving Python's own,
+   completely unmodified `Davidson_augmented_hessian_solve6` on the exact
+   captured (Hessian, gradient, trust_radius) via a standalone script
+   (monkey-patching only the matrix-vector product to use the captured
+   dense Hessian in place of the real matrix-free `orbital_sigma3`, since
+   this dump doesn't carry the full CASSCF state that needs) -- it
+   reproduces Python's real captured step to `1.2e-13`, confirming the
+   replay itself is faithful before trusting what it revealed. **Root
+   cause**: Python's real algorithm has an *unconditional* step on every
+   successful exit, regardless of which branch triggered it
+   (helper_PFCI.py:16138-16140):
+   ```python
+   if exit_solver:
+       aug_hessian_eigenvecs[:, :] = full_eigvecs.T
+       aug_hessian_eigenvals[:] = theta[:nroots_target]   # nroots_target is ALWAYS 2 (line 15563)
+   ```
+   Since `nroots_target` is hardcoded to `2` regardless of `nroots` (how
+   many roots are being *actively tracked/refined* -- a separate thing),
+   `theta` always has $\geq 2$ valid entries from the current subspace
+   projection, and this unconditional overwrite *replaces* whatever the
+   "Easy Case" branch's own earlier `aug_hessian_eigenvals[1] = 1e10 # Fake
+   root 1` placeholder set (helper_PFCI.py:16049-16051) before the function
+   ever returns -- i.e. **that fake-root-1 assignment is provably dead code
+   in the real Python**, confirmed directly (not assumed) by tracing a real
+   execution that hits it. This port's own "Easy Case" branch does the
+   analogous fake-substitution (`DavidsonIterationResult::eigenvalues` gets
+   only 1 entry, `davidson_driven_lstrs_solver.cpp`'s wrapper fills in
+   `mu1=1e10`/`w1≈0` for the shared bisection core) but is **missing**
+   Python's equivalent unconditional overwrite -- `theta(1)` is sitting
+   right there, already computed (confirmed via the `CASSCF_DEBUG_DAVIDSON`
+   trace macro, which prints real `theta1=...` values at exactly this exit
+   point), just not kept. The `all_required_converged` exit branch a few
+   lines below (`davidson_augmented_hessian_solver.cpp:458-463`) already
+   does this correctly (`theta.head(2)`) -- the fix is to make the "Easy
+   Case" branch do the same, not a new mechanism. **Not yet applied** as of
+   this writing; a small, narrowly-scoped, high-confidence fix once someone
+   picks it up (see the `CasscfMicroiterationOptimizationStep` section
+   below for the full validation-sweep context this was found in).
 
-Both were only found by testing genuinely difficult cases (a small guess
-subspace on a larger problem, forcing several expansion iterations and at
-least one soft restart) rather than trusting the "does it converge in
-iteration 1" tests alone -- worth keeping in mind if this solver is
-extended further.
+The first two were only found by testing genuinely difficult cases (a small
+guess subspace on a larger problem, forcing several expansion iterations
+and at least one soft restart) rather than trusting the "does it converge
+in iteration 1" tests alone; the third was only found by testing against
+*real chemistry* on a system rich enough to actually exercise this exit
+branch -- worth keeping in mind if this solver is extended further.
 
 ## Shared bisection core
 
