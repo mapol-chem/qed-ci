@@ -1,6 +1,7 @@
 #include "casscf/davidson_driven_lstrs_solver.hpp"
+#include "casscf/linear_equation_solve.hpp"
 #include "casscf/lstrs_bisection_core.hpp"
-#include "casscf/pcg_trust_region_solver.hpp"
+#include "casscf/minres_solver.hpp"
 
 #include <stdexcept>
 
@@ -53,11 +54,25 @@ TrustRegionResult DavidsonDrivenLstrsSolver::solve(const Vector& gradient, doubl
         return gradient.dot(x) + 0.5 * x.dot(hessian_->apply(x));
     };
 
-    // See class doc comment, gap 2.
+    // See class doc comment: linear_equation_solve, falling back to real
+    // MINRES (via dense materialization) on non-convergence.
     HardCase2SolveFn hard_case2_solve = [&]() -> Vector {
-        constexpr double effectively_unconstrained_radius = 1e10;
-        PcgTrustRegionSolver cg(hessian_, reduced_hessian_diagonal_, config_.cg_tol, config_.cg_max_iter);
-        return cg.solve(gradient, effectively_unconstrained_radius).step;
+        auto apply = [&](const Vector& v) { return hessian_->apply(v); };
+        LinearEquationSolveResult result =
+            linear_equation_solve(apply, gradient, reduced_hessian_diagonal_, config_.linear_solve_max_iter,
+                                   config_.linear_solve_conv_thresh, config_.random_seed);
+        if (result.converged) {
+            return result.solution;
+        }
+
+        const int n = hessian_->dimension();
+        Matrix dense_hessian(n, n);
+        for (int i = 0; i < n; ++i) {
+            Vector e_i = Vector::Zero(n);
+            e_i(i) = 1.0;
+            dense_hessian.col(i) = hessian_->apply(e_i);
+        }
+        return minres_solve(dense_hessian, -gradient, config_.minres_rtol).x;
     };
 
     return solve_lstrs_bisection(gradient, reduced_hessian_diagonal_, trust_radius, config_.max_bisection_iter,

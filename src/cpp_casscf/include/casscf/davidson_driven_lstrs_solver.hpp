@@ -9,10 +9,16 @@ namespace casscf {
 struct DavidsonDrivenLstrsConfig {
     int max_bisection_iter = 50; // count10 == 50 cap, helper_PFCI.py:11797-11798
 
-    // hard_case==2 (interior/near-Newton) is solved with a matrix-free CG
-    // instead of the Python's linear_equation_solve/MINRES -- see class doc.
-    int cg_max_iter = 200;
-    double cg_tol = 1e-8;
+    // hard_case==2 (interior/near-Newton) resolution -- linear_equation_solve
+    // falling back to MINRES on non-convergence, see class doc comment.
+    // Values match the Python's own hard-coded constants at this call site
+    // exactly (helper_PFCI.py:12058-12073): NOT independently tunable
+    // knobs, just exposed here for consistency with this struct's other
+    // fields.
+    int linear_solve_max_iter = 20;
+    double linear_solve_conv_thresh = 1e-6;
+    double minres_rtol = 1e-6;
+    unsigned int random_seed = 0; // see linear_equation_solve.hpp's doc comment
 };
 
 // Large-dimension counterpart of LstrsSolver: the beta-bisection driver
@@ -30,20 +36,30 @@ struct DavidsonDrivenLstrsConfig {
 // subspace persistence across bisection steps (guess_vector/restart=True in
 // the Python, helper_PFCI.py:11401, 11466, 11478) works as in the source.
 //
-// ONE KNOWN GAP relative to the Python, documented rather than silently
-// papered over:
+// hard_case==2 (interior/near-Newton) is now a faithful port, not a
+// substitution: linear_equation_solve (LinearRMSolver, diagonally
+// preconditioned by reduced_hessian_diagonal, matvec via `hessian_->apply`)
+// falling back to real MINRES on non-convergence (helper_PFCI.py:
+// 12052-12094 -- the same formula, with the same hard-coded constants, as
+// CasscfMicroiterationOptimizationStep's own gradient-small-Newton fallback
+// at helper_PFCI.py:12103-12137; see linear_equation_solve.hpp's doc
+// comment for why these share one generic core rather than being ported
+// twice). Previously substituted with PcgTrustRegionSolver at an
+// effectively-unconstrained trust radius (mathematically reasonable, since
+// hard_case==2 implies a near-PSD Hessian, but not what the Python
+// actually does); no longer needed.
 //
-// hard_case==2 SOLVED WITH PLAIN CG, NOT linear_equation_solve/MINRES.
-//    The Python's interior-step solve (helper_PFCI.py:11855-11878) tries a
-//    custom diagonally-preconditioned residual-minimization iterative solver
-//    (`LinearRMSolver`, defined in residual_minimization.py -- not yet read)
-//    and falls back to scipy's MINRES if that doesn't converge. Since
-//    hard_case==2 implies the Hessian is (near-)positive-semidefinite at
-//    that point (mu0 > -1e-8), a standard matrix-free CG is the
-//    mathematically appropriate substitute; this reuses the already-tested
-//    PcgTrustRegionSolver with an effectively-unconstrained trust radius
-//    (which makes Steihaug-CG reduce to plain CG) rather than reimplementing
-//    a second CG loop.
+// One real, NOT fixed limitation this substitution's removal introduces:
+// minres_solve (the real MINRES fallback) only accepts a DENSE matrix (see
+// its own doc comment), so the MINRES fallback path here materializes the
+// full `hessian_->apply` operator via unit-vector probing -- O(dimension)
+// extra Hessian-vector products, only paid on the (expected to be rare)
+// case where linear_equation_solve itself doesn't converge within
+// max_iter. For the genuinely large-dimension problems this class exists
+// to handle matrix-free in the first place, that fallback path would be
+// expensive if hit often -- acceptable for now (same "flag for future
+// performance work" precedent as orbital_sigma3), not a correctness
+// concern.
 class DavidsonDrivenLstrsSolver final : public TrustRegionSolver {
 public:
     DavidsonDrivenLstrsSolver(std::shared_ptr<const HessianOperator> hessian,

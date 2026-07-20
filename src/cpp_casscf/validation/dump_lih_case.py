@@ -30,6 +30,15 @@ parser.add_argument("--davidson-maxdim", type=int, default=8, help="multiplied b
 parser.add_argument("--davidson-indim", type=int, default=6, help="multiplied by davidson-roots; must stay below H_dim/roots or the C solver sys.exit()s")
 parser.add_argument("--omega", type=float, default=0.1)
 parser.add_argument("--dump-dir", default="dumps_lih", help="subdirectory (under this script's directory) to write dumps into")
+parser.add_argument("--random-seed", type=int, default=None,
+                     help="TEMPORARY, for controlled comparison against the cpp_casscf port only -- seeds "
+                          "numpy's global RNG before the CASSCF run starts, so the two random draws "
+                          "helper_PFCI.py makes (GLTR's trust-region-perturbation noise and "
+                          "linear_equation_solve's small-gradient initial probe) are reproducible run to "
+                          "run. Does NOT make Python match the C++ port's own specific draws (different RNG "
+                          "algorithm entirely, and unseeded by default on both sides otherwise) -- only makes "
+                          "each side internally deterministic so repeated runs/debugging are comparable. "
+                          "Omit (default) for normal, unseeded production behavior.")
 args = parser.parse_args()
 
 _here = os.path.dirname(os.path.abspath(__file__))
@@ -39,6 +48,10 @@ os.environ["CPP_CASSCF_VALIDATION_DIR"] = _dump_dir
 sys.path.insert(0, os.path.join(_here, "..", ".."))  # qed-ci/src
 
 import numpy as np
+
+if args.random_seed is not None:
+    np.random.seed(args.random_seed)
+
 import psi4
 from helper_PFCI import PFHamiltonianGenerator
 
