@@ -29,7 +29,9 @@ CasscfCiStateAverageSolver::CasscfCiStateAverageSolver(Dimensions dims, CasscfCi
     : dims_(dims), config_(std::move(config)), constants_(std::move(constants)), setup_(&setup),
       context_(&context) {}
 
-CiStateAverageResult CasscfCiStateAverageSolver::solve(const Matrix& eigenvecs_guess, bool use_staged_inputs) {
+CiStateAverageResult CasscfCiStateAverageSolver::solve(const Matrix& eigenvecs_guess, bool use_staged_inputs,
+                                                          std::optional<double> davidson_threshold_override,
+                                                          std::optional<int> davidson_maxiter_override) {
     CasscfContext& context = *context_;
     const Dimensions& dims = dims_;
     const int n_act = dims.n_act_orb;
@@ -115,13 +117,13 @@ CiStateAverageResult CasscfCiStateAverageSolver::solve(const Matrix& eigenvecs_g
                                        setup_->indim(),
                                        setup_->maxdim(),
                                        davidson_roots,
-                                       config_.davidson_maxiter};
+                                       davidson_maxiter_override.value_or(config_.davidson_maxiter)};
     Vector constdouble(6);
     constdouble(0) = constants_.Enuc;
     constdouble(1) = config_.ignore_dse_terms ? 0.0 : constants_.d_c;
     constdouble(2) = constants_.omega;
     constdouble(3) = constants_.d_exp - d_diag;
-    constdouble(4) = config_.davidson_threshold;
+    constdouble(4) = davidson_threshold_override.value_or(config_.davidson_threshold);
     constdouble(5) = core_energy;
 
     // helper_PFCI.py:2526-2528 (fresh mode) slices self.d_cmo, unrotated
@@ -151,6 +153,10 @@ CiStateAverageResult CasscfCiStateAverageSolver::solve(const Matrix& eigenvecs_g
     // helper_PFCI.py:7699/7712-7728-ish: constint[8] == 0 after the call
     // means the Davidson diagonalization converged.
     result.ci_diagonalization_converged = (constint[8] == 0);
+    // helper_PFCI.py:12433 (current_residual = self.constdouble[4]):
+    // constdouble(4) is overwritten in place by get_roots -- see
+    // CiStateAverageResult::residual_norm's own doc comment.
+    result.residual_norm = constdouble(4);
 
     // helper_PFCI.py:2543-2545: avg_energy = sum_i weight[i] * eigenvals[i].
     double avg_energy = 0.0;

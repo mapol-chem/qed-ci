@@ -14,4 +14,10 @@ bool should_reset_bfgs_reference(const BfgsReferenceState& state, bool qn_optimi
            state.consecutive_skips >= 3;
 }
 
+bool should_reset_bfgs_reference_point(const BfgsReferenceState& state, bool qn_optimization) {
+    return (state.density_norm_change > 0.025 && qn_optimization) ||
+           state.predicted_energy > 0.0 ||
+           state.qn_count == 1;
+}
+
 } // namespace casscf

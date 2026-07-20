@@ -58,4 +58,17 @@ struct BfgsReferenceState {
 // Note Python `and` binds tighter than `or`, which is preserved here.
 bool should_reset_bfgs_reference(const BfgsReferenceState& state, bool qn_optimization);
 
+// Faithful port of the DIFFERENT, 3-clause condition at helper_PFCI.py:11227
+// (top-of-outer-pass reference-point-refresh trigger, distinct from
+// should_reset_bfgs_reference()'s 4-clause dispatch condition above -- see
+// that function's own comment, and BfgsOperator's header doc comment, for
+// why the two are not the same condition in the real Python):
+//   density_norm_change > 0.025 and qn_optimization or predicted_energy > 0
+//     or qn_count == 1
+// Note: no `consecutive_skips >= 3` disjunct here, unlike
+// should_reset_bfgs_reference(). True -> adopt this pass's freshly-built
+// (pre-step) U2/A_tilde/G/reduced_hessian_diagonal as the new BFGS
+// reference point and clear its history (BfgsOperator::reset_reference()).
+bool should_reset_bfgs_reference_point(const BfgsReferenceState& state, bool qn_optimization);
+
 } // namespace casscf

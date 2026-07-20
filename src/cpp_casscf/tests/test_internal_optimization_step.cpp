@@ -45,8 +45,12 @@ class MockCiSolver final : public CiStateAverageSolver {
 public:
     explicit MockCiSolver(bool converged) : converged_(converged) {}
 
-    CiStateAverageResult solve(const Matrix& eigenvecs_guess, bool use_staged_inputs = false) override {
+    CiStateAverageResult solve(const Matrix& eigenvecs_guess, bool use_staged_inputs = false,
+                                std::optional<double> davidson_threshold_override = std::nullopt,
+                                std::optional<int> davidson_maxiter_override = std::nullopt) override {
         (void)use_staged_inputs;
+        (void)davidson_threshold_override;
+        (void)davidson_maxiter_override;
         ++call_count;
         CiStateAverageResult result;
         result.eigenvectors = eigenvecs_guess; // pass-through, arbitrary for this test

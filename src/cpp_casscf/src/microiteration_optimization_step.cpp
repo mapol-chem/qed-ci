@@ -222,6 +222,19 @@ void CasscfMicroiterationOptimizationStep::run(CasscfContext& context, const Mat
     int N_orbital_optimization_steps = 1;
     int N_microiterations = max_microiterations_;
 
+    // helper_PFCI.py:11504-11505 (and identically at every other
+    // solve_gltr_trust_region/solve_gltr_with_operator call site inside
+    // microiteration_optimization6): every GLTR call here explicitly
+    // overrides that function's own defaults (tol=1e-4, max_iter=100) with
+    // tol=1e-7, max_iter=1000. The call below previously passed no
+    // GltrConfig at all, silently using the looser defaults -- invisible
+    // against real-chemistry validation because GLTR is convergent and a
+    // looser tolerance rarely changes the accepted step enough to fail
+    // those tolerances, but a real, previously-unflagged deviation from
+    // the Python nonetheless. Fixed here (and reused by the QN branch's
+    // own two GLTR calls, which need the same config).
+    const GltrConfig gltr_config{/*tol=*/1e-7, /*max_iter=*/1000};
+
     int microiteration = 0;
     while (microiteration < N_microiterations) {
         // helper_PFCI.py:11019: trust_radius reset to 0.5 once per OUTER
@@ -290,7 +303,7 @@ void CasscfMicroiterationOptimizationStep::run(CasscfContext& context, const Mat
             int hard_case = 0;
             if (gradient_norm > 1e-3) {
                 if (n_negative == 0) {
-                    GltrTrustRegionSolver solver(hessian_op, hd.reduced_hessian_diagonal);
+                    GltrTrustRegionSolver solver(hessian_op, hd.reduced_hessian_diagonal, gltr_config);
                     TrustRegionResult result = solver.solve(reduced_gradient, trust_radius);
                     step = result.step;
                     hard_case = 0;

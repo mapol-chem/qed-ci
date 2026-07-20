@@ -5,6 +5,8 @@
 #include "casscf/macroiteration_driver.hpp"
 #include "casscf/types.hpp"
 
+#include <optional>
+
 namespace casscf {
 
 // The real CiStateAverageSolver -- the CI diagonalization + weighted
@@ -56,7 +58,9 @@ public:
     CasscfCiStateAverageSolver(Dimensions dims, CasscfCiConfig config, CasscfPhysicalConstants constants,
                                  CasscfCiSetup& setup, CasscfContext& context);
 
-    CiStateAverageResult solve(const Matrix& eigenvecs_guess, bool use_staged_inputs = false) override;
+    CiStateAverageResult solve(const Matrix& eigenvecs_guess, bool use_staged_inputs = false,
+                                std::optional<double> davidson_threshold_override = std::nullopt,
+                                std::optional<int> davidson_maxiter_override = std::nullopt) override;
 
 private:
     Dimensions dims_;

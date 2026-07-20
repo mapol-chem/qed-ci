@@ -47,8 +47,12 @@ class ScriptedCiSolver final : public CiStateAverageSolver {
 public:
     explicit ScriptedCiSolver(std::vector<double> avg_energies) : avg_energies_(std::move(avg_energies)) {}
 
-    CiStateAverageResult solve(const Matrix& eigenvecs_guess, bool use_staged_inputs = false) override {
+    CiStateAverageResult solve(const Matrix& eigenvecs_guess, bool use_staged_inputs = false,
+                                std::optional<double> davidson_threshold_override = std::nullopt,
+                                std::optional<int> davidson_maxiter_override = std::nullopt) override {
         (void)use_staged_inputs;
+        (void)davidson_threshold_override;
+        (void)davidson_maxiter_override;
         last_eigenvecs_guess = eigenvecs_guess;
         CiStateAverageResult result;
         result.avg_energy = avg_energies_.at(call_count);

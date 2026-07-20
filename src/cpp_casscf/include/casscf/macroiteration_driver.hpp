@@ -4,6 +4,8 @@
 #include "casscf/tensor_types.hpp"
 #include "casscf/types.hpp"
 
+#include <optional>
+
 namespace casscf {
 
 // Result of the CI diagonalization + weighted state-average energy + RDM
@@ -36,6 +38,17 @@ struct CiStateAverageResult {
     // convergence (e.g. test_macroiteration_driver.cpp's) don't need to set
     // it explicitly.
     bool ci_diagonalization_converged = true;
+
+    // The achieved RMS residual norm across roots, helper_PFCI.py:12433
+    // (current_residual = self.constdouble[4]) -- confirmed by reading
+    // ci_solver.c directly (get_roots/build_H_diag_cas_spin's convergence
+    // loop, e.g. ~1625-1669): constdouble[4] is an INPUT (the requested
+    // Davidson convergence threshold) on the way in, but the C function
+    // OVERWRITES it before returning with the actual achieved residual
+    // norm averaged over davidson_roots -- a genuine second output, not
+    // just an echoed threshold. Used by MicroiterationOptimizationStep's
+    // QN-adjacent "total_norm" outer-loop break (helper_PFCI.py:11243-11256).
+    double residual_norm = 0.0;
 };
 
 // Not yet implemented: needs the CI Davidson solver (c_get_roots) and the
@@ -71,7 +84,20 @@ struct CiStateAverageResult {
 class CiStateAverageSolver {
 public:
     virtual ~CiStateAverageSolver() = default;
-    virtual CiStateAverageResult solve(const Matrix& eigenvecs_guess, bool use_staged_inputs = false) = 0;
+
+    // davidson_threshold_override/davidson_maxiter_override: helper_PFCI.py:
+    // 12395-12404 -- microiteration_optimization6's CI-solve call resets
+    // constdouble[4]/constint[8] to 1e-9/5 every pass by default, but
+    // overrides them to 0.1*||reduced_gradient||/10000 once qn_count > 0
+    // (a looser, cheaper CI resolve once the QN path is active and orbital
+    // steps are already small). std::nullopt (default, both call sites
+    // that predate QN) means "use the constructor-time
+    // CasscfCiConfig::davidson_threshold/davidson_maxiter unchanged" --
+    // only MicroiterationOptimizationStep's QN-active passes pass a real
+    // value here.
+    virtual CiStateAverageResult solve(const Matrix& eigenvecs_guess, bool use_staged_inputs = false,
+                                        std::optional<double> davidson_threshold_override = std::nullopt,
+                                        std::optional<int> davidson_maxiter_override = std::nullopt) = 0;
 };
 
 // Corresponds to internal_optimization3(E0, eigenvecs), helper_PFCI.py:6847-7961:
