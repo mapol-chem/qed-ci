@@ -84,8 +84,7 @@ one and reuses it for every bisection step, matching how the Python's
 caller threads `guess_vector`/`restart` through repeated calls.
 
 **Three real bugs were caught by testing this against a dense reference**
-(the first two fixed in an earlier session, see the git history / commit
-for detail if useful; the third confirmed but **not yet fixed**, see below):
+(all three now fixed, see the git history / commit for detail if useful):
 
 1. The Python's "converged in iteration 1" exit paths return the
    *unit-vector* basis `Q` (rebuilt unconditionally after the exit check,
@@ -142,17 +141,18 @@ for detail if useful; the third confirmed but **not yet fixed**, see below):
    execution that hits it. This port's own "Easy Case" branch does the
    analogous fake-substitution (`DavidsonIterationResult::eigenvalues` gets
    only 1 entry, `davidson_driven_lstrs_solver.cpp`'s wrapper fills in
-   `mu1=1e10`/`w1≈0` for the shared bisection core) but is **missing**
-   Python's equivalent unconditional overwrite -- `theta(1)` is sitting
+   `mu1=1e10`/`w1≈0` for the shared bisection core) but was **missing**
+   Python's equivalent unconditional overwrite -- `theta(1)` was sitting
    right there, already computed (confirmed via the `CASSCF_DEBUG_DAVIDSON`
    trace macro, which prints real `theta1=...` values at exactly this exit
    point), just not kept. The `all_required_converged` exit branch a few
-   lines below (`davidson_augmented_hessian_solver.cpp:458-463`) already
-   does this correctly (`theta.head(2)`) -- the fix is to make the "Easy
-   Case" branch do the same, not a new mechanism. **Not yet applied** as of
-   this writing; a small, narrowly-scoped, high-confidence fix once someone
-   picks it up (see the `CasscfMicroiterationOptimizationStep` section
-   below for the full validation-sweep context this was found in).
+   lines below (`davidson_augmented_hessian_solver.cpp:458-463`) already did
+   this correctly (`theta.head(2)`). **Fixed** (`ab0e759`): the "Easy Case"
+   branch now keeps both entries (`theta.head(2)`/
+   `full_eigvecs.topRows(2).transpose()`), the same pattern
+   `all_required_converged` already used. Fixed the `davidson_lstrs_006`
+   cross-check (step error `1.6e-4` -> `6.8e-14`) with no regressions
+   (`ctest` 21/21, `sweep_macroiterations.sh` 8/8).
 
 The first two were only found by testing genuinely difficult cases (a small
 guess subspace on a larger problem, forcing several expansion iterations
@@ -160,6 +160,62 @@ and at least one soft restart) rather than trusting the "does it converge
 in iteration 1" tests alone; the third was only found by testing against
 *real chemistry* on a system rich enough to actually exercise this exit
 branch -- worth keeping in mind if this solver is extended further.
+
+**Digging into `collapse_subspace`/`restart` test coverage** (user request,
+prompted by not remembering how to reproduce the extreme cases): audited
+which of the `collapse_subspace_check_`x`restart` combinations the existing
+tests actually exercise, via a temporary `CASSCF_DEBUG_DAVIDSON` trace
+(reverted after). `test_davidson_augmented_hessian_solver.cpp` only ever
+calls `solve()` once, `restart=false`, converging before the expansion
+loop even runs. `test_davidson_expansion_loop.cpp` does drive
+`restart=true` resumes (5 calls on one shared solver instance, via
+`DavidsonDrivenLstrsSolver`), but with a guess-subspace cap so small
+(`max_guess_dimension=2` on a 15-dim problem) that
+`collapse_subspace_check_` flips `true` by the second Davidson iteration of
+the *first* call and stays `true` for every subsequent `restart=true`
+resume. **`restart=true` resuming a subspace that has never collapsed was
+untested anywhere** -- and, per real captured Python `stdout` across every
+config we have logs for (LiH/6-31G and LiH/6-311G (4,4)/(4,8), and a harder
+stretched/2-photon H2O/6-31G case, H_dim up to 97), `collapse subspace
+check` prints `False` on **every single call, 190/190** -- it never fires
+in real chemistry at these problem sizes, while `restart=True` is the
+dominant call pattern (8/11 calls in the LiH cases). So the untested
+combination is the realistic production one, and the only place
+`collapse=true` was exercised at all was a synthetic config with
+dimension ratios nothing like production.
+
+Added two tests to close this: `test_davidson_restart_no_collapse.cpp` (a
+20-dim problem at the *unmodified* production `dim1 = n/2` default -- three
+`solve()` calls, `restart=false` then two `restart=true` resumes, all on a
+persisted subspace that never collapses, each cross-validated against a
+fresh dense `bordered_eigensolve()` reference at that call's alpha) and
+`test_davidson_initial_guess_partial_convergence.cpp` (the other coverage
+gap flagged: the `nroots==2` initial-guess check converging exactly one of
+the two roots, not zero or both -- a deterministic construction using a
+zero-gradient coordinate, which is exactly decoupled from the border row/
+column of the augmented matrix and so converges to machine precision the
+instant it's selected into the guess subspace, while a genuinely
+border-coupled second root needs real Davidson correction; see that file's
+header comment for the full construction and why it's not producible by a
+random search).
+
+Also found and fixed, while adding this coverage: `solve()`'s early-return
+path (`!restart`, converged within the initial guess) properly returns its
+own populated `DavidsonProblemStructure` (`n_negative`/`min_diag`/
+`max_diag`/`gradient_norm`/`dim1`), but the `run_expansion_loop()` path --
+i.e. every case that actually enters the loop, which per the finding above
+is close to the universal real-world case -- silently returned a
+default-constructed (all-zero) `structure` instead, since
+`run_expansion_loop()` builds its own fresh `DavidsonIterationResult` with
+no way to see the caller's already-computed `structure`. Not consumed by
+any production caller today (`DavidsonDrivenLstrsSolver` ignores
+`result.structure` entirely, and the one existing test that reads it only
+ever hits the early-return path), so not a correctness bug against real
+chemistry -- but a real, silent data-loss bug in the port. Fixed by
+copying `structure` into `run_expansion_loop()`'s returned result before
+returning it in `solve()`; `test_davidson_restart_no_collapse.cpp` asserts
+`structure.dim1`/`structure.n_negative` come back correct through the
+expansion-loop path specifically, so this can't silently regress.
 
 ## Shared bisection core
 
@@ -2113,6 +2169,15 @@ tests/
   test_davidson_driven_lstrs_solver.cpp full-subspace-coverage check against dense LstrsSolver reference
   test_davidson_expansion_loop.cpp      small guess subspace on a larger problem -- forces real expansion
                                          iterations + a soft restart, cross-validated against LstrsSolver
+  test_davidson_restart_no_collapse.cpp restart=true resuming a persisted subspace that has NEVER hit its
+                                         size cap (collapse_subspace_check_ stays false) at production-
+                                         realistic dim1=n/2 dimension ratios -- previously untested combo,
+                                         and per real captured Python logs the dominant real-world one (see
+                                         "Digging into collapse_subspace/restart test coverage" above)
+  test_davidson_initial_guess_partial_convergence.cpp  nroots==2 initial-guess check converging exactly
+                                         one of the two roots (not zero or both) -- deterministic
+                                         zero-gradient-coordinate construction, see that file's header
+                                         comment
   test_orbital_rotation.cpp             orthogonality/det==1, closed-form 2x2 case, small-angle series branch
   test_macroiteration_driver.cpp        loop shape against mocks of all 4 collaborators: convergence latch,
                                          n_in_a==0 skip, H/d_cmo/U_total bookkeeping (via CasscfContext), restart branch

@@ -141,6 +141,12 @@ DavidsonIterationResult DavidsonAugmentedHessianSolver::solve(
         };
         for (int r : roots_to_check) check_residual(r);
 
+#ifdef CASSCF_DEBUG_DAVIDSON
+        std::fprintf(stderr, "initial guess check: nroots=%d resid0=%.3e resid1=%.3e conv0=%d conv1=%d theta0=%.6f theta1=%.6f\n",
+                     nroots, residual_norm(0), residual_norm(1), (int)conv_status[0], (int)conv_status[1],
+                     theta.size() > 0 ? theta(0) : 0.0, theta.size() > 1 ? theta(1) : 0.0);
+#endif
+
         if (nroots == 1) {
             if (conv_status[0]) {
                 if (check_root_usable(Q_eigvec_based.row(0).transpose(), theta(0), reduced_gradient, trust_radius)) {
@@ -256,8 +262,21 @@ DavidsonIterationResult DavidsonAugmentedHessianSolver::solve(
     }
 
     std::vector<int> roots_to_check = single_root ? std::vector<int>{0} : std::vector<int>{0, 1};
-    return run_expansion_loop(reduced_gradient, H_diag_augmented, alpha, trust_radius, H_dim, maxdim,
-                               nroots, roots_to_check, root_0_locked, L_old, restart);
+    DavidsonIterationResult expansion_result = run_expansion_loop(
+        reduced_gradient, H_diag_augmented, alpha, trust_radius, H_dim, maxdim, nroots, roots_to_check,
+        root_0_locked, L_old, restart);
+    // run_expansion_loop() default-constructs its own DavidsonIterationResult
+    // (it has no way to see `structure`, computed only up here in solve()) --
+    // carry it over so callers see the real problem-structure diagnostics
+    // instead of a silently all-zero default whenever the expansion loop
+    // actually ran (the common case: `structure` was previously only
+    // populated on the "converged already in the initial guess subspace"
+    // fast-path return above). Not consumed by any production caller today
+    // (DavidsonDrivenLstrsSolver ignores `structure` entirely), but this was
+    // a real data-loss bug in the port, caught while adding test coverage
+    // for the restart=true/no-collapse expansion-loop path.
+    expansion_result.structure = structure;
+    return expansion_result;
 }
 
 DavidsonIterationResult DavidsonAugmentedHessianSolver::run_expansion_loop(
