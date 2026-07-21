@@ -4,6 +4,7 @@
 // session; recommend a dedicated scrutiny pass by a stronger reasoning
 // model before trusting for production chemistry results.
 
+#include "casscf/orbital_sigma.hpp"
 #include "casscf/tensor_types.hpp"
 #include "casscf/types.hpp"
 
@@ -50,8 +51,9 @@ class BfgsOperator {
 public:
     BfgsOperator(Matrix U_zero, Matrix A_tilde_zero, Tensor4 G_zero, Dimensions dims, int m_history = 10);
 
-    // get_bfgs_mv(v), helper_PFCI.py:10857-10906: B_0*v (via orbital_sigma3
-    // at the current reference point) plus the recursive limited-memory
+    // get_bfgs_mv(v), helper_PFCI.py:10857-10906: B_0*v (via the fast
+    // OrbitalSigmaOperator at the current reference point -- built once per
+    // reference point, not per apply) plus the recursive limited-memory
     // correction from every history entry, oldest to newest (matches the
     // Python's `for (s, y, Bs, rho_y, rho_Bs) in history:` iteration order
     // -- history_ is stored oldest-first, same as self.bfgs_history).
@@ -82,6 +84,10 @@ private:
     Dimensions dims_;
     int m_history_;
     std::vector<BfgsHistoryEntry> history_;
+    // B_0 = the exact orbital Hessian at the reference point. Built once here
+    // (and rebuilt in reset_reference), reused across every apply() -- the
+    // whole point of the reference point being "fixed" until reset.
+    OrbitalSigmaOperator b0_op_;
 };
 
 } // namespace casscf

@@ -59,7 +59,10 @@ LinearEquationSolveResult linear_equation_solve(const Matrix& U, const Matrix& A
                                                   const Vector& reduced_gradient, const Vector& denom, int max_iter,
                                                   double conv_thresh, const Dimensions& dims,
                                                   unsigned int random_seed) {
-    auto apply = [&](const Vector& v) { return orbital_sigma3(U, A_tilde, G, v, dims); };
+    // Fast path: build the sigma operator once (fixed U/A_tilde/G) and reuse
+    // it across every iteration's Hessian-vector product.
+    OrbitalSigmaOperator sigma_op(U, A_tilde, G, dims);
+    auto apply = [&sigma_op](const Vector& v) { return sigma_op.apply(v); };
     return linear_equation_solve(apply, reduced_gradient, denom, max_iter, conv_thresh, random_seed);
 }
 

@@ -167,6 +167,23 @@ void run_case(const Dimensions& dims, unsigned seed, const char* label) {
     const Vector reference = reference_orbital_sigma3(U, A_tilde, G, R_reduced, dims);
 
     expect_near((production - reference).norm(), 0.0, 1e-10, label);
+
+    // FAST path (OrbitalSigmaOperator / orbital_sigma3_fast) vs the legacy
+    // loop production version -- same math, BLAS-backed evaluation with the G
+    // blocks precomputed once. Checked both via the one-shot convenience
+    // wrapper and via a reused operator applied to two different vectors
+    // (the reuse path is the one production actually exercises: build once,
+    // apply many times per solve).
+    const Vector fast = orbital_sigma3_fast(U, A_tilde, G, R_reduced, dims);
+    expect_near((fast - production).norm(), 0.0, 1e-10, label);
+
+    OrbitalSigmaOperator op(U, A_tilde, G, dims);
+    expect_near((op.apply(R_reduced) - production).norm(), 0.0, 1e-10, label);
+    // A second, independent vector through the SAME operator -- guards
+    // against the operator accidentally caching anything vector-dependent.
+    std::mt19937 rng2(seed ^ 0xabcdu);
+    const Vector R2 = random_matrix(dims.index_map_size(), 1, rng2);
+    expect_near((op.apply(R2) - orbital_sigma3(U, A_tilde, G, R2, dims)).norm(), 0.0, 1e-10, label);
 }
 
 } // namespace
@@ -215,6 +232,20 @@ int main() {
         dims.nmo = 3;
         dims.n_occupied = 2;
         run_case(dims, 7u, "case4: production matches independent reference (minimal dims)");
+    }
+
+    // --- Case 5: a larger case (nmo=20, n_occ=8), representative of the
+    //     performance regime the fast path exists for -- exercises the
+    //     BLAS-backed matmuls at a nontrivial size and confirms the fast/loop
+    //     agreement holds beyond the tiny hand cases above. ---
+    {
+        Dimensions dims;
+        dims.n_in_a = 4;
+        dims.n_act_orb = 4;
+        dims.n_virtual = 12;
+        dims.nmo = 20;
+        dims.n_occupied = 8;
+        run_case(dims, 20240720u, "case5: fast/loop agree at a larger size (nmo=20, n_occ=8)");
     }
 
     if (failures == 0) {

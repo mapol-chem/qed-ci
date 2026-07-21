@@ -361,11 +361,12 @@ void CasscfMicroiterationOptimizationStep::run(CasscfContext& context, const Mat
                 // "solve step for original hessian", helper_PFCI.py:11263-11298:
                 // the exact reduced Hessian evaluated at the frozen BFGS
                 // reference point (U_zero/A_tilde_zero/G_zero), NOT the live
-                // U2_/A_tilde_full/fi.G.
+                // U2_/A_tilde_full/fi.G. Fast path: one OrbitalSigmaOperator
+                // built from the (fixed, for this solve) reference point,
+                // reused across every GLTR Hessian-vector product.
+                OrbitalSigmaOperator exact_sigma_op(bfgs->U_zero(), bfgs->A_tilde_zero(), bfgs->G_zero(), dims);
                 auto exact_hessian_op = std::make_shared<MatrixFreeHessianOperator>(
-                    [&](const Vector& v) {
-                        return orbital_sigma3(bfgs->U_zero(), bfgs->A_tilde_zero(), bfgs->G_zero(), v, dims);
-                    },
+                    [&exact_sigma_op](const Vector& v) { return exact_sigma_op.apply(v); },
                     dims.index_map_size());
                 GltrTrustRegionSolver solver(exact_hessian_op, reduced_hessian_diagonal_zero, gltr_config);
                 step = solver.solve(reduced_gradient, trust_radius).step;
@@ -419,11 +420,21 @@ void CasscfMicroiterationOptimizationStep::run(CasscfContext& context, const Mat
             accepted_count = 0; // helper_PFCI.py:11438
             int orbital_optimization_step = 0;
 
-            auto hessian_op = std::make_shared<MatrixFreeHessianOperator>(
-                [&](const Vector& v) { return orbital_sigma3(U2_, A_tilde_full, fi.G, v, dims); },
-                dims.index_map_size());
-
             while (orbital_optimization_step < N_orbital_optimization_steps) {
+                // Fast path: rebuild the sigma operator to reflect the
+                // current U2_/A_tilde_full (both change on accept at the
+                // bottom of this loop); fi.G is fixed across the whole outer
+                // pass. The G-block precompute is a small fraction of one
+                // Hessian-vector product and amortizes over the many products
+                // each GLTR/Davidson solve below performs, so rebuilding here
+                // (at most N_orbital_optimization_steps times per outer pass)
+                // is negligible next to reusing it across that solve. Reused
+                // for both the trust-region solve and the (rare) dense Newton
+                // fallback's unit-vector materialization.
+                OrbitalSigmaOperator sigma_op(U2_, A_tilde_full, fi.G, dims);
+                auto hessian_op = std::make_shared<MatrixFreeHessianOperator>(
+                    [&sigma_op](const Vector& v) { return sigma_op.apply(v); }, dims.index_map_size());
+
                 const double gradient_norm = reduced_gradient.norm();
                 if (gradient_norm < 0.1 * convergence_threshold && microiteration > 0) {
                     small_gradient_convergence = true;
@@ -465,8 +476,7 @@ void CasscfMicroiterationOptimizationStep::run(CasscfContext& context, const Mat
                         step = solve_result.solution;
                     } else {
                         Matrix dense_hessian = materialize_dense_hessian(
-                            [&](const Vector& v) { return orbital_sigma3(U2_, A_tilde_full, fi.G, v, dims); },
-                            dims.index_map_size());
+                            [&sigma_op](const Vector& v) { return sigma_op.apply(v); }, dims.index_map_size());
                         MinresResult minres_result = minres_solve(dense_hessian, -reduced_gradient, /*rtol=*/1e-6);
                         step = minres_result.x;
                     }

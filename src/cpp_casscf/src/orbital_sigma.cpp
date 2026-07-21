@@ -114,4 +114,108 @@ Vector orbital_sigma3(const Matrix& U, const Matrix& A_tilde, const Tensor4& G, 
     return sigma_reduced;
 }
 
+// ---------------------------------------------------------------------------
+// FAST path: OrbitalSigmaOperator. Same math as orbital_sigma3 above, but
+// evaluated as BLAS-backed Eigen matrix products with the G blocks
+// precomputed once. The matmul structure here is exactly that of the
+// independently-written, already-cross-validated reference implementation in
+// test_orbital_sigma.cpp (promoted into production, restructured so the G
+// blocks -- which don't depend on the input vector -- are built once in the
+// constructor rather than per apply()). See orbital_sigma.hpp's top comment.
+// ---------------------------------------------------------------------------
+
+OrbitalSigmaOperator::OrbitalSigmaOperator(const Matrix& U, const Matrix& A_tilde, const Tensor4& G,
+                                            const Dimensions& dims)
+    : dims_(dims), index_map_(build_index_map(dims)), U_(U), A3_tilde_(A_tilde + A_tilde.transpose()) {
+    const int nmo = dims.nmo;
+    const int n_in_a = dims.n_in_a;
+    const int n_act = dims.n_act_orb;
+
+    // G blocks, laid out exactly as test_orbital_sigma.cpp's reference (which
+    // mirrors helper_PFCI.py:11084-11097's G1 = G.transpose(3,1,2,0) then
+    // block-slice-and-reshape). Built once here; reused every apply().
+    G_ij_ = Matrix(nmo * n_in_a, nmo * n_in_a);
+    for (int a = 0; a < nmo; ++a)
+        for (int b = 0; b < n_in_a; ++b)
+            for (int c = 0; c < nmo; ++c)
+                for (int d = 0; d < n_in_a; ++d) G_ij_(a * n_in_a + b, c * n_in_a + d) = G(d, b, c, a);
+
+    G_ti_ = Matrix(nmo * n_act, nmo * n_in_a);
+    for (int a = 0; a < nmo; ++a)
+        for (int b = 0; b < n_act; ++b)
+            for (int c = 0; c < nmo; ++c)
+                for (int d = 0; d < n_in_a; ++d) G_ti_(a * n_act + b, c * n_in_a + d) = G(d, n_in_a + b, c, a);
+
+    G_tu_ = Matrix(nmo * n_act, nmo * n_act);
+    for (int a = 0; a < nmo; ++a)
+        for (int b = 0; b < n_act; ++b)
+            for (int c = 0; c < nmo; ++c)
+                for (int d = 0; d < n_act; ++d) G_tu_(a * n_act + b, c * n_act + d) = G(n_in_a + d, n_in_a + b, c, a);
+}
+
+Vector OrbitalSigmaOperator::apply(const Vector& R_reduced) const {
+    const int nmo = dims_.nmo;
+    const int n_occ = dims_.n_occupied;
+    const int n_in_a = dims_.n_in_a;
+    const int n_act = dims_.n_act_orb;
+
+    // Step 1 (helper_PFCI.py:8556-8560): embed reduced vector into (nmo, n_occ).
+    Matrix R_total = Matrix::Zero(nmo, n_occ);
+    for (std::size_t j = 0; j < index_map_.size(); ++j)
+        R_total(index_map_[j].first, index_map_[j].second) = R_reduced(static_cast<int>(j));
+
+    // Step 2 (helper_PFCI.py:8566-8576): temp1 = U @ R_total - the "swapped"
+    // contraction, as matmuls (see test_orbital_sigma.cpp for the loop form
+    // this reproduces).
+    const Matrix temp1 =
+        U_ * R_total - (U_.leftCols(n_occ) * R_total.transpose()).leftCols(n_occ);
+
+    // Step 3 (helper_PFCI.py:8580-8608): contract temp1 against the G blocks.
+    // R1_i/R1_a pack temp1's inactive/active occupied columns the same way
+    // G_ij/G_ti/G_tu's second index does.
+    Vector R1_i(nmo * n_in_a);
+    for (int a = 0; a < nmo; ++a)
+        for (int b = 0; b < n_in_a; ++b) R1_i(a * n_in_a + b) = temp1(a, b);
+    Vector R1_a(nmo * n_act);
+    for (int a = 0; a < nmo; ++a)
+        for (int b = 0; b < n_act; ++b) R1_a(a * n_act + b) = temp1(a, n_in_a + b);
+
+    const Vector sigma_i = G_ij_.transpose() * R1_i + G_ti_.transpose() * R1_a;
+    const Vector sigma_a = G_ti_ * R1_i + G_tu_.transpose() * R1_a;
+
+    Matrix W(nmo, n_occ);
+    for (int c = 0; c < nmo; ++c) {
+        for (int d = 0; d < n_in_a; ++d) W(c, d) = sigma_i(c * n_in_a + d);
+        for (int dd = 0; dd < n_act; ++dd) W(c, n_in_a + dd) = sigma_a(c * n_act + dd);
+    }
+
+    // Step 4 (helper_PFCI.py:8612-8618): M4 = U^T @ W; main term M4(r,k), the
+    // r < n_occupied correction is M4(k, r).
+    const Matrix M4 = U_.transpose() * W;
+    Matrix sigma_total(nmo, n_occ);
+    for (int r = 0; r < nmo; ++r)
+        for (int k = 0; k < n_occ; ++k) sigma_total(r, k) = M4(r, k) - (r < n_occ ? M4(k, r) : 0.0);
+
+    // Step 5 (helper_PFCI.py:8620-8680): the four A3_tilde correction terms.
+    const Matrix TA = A3_tilde_ * R_total;                             // (nmo, n_occ)
+    const Matrix TC = R_total * A3_tilde_.leftCols(n_occ).transpose(); // (nmo, nmo)
+    const Matrix TD = A3_tilde_.leftCols(n_occ) * R_total.transpose(); // (nmo, nmo)
+    for (int r = 0; r < nmo; ++r) {
+        for (int k = 0; k < n_occ; ++k) {
+            double val = sigma_total(r, k);
+            val -= 0.5 * TA(r, k);
+            if (r < n_occ) val += 0.5 * TA(k, r);
+            val -= 0.5 * TC(r, k);
+            val += 0.5 * TD(r, k);
+            sigma_total(r, k) = val;
+        }
+    }
+
+    // helper_PFCI.py:8682-8686: reduce back down via index_map.
+    Vector sigma_reduced(static_cast<int>(index_map_.size()));
+    for (std::size_t j = 0; j < index_map_.size(); ++j)
+        sigma_reduced(static_cast<int>(j)) = sigma_total(index_map_[j].first, index_map_[j].second);
+    return sigma_reduced;
+}
+
 } // namespace casscf

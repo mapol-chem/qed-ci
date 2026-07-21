@@ -32,7 +32,7 @@ retargeting onto TAMM's distributed tensor API.
 | `internal_transformation`, `internal_optimization_exact_energy`, `internal_optimization_predicted_energy`, `step_control` | **Fully ported, tested** (hand-computed cases) | helper_PFCI.py:6452-6517, 6734-6871, 6873-6877, 8018-8025 |
 | `calculate_ci_dependent_energy` | **Fully ported, tested** (hand-computed cases) | helper_PFCI.py:6047-6113 |
 | `CasscfInternalOptimizationStep` (real `InternalOptimizationStep`) | **Fully ported, tested** against a hand-solvable all-zero case; 2 documented deviations | helper_PFCI.py:6847-7961 (`internal_optimization3`) |
-| `orbital_sigma3` (matrix-free full-space Hessian-vector product) | **Fully ported, cross-validated** against an independently-written reference implementation | helper_PFCI.py:8285-8316, 8533-8686 (`orbital_sigma3` -> `build_sigma_reduced7`) -- see "`orbital_sigma3`" below |
+| `orbital_sigma3` (legacy loop) + `OrbitalSigmaOperator` (fast) | **Fully ported, cross-validated**; fast BLAS-backed 3-block path added, legacy loop kept as TAMM reference + oracle | helper_PFCI.py:8285-8316, 8533-8686 (`orbital_sigma3` -> `build_sigma_reduced7`) -- see "`orbital_sigma3`" below |
 | `microiteration_exact_energy`, `microiteration_predicted_energy2` | **Fully ported, tested** | helper_PFCI.py:8800-8826, 9455-9467 -- see "`microiteration_energy.hpp`/`.cpp`" below |
 | `BfgsOperator` (real `get_bfgs_mv` + damped history update) | **Fully ported, tested** | helper_PFCI.py:10857-10906 (`get_bfgs_mv`), 11128-11176 (damped update) -- see "`BfgsOperator`" below |
 | `microiteration_ci_integrals_transform` | **Fully ported, tested** | helper_PFCI.py:8689-8798 |
@@ -608,6 +608,37 @@ an ordinary coding bug), but it is strong evidence against a transcription
 or algebra error, which was the primary risk on a function this intricate.
 A real captured-data dump hook is a reasonable next enhancement once
 `CasscfMicroiterationOptimizationStep` exists to consume it.
+
+**Fast path (`OrbitalSigmaOperator`)**: this is the hottest path in the
+whole solver stack -- called once per Hessian-vector product from GLTR,
+`DavidsonDrivenLstrsSolver`, `BfgsOperator`'s `B_0` term, and
+`linear_equation_solve`, i.e. many times per microiteration outer pass. The
+explicit-loop `orbital_sigma3(...)` above is **kept as legacy** (the closest
+line-for-line correspondence to the Python's index algebra, and the intended
+reference for the future TAMM retarget -- per the developer, the loop-based
+construction of every intermediate/orbital transform in this port is kept as
+legacy precisely because loops map to TAMM's indexed-tensor API more directly
+than fused matmul chains) *and* as the correctness oracle. Alongside it,
+`OrbitalSigmaOperator` implements the identical math as BLAS-backed Eigen
+matrix products, using the **same three-block `G` decomposition the Python
+itself uses for performance** (`G_ij`/`G_ti`/`G_tu`, from
+`G.transpose(3,1,2,0)` then block-reshape, helper_PFCI.py:11084-11097). The
+blocks don't depend on the input vector, so they're precomputed **once** in
+the operator's constructor and reused across every Hessian-vector product in
+a solve, rather than the loop version's per-call re-traversal of the raw `G`
+tensor. Measured ~3-4x faster per apply on random problems (nmo 12-60), which
+directly enables larger side-by-side-vs-Python cases; the remaining ceiling
+is that a single Hessian-vector product is a memory-bound mat*vec* (BLAS
+helps over scalar loops but can't make it compute-bound, and the sequential
+Krylov recurrences in GLTR/Davidson rule out batching into a GEMM). The
+matmul structure is exactly `test_orbital_sigma.cpp`'s independent reference
+(already cross-validated against the loop since this module was written);
+that test now also asserts `OrbitalSigmaOperator`/`orbital_sigma3_fast`
+reproduce the legacy loop to ~1e-10, including a larger (nmo=20) case and a
+reused-operator/second-vector check. All 8 real-chemistry
+`sweep_macroiterations.sh` configs (QN path included, since `BfgsOperator`'s
+`B_0` now routes through the operator) still match Python to ~1e-12 with the
+fast path wired into every hot call site.
 
 ## `microiteration_energy.hpp`/`.cpp`
 

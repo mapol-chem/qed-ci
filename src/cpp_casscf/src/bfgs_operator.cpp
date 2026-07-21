@@ -11,10 +11,11 @@ BfgsOperator::BfgsOperator(Matrix U_zero, Matrix A_tilde_zero, Tensor4 G_zero, D
       A_tilde_zero_(std::move(A_tilde_zero)),
       G_zero_(std::move(G_zero)),
       dims_(dims),
-      m_history_(m_history) {}
+      m_history_(m_history),
+      b0_op_(U_zero_, A_tilde_zero_, G_zero_, dims_) {}
 
 Vector BfgsOperator::apply(const Vector& v) const {
-    Vector sigma = orbital_sigma3(U_zero_, A_tilde_zero_, G_zero_, v, dims_);
+    Vector sigma = b0_op_.apply(v);
     for (const BfgsHistoryEntry& e : history_) {
         const double y_dot_v = e.y.dot(v);
         const double s_dot_sigma = e.s.dot(sigma);
@@ -49,6 +50,7 @@ void BfgsOperator::reset_reference(Matrix U_zero, Matrix A_tilde_zero, Tensor4 G
     U_zero_ = std::move(U_zero);
     A_tilde_zero_ = std::move(A_tilde_zero);
     G_zero_ = std::move(G_zero);
+    b0_op_ = OrbitalSigmaOperator(U_zero_, A_tilde_zero_, G_zero_, dims_);
     history_.clear();
 }
 
