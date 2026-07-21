@@ -92,6 +92,7 @@ add_library(casscf_trust_region
     src/integral_transformer.cpp
     src/ci_setup.cpp
     src/ci_state_average_solver.cpp
+    src/root_analysis.cpp
     src/linear_rm_solver.cpp
     src/linear_equation_solve.cpp
 )
@@ -193,6 +194,10 @@ add_test(NAME ci_state_average_solver COMMAND test_ci_state_average_solver)
 add_executable(test_linear_equation_solve tests/test_linear_equation_solve.cpp)
 target_link_libraries(test_linear_equation_solve PRIVATE casscf_trust_region)
 add_test(NAME linear_equation_solve COMMAND test_linear_equation_solve)
+
+add_executable(test_root_analysis tests/test_root_analysis.cpp)
+target_link_libraries(test_root_analysis PRIVATE casscf_trust_region)
+add_test(NAME root_analysis COMMAND test_root_analysis)
 
 # Standalone tool, not a ctest: replays real Python-captured solver instances
 # from a dump directory (see validation/dump_lih_case.py). Run manually:

@@ -42,6 +42,7 @@ retargeting onto TAMM's distributed tensor API.
 | `CasscfCiSetup` | **Fully ported, tested against the real compiled C backend** (a genuine Davidson CI diagonalization, hand-solvable non-interacting test problem) | `PFHamiltonianGenerator.__init__`'s CI graph/table setup, helper_PFCI.py:1507-1613 -- see "`CasscfCiSetup`/`CasscfCiStateAverageSolver`" below |
 | `CasscfCiStateAverageSolver` (real `CiStateAverageSolver`) | **Fully ported, tested against the real compiled C backend** | helper_PFCI.py:2424-2553 -- see "`CasscfCiSetup`/`CasscfCiStateAverageSolver`" below |
 | `LinearRMSolver` / `linear_equation_solve` | **Fully ported, tested** -- closes the last 2 documented `hard_case==2` substitutions in this solver stack | residual_minimization.py, helper_PFCI.py:16342-16399 -- see "`LinearRMSolver`/`linear_equation_solve`" below |
+| `analyze_roots` / `check_total_spin` (`root_analysis.hpp`/`.cpp`) | **Fully ported, tested** (bit/index decoding hand-checked; `check_total_spin` against the real compiled `build_sigma_s_square`) | helper_PFCI.py:1959-2077 -- see "Root analysis" below |
 
 ### A naming correction from the first pass of this scaffold
 
@@ -1665,6 +1666,90 @@ update at all -- a completely different, unambiguous signature).
 than 1 (or any energy difference beyond `1e-8`) as a real failure worth
 investigating, not something to wave through by default.
 
+## Root analysis (`root_analysis.hpp`/`.cpp`)
+
+Port of the post-CI-solve **"ACTIVE PART OF DETERMINANTS THAT HAVE THE MOST
+IMPORTANT CONTRIBUTIONS"** block, helper_PFCI.py:1959-2077. For each CI root it
+reports `<S^2>` (with a singlet/triplet/quintet label and a running per-label
+counter), then walks that root's coefficients in descending `|c|` order,
+decoding every CI index back into its alpha/beta active-orbital occupation
+lists and photon-number block, and accumulating an excitation-rank histogram.
+
+Three near-identical copies of this block exist in the Python
+(helper_PFCI.py:1959, 2618, 5457). This ports the **first** -- the only one
+carrying the excitation-rank accumulation (confirmed by grep: `"excitation
+ranke"` appears at exactly one line, helper_PFCI.py:2072). The other two are
+strictly smaller subsets and can reuse this if ever needed.
+
+Nothing new was needed from the C backend: `get_graph` was already declared in
+`ci_orbital_backend.hpp`, and `index_to_string` / `build_sigma_s_square` were
+already present in `ci_solver.c`/`.h` and just needed `extern "C"`
+declarations adding. `CasscfCiSetup` already exposes everything else
+(`Y()`/`table()`/`b_array()`/`S_diag()`/`num_alpha()`/`H_dim()`).
+
+**Index decoding**, transcribed literally from helper_PFCI.py:2003-2032:
+
+```
+Idet     = position % num_det
+photon_p = (position - Idet) / num_det
+Ib       = Idet % num_alpha      <- BETA  from the remainder
+Ia       = Idet / num_alpha      <- ALPHA from the quotient
+```
+
+That alpha/beta assignment is the Python's own and is *not* the order the
+names suggest; it is kept exactly as written rather than "corrected".
+
+**Faithfully reproduced quirks** (all deliberate, all verified against the
+Python source rather than assumed):
+
+- `excitation_rank` is initialized to `0` *before* the `j` loop and only ever
+  updated inside `if i == 0` (helper_PFCI.py:2015, 2044-2047), so every state
+  above the ground state reports rank `0` for all its determinants. The port
+  does the same, and a test asserts it.
+- `np.sum(a_ref != a_curr)` is an **elementwise** comparison of two
+  equal-length occupied-orbital lists (both have `n_act_a` entries, since
+  particle number is conserved) -- it counts positions at which the sorted
+  occupation lists differ, **not** a set difference.
+- The analysis loops over all `H_dim` determinants but only *prints* the first
+  11 (`if j <= 10`). The rank accumulation runs over all of them, so
+  `analyze_roots` retains the full sorted list and only
+  `print_root_analysis` applies the cap.
+- The commented-out inactive-orbital prepend at helper_PFCI.py:2059/2061 is
+  not ported; `alphalist2`/`betalist2` are just the active indices shifted by
+  `n_in_a`.
+- `self.casci_config_count_by_rank`/`casci_sum_squared_weight_by_rank` are
+  allocated once per run and **accumulated** into, so
+  `ExcitationRankAccumulators` is passed in/out rather than returned fresh.
+
+**Two documented deviations:**
+
+1. `np.argsort`'s default quicksort is **not stable**, so exactly-tied `|c|`
+   values may order differently than in the Python. The port uses
+   `std::stable_sort` to stay deterministic; ties only reorder
+   degenerate-magnitude determinants and never change the multiset of
+   reported amplitudes.
+2. Python prints `eigenvals[i]` and `total_spin` with `str()`/`repr()` float
+   formatting, which C++ iostreams cannot reproduce character-for-character.
+   `print_root_analysis` uses `%.12g` for those two fields; every other field
+   (the `%20.12lf` amplitude, `%9.3d` position, `%4.1d` photon, the orbital
+   lists, the excitation rank) matches the Python's formatting exactly,
+   including the original `"excitation ranke"` spelling.
+
+`analyze_roots` is kept separate from `print_root_analysis` so the analysis is
+testable without scraping text.
+
+**Tested** (`tests/test_root_analysis.cpp`, 2 active orbitals / `n_act_a == 1`
+/ `H_spatial2 == diag(0,1)` / `J == K == 0` / `N_p == 0` -- the same
+hand-solvable active space `test_ci_state_average_solver.cpp` uses, giving
+`num_alpha == 2`, `num_det == 4`, `H_dim == 4` and a fully hand-writable
+index -> determinant table). `check_total_spin` is exercised against the
+**real compiled `build_sigma_s_square`** using cases whose `<S^2>` follows
+from first principles and needs no knowledge of the backend's phase
+conventions: a closed-shell determinant gives `0`, a single open-shell
+`S_z == 0` determinant gives `1`, and the two normalized combinations of the
+open-shell pair give `{0, 2}` (asserted as a set, since which combination is
+the triplet depends on the determinant phase convention).
+
 ## What's still open
 
 - **The macroiteration/microiteration driver loop**
@@ -2190,6 +2275,9 @@ include/casscf/
                                          shared by CasscfMicroiterationOptimizationStep and
                                          DavidsonDrivenLstrsSolver (implemented, tested; see that
                                          section above)
+  root_analysis.hpp                     analyze_roots/check_total_spin/obt_bits_to_obt_index_list --
+                                         the post-CI-solve most-important-determinants analysis
+                                         (implemented, tested; see "Root analysis" above)
 src/                                    corresponding .cpp files (ci_orbital_backend.hpp has no .cpp,
                                          declarations only)
 tests/
@@ -2284,4 +2372,9 @@ validation/
                                          config (pruned to just macroiteration_bootstrap_000/
                                          macroiteration_convergence_000 -- see that script's header
                                          comment for how they were generated and how to regenerate)
+  test_root_analysis.cpp                hand-checked bit/index decoding, excitation-rank rules and the
+                                         state-0-only quirk, n_in_a shifting, print formatting; plus
+                                         check_total_spin against the real compiled build_sigma_s_square
+                                         (closed-shell -> 0, open-shell determinant -> 1, the two
+                                         open-shell combinations -> {0, 2})
 ```

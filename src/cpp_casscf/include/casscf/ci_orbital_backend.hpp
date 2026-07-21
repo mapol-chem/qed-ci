@@ -26,6 +26,13 @@ extern "C" {
 // ported as of this header's writing).
 void get_graph(size_t N, size_t n_o, int* Y);
 
+// Maps a lexical alpha/beta string INDEX to its occupation BIT-STRING, using
+// the graph `Y` built by get_graph. Returns `size_t` in ci_solver.h (the
+// ctypes wrapper c_index_to_string, helper_PFCI.py:497, hides this). Used by
+// the root analysis (root_analysis.hpp) to recover which orbitals a given
+// determinant index occupies.
+size_t index_to_string(int index, int N, int n_o, int* Y);
+
 void get_string(double* h1e, double* h2e, double* H_diag, int* b_array, int* table,
                  int* table_creation, int* table_annihilation, int N_p, int num_alpha, int nmo, int N,
                  int n_o, int n_in_a, double E_core, double omega, double Enuc, double dc,
@@ -37,6 +44,13 @@ void build_H_diag_cas_spin(double* h1e, double* h2e, double* H_diag, int N_p, in
 
 void build_S_diag(double* S_diag, int num_alpha, int nmo, int N_ac, int n_o_ac, int n_o_in,
                     double shift);
+
+// Applies the S^2 operator to `c_vectors`, accumulating into `c1_vectors`
+// (scaled by `scale`). Backs check_total_spin (helper_PFCI.py:5169-5188) via
+// the ctypes wrapper c_sigma_s_square -- see root_analysis.hpp.
+void build_sigma_s_square(double* c_vectors, double* c1_vectors, double* S_diag, int* b_array,
+                            int* table1, int num_links, int n_o_ac, int num_alpha, int num_state,
+                            int N_p, double scale);
 
 // ci_solver.c -- per-macroiteration CI Davidson solve + active-space RDMs
 // (CasscfCiStateAverageSolver, not yet ported as of this header's writing).
