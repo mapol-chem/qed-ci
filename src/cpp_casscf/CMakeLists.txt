@@ -158,6 +158,10 @@ add_executable(test_orbital_sigma tests/test_orbital_sigma.cpp)
 target_link_libraries(test_orbital_sigma PRIVATE casscf_trust_region)
 add_test(NAME orbital_sigma COMMAND test_orbital_sigma)
 
+add_executable(test_logging tests/test_logging.cpp)
+target_link_libraries(test_logging PRIVATE casscf_trust_region)
+add_test(NAME logging COMMAND test_logging)
+
 add_executable(test_intermediates_fast tests/test_intermediates_fast.cpp)
 target_link_libraries(test_intermediates_fast PRIVATE casscf_trust_region)
 add_test(NAME intermediates_fast COMMAND test_intermediates_fast)
