@@ -794,6 +794,77 @@ reused-operator/second-vector check. All 8 real-chemistry
 `B_0` now routes through the operator) still match Python to ~1e-12 with the
 fast path wired into every hot call site.
 
+### `microiteration_ci_integrals_transform_fast` -- symmetry-reduced
+
+BLAS-backed twin of `microiteration_ci_integrals_transform`, **wired into
+production** at both call sites in `CasscfMicroiterationOptimizationStep`
+(`microiteration_optimization_step.cpp:417` and `:559`, both on the
+accepted-inner-step path). Speedup 5.4x/2.8x/3.0x/3.2x at
+`n_act = 8/12/14/16`.
+
+This one is different from the other two `_fast` twins in a way that must be
+understood before touching it: **it uses two independent kinds of saving,
+only one of which is unconditional.**
+
+**1. Exact algebra (holds for arbitrary inputs).** The `active_fock_core`
+J/K terms are, in the legacy loop, an `O(n_act^2 * nmo^2 * n_in_a)` quintuple
+loop:
+
+    acc(t,u) = sum_{r,i} U(r,i) * sum_s Jslab(t,u)(r,s) * U(s,i)
+
+The sum over the inactive index factorizes straight out of the slab:
+
+    acc(t,u) = trace(Uocc^T Jslab(t,u) Uocc) = <Jslab(t,u), D>,   D = Uocc Uocc^T
+
+`D` is an inactive density matrix built **once**, so a whole factor of
+`n_in_a` disappears. J and K then merge into a *single* GEVM against
+`<2J - K, D>`, since they enter with coefficients `+2` and `-1`. This is the
+same packing trick as `build_intermediates_fast`'s `fock_general`.
+
+**2. ERI permutational symmetry -- verified, not assumed.** Measured on real
+captured dumps (`dumps_lih`, `dumps_compare_h2o_stretched_2photon`), against
+a `~1e0` element scale:
+
+| tensor | symmetry | measured |
+|---|---|---|
+| `J(k,l,r,s) = (rs\|kl)` | `k<->l` | 5.7e-17 / 2.5e-15 |
+| `J` | `r<->s` (independently) | 9.7e-17 / 4.0e-15 |
+| `K(k,l,r,s) = (rk\|sl)` | joint `k<->l` **and** `r<->s` | 1.4e-16 / 2.6e-15 |
+| `K` | `k<->l` alone | **0.37 / 1.03 -- NOT a symmetry** |
+| `K` | `r<->s` alone | **0.37 / 1.03 -- NOT a symmetry** |
+
+That last pair is why K's reduction is not the same as J's -- the obvious
+guess (treat K like J) is wrong by an O(1) amount, not by round-off. Both
+two-index transforms in `active_twoeint` are therefore computed over a
+triangle of slabs only:
+
+- J part: `N(v,w) = Uact^T Jslab(v,w) Uact`, and `Jslab(w,v) == Jslab(v,w)`,
+  so `N(w,v) == N(v,w)` -- compute `v <= w`, **copy**.
+- K part: `M(t,v) = Tact^T Kslab(t,v) Tact`, and
+  `Kslab(v,t) == Kslab(t,v)^T`, so `M(v,t) == M(t,v)^T` -- compute
+  `t <= v`, **transpose**.
+
+Each halves the dominant `O(n_act^3 * nmo^2)` term.
+
+**Consequence for testing, and the trap to avoid.** Because of (2) this
+function is *not* equivalent to its legacy oracle for arbitrary J/K -- only
+for J/K carrying the physical symmetries. `test_microiteration_ci_integrals_
+transform_fast.cpp` therefore does **not** fill J/K with independent randoms
+the way the other two `_fast` tests do. It builds them from a single random
+`(nmo)^4` tensor explicitly symmetrized to full 8-fold ERI symmetry, then
+sliced through the code's own conventions (`J(k,l,r,s) = g(r,s,k,l)`,
+`K(k,l,r,s) = g(r,k,s,l)`), and derives `L` from `J`/`K` by its real defining
+formula. That is stronger than symmetrizing J and K separately: it guarantees
+they come from *one* integral set, as the real ones do. Everything else (`U`,
+`d_cmo_ref`, `active_twoeint_ref`) stays unsymmetrized random so a stray
+transpose in the non-ERI parts still shows up. Filling J/K independently at
+random WILL produce spurious failures.
+
+Validation: agreement ~1e-14 across five shapes including `n_in_a == 0`;
+ctest 27/27; `sweep_macroiterations.sh` 8/8 PASS with every macroiteration
+count still matching Python exactly -- the real-chemistry confirmation that
+the symmetry assumptions hold where it counts.
+
 ## `microiteration_energy.hpp`/`.cpp`
 
 **Fully ported, tested.** `microiteration_exact_energy` (helper_PFCI.py:8800-8826):

@@ -414,7 +414,9 @@ void CasscfMicroiterationOptimizationStep::run(CasscfContext& context, const Mat
             U2_ = U3;
             last_accepted_step = step;
 
-            MicroiterationCiIntegralsResult ci_int = microiteration_ci_integrals_transform(
+            // BLAS-backed, ERI-symmetry-reduced production path; the legacy
+            // loop stays as the Python correspondence and this path's oracle.
+            MicroiterationCiIntegralsResult ci_int = microiteration_ci_integrals_transform_fast(
                 U2_, fi.E_core, fi.fock_core, fi.L, context.J, context.K, fi.active_twoeint, context.d_cmo, dims);
             staging.active_fock_core = ci_int.active_fock_core;
             staging.active_twoeint = ci_int.active_twoeint;
@@ -556,7 +558,7 @@ void CasscfMicroiterationOptimizationStep::run(CasscfContext& context, const Mat
                         reduced_gradient = extract_reduced_gradient(gr.gradient_tilde, index_map);
                     }
 
-                    MicroiterationCiIntegralsResult ci_int = microiteration_ci_integrals_transform(
+                    MicroiterationCiIntegralsResult ci_int = microiteration_ci_integrals_transform_fast(
                         U2_, fi.E_core, fi.fock_core, fi.L, context.J, context.K, fi.active_twoeint, context.d_cmo, dims);
                     staging.active_fock_core = ci_int.active_fock_core;
                     staging.active_twoeint = ci_int.active_twoeint;
