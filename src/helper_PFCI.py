@@ -3398,12 +3398,52 @@ class PFHamiltonianGenerator:
         self.Ca_hf = wfn.Ca()
 
         ##random orbital guess
-        #U = ortho_group.rvs(wfn.nmo())
-        #new_C = np.einsum("pq,qr->pr", self.C, U)
-
-        #self.C[:,:] = new_C[:,:]
-        ##update d_cmo
-        #self.d_cmo = np.dot(self.C.T, self.d_ao).dot(self.C)
+        # Validation tooling: a seeded random unitary rotation of the initial
+        # orbitals, replacing the commented-out unseeded block that used to
+        # sit here. Gated behind an env var, so it is a no-op on every normal
+        # run and on the whole C++ validation path -- set
+        # QED_RANDOM_ORBITAL_SEED=<int> to enable.
+        #
+        # Why this is kept: canonical-guess CASSCF converges in ~8
+        # macroiterations on the small test systems, which is too easy to
+        # discriminate between convergence strategies. The random-guess regime
+        # is what reproduces the hard >10-macroiteration cases, and this is
+        # the only reproducer for them. cpp_casscf/validation/run_mgh_case.py
+        # and run_qn_case.py both depend on it. See cpp_casscf/README.md, "The
+        # QN/BFGS convergence-variant experiment", for what it was used for
+        # and what that experiment concluded.
+        _rand_orb_seed = os.environ.get("QED_RANDOM_ORBITAL_SEED")
+        if _rand_orb_seed is not None:
+            # Fix the MO sign convention BEFORE rotating. psi4's threaded SCF
+            # returns the same orbitals every run (occupied subspaces agree to
+            # ~1e-14) but with run-to-run-varying column SIGNS -- measured at
+            # OMP_NUM_THREADS=16: 5 columns identical, 8 sign-flipped, 0
+            # genuinely different. Those signs are unphysical and harmless for
+            # a canonical-orbital run, but `C @ U` mixes all columns, so a
+            # flipped sign makes the ROTATED guess a genuinely different
+            # orbital set -- which made this experiment non-reproducible
+            # (9/12/11 macroiterations across identical repeats) until the
+            # signs were pinned here. Deterministic rule: make the
+            # largest-magnitude coefficient of every column positive.
+            # np.round before argmax is essential, not cosmetic: in a molecule
+            # with symmetry-equivalent atoms (water's two hydrogens) an MO has
+            # EXACTLY tied largest coefficients, and the two differ only by
+            # ~1e-15 of threading noise -- so a raw argmax picks between them
+            # arbitrarily and the sign rule itself becomes non-reproducible
+            # (measured: 3 of 13 columns fragile, margins 1.5e-15 to 6e-14).
+            # Rounding collapses the tie so argmax's first-occurrence rule
+            # resolves it deterministically by lowest index.
+            for _j in range(self.C.shape[1]):
+                _k = int(np.argmax(np.round(np.abs(self.C[:, _j]), 10)))
+                if self.C[_k, _j] < 0.0:
+                    self.C[:, _j] *= -1.0
+            if os.environ.get("QED_DUMP_PREROT") is not None:
+                np.savetxt(os.environ["QED_DUMP_PREROT"], self.C)
+            U = ortho_group.rvs(wfn.nmo(), random_state=int(_rand_orb_seed))
+            new_C = np.einsum("pq,qr->pr", self.C, U)
+            self.C[:, :] = new_C[:, :]
+            # update d_cmo
+            self.d_cmo = np.dot(self.C.T, self.d_ao).dot(self.C)
 
         np.savetxt("orbital2.out", self.C)
         # print("Unitary matrix")
