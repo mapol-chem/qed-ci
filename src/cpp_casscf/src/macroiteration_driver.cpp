@@ -1,4 +1,7 @@
 #include "casscf/macroiteration_driver.hpp"
+
+#include <cstdio>
+#include <string>
 #include "casscf/orbital_rotation.hpp"
 
 #include <cmath>
@@ -16,6 +19,22 @@ MacroiterationDriver::MacroiterationDriver(MacroiterationDriverConfig config,
       internal_step_(&internal_step),
       microiteration_step_(&microiteration_step),
       integral_transformer_(&integral_transformer) {}
+
+namespace {
+// Fixed-width numeric formatting so the records stay column-stable and
+// greppable (see logging.hpp): energies at 12 decimals, small quantities in
+// scientific notation.
+std::string fmt12(double x) {
+    char buf[40];
+    std::snprintf(buf, sizeof(buf), "%.12f", x);
+    return buf;
+}
+std::string fmte(double x) {
+    char buf[40];
+    std::snprintf(buf, sizeof(buf), "%.3e", x);
+    return buf;
+}
+} // namespace
 
 MacroiterationResult MacroiterationDriver::run(Matrix eigenvecs0, double avg_energy0, CasscfContext& context) {
     const Dimensions& dims = config_.dims;
@@ -61,6 +80,22 @@ MacroiterationResult MacroiterationDriver::run(Matrix eigenvecs0, double avg_ene
             context.D_tu_avg = ci_result.D_tu_avg;
             context.D_tuvw_avg = ci_result.D_tuvw_avg;
             context.Dpe_tu_avg = ci_result.Dpe_tu_avg;
+
+            // [ci] -- one record per macroiteration-level CI solve.
+            CASSCF_LOG(context.log, PrintLevel::Normal,
+                       "[ci]     macro=" << macroiteration << " phase=macro"
+                       << " E=" << fmt12(ci_result.avg_energy)
+                       << " res=" << fmte(ci_result.residual_norm)
+                       << " roots=" << ci_result.eigenvalues.size()
+                       << " conv=" << (ci_result.ci_diagonalization_converged ? 1 : 0));
+
+            // [ci.root] -- per-root detail is Debug and above; at Normal the
+            // individual roots are not listed (only spin exceptions are).
+            for (int r = 0; r < ci_result.eigenvalues.size(); ++r) {
+                CASSCF_LOG(context.log, PrintLevel::Debug,
+                           "[ci.root] macro=" << macroiteration << " root=" << r
+                           << " E=" << fmt12(ci_result.eigenvalues(r)));
+            }
         }
 
         // helper_PFCI.py:2597-2600's print call site, same values, same
@@ -68,6 +103,12 @@ MacroiterationResult MacroiterationDriver::run(Matrix eigenvecs0, double avg_ene
         if (config_.on_macroiteration_end) {
             config_.on_macroiteration_end(macroiteration, old_avg_energy, new_avg_energy);
         }
+
+        // [macro] -- the top-level per-macroiteration record.
+        CASSCF_LOG(context.log, PrintLevel::Normal,
+                   "[macro]  iter=" << macroiteration
+                   << " E=" << fmt12(new_avg_energy)
+                   << " dE=" << fmte(new_avg_energy - old_avg_energy));
 
         if (std::abs(new_avg_energy - old_avg_energy) < config_.energy_convergence) {
             convergence = true;

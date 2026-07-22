@@ -30,6 +30,7 @@
 
 #include <cmath>
 #include <cstdio>
+#include <iostream>
 #include <filesystem>
 #include <fstream>
 #include <sstream>
@@ -106,10 +107,20 @@ Dimensions load_dims(const fs::path& path) {
 int main(int argc, char** argv) {
     fs::path dump_dir = fs::path("../validation/dumps_macro_lih");
     bool disable_qn = false;
+    // Output verbosity (logging.hpp). Default stays Silent so the existing
+    // sweep scripts, which parse this tool's own summary lines, are unaffected.
+    PrintLevel print_level = PrintLevel::Silent;
     for (int i = 1; i < argc; ++i) {
         const std::string arg = argv[i];
         if (arg == "--disable-qn") {
             disable_qn = true;
+        } else if (arg.rfind("--print-level=", 0) == 0) {
+            const std::string v = arg.substr(14);
+            if (v == "silent") print_level = PrintLevel::Silent;
+            else if (v == "normal") print_level = PrintLevel::Normal;
+            else if (v == "debug") print_level = PrintLevel::Debug;
+            else if (v == "trace") print_level = PrintLevel::Trace;
+            else { std::fprintf(stderr, "unknown --print-level=%s (silent|normal|debug|trace)\n", v.c_str()); return 2; }
         } else {
             dump_dir = fs::path(arg);
         }
@@ -165,6 +176,8 @@ int main(int argc, char** argv) {
                 avg_energy0, python_avg_energy, python_macroiterations);
 
     CasscfContext context;
+    context.log.level = print_level;
+    context.log.os = &std::cout;
     context.H_spatial2 = H_spatial2;
     context.d_cmo = d_cmo;
     context.J = J;

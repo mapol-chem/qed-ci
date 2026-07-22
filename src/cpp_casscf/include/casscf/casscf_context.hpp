@@ -1,5 +1,6 @@
 #pragma once
 
+#include "casscf/logging.hpp"
 #include "casscf/tensor_types.hpp"
 #include "casscf/types.hpp"
 
@@ -24,6 +25,14 @@ namespace casscf {
 // H_spatial2/d_cmo/U_total. See macroiteration_driver.hpp's
 // InternalOptimizationStep doc comment.
 struct CasscfContext {
+    // --- Diagnostics ---
+    // Output verbosity. Lives here rather than in a global because every
+    // collaborator already receives the context by reference, and a global
+    // would break test isolation (the 28 ctest binaries run in one process
+    // each but must not inherit each other's settings). Defaults to Silent,
+    // so the library stays quiet unless a driver opts in -- see logging.hpp.
+    Logger log;
+
     // --- Full molecular-orbital-space state ---
     Matrix H_spatial2; // (nmo, nmo) -- one-electron Hamiltonian in the current MO basis
     Matrix d_cmo;       // (nmo, nmo) -- PF dipole-coupling integrals in the current MO basis
