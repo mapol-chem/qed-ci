@@ -375,24 +375,32 @@ production** at both of its call sites in
 `:193`) -- note the second sits *inside* the internal-iteration loop, so this
 function runs more often per macroiteration than the full-block one does.
 
-The transformations mirror `build_intermediates_fast`'s, **except for one
-term that is genuinely different and must not be copied across** -- exactly
-the trap flagged in the two-surprises note below. `A`'s active-active
-two-electron contraction is:
+The transformations mirror `build_intermediates_fast`'s, except that `A`'s
+active-active two-electron contraction is *written* differently in the two
+Python functions:
 
 | | einsum | J indexing |
 |---|---|---|
 | `build_intermediates` | `"vwrt,tuvw->ru"` | `J(v, w, r, t)` -- `r` third |
 | `build_intermediates_internal` | `"rtvw,tuvw->ru"` | `occupied_J(r, t, v, w)` -- `r` leading |
 
-The reason is structural rather than arbitrary, which is worth knowing
-before "fixing" either one: `build_intermediates`'s `J` is
-`(n_occupied, n_occupied, nmo, nmo)`, so a free index running over the full
-orbital range can only live in the trailing two axes. Here `occupied_J` is
-the fully occupied-restricted `(n_occupied)^4` block and `r` runs over
-`n_occupied`, so it can and does sit in the *leading* axis. Consequence for
-the packing: the folded operand comes out as `P(r, (t,v,w))` and the GEMM is
-`P * Q` directly, where the full-block twin needs `P.transpose() * Q`.
+**These are the same contraction, not two different formulas** -- see the
+CORRECTED note in the two-surprises list below for the numerical
+verification on real dumps. `(rt|vw) == (vw|rt)` by ERI bra-ket symmetry, so
+either slice of `occupied_J` gives the same answer on real data. The
+asymmetry is one of available storage, not formula: `build_intermediates`'s
+`J` is `(n_occupied, n_occupied, nmo, nmo)`, so an `r` ranging over `nmo`
+*cannot* be the leading axis and the `rtvw` slice does not exist there;
+`occupied_J` is the full `(n_occupied)^4` block, so the internal function
+could use either and the Python writes `rtvw`.
+
+The port reproduces the Python's literal choice, per the faithful-port rule.
+Consequence for the packing: the folded operand comes out as `P(r, (t,v,w))`
+and the GEMM is `P * Q` directly, where the full-block twin needs
+`P.transpose() * Q`. Note that the cross-validation test's random inputs are
+*not* ERI-symmetric, so the two forms do differ under it -- that is what
+pins this path to the Python's literal choice, and it means switching forms
+deliberately would require symmetrizing the test inputs first.
 
 Because `rot_dim == n_occupied` here (not `nmo`), every slab is
 `(n_occupied, n_occupied)` and the dominant active-active `G` term is
@@ -442,13 +450,41 @@ doc comments):
   "resolved" what looked like a shape-mismatch bug in the Python before
   realizing the actual array shape made it consistent all along).
 - `build_intermediates`'s active-active two-electron term in `A`
-  (`"vwrt,tuvw->ru"`) uses a genuinely different index pattern than
-  `build_intermediates_internal`'s analogous term (`"rtvw,tuvw->ru"`) --
-  not the same formula under different variable names. Confirmed by tracing
-  both term by term rather than assumed from the similar structure
-  elsewhere, which is why these two functions were ported as two separate,
-  literal translations rather than one shared core (unlike the LSTRS
-  bisection, where the shared structure *was* verified to be exact).
+  (`"vwrt,tuvw->ru"`, helper_PFCI.py:5927) is written with a different index
+  pattern than `build_intermediates_internal`'s analogous term
+  (`"rtvw,tuvw->ru"`, helper_PFCI.py:5723).
+
+  **CORRECTED 2026-07-22 (developer-raised).** An earlier pass of this file
+  claimed these were "genuinely different index patterns -- not the same
+  formula under different variable names." **That claim was wrong.** They
+  are the *same contraction*: `(rt|vw) == (vw|rt)` by the bra-ket exchange
+  symmetry of real ERIs, which `occupied_J` carries exactly. Verified on
+  three real captured dumps (`dumps_lih`, `dumps_macro_lih`,
+  `dumps_compare_h2o_stretched_2photon`): `occupied_J` matches
+  `occupied_J.transpose(2,3,0,1)` to `2.8e-16`/`2.8e-16`/`6.7e-16` (the bra
+  and ket swaps are exactly 0), and slicing `twoeint_vwrt` out of the *same*
+  `occupied_J` and contracting it the full-block way reproduces the
+  `rtvw` result to relative `2.1e-16`/`6.1e-17`/`3.7e-16`.
+
+  What is actually true, and is the useful thing to carry forward:
+  `build_intermediates` has **no choice** -- `self.J` is
+  `(n_occupied, n_occupied, nmo, nmo)`, so an `r` ranging over `nmo` cannot
+  be the leading axis and the `rtvw` slice simply does not exist in that
+  array. `build_intermediates_internal` **does** have a choice, because
+  `occupied_J` is the full `(n_occupied)^4` block; the Python happens to
+  write `rtvw`. So the asymmetry is one of available storage, not of
+  formula.
+
+  Two consequences worth knowing before touching either function:
+  - The port reproduces the Python's literal choice (`rtvw` in the internal
+    function), per the faithful-port rule. Either form would be numerically
+    valid on real data.
+  - `test_intermediates_internal_fast.cpp` fills `occupied_J` with random,
+    *unsymmetrized* values, which do NOT satisfy the ERI symmetry. The two
+    forms therefore genuinely disagree under that test, which is what pins
+    the fast path to the Python's literal choice. If you ever switch the
+    form deliberately, that test must be given ERI-symmetric inputs or it
+    will fail for a reason that is not a bug.
 
 Implemented as explicit nested index loops (matching each einsum's index
 labels term by term) rather than chained `Eigen::Tensor::contract()`/

@@ -96,22 +96,31 @@ SmallBlockIntermediates build_intermediates_internal(const Matrix& occupied_fock
 // form stays as the line-for-line Python correspondence, the TAMM-retarget
 // reference, and this path's correctness oracle.
 //
-// The transformations mirror build_intermediates_fast's, with ONE term that
-// is genuinely different and must not be copied across -- the `A`
+// The transformations mirror build_intermediates_fast's. The one term
+// *written* differently between the two Python functions is `A`'s
 // active-active two-electron term:
 //
 //   build_intermediates          "vwrt,tuvw->ru"   J(v, w, r, t)
 //   build_intermediates_internal "rtvw,tuvw->ru"   occupied_J(r, t, v, w)
 //
-// These are not the same formula renamed. The reason is structural rather
-// than arbitrary, which is worth knowing before "fixing" either one:
-// build_intermediates's J is (n_occupied, n_occupied, nmo, nmo), so a free
-// index running over the full orbital range can only live in the trailing
-// two axes -- hence `r` third. Here occupied_J is the fully
-// occupied-restricted (n_occupied)^4 block and `r` runs over n_occupied, so
-// it can and does sit in the LEADING axis. Consequence for the packing
-// below: the folded operand comes out as P(r, (t,v,w)) and the GEMM is
-// `P * Q` directly, where build_intermediates_fast needs `P.transpose() * Q`.
+// These are the SAME contraction, not two formulas: (rt|vw) == (vw|rt) by
+// ERI bra-ket symmetry, which real occupied_J carries exactly (verified on
+// three captured dumps to ~1e-16 relative -- see README.md's "two
+// internal-representation surprises" note, which previously asserted the
+// opposite and has been corrected). What differs is which slices exist:
+// build_intermediates's J is (n_occupied, n_occupied, nmo, nmo), so an `r`
+// ranging over nmo cannot be the leading axis and the rtvw slice is simply
+// unavailable there. occupied_J is the full (n_occupied)^4 block, so the
+// internal function could use either form; the Python writes rtvw and this
+// port reproduces that literal choice.
+//
+// Consequence for the packing below: the folded operand comes out as
+// P(r, (t,v,w)) and the GEMM is `P * Q` directly, where
+// build_intermediates_fast needs `P.transpose() * Q`. Note the
+// cross-validation test's random inputs are NOT ERI-symmetric, so the two
+// forms do disagree under it -- that is what pins this path to the Python's
+// literal choice, and switching forms would require symmetrizing those
+// inputs first.
 //
 // Because rot_dim == n_occupied here (not nmo), every slab is
 // (n_occupied, n_occupied) and the dominant active-active G term is
