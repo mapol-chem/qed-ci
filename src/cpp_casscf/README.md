@@ -26,7 +26,7 @@ retargeting onto TAMM's distributed tensor API.
 | `build_unitary_matrix` | **Fully ported, tested** | helper_PFCI.py:6131-6164 |
 | `MacroiterationDriver::run` (outer loop orchestration) | **Fully ported, tested** against mocked collaborators (see "documented gap" below) | helper_PFCI.py:2394-3060 |
 | `minres_solve` (Paige/Saunders MINRES) | **Fully ported, tested** against real ill-conditioned chemistry data; used by `LstrsSolver`'s hard_case==2 | helper_PFCI.py:7547-7549 (`scipy.sparse.linalg.minres` call site) |
-| `build_intermediates(_internal)`/`build_gradient(_and_hessian)`/`build_hessian_diagonal` | **Fully ported, tested** against real captured data | see "Intermediates building" section |
+| `build_intermediates(_internal)`/`build_gradient(_and_hessian)`/`build_hessian_diagonal` | **Fully ported, tested** against real captured data; `build_intermediates` additionally has a BLAS-backed `_fast` twin (legacy loop kept as TAMM reference + oracle) | see "Intermediates building" section |
 | `OrbitalHessianGuessProvider` (real `HessianGuessProvider`) | **Fully ported, tested** against real captured data | helper_PFCI.py:16614-16712 (`build_orbital_hessian_guess`/`hessian_guess`) |
 | `CasscfContext` | Done (struct, no logic to test) | bundles self.H_spatial2/d_cmo/U_total/J/K/occupied_*/E_core/gkl2/H_diag3 -- see "Shared CasscfContext" below |
 | `internal_transformation`, `internal_optimization_exact_energy`, `internal_optimization_predicted_energy`, `step_control` | **Fully ported, tested** (hand-computed cases) | helper_PFCI.py:6452-6517, 6734-6871, 6873-6877, 8018-8025 |
@@ -307,6 +307,51 @@ gradient, and Hessian diagonal the trust-region solvers consume is now
 | `build_gradient` | helper_PFCI.py:6188-6203 | `full_space==True` branch only (the only one called, from `microiteration_optimization6`) |
 | `build_gradient_and_hessian` | helper_PFCI.py:6282-6441 | `full_space==False` branch only (the only one called, from `internal_optimization3`); the `full_space==True` branch is both unreachable *and* dominated by ~O(n^6) nested-loop debug/`allclose` validation code with no bearing on the returned values, so it wasn't ported at all |
 | `build_hessian_diagonal` | helper_PFCI.py:14416-14513 | direct port; reduction into `reduced_hessian_diagonal` reuses `build_index_map` |
+
+### `build_intermediates_fast` -- BLAS-backed twin
+
+`build_intermediates` now has a `_fast` counterpart with an identical
+signature and identical outputs, following the same legacy/fast arrangement
+as `orbital_sigma3` / `OrbitalSigmaOperator` (see that section for the
+rationale -- the loop form stays as the line-for-line Python correspondence
+and the intended TAMM-retarget reference, and doubles as the fast path's
+correctness oracle).
+
+The dominant term is the active-active `G` block, `O(n_act^4 * nmo^2)` scalar
+FMAs with 4-index tensor addressing in the legacy loop. Both of its
+contractions become GEMMs against the active-active `J`/`K` blocks packed once
+as `(n_act^2, nmo^2)`:
+
+- `"vwrs,tuvw->turs"` -- the `D_tuvw_avg` operand is *exactly* its own RowMajor
+  buffer reshaped to `(n_act^2, n_act^2)`, no copy
+- `"vwrs,tvuw->turs"` -- a genuine index permutation, materialized explicitly
+
+Three smaller terms are also re-expressed: the `A` `"vwrt,tuvw->ru"` term
+becomes one GEMM by folding `t` into the contracted row index, the `G`
+active-inactive `"tv,vjrs->tjrs"` term becomes one GEMM against a zero-copy
+map of `L`'s active rows, and `fock_general` becomes a GEVM. Everything else
+(`L`, `fock_core`, the inactive `G` blocks, the transpose block) becomes
+per-`(r,s)`-slab Eigen expressions instead of scalar quadruple loops.
+
+Measured against the legacy loop (`-O2`, randomized inputs, identical to
+~1e-14 elementwise):
+
+| `n_in_a` | `n_act` | `nmo` | legacy | fast | speedup |
+|---|---|---|---|---|---|
+| 3 | 8 | 29 | 5.8 ms | 3.1 ms | 1.9x |
+| 4 | 12 | 41 | 56 ms | 16 ms | 3.6x |
+| 5 | 14 | 30+ (49) | 306 ms | 29 ms | 10.5x |
+
+`test_intermediates_fast.cpp` cross-validates the two elementwise over five
+dimension shapes (including `n_in_a == 0`, and shapes where no two of
+`n_in_a`/`n_act`/`n_virt` coincide so an index swap between them can't hide),
+with unsymmetrized random inputs so that any accidental slab transpose from a
+wrong storage-order assumption shows up immediately. Agreement is ~1e-15.
+
+**Not yet wired into production**: every call site still calls the legacy
+`build_intermediates`. Switching them is a one-line change per call site but
+perturbs results at the ~1e-15 level, which would shift the checked-in
+validation-sweep numbers, so it is left as a deliberate, separate step.
 
 Deliberately **not** ported: `build_intermediates2` (dead code -- every call
 site is commented out, confirmed via grep) and `build_intermediates_with_blocks`

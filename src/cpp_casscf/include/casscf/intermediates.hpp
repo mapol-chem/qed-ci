@@ -134,11 +134,51 @@ struct FullBlockIntermediates {
 // off_diagonal_constant: same interface simplification as
 // build_intermediates_internal -- computed by the caller via
 // calculate_off_diagonal_photon_constant, passed in rather than recomputed.
+//
+// LEGACY / TAMM-reference / fast-path oracle -- same two-implementation
+// arrangement as orbital_sigma.hpp (read its top comment for the rationale):
+// the explicit-loop form below stays as the line-for-line correspondence to
+// the Python's index algebra and the intended reference for the future TAMM
+// retarget, with build_intermediates_fast(...) as the BLAS-backed production
+// path. Prefer the fast path unless you are reading this against the Python.
 FullBlockIntermediates build_intermediates(const Matrix& H_spatial2, const Matrix& d_cmo,
                                             const Tensor4& J, const Tensor4& K,
                                             const Matrix& D_tu_avg, const Tensor4& D_tuvw_avg,
                                             const Matrix& Dpe_tu_avg, double off_diagonal_constant,
                                             double omega, const Dimensions& dims);
+
+// FAST path -- identical signature, identical outputs, same math evaluated as
+// BLAS-backed Eigen products instead of scalar loops. Every field of
+// FullBlockIntermediates is produced, so this is a drop-in replacement.
+//
+// Where the speedup comes from (n_act == n_act_orb):
+//
+//   G active-active   O(n_act^4 * nmo^2) scalar FMAs  ->  two GEMMs,
+//                     (n_act^2, n_act^2) x (n_act^2, nmo^2). This is the
+//                     dominant term and the reason this function exists: for
+//                     a CAS(8,12) in a ~30-orbital basis the legacy loop is
+//                     ~1.7e7 iterations of 4-index tensor addressing.
+//   A "vwrt,tuvw->ru" O(nmo * n_act^4)   ->  one GEMM, by folding t into the
+//                     contracted row index.
+//   G active-inactive "tv,vjrs->tjrs"    ->  one GEMM against a zero-copy map
+//                     of L's active rows.
+//   fock_general      sum over n_act^2 slabs  ->  one GEMV.
+//   L, fock_core, G inactive blocks, the transpose block -> per-(r,s)-slab
+//                     Eigen expressions rather than scalar quadruple loops.
+//
+// The J/K active-active blocks are packed once into (n_act^2, nmo^2) matrices
+// and shared by the G active-active GEMMs and the fock_general GEVM.
+//
+// NOT an independent re-derivation of the Python: every term is transformed
+// from the legacy loop directly above it in intermediates.cpp, which carries
+// the helper_PFCI.py line citations, and each is commented with the legacy
+// line range it replaces. test_intermediates_fast.cpp asserts the two agree
+// elementwise on randomized problems across several dimension shapes.
+FullBlockIntermediates build_intermediates_fast(const Matrix& H_spatial2, const Matrix& d_cmo,
+                                                 const Tensor4& J, const Tensor4& K,
+                                                 const Matrix& D_tu_avg, const Tensor4& D_tuvw_avg,
+                                                 const Matrix& Dpe_tu_avg, double off_diagonal_constant,
+                                                 double omega, const Dimensions& dims);
 
 struct GradientResult {
     Matrix A_tilde;         // (nmo, n_occupied) -- A_tilde[:, :n_occupied] in the Python

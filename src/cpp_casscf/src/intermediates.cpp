@@ -1,6 +1,8 @@
 #include "casscf/intermediates.hpp"
 
+#include <algorithm>
 #include <cmath>
+#include <cstddef>
 
 namespace casscf {
 
@@ -387,6 +389,225 @@ FullBlockIntermediates build_intermediates(const Matrix& H_spatial2, const Matri
                         G(n_in_a + t, n_in_a + u, r, s) = val;
                     }
                 }
+            }
+        }
+    }
+
+    return result;
+}
+
+// ---------------------------------------------------------------------------
+// FAST path: build_intermediates_fast. Same math as build_intermediates above,
+// with the four contraction-shaped terms re-expressed as BLAS-backed Eigen
+// matrix products and the elementwise ones as (r,s)-slab operations. See
+// intermediates.hpp's doc comment for the term-by-term correspondence.
+//
+// Every slab map below relies on Tensor4 being RowMajor (tensor_types.hpp:17):
+// for a (d0,d1,nmo,nmo) tensor the trailing (r,s) plane at fixed (i,j) is
+// nmo*nmo contiguous doubles, so it maps directly as a RowMajorMatrix with no
+// copy. Getting that storage order wrong would silently transpose slabs, which
+// is exactly what the cross-validation test guards.
+// ---------------------------------------------------------------------------
+
+namespace {
+
+// (r,s) slab of a (d0,d1,nmo,nmo) RowMajor tensor at fixed (i,j), as a matrix.
+inline Eigen::Map<const RowMajorMatrix> slab(const Tensor4& T, int i, int j, int nmo) {
+    return Eigen::Map<const RowMajorMatrix>(T.data() + (static_cast<std::ptrdiff_t>(i) * T.dimension(1) + j) *
+                                                           static_cast<std::ptrdiff_t>(nmo) * nmo,
+                                            nmo, nmo);
+}
+
+inline Eigen::Map<RowMajorMatrix> slab_mut(Tensor4& T, int i, int j, int nmo) {
+    return Eigen::Map<RowMajorMatrix>(T.data() + (static_cast<std::ptrdiff_t>(i) * T.dimension(1) + j) *
+                                                     static_cast<std::ptrdiff_t>(nmo) * nmo,
+                                      nmo, nmo);
+}
+
+} // namespace
+
+FullBlockIntermediates build_intermediates_fast(const Matrix& H_spatial2, const Matrix& d_cmo,
+                                                 const Tensor4& J, const Tensor4& K,
+                                                 const Matrix& D_tu_avg, const Tensor4& D_tuvw_avg,
+                                                 const Matrix& Dpe_tu_avg, double off_diagonal_constant,
+                                                 double omega, const Dimensions& dims) {
+    const int nmo = dims.nmo;
+    const int n_occupied = dims.n_occupied;
+    const int n_in_a = dims.n_in_a;
+    const int n_act = dims.n_act_orb;
+    const int rot_dim = nmo; // as in build_intermediates: full_space == True is the only active case
+    const int nmo2 = nmo * nmo;
+    const int nact2 = n_act * n_act;
+
+    FullBlockIntermediates result;
+    result.A = Matrix::Zero(rot_dim, rot_dim);
+    result.G = Tensor4(n_occupied, n_occupied, rot_dim, rot_dim);
+    result.G.setZero();
+
+    // Row-major copies of the two matrices that get combined with tensor
+    // slabs below (Matrix is ColMajor; mixing storage orders in a binary
+    // expression is avoided here entirely rather than relied upon).
+    const RowMajorMatrix H_rm = H_spatial2;
+    const RowMajorMatrix d_cmo_rm = d_cmo;
+
+    // fock_core, legacy lines 239-245: sum of n_in_a diagonal slabs.
+    RowMajorMatrix fock_core_rm = H_rm;
+    for (int j = 0; j < n_in_a; ++j) fock_core_rm += 2.0 * slab(J, j, j, nmo) - slab(K, j, j, nmo);
+    const Matrix fock_core = fock_core_rm;
+    result.fock_core = fock_core;
+
+    Matrix& A = result.A;
+    Tensor4& G = result.G;
+
+    // L, legacy lines 254-258: elementwise per (p,j) slab. The transpose is of
+    // a distinct buffer from the destination, so there is no aliasing.
+    Tensor4 L(n_occupied, n_in_a, rot_dim, rot_dim);
+    for (int p = 0; p < n_occupied; ++p) {
+        for (int j = 0; j < n_in_a; ++j) {
+            const auto Kpj = slab(K, p, j, nmo);
+            slab_mut(L, p, j, nmo) = 4.0 * Kpj - Kpj.transpose() - slab(J, p, j, nmo);
+        }
+    }
+    result.L = L;
+
+    // E_core / active_fock_core / active_twoeint, legacy lines 264-275.
+    {
+        double e_core = 0.0;
+        for (int j = 0; j < n_in_a; ++j) e_core += H_spatial2(j, j) + fock_core(j, j);
+        result.E_core = e_core;
+    }
+    result.active_fock_core = fock_core.block(n_in_a, n_in_a, n_act, n_act);
+    result.active_twoeint = Tensor4(n_act, n_act, n_act, n_act);
+    for (int t = 0; t < n_act; ++t)
+        for (int u = 0; u < n_act; ++u)
+            for (int v = 0; v < n_act; ++v)
+                for (int w = 0; w < n_act; ++w)
+                    result.active_twoeint(t, u, v, w) = J(n_in_a + t, n_in_a + u, n_in_a + v, n_in_a + w);
+
+    // Active-active (v,w) blocks of J and K, packed as (n_act^2, nmo^2) with
+    // row (v*n_act + w) -- the shared operand of every contraction below.
+    // For fixed v the n_act rows are already contiguous in the source tensor
+    // (rows (n_in_a+v)*n_occupied + (n_in_a+w), w contiguous), so each is one
+    // chunk copy of n_act*nmo^2 doubles.
+    RowMajorMatrix Jmat(nact2, nmo2);
+    RowMajorMatrix Kmat(nact2, nmo2);
+    for (int v = 0; v < n_act; ++v) {
+        const std::ptrdiff_t src =
+            (static_cast<std::ptrdiff_t>(n_in_a + v) * n_occupied + n_in_a) * static_cast<std::ptrdiff_t>(nmo2);
+        std::copy(J.data() + src, J.data() + src + static_cast<std::ptrdiff_t>(n_act) * nmo2,
+                  Jmat.data() + static_cast<std::ptrdiff_t>(v) * n_act * nmo2);
+        std::copy(K.data() + src, K.data() + src + static_cast<std::ptrdiff_t>(n_act) * nmo2,
+                  Kmat.data() + static_cast<std::ptrdiff_t>(v) * n_act * nmo2);
+    }
+
+    // fock_general, legacy lines 281-290: sum_{tu} D(t,u)*(J - 0.5*K) over the
+    // active-active slabs == one GEMV against the packed blocks.
+    Vector dvec(nact2);
+    for (int t = 0; t < n_act; ++t)
+        for (int u = 0; u < n_act; ++u) dvec(t * n_act + u) = D_tu_avg(t, u);
+    const Vector fg_flat = (Jmat - 0.5 * Kmat).transpose() * dvec;
+    RowMajorMatrix fock_general_rm = fock_core_rm + Eigen::Map<const RowMajorMatrix>(fg_flat.data(), nmo, nmo);
+    const Matrix fock_general = fock_general_rm;
+
+    // A inactive columns, legacy lines 294-295.
+    for (int r = 0; r < rot_dim; ++r)
+        for (int j = 0; j < n_in_a; ++j) A(r, j) = 2.0 * (fock_general(r, j) + d_cmo(r, j) * off_diagonal_constant);
+
+    // A active columns, term 1, legacy lines 299-303 (already a matrix product).
+    {
+        Matrix term = fock_core.block(0, n_in_a, rot_dim, n_act) * D_tu_avg;
+        for (int r = 0; r < rot_dim; ++r)
+            for (int u = 0; u < n_act; ++u) A(r, n_in_a + u) = term(r, u);
+    }
+
+    // A active columns, "vwrt,tuvw->ru" term, legacy lines 310-319. Packed as
+    // one GEMM by folding t into the contracted row index:
+    //   P[(t,v,w), r] = J(n_in_a+v, n_in_a+w, r, n_in_a+t)
+    //   Q[(t,v,w), u] = D_tuvw_avg(t, u, v, w)
+    //   acc = P^T * Q  -> (rot_dim, n_act)
+    {
+        RowMajorMatrix P(static_cast<Eigen::Index>(n_act) * nact2, rot_dim);
+        RowMajorMatrix Q(static_cast<Eigen::Index>(n_act) * nact2, n_act);
+        for (int t = 0; t < n_act; ++t) {
+            for (int v = 0; v < n_act; ++v) {
+                for (int w = 0; w < n_act; ++w) {
+                    const int row = (t * n_act + v) * n_act + w;
+                    for (int r = 0; r < rot_dim; ++r) P(row, r) = J(n_in_a + v, n_in_a + w, r, n_in_a + t);
+                    for (int u = 0; u < n_act; ++u) Q(row, u) = D_tuvw_avg(t, u, v, w);
+                }
+            }
+        }
+        const Matrix acc = P.transpose() * Q;
+        for (int r = 0; r < rot_dim; ++r)
+            for (int u = 0; u < n_act; ++u) A(r, n_in_a + u) += acc(r, u);
+    }
+
+    // A active columns, photon term, legacy lines 323-328 (matrix product).
+    {
+        Matrix term = d_cmo.block(0, n_in_a, rot_dim, n_act) * Dpe_tu_avg;
+        const double pref = -std::sqrt(omega / 2.0);
+        for (int r = 0; r < rot_dim; ++r)
+            for (int u = 0; u < n_act; ++u) A(r, n_in_a + u) += pref * term(r, u);
+    }
+
+    // temp2, legacy lines 331-333.
+    const RowMajorMatrix temp2_rm = fock_general_rm + off_diagonal_constant * d_cmo_rm;
+
+    // G inactive-inactive, legacy lines 336-340: per-slab.
+    for (int i = 0; i < n_in_a; ++i) {
+        for (int j = 0; j < n_in_a; ++j) {
+            slab_mut(G, i, j, nmo) = 2.0 * slab(L, i, j, nmo);
+            if (i == j) slab_mut(G, i, j, nmo) += 2.0 * temp2_rm;
+        }
+    }
+
+    // G active-inactive, legacy lines 345-355: "tv,vjrs->tjrs". L's rows
+    // n_in_a..n_occupied are contiguous, so the whole (v, j*r*s) operand maps
+    // without a copy and the contraction is a single GEMM.
+    {
+        const Eigen::Map<const RowMajorMatrix> Lact(
+            L.data() + static_cast<std::ptrdiff_t>(n_in_a) * n_in_a * nmo2, n_act,
+            static_cast<Eigen::Index>(n_in_a) * nmo2);
+        const RowMajorMatrix Gti = RowMajorMatrix(D_tu_avg) * Lact; // (n_act, n_in_a*nmo^2)
+        for (int t = 0; t < n_act; ++t)
+            for (int j = 0; j < n_in_a; ++j)
+                slab_mut(G, n_in_a + t, j, nmo) =
+                    Eigen::Map<const RowMajorMatrix>(Gti.data() + (static_cast<std::ptrdiff_t>(t) * n_in_a + j) * nmo2,
+                                                     nmo, nmo);
+    }
+
+    // G inactive-active, legacy lines 359-362: slab transpose of the above.
+    for (int j = 0; j < n_in_a; ++j)
+        for (int t = 0; t < n_act; ++t)
+            slab_mut(G, j, n_in_a + t, nmo) = slab(G, n_in_a + t, j, nmo).transpose();
+
+    // G active-active, legacy lines 371-392 -- the dominant term
+    // (O(n_act^4 * nmo^2)). Both contractions become GEMMs against the packed
+    // (n_act^2, nmo^2) J/K blocks:
+    //   "vwrs,tuvw->turs" : D1[(t,u),(v,w)] = D_tuvw_avg(t,u,v,w) -- which is
+    //                       exactly D_tuvw_avg's RowMajor buffer reshaped, no
+    //                       copy needed
+    //   "vwrs,tvuw->turs" : D2[(t,u),(v,w)] = D_tuvw_avg(t,v,u,w) -- a genuine
+    //                       index permutation, so materialized explicitly
+    {
+        const Eigen::Map<const RowMajorMatrix> D1(D_tuvw_avg.data(), nact2, nact2);
+        RowMajorMatrix D2(nact2, nact2);
+        for (int t = 0; t < n_act; ++t)
+            for (int u = 0; u < n_act; ++u)
+                for (int v = 0; v < n_act; ++v)
+                    for (int w = 0; w < n_act; ++w) D2(t * n_act + u, v * n_act + w) = D_tuvw_avg(t, v, u, w);
+
+        const RowMajorMatrix GJ = D1 * Jmat;           // (n_act^2, nmo^2)
+        const RowMajorMatrix GK = D2 * Kmat;           // (n_act^2, nmo^2)
+        const double pref_pe = -std::sqrt(omega / 2.0);
+        for (int t = 0; t < n_act; ++t) {
+            for (int u = 0; u < n_act; ++u) {
+                const int tu = t * n_act + u;
+                slab_mut(G, n_in_a + t, n_in_a + u, nmo) =
+                    D_tu_avg(t, u) * fock_core_rm + (pref_pe * Dpe_tu_avg(t, u)) * d_cmo_rm +
+                    Eigen::Map<const RowMajorMatrix>(GJ.data() + static_cast<std::ptrdiff_t>(tu) * nmo2, nmo, nmo) +
+                    2.0 * Eigen::Map<const RowMajorMatrix>(GK.data() + static_cast<std::ptrdiff_t>(tu) * nmo2, nmo,
+                                                            nmo);
             }
         }
     }
