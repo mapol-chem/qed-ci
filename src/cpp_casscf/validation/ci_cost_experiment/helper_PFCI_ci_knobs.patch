@@ -1,0 +1,61 @@
+diff --git a/src/helper_PFCI.py b/src/helper_PFCI.py
+index 4d98202..7a9d6d1 100644
+--- a/src/helper_PFCI.py
++++ b/src/helper_PFCI.py
+@@ -40,6 +40,27 @@ from scipy.sparse.linalg import LinearOperator
+ from timeit import default_timer as timer
+ from scipy.linalg import eigh_tridiagonal
+ from collections import deque
++
++# --- CI-cost experiment knobs (both default-no-op) --------------------------
++# Profiling of the real MgH+ CAS(8,12) runs (see
++# cpp_casscf/validation/ci_cost_experiment/README.md) showed the CI step is
++# 71% of total runtime, and within it the COUPLED (qn_count > 0) CI solves in
++# microiteration_optimization6 are ~79% of all Davidson time -- 833 calls,
++# mean 25.9 iterations, 16.2 s each. By contrast the whole orbital side
++# (orbital sigma, gradient, Hessian diagonal, intermediates, all integral
++# transforms, LSTRS/GLTR expand+residual) is 0.05% of runtime.
++#
++#   QED_CI_UNCOUPLED_MAXITER : the Kreplin uncoupled CI cap        (default 5)
++#   QED_CI_COUPLED_FACTOR    : the 0.1 in 0.1*||g_orb||            (default 0.1)
++#
++# The coupled threshold is tied to the orbital gradient, so it tightens as the
++# optimization converges; measured cost of that tightening is mean iterations
++# rising 23.9 -> 29.9 from the largest to the smallest gradient-norm quartile.
++# Kreplin/Werner's precondition is qualitative ("CI residual substantially
++# lower than the last orbital gradient"), so 0.1 is a choice, not a derived
++# value -- which is what makes it worth sweeping.
++_QED_CI_UNCOUPLED_MAXITER = int(os.environ.get("QED_CI_UNCOUPLED_MAXITER", "5"))
++_QED_CI_COUPLED_FACTOR = float(os.environ.get("QED_CI_COUPLED_FACTOR", "0.1"))
+ import numba as nb
+ from scipy.linalg import eigh, cho_factor, cho_solve, solve_triangular
+ 
+@@ -7778,7 +7799,10 @@ class PFHamiltonianGenerator:
+                 self.constdouble[3] = self.d_exp - d_diag
+                 self.constdouble[4] = 1e-5
+                 self.constdouble[5] = self.E_core
+-                self.constint[8] = 5
++                # Same uncoupled cap knob as microiteration_optimization6's
++                # (default 5) -- internal_optimization3 is the other live site
++                # running the Kreplin uncoupled-CI strategy.
++                self.constint[8] = _QED_CI_UNCOUPLED_MAXITER
+                 eigenvals = np.zeros((self.davidson_roots))
+                 # eigenvecs = np.zeros((self.davidson_roots, H_dim))
+                 # eigenvecs[:,:] = 0.0
+@@ -12438,9 +12462,14 @@ class PFHamiltonianGenerator:
+             self.constdouble[3] = self.d_exp - d_diag
+             self.constdouble[4] = 1e-9
+             self.constdouble[5] = self.E_core2
+-            self.constint[8] = 5
++            # Experiment knobs, default-no-op -- see the definitions at the
++            # top of this file. This is the LIVE coupled-CI site
++            # (microiteration_optimization6); the byte-identical block in
++            # microiteration_optimization5 is dead code (no callers) and is
++            # deliberately left untouched.
++            self.constint[8] = _QED_CI_UNCOUPLED_MAXITER
+             if qn_count > 0: 
+-                self.constdouble[4] = 0.1 * np.linalg.norm(reduced_gradient)
++                self.constdouble[4] = _QED_CI_COUPLED_FACTOR * np.linalg.norm(reduced_gradient)
+                 self.constint[8] = 10000
+             print("number of CI iteration", self.constint[8])
+             eigenvals = np.zeros((self.davidson_roots))
