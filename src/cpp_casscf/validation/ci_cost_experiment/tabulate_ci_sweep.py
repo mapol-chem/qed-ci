@@ -25,8 +25,14 @@ re_wall = re.compile(r"wall=([0-9.]+)s")
 re_macro = re.compile(r"^Macroiteration", re.M)
 re_energy = re.compile(r"avg energy final\s+\d+\s+(-?[0-9.]+)")
 re_dav = re.compile(r"Complete Davidson in ([0-9.]+) seconds")
-re_nci = re.compile(r"number of CI iteration (\d+)")
-re_iter = re.compile(r"^ITERATION\s+(\d+)\s+subspace size", re.M)
+# CI work: one "ITERATION n subspace size m" line per CI Davidson iteration,
+# 1:1 with "build sigma took" (5695 vs 5696 in s1_v0). CI-only -- the orbital
+# Hessian-vector products are separately labelled "build orbital sigma ...".
+re_iter = re.compile(r"^ITERATION\s+\d+\s+subspace size", re.M)
+# Orbital work -- the quantity that must NOT rise much in exchange:
+re_orbsig = re.compile(r"build orbital sigma for Q space took")   # orbital HVPs
+re_orbstep = re.compile(r"build unitary matrix and recheck energy took")
+re_micro = re.compile(r"microiteration took")
 
 
 def parse(path):
@@ -48,6 +54,10 @@ def parse(path):
         "dav_total": sum(dav),
         "dav_calls": len(dav),
         "coupled": txt.count("number of CI iteration 10000"),
+        "ci_iters": len(re_iter.findall(txt)),
+        "orb_hvp": len(re_orbsig.findall(txt)),
+        "orb_steps": len(re_orbstep.findall(txt)),
+        "micro": len(re_micro.findall(txt)),
     }
 
 
@@ -62,7 +72,10 @@ def main():
         print(f"  IN PROGRESS (excluded from all summaries): "
               f"{', '.join(f's{s}_{v}' for s, v in sorted(running))}\n")
 
-    for title, key, fmt in [("wall time (s)", "wall", "{:>9.0f}"),
+    for title, key, fmt in [("TOTAL CI ITERATIONS  (want DOWN)", "ci_iters", "{:>9d}"),
+                            ("orbital HVPs  (want ~flat)", "orb_hvp", "{:>9d}"),
+                            ("orbital steps (want ~flat)", "orb_steps", "{:>9d}"),
+                            ("wall time (s)", "wall", "{:>9.0f}"),
                             ("macroiterations", "macro", "{:>9d}"),
                             ("Davidson total (s)", "dav_total", "{:>9.0f}")]:
         print(f"--- {title} ---")
@@ -82,21 +95,30 @@ def main():
         print("No seed has all variants finished yet -- no paired summary.")
         return
     print(f"=== paired summary over seeds with ALL variants finished: {full} ===")
-    print(f"{'variant':<8}{'mean wall':>11}{'vs base':>10}{'mean macro':>12}{'mean Dav':>10}{'coupled':>9}{'worst dE vs best':>18}")
-    base_wall = st.mean([data[(s, 'base')]["wall"] for s in full])
+    print("The question this table exists to answer: does TOTAL CI WORK go down,")
+    print("while ORBITAL work does not go up much?\n")
+
+    def mean(v, k):
+        return st.mean([data[(s, v)][k] for s in full])
+
+    b_ci, b_hvp, b_step, b_wall = (mean("base", k) for k in
+                                   ("ci_iters", "orb_hvp", "orb_steps", "wall"))
+    print(f"{'variant':<8}{'CI iters':>10}{'vs base':>9}{'orb HVP':>9}{'vs base':>9}"
+          f"{'orb step':>10}{'vs base':>9}{'macro':>7}{'wall s':>9}{'vs base':>9}{'worst dE':>11}")
     for v in VARIANTS:
-        w = st.mean([data[(s, v)]["wall"] for s in full])
-        m = st.mean([data[(s, v)]["macro"] for s in full])
-        dv = st.mean([data[(s, v)]["dav_total"] for s in full])
-        cp = st.mean([data[(s, v)]["coupled"] for s in full])
+        ci, hvp, stp, w = (mean(v, k) for k in ("ci_iters", "orb_hvp", "orb_steps", "wall"))
+        m = mean(v, "macro")
         worst = 0.0
         for s in full:
             best = min(data[(s, x)]["energy"] for x in VARIANTS if data[(s, x)]["energy"] is not None)
             e = data[(s, v)]["energy"]
             if e is not None:
                 worst = max(worst, e - best)
-        print(f"{v:<8}{w:>11.0f}{100*(w-base_wall)/base_wall:>9.1f}%{m:>12.1f}{dv:>10.0f}{cp:>9.0f}{worst:>18.2e}")
-    print("\n'worst dE vs best' is how much higher this variant's final energy is than the best")
+        print(f"{v:<8}{ci:>10.0f}{100*(ci-b_ci)/max(b_ci,1):>8.1f}%{hvp:>9.0f}{100*(hvp-b_hvp)/max(b_hvp,1):>8.1f}%"
+              f"{stp:>10.0f}{100*(stp-b_step)/max(b_step,1):>8.1f}%{m:>7.1f}"
+              f"{w:>9.0f}{100*(w-b_wall)/max(b_wall,1):>8.1f}%{worst:>11.1e}")
+    print()
+    print("'worst dE vs best' is how much higher this variant's final energy is than the best")
     print("variant's on the same seed, worst case. Anything above ~1e-6 means the variant found a")
     print("DIFFERENT (worse) solution -- a speedup there is not a speedup, and the cell is not")
     print("comparable. Check it before believing any wall-time win.")
