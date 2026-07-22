@@ -5,3 +5,16 @@ timer.dat
 dumps_sweep_*/
 sweep_*.log
 psi.*.clean
+
+# compare_macroiterations.sh outputs -- regenerable scratch, same status as
+# dumps_sweep_*/ above (the h2o case alone is ~160 MB). Deliberately narrow
+# patterns: the dumps_macro_sweep_*/ , dumps_lih/ and dumps_macro_lih*/
+# fixtures ARE tracked on purpose (sweep_macroiterations.sh reads them) and
+# must keep matching nothing here.
+dumps_compare_*/
+logs_compare_*/
+
+# Ad-hoc run outputs from run_qn_case.py / run_mgh_case.py, whose drivers are
+# tracked but whose logs are not worth versioning.
+qn_*.out
+mgh.out
