@@ -26,7 +26,7 @@ retargeting onto TAMM's distributed tensor API.
 | `build_unitary_matrix` | **Fully ported, tested** | helper_PFCI.py:6131-6164 |
 | `MacroiterationDriver::run` (outer loop orchestration) | **Fully ported, tested** against mocked collaborators (see "documented gap" below) | helper_PFCI.py:2394-3060 |
 | `minres_solve` (Paige/Saunders MINRES) | **Fully ported, tested** against real ill-conditioned chemistry data; used by `LstrsSolver`'s hard_case==2 | helper_PFCI.py:7547-7549 (`scipy.sparse.linalg.minres` call site) |
-| `build_intermediates(_internal)`/`build_gradient(_and_hessian)`/`build_hessian_diagonal` | **Fully ported, tested** against real captured data; `build_intermediates` additionally has a BLAS-backed `_fast` twin, **now the production path** (legacy loop kept as TAMM reference + oracle) | see "Intermediates building" section |
+| `build_intermediates(_internal)`/`build_gradient(_and_hessian)`/`build_hessian_diagonal` | **Fully ported, tested** against real captured data; `build_intermediates` and `build_intermediates_internal` each additionally have a BLAS-backed `_fast` twin, **both now the production path** (legacy loops kept as TAMM reference + oracle) | see "Intermediates building" section |
 | `OrbitalHessianGuessProvider` (real `HessianGuessProvider`) | **Fully ported, tested** against real captured data | helper_PFCI.py:16614-16712 (`build_orbital_hessian_guess`/`hessian_guess`) |
 | `CasscfContext` | Done (struct, no logic to test) | bundles self.H_spatial2/d_cmo/U_total/J/K/occupied_*/E_core/gkl2/H_diag3 -- see "Shared CasscfContext" below |
 | `internal_transformation`, `internal_optimization_exact_energy`, `internal_optimization_predicted_energy`, `step_control` | **Fully ported, tested** (hand-computed cases) | helper_PFCI.py:6452-6517, 6734-6871, 6873-6877, 8018-8025 |
@@ -366,6 +366,64 @@ correspondence, not the reformulation. Coverage of the production path is
 transitive and no weaker for it -- `test_intermediates_fast.cpp` ties fast
 to legacy elementwise at ~1e-15, and `validate_against_python` ties legacy
 to Python at ~1e-15-1e-17. Keep this split if you touch either file.
+
+### `build_intermediates_internal_fast` -- the occupied-space twin
+
+Same arrangement again, for `build_intermediates_internal`. **Wired into
+production** at both of its call sites in
+`CasscfInternalOptimizationStep` (`internal_optimization_step.cpp:107` and
+`:193`) -- note the second sits *inside* the internal-iteration loop, so this
+function runs more often per macroiteration than the full-block one does.
+
+The transformations mirror `build_intermediates_fast`'s, **except for one
+term that is genuinely different and must not be copied across** -- exactly
+the trap flagged in the two-surprises note below. `A`'s active-active
+two-electron contraction is:
+
+| | einsum | J indexing |
+|---|---|---|
+| `build_intermediates` | `"vwrt,tuvw->ru"` | `J(v, w, r, t)` -- `r` third |
+| `build_intermediates_internal` | `"rtvw,tuvw->ru"` | `occupied_J(r, t, v, w)` -- `r` leading |
+
+The reason is structural rather than arbitrary, which is worth knowing
+before "fixing" either one: `build_intermediates`'s `J` is
+`(n_occupied, n_occupied, nmo, nmo)`, so a free index running over the full
+orbital range can only live in the trailing two axes. Here `occupied_J` is
+the fully occupied-restricted `(n_occupied)^4` block and `r` runs over
+`n_occupied`, so it can and does sit in the *leading* axis. Consequence for
+the packing: the folded operand comes out as `P(r, (t,v,w))` and the GEMM is
+`P * Q` directly, where the full-block twin needs `P.transpose() * Q`.
+
+Because `rot_dim == n_occupied` here (not `nmo`), every slab is
+`(n_occupied, n_occupied)` and the dominant active-active `G` term is
+`O(n_act^4 * n_occupied^2)` rather than `O(n_act^4 * nmo^2)` -- a smaller
+win than the full-block twin's, but the same shape of win:
+
+| `n_in_a` | `n_act` | `n_occupied` | legacy | fast | speedup |
+|---|---|---|---|---|---|
+| 3 | 8 | 11 | 0.34 ms | 0.14 ms | 2.3x |
+| 4 | 12 | 16 | 5.6 ms | 1.4 ms | 4.1x |
+| 5 | 14 | 19 | 9.5 ms | 2.8 ms | 3.4x |
+| 6 | 16 | 22 | 23.5 ms | 6.7 ms | 3.5x |
+
+`test_intermediates_internal_fast.cpp` cross-validates the two elementwise
+over six dimension shapes (including `n_in_a == 0`, where every
+`n_in_a`-strided packing -- notably the `Lact` map, whose leading offset is
+`n_in_a`-scaled -- becomes empty), with unsymmetrized random inputs.
+Agreement is ~1e-15/1e-16. `dims.nmo` is deliberately set to something
+distinct from `n_occupied` in the test so that an accidental use of it in
+the fast path fails on shape rather than silently agreeing.
+
+**The test was verified non-vacuous by negative control**: permuting the
+single index in `D2` (`D_tuvw_avg(t,v,u,w)` -> `(t,u,v,w)`, the one
+non-canonical permutation in the whole function) makes `G` fail at `3.1e+01`
+while `A` correctly still passes, since `A` doesn't consume `D2`. Worth
+re-running that check if this code is ever restructured.
+
+Validation after wiring in: ctest 26/26, `sweep_macroiterations.sh` 8/8 PASS
+with every macroiteration count still matching Python exactly. As with the
+full-block twin, `tools/validate_against_python.cpp:226` deliberately stays
+on the legacy loop, for the same reason.
 
 Deliberately **not** ported: `build_intermediates2` (dead code -- every call
 site is commented out, confirmed via grep) and `build_intermediates_with_blocks`
@@ -1915,14 +1973,12 @@ the triplet depends on the determinant phase convention).
     path in the whole solver stack.
   - `HessianGuessProvider` now has a real implementation
     (`OrbitalHessianGuessProvider`, see above) -- nothing left here for it.
-  - **Next vectorization candidates**, by loop-nest depth, now that
-    `build_intermediates` (depth 7) is done *and wired into production*:
-    `build_intermediates_internal` (`intermediates.cpp:7`, also depth 7, the
-    occupied-space twin -- most term structure should carry over, but
-    **verify rather than assume**: its `A` active-active term uses a
-    genuinely different index pattern, `"rtvw,tuvw->ru"` vs
-    `"vwrt,tuvw->ru"`, see the two-surprises note in the
-    `build_intermediates_fast` section); then
+  - **Next vectorization candidates**, by loop-nest depth. Both depth-7
+    functions (`build_intermediates` and `build_intermediates_internal`) are
+    now done *and wired into production*; the differing-index-pattern warning
+    that used to sit here was checked and turned out to be real -- see
+    "`build_intermediates_internal_fast`" above for what it amounted to.
+    Remaining, in order:
     `microiteration_ci_integrals_transform.cpp` (depth 6),
     `internal_optimization.cpp:internal_transformation` (depth 5),
     `integral_transformer.cpp:transform_macroiteration` (depth 4). The

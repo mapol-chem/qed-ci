@@ -615,6 +615,194 @@ FullBlockIntermediates build_intermediates_fast(const Matrix& H_spatial2, const 
     return result;
 }
 
+// ---------------------------------------------------------------------------
+// FAST path: build_intermediates_internal_fast. Same math as
+// build_intermediates_internal at the top of this file, transformed term by
+// term from that function (NOT re-derived from the Python independently, and
+// NOT copied from build_intermediates_fast -- see the header's note on the `A`
+// active-active term, which genuinely differs between the two). Each block
+// below cites the legacy line range it replaces.
+//
+// Everything here is (n_occupied)-dimensional: occupied_J/occupied_K are
+// (n_occupied)^4 and rot_dim == n_occupied, so the slab helpers above are
+// called with n_occupied where the full-block twin passes nmo.
+// ---------------------------------------------------------------------------
+SmallBlockIntermediates build_intermediates_internal_fast(const Matrix& occupied_fock_core,
+                                                             const Matrix& occupied_d_cmo,
+                                                             const Tensor4& occupied_J,
+                                                             const Tensor4& occupied_K,
+                                                             const Matrix& D_tu_avg,
+                                                             const Tensor4& D_tuvw_avg,
+                                                             const Matrix& Dpe_tu_avg,
+                                                             double off_diagonal_constant,
+                                                             double omega, const Dimensions& dims) {
+    const int n_occupied = dims.n_occupied;
+    const int n_in_a = dims.n_in_a;
+    const int n_act = dims.n_act_orb;
+    const int rot_dim = n_occupied; // helper_PFCI.py:5579
+    const int nocc2 = n_occupied * n_occupied;
+    const int nact2 = n_act * n_act;
+
+    SmallBlockIntermediates result;
+    result.A = Matrix::Zero(n_occupied, n_occupied);
+    result.G = Tensor4(n_occupied, n_occupied, rot_dim, rot_dim);
+    result.G.setZero();
+    Matrix& A = result.A;
+    Tensor4& G = result.G;
+
+    // RowMajor copies of the two matrices combined with tensor slabs below
+    // (Matrix is ColMajor; mixing storage orders in a binary expression is
+    // avoided outright rather than relied upon).
+    const RowMajorMatrix fock_core_rm = occupied_fock_core;
+    const RowMajorMatrix d_cmo_rm = occupied_d_cmo;
+
+    // L, legacy lines 30-36: elementwise per (p,j) slab. The transpose reads a
+    // distinct buffer from the destination, so there is no aliasing.
+    Tensor4 L(n_occupied, n_in_a, rot_dim, rot_dim);
+    for (int p = 0; p < n_occupied; ++p) {
+        for (int j = 0; j < n_in_a; ++j) {
+            const auto Kpj = slab(occupied_K, p, j, n_occupied);
+            slab_mut(L, p, j, n_occupied) = 4.0 * Kpj - Kpj.transpose() - slab(occupied_J, p, j, n_occupied);
+        }
+    }
+
+    // Active-active (v,w) blocks of occupied_J/occupied_K packed as
+    // (n_act^2, n_occupied^2), row (v*n_act + w) -- shared by the fock_general
+    // GEVM and the G active-active GEMMs. For fixed v the n_act rows are
+    // already contiguous in the source tensor, so each is one chunk copy.
+    RowMajorMatrix Jmat(nact2, nocc2);
+    RowMajorMatrix Kmat(nact2, nocc2);
+    for (int v = 0; v < n_act; ++v) {
+        const std::ptrdiff_t src =
+            (static_cast<std::ptrdiff_t>(n_in_a + v) * n_occupied + n_in_a) * static_cast<std::ptrdiff_t>(nocc2);
+        std::copy(occupied_J.data() + src, occupied_J.data() + src + static_cast<std::ptrdiff_t>(n_act) * nocc2,
+                  Jmat.data() + static_cast<std::ptrdiff_t>(v) * n_act * nocc2);
+        std::copy(occupied_K.data() + src, occupied_K.data() + src + static_cast<std::ptrdiff_t>(n_act) * nocc2,
+                  Kmat.data() + static_cast<std::ptrdiff_t>(v) * n_act * nocc2);
+    }
+
+    // fock_general, legacy lines 41-51: sum_{tu} D(t,u)*(J - 0.5*K) over the
+    // active-active slabs == one GEVM against the packed blocks.
+    Vector dvec(nact2);
+    for (int t = 0; t < n_act; ++t)
+        for (int u = 0; u < n_act; ++u) dvec(t * n_act + u) = D_tu_avg(t, u);
+    const Vector fg_flat = (Jmat - 0.5 * Kmat).transpose() * dvec;
+    const RowMajorMatrix fock_general_rm =
+        fock_core_rm + Eigen::Map<const RowMajorMatrix>(fg_flat.data(), n_occupied, n_occupied);
+    const Matrix fock_general = fock_general_rm;
+
+    // A inactive columns, legacy lines 55-58.
+    for (int r = 0; r < n_occupied; ++r)
+        for (int j = 0; j < n_in_a; ++j)
+            A(r, j) = 2.0 * (fock_general(r, j) + occupied_d_cmo(r, j) * off_diagonal_constant);
+
+    // A active columns, term 1, legacy lines 62-66 (already a matrix product).
+    {
+        Matrix term = occupied_fock_core.block(0, n_in_a, n_occupied, n_act) * D_tu_avg;
+        for (int r = 0; r < n_occupied; ++r)
+            for (int u = 0; u < n_act; ++u) A(r, n_in_a + u) = term(r, u);
+    }
+
+    // A active columns, "rtvw,tuvw->ru" term, legacy lines 70-79. Folded into
+    // one GEMM over the composite index (t,v,w):
+    //   P[r, (t,v,w)] = occupied_J(r, n_in_a+t, n_in_a+v, n_in_a+w)
+    //   Q[(t,v,w), u] = D_tuvw_avg(t, u, v, w)
+    //   acc = P * Q  -> (n_occupied, n_act)
+    // NOTE the contrast with build_intermediates_fast's corresponding term
+    // ("vwrt,tuvw->ru"), which has r as the THIRD index of J and therefore
+    // needs P.transpose() * Q. Here r leads, so the product is direct. Q is
+    // identical between the two; only P differs.
+    {
+        RowMajorMatrix P(n_occupied, static_cast<Eigen::Index>(n_act) * nact2);
+        RowMajorMatrix Q(static_cast<Eigen::Index>(n_act) * nact2, n_act);
+        for (int t = 0; t < n_act; ++t) {
+            for (int v = 0; v < n_act; ++v) {
+                for (int w = 0; w < n_act; ++w) {
+                    const int col = (t * n_act + v) * n_act + w;
+                    for (int r = 0; r < n_occupied; ++r)
+                        P(r, col) = occupied_J(r, n_in_a + t, n_in_a + v, n_in_a + w);
+                    for (int u = 0; u < n_act; ++u) Q(col, u) = D_tuvw_avg(t, u, v, w);
+                }
+            }
+        }
+        const Matrix acc = P * Q;
+        for (int r = 0; r < n_occupied; ++r)
+            for (int u = 0; u < n_act; ++u) A(r, n_in_a + u) += acc(r, u);
+    }
+
+    // A active columns, photon term, legacy lines 83-89 (matrix product).
+    {
+        Matrix term = occupied_d_cmo.block(0, n_in_a, n_occupied, n_act) * Dpe_tu_avg;
+        const double pref = -std::sqrt(omega / 2.0);
+        for (int r = 0; r < n_occupied; ++r)
+            for (int u = 0; u < n_act; ++u) A(r, n_in_a + u) += pref * term(r, u);
+    }
+
+    // G inactive-inactive, legacy lines 92-106: per-slab. The diagonal
+    // addition is (2*fock_general + 2*off_diagonal_constant*d_cmo).
+    {
+        const RowMajorMatrix temp2_rm = fock_general_rm + off_diagonal_constant * d_cmo_rm;
+        for (int i = 0; i < n_in_a; ++i) {
+            for (int j = 0; j < n_in_a; ++j) {
+                slab_mut(G, i, j, n_occupied) = 2.0 * slab(L, i, j, n_occupied);
+                if (i == j) slab_mut(G, i, j, n_occupied) += 2.0 * temp2_rm;
+            }
+        }
+    }
+
+    // G active-inactive, legacy lines 110-121: "tv,vjrs->tjrs". L's rows
+    // n_in_a..n_occupied are contiguous, so the whole (v, j*r*s) operand maps
+    // without a copy and the contraction is a single GEMM.
+    {
+        const Eigen::Map<const RowMajorMatrix> Lact(
+            L.data() + static_cast<std::ptrdiff_t>(n_in_a) * n_in_a * nocc2, n_act,
+            static_cast<Eigen::Index>(n_in_a) * nocc2);
+        const RowMajorMatrix Gti = RowMajorMatrix(D_tu_avg) * Lact; // (n_act, n_in_a*n_occupied^2)
+        for (int t = 0; t < n_act; ++t)
+            for (int j = 0; j < n_in_a; ++j)
+                slab_mut(G, n_in_a + t, j, n_occupied) = Eigen::Map<const RowMajorMatrix>(
+                    Gti.data() + (static_cast<std::ptrdiff_t>(t) * n_in_a + j) * nocc2, n_occupied, n_occupied);
+    }
+
+    // G inactive-active, legacy lines 125-129: slab transpose of the above.
+    for (int j = 0; j < n_in_a; ++j)
+        for (int t = 0; t < n_act; ++t)
+            slab_mut(G, j, n_in_a + t, n_occupied) = slab(G, n_in_a + t, j, n_occupied).transpose();
+
+    // G active-active, legacy lines 131-158 -- the dominant term
+    // (O(n_act^4 * n_occupied^2)). Both contractions become GEMMs against the
+    // packed blocks:
+    //   "vwrs,tuvw->turs" : D1[(t,u),(v,w)] = D_tuvw_avg(t,u,v,w) -- exactly
+    //                       D_tuvw_avg's RowMajor buffer reshaped, no copy
+    //   "vwrs,tvuw->turs" : D2[(t,u),(v,w)] = D_tuvw_avg(t,v,u,w) -- a genuine
+    //                       index permutation, so materialized explicitly
+    {
+        const Eigen::Map<const RowMajorMatrix> D1(D_tuvw_avg.data(), nact2, nact2);
+        RowMajorMatrix D2(nact2, nact2);
+        for (int t = 0; t < n_act; ++t)
+            for (int u = 0; u < n_act; ++u)
+                for (int v = 0; v < n_act; ++v)
+                    for (int w = 0; w < n_act; ++w) D2(t * n_act + u, v * n_act + w) = D_tuvw_avg(t, v, u, w);
+
+        const RowMajorMatrix GJ = D1 * Jmat; // (n_act^2, n_occupied^2)
+        const RowMajorMatrix GK = D2 * Kmat; // (n_act^2, n_occupied^2)
+        const double pref_pe = -std::sqrt(omega / 2.0);
+        for (int t = 0; t < n_act; ++t) {
+            for (int u = 0; u < n_act; ++u) {
+                const int tu = t * n_act + u;
+                slab_mut(G, n_in_a + t, n_in_a + u, n_occupied) =
+                    D_tu_avg(t, u) * fock_core_rm + (pref_pe * Dpe_tu_avg(t, u)) * d_cmo_rm +
+                    Eigen::Map<const RowMajorMatrix>(GJ.data() + static_cast<std::ptrdiff_t>(tu) * nocc2, n_occupied,
+                                                      n_occupied) +
+                    2.0 * Eigen::Map<const RowMajorMatrix>(GK.data() + static_cast<std::ptrdiff_t>(tu) * nocc2,
+                                                            n_occupied, n_occupied);
+            }
+        }
+    }
+
+    return result;
+}
+
 GradientResult build_gradient(const Matrix& U, const Matrix& A, const Tensor4& G, const Dimensions& dims) {
     const int nmo = dims.nmo;
     const int n_occupied = dims.n_occupied;

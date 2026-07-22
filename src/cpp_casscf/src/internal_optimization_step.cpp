@@ -103,11 +103,14 @@ void CasscfInternalOptimizationStep::run(CasscfContext& context, double /*E0*/, 
     Matrix U1 = Matrix::Identity(dims.nmo, dims.nmo);
     double trust_radius = 0.5;
 
-    // helper_PFCI.py:6984-7043.
-    SmallBlockIntermediates si = build_intermediates_internal(context.occupied_fock_core, context.occupied_d_cmo,
-                                                                context.occupied_J, context.occupied_K, sad.D_tu_avg,
-                                                                sad.D_tuvw_avg, sad.Dpe_tu_avg, off_diagonal_constant,
-                                                                sad.omega, dims);
+    // helper_PFCI.py:6984-7043. BLAS-backed production path; the legacy
+    // explicit-loop build_intermediates_internal stays in intermediates.cpp as
+    // the line-for-line Python correspondence, the TAMM-retarget reference,
+    // and this path's oracle (test_intermediates_internal_fast.cpp ties the
+    // two elementwise). Same arrangement as build_intermediates_fast.
+    SmallBlockIntermediates si = build_intermediates_internal_fast(
+        context.occupied_fock_core, context.occupied_d_cmo, context.occupied_J, context.occupied_K, sad.D_tu_avg,
+        sad.D_tuvw_avg, sad.Dpe_tu_avg, off_diagonal_constant, sad.omega, dims);
     GradientAndHessianResult gh = build_gradient_and_hessian(si.A, si.G, dims);
     Vector gradient_ai = extract_gradient_ai(gh.gradient_tilde, dims);
     Matrix hessian_ai = extract_hessian_ai(gh.hessian_tilde, dims);
@@ -190,9 +193,10 @@ void CasscfInternalOptimizationStep::run(CasscfContext& context, double /*E0*/, 
             // committed state for the next microiteration.
             off_diagonal_constant =
                 calculate_off_diagonal_photon_constant(eigenvecs, sad.weight, sad.N_p, sad.num_det, sad.omega);
-            si = build_intermediates_internal(context.occupied_fock_core, context.occupied_d_cmo, context.occupied_J,
-                                               context.occupied_K, sad.D_tu_avg, sad.D_tuvw_avg, sad.Dpe_tu_avg,
-                                               off_diagonal_constant, sad.omega, dims);
+            si = build_intermediates_internal_fast(context.occupied_fock_core, context.occupied_d_cmo,
+                                                    context.occupied_J, context.occupied_K, sad.D_tu_avg,
+                                                    sad.D_tuvw_avg, sad.Dpe_tu_avg, off_diagonal_constant, sad.omega,
+                                                    dims);
             gh = build_gradient_and_hessian(si.A, si.G, dims);
             gradient_ai = extract_gradient_ai(gh.gradient_tilde, dims);
             hessian_ai = extract_hessian_ai(gh.hessian_tilde, dims);

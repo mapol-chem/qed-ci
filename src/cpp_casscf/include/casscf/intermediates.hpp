@@ -90,6 +90,43 @@ SmallBlockIntermediates build_intermediates_internal(const Matrix& occupied_fock
                                                        double off_diagonal_constant,
                                                        double omega, const Dimensions& dims);
 
+// FAST path -- identical signature, identical outputs, same math evaluated as
+// BLAS-backed Eigen products instead of scalar loops. Same legacy/fast
+// arrangement as build_intermediates/build_intermediates_fast above: the loop
+// form stays as the line-for-line Python correspondence, the TAMM-retarget
+// reference, and this path's correctness oracle.
+//
+// The transformations mirror build_intermediates_fast's, with ONE term that
+// is genuinely different and must not be copied across -- the `A`
+// active-active two-electron term:
+//
+//   build_intermediates          "vwrt,tuvw->ru"   J(v, w, r, t)
+//   build_intermediates_internal "rtvw,tuvw->ru"   occupied_J(r, t, v, w)
+//
+// These are not the same formula renamed. The reason is structural rather
+// than arbitrary, which is worth knowing before "fixing" either one:
+// build_intermediates's J is (n_occupied, n_occupied, nmo, nmo), so a free
+// index running over the full orbital range can only live in the trailing
+// two axes -- hence `r` third. Here occupied_J is the fully
+// occupied-restricted (n_occupied)^4 block and `r` runs over n_occupied, so
+// it can and does sit in the LEADING axis. Consequence for the packing
+// below: the folded operand comes out as P(r, (t,v,w)) and the GEMM is
+// `P * Q` directly, where build_intermediates_fast needs `P.transpose() * Q`.
+//
+// Because rot_dim == n_occupied here (not nmo), every slab is
+// (n_occupied, n_occupied) and the dominant active-active G term is
+// O(n_act^4 * n_occupied^2) rather than O(n_act^4 * nmo^2) -- a smaller win
+// than the full-block twin's, but the same shape of win.
+SmallBlockIntermediates build_intermediates_internal_fast(const Matrix& occupied_fock_core,
+                                                             const Matrix& occupied_d_cmo,
+                                                             const Tensor4& occupied_J,
+                                                             const Tensor4& occupied_K,
+                                                             const Matrix& D_tu_avg,
+                                                             const Tensor4& D_tuvw_avg,
+                                                             const Matrix& Dpe_tu_avg,
+                                                             double off_diagonal_constant,
+                                                             double omega, const Dimensions& dims);
+
 struct FullBlockIntermediates {
     Matrix A;          // (nmo, nmo)
     Tensor4 G;         // (n_occupied, n_occupied, nmo, nmo)

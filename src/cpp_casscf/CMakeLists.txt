@@ -162,6 +162,10 @@ add_executable(test_intermediates_fast tests/test_intermediates_fast.cpp)
 target_link_libraries(test_intermediates_fast PRIVATE casscf_trust_region)
 add_test(NAME intermediates_fast COMMAND test_intermediates_fast)
 
+add_executable(test_intermediates_internal_fast tests/test_intermediates_internal_fast.cpp)
+target_link_libraries(test_intermediates_internal_fast PRIVATE casscf_trust_region)
+add_test(NAME intermediates_internal_fast COMMAND test_intermediates_internal_fast)
+
 add_executable(test_microiteration_energy tests/test_microiteration_energy.cpp)
 target_link_libraries(test_microiteration_energy PRIVATE casscf_trust_region)
 add_test(NAME microiteration_energy COMMAND test_microiteration_energy)
