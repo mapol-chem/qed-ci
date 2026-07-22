@@ -288,9 +288,16 @@ void CasscfMicroiterationOptimizationStep::run(CasscfContext& context, const Mat
             calculate_off_diagonal_photon_constant(eigenvecs, constants_.weight, constants_.N_p, constants_.num_det,
                                                     constants_.omega);
         StateAverageData sad = make_state_average_data(context, constants_);
-        FullBlockIntermediates fi = build_intermediates(context.H_spatial2, context.d_cmo, context.J, context.K,
-                                                          sad.D_tu_avg, sad.D_tuvw_avg, sad.Dpe_tu_avg,
-                                                          off_diagonal_constant, sad.omega, dims);
+        // BLAS-backed production path. Identical signature/outputs to the
+        // legacy explicit-loop build_intermediates, which stays in
+        // intermediates.cpp as the line-for-line Python correspondence, the
+        // TAMM-retarget reference, and this path's correctness oracle
+        // (test_intermediates_fast.cpp ties the two elementwise). Results move
+        // at the ~1e-15 level relative to the legacy loop -- see the README's
+        // "build_intermediates_fast" section.
+        FullBlockIntermediates fi = build_intermediates_fast(context.H_spatial2, context.d_cmo, context.J, context.K,
+                                                             sad.D_tu_avg, sad.D_tuvw_avg, sad.Dpe_tu_avg,
+                                                             off_diagonal_constant, sad.omega, dims);
         context.E_core = fi.E_core; // helper_PFCI.py: self.E_core reassigned inside build_intermediates
 
         // Step 2: zero_energy / current_energy / small-energy-change break.

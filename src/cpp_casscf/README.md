@@ -26,7 +26,7 @@ retargeting onto TAMM's distributed tensor API.
 | `build_unitary_matrix` | **Fully ported, tested** | helper_PFCI.py:6131-6164 |
 | `MacroiterationDriver::run` (outer loop orchestration) | **Fully ported, tested** against mocked collaborators (see "documented gap" below) | helper_PFCI.py:2394-3060 |
 | `minres_solve` (Paige/Saunders MINRES) | **Fully ported, tested** against real ill-conditioned chemistry data; used by `LstrsSolver`'s hard_case==2 | helper_PFCI.py:7547-7549 (`scipy.sparse.linalg.minres` call site) |
-| `build_intermediates(_internal)`/`build_gradient(_and_hessian)`/`build_hessian_diagonal` | **Fully ported, tested** against real captured data; `build_intermediates` additionally has a BLAS-backed `_fast` twin (legacy loop kept as TAMM reference + oracle) | see "Intermediates building" section |
+| `build_intermediates(_internal)`/`build_gradient(_and_hessian)`/`build_hessian_diagonal` | **Fully ported, tested** against real captured data; `build_intermediates` additionally has a BLAS-backed `_fast` twin, **now the production path** (legacy loop kept as TAMM reference + oracle) | see "Intermediates building" section |
 | `OrbitalHessianGuessProvider` (real `HessianGuessProvider`) | **Fully ported, tested** against real captured data | helper_PFCI.py:16614-16712 (`build_orbital_hessian_guess`/`hessian_guess`) |
 | `CasscfContext` | Done (struct, no logic to test) | bundles self.H_spatial2/d_cmo/U_total/J/K/occupied_*/E_core/gkl2/H_diag3 -- see "Shared CasscfContext" below |
 | `internal_transformation`, `internal_optimization_exact_energy`, `internal_optimization_predicted_energy`, `step_control` | **Fully ported, tested** (hand-computed cases) | helper_PFCI.py:6452-6517, 6734-6871, 6873-6877, 8018-8025 |
@@ -348,10 +348,24 @@ dimension shapes (including `n_in_a == 0`, and shapes where no two of
 with unsymmetrized random inputs so that any accidental slab transpose from a
 wrong storage-order assumption shows up immediately. Agreement is ~1e-15.
 
-**Not yet wired into production**: every call site still calls the legacy
-`build_intermediates`. Switching them is a one-line change per call site but
-perturbs results at the ~1e-15 level, which would shift the checked-in
-validation-sweep numbers, so it is left as a deliberate, separate step.
+**Wired into production.** The one production call site --
+`CasscfMicroiterationOptimizationStep`'s once-per-outer-iteration build
+(`microiteration_optimization_step.cpp:291`, "Step 1") -- now calls
+`build_intermediates_fast`. The ~1e-15 perturbation this was expected to
+introduce turns out **not** to shift any checked-in validation number:
+`sweep_macroiterations.sh` re-run against the fast path is 8/8 PASS with
+every macroiteration count still matching Python *exactly* and final
+energies at `6.7e-14`/`9.1e-14`/`9.3e-14`/`7.0e-14`/`6.7e-14`/`3.4e-12`/
+`4.5e-13` -- the same `~1e-12`-`1e-14` band the legacy path produced, so no
+fixture regeneration was needed. Suite 25/25.
+
+`tools/validate_against_python.cpp:256` deliberately **stays on the legacy
+`build_intermediates`**: its job is to check this port against Python's own
+captured intermediates, so it must exercise the line-for-line
+correspondence, not the reformulation. Coverage of the production path is
+transitive and no weaker for it -- `test_intermediates_fast.cpp` ties fast
+to legacy elementwise at ~1e-15, and `validate_against_python` ties legacy
+to Python at ~1e-15-1e-17. Keep this split if you touch either file.
 
 Deliberately **not** ported: `build_intermediates2` (dead code -- every call
 site is commented out, confirmed via grep) and `build_intermediates_with_blocks`
@@ -1901,6 +1915,97 @@ the triplet depends on the determinant phase convention).
     path in the whole solver stack.
   - `HessianGuessProvider` now has a real implementation
     (`OrbitalHessianGuessProvider`, see above) -- nothing left here for it.
+  - **Next vectorization candidates**, by loop-nest depth, now that
+    `build_intermediates` (depth 7) is done *and wired into production*:
+    `build_intermediates_internal` (`intermediates.cpp:7`, also depth 7, the
+    occupied-space twin -- most term structure should carry over, but
+    **verify rather than assume**: its `A` active-active term uses a
+    genuinely different index pattern, `"rtvw,tuvw->ru"` vs
+    `"vwrt,tuvw->ru"`, see the two-surprises note in the
+    `build_intermediates_fast` section); then
+    `microiteration_ci_integrals_transform.cpp` (depth 6),
+    `internal_optimization.cpp:internal_transformation` (depth 5),
+    `integral_transformer.cpp:transform_macroiteration` (depth 4). The
+    Davidson/GLTR solvers show depth 5-6 too, but those loops are iteration
+    control, not contractions -- leave them alone.
+
+### The QN/BFGS convergence-variant experiment: a negative result (closed 2026-07-22)
+
+Recorded here so it is not re-litigated. **Question**: does the Python's
+QN/BFGS exact-Hessian *reset* policy (which
+`CasscfMicroiterationOptimizationStep` mirrors) leave convergence on the
+table? Five variants were implemented as default-no-op env toggles in
+`helper_PFCI.py` and swept paired-by-seed:
+
+| | trigger change | verdict |
+|---|---|---|
+| v1 | QN disabled entirely | no effect |
+| v2 | reset on *actual* `E^k - E^{k-1}` instead of predicted | **inert** (see below) |
+| v3 | reset after 3 Powell-damping events | **unreachable** |
+| v4 | v2 + v3 | == v2 |
+| v6 | reset on the QN step's own uphill second-order change | **inert** |
+| v7 | reject uphill QN steps outright | **harmful** |
+
+Small systems (LiH/H2O/BeH2, 150 runs/variant) came back statistically
+indistinguishable -- mean 8.28 macroiterations for v0/v2/v3/v4/v6, 8.32 for
+v7, 8.46 QN-off, zero non-convergences. That was **not** evidence the
+variants do nothing: those systems converge in ~8 macroiterations and never
+exercise the pathology. The decisive test was MgH+ CAS(8,12)/cc-pVDZ (>10
+macroiterations), 6 seeds x 6 variants, `OMP_NUM_THREADS=1`:
+
+| | v0 | v2 | v3 | v4 | v6 | v7 |
+|---|---|---|---|---|---|---|
+| mean macroiterations | 12.50 | 12.67 | 12.50 | 12.67 | 12.50 | **16.33** |
+| exact-Hessian resets (6 seeds) | 345 | **141** | 345 | 141 | 342 | 1103 |
+| mean wall (s) | 4489 | 4206 | 4334 | 4292 | 4180 | **6241** |
+
+All 36 converged to the same solution (-199.5439747, spread < 1e-8). Four
+things this settles:
+
+- **v7 is decisively worse** -- +31% macroiterations, +39% wall, 954 step
+  rejections and 614 curvature violations. The earlier plan to consider
+  porting it to `CasscfMicroiterationOptimizationStep` (which would have
+  added an accept/reject fork and persistent trust-radius state to a class
+  that currently mirrors the Python's unconditional-accept structure) is
+  **dropped**. Do not port it.
+- **v3/v4 are inert for a structural reason, not a statistical one**: v3 is
+  bit-identical to v0 and v4 to v2 in *every* cell and *every* counter,
+  because only 2 Powell-damping events occur across all six v0 seeds -- the
+  3-event trigger simply never fires here.
+- **v6 does not generalize.** On small systems it halved resets (115 vs 230)
+  at identical macroiteration counts, which looked like a free win; on MgH+
+  it is 342 vs 345, i.e. nothing.
+- **v2's reset reduction is real but doesn't pay.** -59% resets, consistent
+  across all 6 seeds, but wall time is a wash (paired differences flip sign
+  on 2 of 6 seeds) at +0.17 macroiterations. Read-through: **exact-Hessian
+  rebuilds are not the bottleneck -- Davidson is.** That is the useful
+  finding to keep, and it is an argument for spending effort on the
+  vectorization list above rather than on reset policy.
+
+Consequently the `helper_PFCI.py` toggles were **reverted**, not committed:
+the Python here is the port's reference and must stay identical to the
+production code. The full diff is preserved as
+`validation/qn_experiment_scratch/helper_PFCI_qn_experiment.patch`, with the
+sweep drivers, per-run logs and `tabulate_mgh_det.py` alongside it.
+
+What *was* kept (still uncommitted, gated, default-no-op) is the
+`QED_RANDOM_ORBITAL_SEED` seeded random-orbital-guess block in
+`PFHamiltonianGenerator`: it is the only way to reproduce the hard
+>10-macroiteration regime, and it carries a non-obvious MO **sign-pinning**
+fix without which the experiment is not reproducible at all (psi4's threaded
+SCF returns run-to-run-varying column signs; `C @ U` mixes columns, so a
+flipped sign makes the rotated guess a genuinely different orbital set --
+this cost 9/12/11 macroiterations across supposedly identical repeats before
+it was found, and the `np.round` before `argmax` is load-bearing for
+symmetry-equivalent atoms whose largest coefficients tie to ~1e-15).
+
+Two methodology notes worth not rediscovering: **`OMP_NUM_THREADS=1` is
+mandatory** for this kind of comparison (from a bitwise-identical pinned
+guess, threaded CI-solver noise starts at 4.3e-14 and amplifies to 4.5e-6 by
+macroiteration 13 -- more than enough to flip a trust-radius accept/reject or
+the `step_norm < 0.05` QN trigger); and **never compare macroiteration counts
+alone** -- a variant that stops looser looks faster, so every cell above is
+reported with its final energy.
 
 `build_unitary_matrix` (`orbital_rotation.hpp`/`.cpp`, port of
 helper_PFCI.py:6131-6164 -- builds `exp(R)` for the antisymmetric rotation
