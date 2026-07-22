@@ -1,0 +1,235 @@
+
+Scratch directory: /home/nvu12/software/scratch/
+   => Libint2 <=
+
+    Primary   basis highest AM E, G, H:  6, 6, 3
+    Auxiliary basis highest AM E, G, H:  7, 7, 4
+    Onebody   basis highest AM E, G, H:  -, -, -
+    Solid Harmonics ordering:            Gaussian
+
+*** tstart() called on chem993kg04lws
+*** at Tue Jul 21 21:34:05 2026
+
+   => Loading Basis Set <=
+
+    Name: 6-31G
+    Role: ORBITAL
+    Keyword: BASIS
+    atoms 1   entry O          line   117 file /home/nvu12/miniforge3/envs/p4dev/share/psi4/basis/6-31g.gbs 
+    atoms 2-3 entry H          line    26 file /home/nvu12/miniforge3/envs/p4dev/share/psi4/basis/6-31g.gbs 
+
+
+         ---------------------------------------------------------
+                                   SCF
+               by Justin Turney, Rob Parrish, Andy Simmonett
+                          and Daniel G. A. Smith
+                              RHF Reference
+                        3 Threads,   3814 MiB Core
+         ---------------------------------------------------------
+
+  ==> Geometry <==
+
+    Molecular point group: c1
+    Full point group: C2v
+
+    Geometry (in Angstrom), charge = 0, multiplicity = 1:
+
+       Center              X                  Y                   Z               Mass       
+    ------------   -----------------  -----------------  -----------------  -----------------
+         O            0.000000000000     0.000000000000    -0.065775570547    15.994914619570
+         H            0.000000000000    -0.759061990794     0.521953018286     1.007825032230
+         H            0.000000000000     0.759061990794     0.521953018286     1.007825032230
+
+  Running in c1 symmetry.
+
+  Rotational constants: A =     27.26297  B =     14.51533  C =      9.47217 [cm^-1]
+  Rotational constants: A = 817323.21126  B = 435158.60141  C = 283968.37536 [MHz]
+  Nuclear repulsion =    9.168193296424349
+
+  Charge       = 0
+  Multiplicity = 1
+  Electrons    = 10
+  Nalpha       = 5
+  Nbeta        = 5
+
+  ==> Algorithm <==
+
+  SCF Algorithm Type is PK.
+  DIIS enabled.
+  MOM disabled.
+  Fractional occupation disabled.
+  Guess Type is SAD.
+  Energy threshold   = 1.00e-10
+  Density threshold  = 1.00e-10
+  Integral threshold = 1.00e-12
+
+  ==> Primary Basis <==
+
+  Basis Set: 6-31G
+    Blend: 6-31G
+    Number of shells: 9
+    Number of basis functions: 13
+    Number of Cartesian functions: 13
+    Spherical Harmonics?: false
+    Max angular momentum: 1
+
+  ==> Integral Setup <==
+
+  Using in-core PK algorithm.
+   Calculation information:
+      Number of atoms:                   3
+      Number of AO shells:               9
+      Number of primitives:             22
+      Number of atomic orbitals:        13
+      Number of basis functions:        13
+
+      Integral cutoff                 1.00e-12
+      Number of threads:                 3
+
+  Performing in-core PK
+  Using 8372 doubles for integral storage.
+  We computed 1265 shell quartets total.
+  Whereas there are 1035 unique shell quartets.
+    22.22 percent of shell quartets recomputed by reordering.
+
+  ==> DiskJK: Disk-Based J/K Matrices <==
+
+    J tasked:                  Yes
+    K tasked:                  Yes
+    wK tasked:                  No
+    Memory [MiB]:             2861
+    Schwarz Cutoff:          1E-12
+
+    OpenMP threads:              3
+
+  Minimum eigenvalue in the overlap matrix is 6.8136511557E-02.
+  Reciprocal condition number of the overlap matrix is 1.9805979309E-02.
+    Using symmetric orthogonalization.
+
+  ==> Pre-Iterations <==
+
+  SCF Guess: Superposition of Atomic Densities via on-the-fly atomic UHF (no occupation information).
+
+   -------------------------
+    Irrep   Nso     Nmo    
+   -------------------------
+     A         13      13 
+   -------------------------
+    Total      13      13
+   -------------------------
+
+  ==> Iterations <==
+
+                        Total Energy        Delta E     RMS |[F,P]|
+
+   @RHF iter SAD:   -75.52056463072975   -7.55206e+01   0.00000e+00 
+   @RHF iter   1:   -75.91013434841079   -3.89570e-01   3.11500e-02 ADIIS/DIIS
+   @RHF iter   2:   -75.96451506204384   -5.43807e-02   1.81130e-02 ADIIS/DIIS
+   @RHF iter   3:   -75.98336141826606   -1.88464e-02   2.47039e-03 ADIIS/DIIS
+   @RHF iter   4:   -75.98392866723185   -5.67249e-04   2.79893e-04 ADIIS/DIIS
+   @RHF iter   5:   -75.98393996717766   -1.12999e-05   3.89765e-05 DIIS
+   @RHF iter   6:   -75.98394028760397   -3.20426e-07   6.77138e-06 DIIS
+   @RHF iter   7:   -75.98394029827053   -1.06666e-08   1.37739e-06 DIIS
+   @RHF iter   8:   -75.98394029874126   -4.70735e-10   2.37854e-07 DIIS
+   @RHF iter   9:   -75.98394029875075   -9.49285e-12   2.49736e-08 DIIS
+   @RHF iter  10:   -75.98394029875085   -9.94760e-14   2.39351e-09 DIIS
+   @RHF iter  11:   -75.98394029875092   -7.10543e-14   1.52918e-10 DIIS
+   @RHF iter  12:   -75.98394029875089    2.84217e-14   1.27117e-11 DIIS
+  Energy and wave function converged.
+
+
+  ==> Post-Iterations <==
+
+    Orbital Energies [Eh]
+    ---------------------
+
+    Doubly Occupied:                                                      
+
+       1A    -20.560950     2A     -1.354919     3A     -0.708629  
+       4A     -0.560244     5A     -0.501236  
+
+    Virtual:                                                              
+
+       6A      0.203128     7A      0.299117     8A      1.056521  
+       9A      1.164454    10A      1.183781    11A      1.215706  
+      12A      1.378629    13A      1.696036  
+
+    Final Occupation by Irrep:
+              A 
+    DOCC [     5 ]
+    NA   [     5 ]
+    NB   [     5 ]
+
+  @RHF Final Energy:   -75.98394029875089
+
+   => Energetics <=
+
+    Nuclear Repulsion Energy =              9.1681932964243487
+    One-Electron Energy =                -122.9323117971093069
+    Two-Electron Energy =                  37.7801782019340635
+    Total Energy =                        -75.9839402987508947
+
+Computation Completed
+
+
+Properties will be evaluated at   0.000000,   0.000000,   0.000000 [a0]
+
+Properties computed using the SCF density matrix
+
+
+ Multipole Moments:
+
+ ------------------------------------------------------------------------------------
+     Multipole            Electronic (a.u.)      Nuclear  (a.u.)        Total (a.u.)
+ ------------------------------------------------------------------------------------
+
+ L = 1.  Multiply by 2.5417464519 to convert [e a0] to [Debye]
+ Dipole X            :         -0.0000000            0.0000000           -0.0000000
+ Dipole Y            :         -0.0000000            0.0000000           -0.0000000
+ Dipole Z            :          0.0570025            0.9783140            1.0353165
+ Magnitude           :                                                    1.0353165
+
+ ------------------------------------------------------------------------------------
+
+*** tstop() called on chem993kg04lws at Tue Jul 21 21:34:05 2026
+Module time:
+	user time   =       0.18 seconds =       0.00 minutes
+	system time =       0.03 seconds =       0.00 minutes
+	total time  =          0 seconds =       0.00 minutes
+Total time:
+	user time   =       0.18 seconds =       0.00 minutes
+	system time =       0.03 seconds =       0.00 minutes
+	total time  =          0 seconds =       0.00 minutes
+   => Loading Basis Set <=
+
+    Name: 6-31G
+    Role: ORBITAL
+    Keyword: BASIS
+    atoms 1   entry O          line   117 file /home/nvu12/miniforge3/envs/p4dev/share/psi4/basis/6-31g.gbs 
+    atoms 2-3 entry H          line    26 file /home/nvu12/miniforge3/envs/p4dev/share/psi4/basis/6-31g.gbs 
+
+   => Loading Basis Set <=
+
+    Name: 6-31G
+    Role: ORBITAL
+    Keyword: BASIS
+    atoms 1   entry O          line   117 file /home/nvu12/miniforge3/envs/p4dev/share/psi4/basis/6-31g.gbs 
+    atoms 2-3 entry H          line    26 file /home/nvu12/miniforge3/envs/p4dev/share/psi4/basis/6-31g.gbs 
+
+
+  ==> Orthogonalize Orbitals Between Different Geometries <==
+
+    Testing frozen orbitals ... Pass
+    Preparing orbitals of subspaces ... Done
+    Orthogonalizing orbitals of subspaces ... Done
+    Combining orbitals of subspaces ... Done
+    Semicanonicalizing orbitals ... Done
+
+   => Loading Basis Set <=
+
+    Name: 6-31G
+    Role: ORBITAL
+    Keyword: BASIS
+    atoms 1   entry O          line   117 file /home/nvu12/miniforge3/envs/p4dev/share/psi4/basis/6-31g.gbs 
+    atoms 2-3 entry H          line    26 file /home/nvu12/miniforge3/envs/p4dev/share/psi4/basis/6-31g.gbs 
+

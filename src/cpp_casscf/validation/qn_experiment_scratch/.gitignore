@@ -1,0 +1,15 @@
+# Raw per-run CASSCF logs from the (closed) QN/BFGS variant experiment --
+# ~210 MB, far too much for the repo and regenerable from the drivers here.
+#
+# Nothing in the conclusions depends on having them: the numbers they
+# support are tabulated in RESUME.md and written up in cpp_casscf/README.md
+# ("The QN/BFGS convergence-variant experiment: a negative result"). If you
+# do regenerate them, tabulate_mgh_det.py turns them back into the results
+# table, and the per-log counters it greps for are listed in RESUME.md.
+mgh_det_logs/
+
+# Same, for the two archived sub-experiments. Their README.md /
+# orbguess_findings.md write-ups and the small trace_*.txt evidence files
+# are tracked -- only the multi-MB run logs are dropped.
+superseded_v6_or_semantics/*.log
+orbguess_run/*.log

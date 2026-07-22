@@ -1,0 +1,322 @@
+diff --git a/src/helper_PFCI.py b/src/helper_PFCI.py
+index e5ced9d..b0dd89d 100644
+--- a/src/helper_PFCI.py
++++ b/src/helper_PFCI.py
+@@ -3398,12 +3398,43 @@ class PFHamiltonianGenerator:
+         self.Ca_hf = wfn.Ca()
+ 
+         ##random orbital guess
+-        #U = ortho_group.rvs(wfn.nmo())
+-        #new_C = np.einsum("pq,qr->pr", self.C, U)
+-
+-        #self.C[:,:] = new_C[:,:]
+-        ##update d_cmo
+-        #self.d_cmo = np.dot(self.C.T, self.d_ao).dot(self.C)
++        # TEMPORARY (QN/BFGS convergence experiments only): a random unitary
++        # rotation of the initial orbitals, seeded + gated by an env var so it
++        # is a no-op on every normal run / the C++ validation. Reproduces the
++        # hard >10-macroiteration cases that the random-initial-guess regime
++        # produces. Set QED_RANDOM_ORBITAL_SEED=<int> to enable.
++        _rand_orb_seed = os.environ.get("QED_RANDOM_ORBITAL_SEED")
++        if _rand_orb_seed is not None:
++            # Fix the MO sign convention BEFORE rotating. psi4's threaded SCF
++            # returns the same orbitals every run (occupied subspaces agree to
++            # ~1e-14) but with run-to-run-varying column SIGNS -- measured at
++            # OMP_NUM_THREADS=16: 5 columns identical, 8 sign-flipped, 0
++            # genuinely different. Those signs are unphysical and harmless for
++            # a canonical-orbital run, but `C @ U` mixes all columns, so a
++            # flipped sign makes the ROTATED guess a genuinely different
++            # orbital set -- which made this experiment non-reproducible
++            # (9/12/11 macroiterations across identical repeats) until the
++            # signs were pinned here. Deterministic rule: make the
++            # largest-magnitude coefficient of every column positive.
++            # np.round before argmax is essential, not cosmetic: in a molecule
++            # with symmetry-equivalent atoms (water's two hydrogens) an MO has
++            # EXACTLY tied largest coefficients, and the two differ only by
++            # ~1e-15 of threading noise -- so a raw argmax picks between them
++            # arbitrarily and the sign rule itself becomes non-reproducible
++            # (measured: 3 of 13 columns fragile, margins 1.5e-15 to 6e-14).
++            # Rounding collapses the tie so argmax's first-occurrence rule
++            # resolves it deterministically by lowest index.
++            for _j in range(self.C.shape[1]):
++                _k = int(np.argmax(np.round(np.abs(self.C[:, _j]), 10)))
++                if self.C[_k, _j] < 0.0:
++                    self.C[:, _j] *= -1.0
++            if os.environ.get("QED_DUMP_PREROT") is not None:
++                np.savetxt(os.environ["QED_DUMP_PREROT"], self.C)
++            U = ortho_group.rvs(wfn.nmo(), random_state=int(_rand_orb_seed))
++            new_C = np.einsum("pq,qr->pr", self.C, U)
++            self.C[:, :] = new_C[:, :]
++            # update d_cmo
++            self.d_cmo = np.dot(self.C.T, self.d_ao).dot(self.C)
+ 
+         np.savetxt("orbital2.out", self.C)
+         # print("Unitary matrix")
+@@ -11009,7 +11040,37 @@ class PFHamiltonianGenerator:
+         microiteration = 0
+         qn_optimization = False
+         qn_count = 0
+-        self.consecutive_skips = 0 
++        self.consecutive_skips = 0
++        # TEMPORARY QN/BFGS convergence experiment toggles (env-gated, all
++        # no-ops when unset -> default behavior identical to before):
++        #   QED_DISABLE_QN               : never activate QN (uncoupled only)
++        #   QED_ENERGY_TRIGGER_ACTUAL    : use the actual (E^k - E^{k-1})
++        #                                  energy change instead of the
++        #                                  predicted step energy in the
++        #                                  exact-Hessian-recompute trigger
++        #   QED_HESSIAN_RESET_NEG_CURV=N : count consecutive Powell-damping
++        #                                  (negative-curvature) events and
++        #                                  recompute the exact Hessian +
++        #                                  restart BFGS after N of them
++        _QED_DISABLE_QN = os.environ.get("QED_DISABLE_QN") is not None
++        _QED_ENERGY_ACTUAL = os.environ.get("QED_ENERGY_TRIGGER_ACTUAL") is not None
++        _QED_HESS_RESET_N = os.environ.get("QED_HESSIAN_RESET_NEG_CURV")
++        _QED_HESS_RESET_N = int(_QED_HESS_RESET_N) if _QED_HESS_RESET_N is not None else None
++        #   QED_RESET_ON_BAD_STEP        : reset the exact Hessian + restart
++        #                                  BFGS when the QN step just taken
++        #                                  actually raised the energy
++        _QED_RESET_ON_BAD_STEP = os.environ.get("QED_RESET_ON_BAD_STEP") is not None
++        _qn_bad_step = False
++        #   QED_QN_REJECT                : (v7) REJECT an energy-raising QN step
++        #                                  instead of taking it anyway, and
++        #                                  shrink a *persistent* QN trust radius.
++        # The QN branch as written has no accept/reject test and no trust-radius
++        # update, and `trust_radius` is re-set to 0.5 at the top of every
++        # microiteration, so the trust region is effectively inert there.
++        _QED_QN_REJECT = os.environ.get("QED_QN_REJECT") is not None
++        _qn_trust_radius = 0.5
++        _qn_rejected = False
++        energy_change_actual = 0.0
+         while microiteration < N_microiterations:
+             print("\n")
+             print("\n")
+@@ -11017,6 +11078,10 @@ class PFHamiltonianGenerator:
+ 
+             # while(microiteration < 2):
+             trust_radius = 0.5
++            # v7: carry the QN trust radius across microiterations so that
++            # shrinking it on a rejected step actually has an effect.
++            if _QED_QN_REJECT and qn_optimization == True:
++                trust_radius = _qn_trust_radius
+             A[:, :] = 0.0
+             G[:, :, :, :] = 0.0
+             start = timer()
+@@ -11102,17 +11167,24 @@ class PFHamiltonianGenerator:
+             end1 = timer()
+             print("calculate initial exact energy took", end1 - start1)
+             current_energy = zero_energy + initial_energy_change
++            # actual energy change E^k - E^{k-1}, captured before old_energy is
++            # overwritten below (used by the QED_ENERGY_TRIGGER_ACTUAL toggle).
++            energy_change_actual = current_energy - old_energy
+             print(
+                 "current energy from zero energy + second order energy change",
+                 zero_energy + initial_energy_change,
+                 flush=True,
+             )
+             print(old_energy, current_energy)
++            # v7: after a REJECTED QN step the orbitals did not move, so
++            # current_energy == old_energy exactly.  That is "we did not move",
++            # not "we converged" -- without this guard every rejection would
++            # trip the check below and end the whole macroiteration.
+             print("initial convergence threshold", convergence_threshold)
+             if (
+                 np.abs(current_energy - old_energy)
+                 < max(0.01 * convergence_threshold, 1e-10)
+-            ) and microiteration >= 2:
++            ) and microiteration >= 2 and not (_QED_QN_REJECT and _qn_rejected):
+                 # if (np.abs(current_energy - old_energy) < 1e-15) and microiteration >=2:
+                 print("microiteration converged (small energy change)")
+                 # self.U_total = np.einsum("pq,qs->ps", self.U_total, self.U2)
+@@ -11171,8 +11243,14 @@ class PFHamiltonianGenerator:
+                     index_count1 += 1
+             #print("reduced_gradient",reduced_gradient, flush = True)
+             new_reduced_gradient = copy.deepcopy(reduced_gradient)
+-           
+-            if qn_count > 1:
++
++            # v7: if the previous QN step was REJECTED, `step` was never applied,
++            # so pairing it with y = new_grad - old_grad (which is ~0, since the
++            # orbitals did not move) would be a degenerate BFGS update and
++            # 1.0/dot_ys would blow up.  Skip the update for that one pass.
++            if _QED_QN_REJECT and _qn_rejected:
++                print("  BFGS update skipped (previous QN step was rejected)")
++            elif qn_count > 1:
+                 s_vec = step  # The step we just took
+                 #print("step", step, flush = True)
+                 y_vec = new_reduced_gradient - old_reduced_gradient
+@@ -11198,19 +11276,27 @@ class PFHamiltonianGenerator:
+                 sBs_dot = np.dot(s_vec, Bs_vec)    # Model curvature
+                 
+                 # 3. Damping Logic
+-                sigma = 0.1 
++                sigma = 0.1
+                 if ys_dot < sigma * sBs_dot:
+-                    print(f"  Curvature Violation ({ys_dot:.4e} < 0.2 * {sBs_dot:.4e}). Damping...")
++                    print(f"  Curvature Violation ({ys_dot:.4e} < 0.1 * {sBs_dot:.4e}). Damping...")
+                     theta = ((1.0 - sigma) * sBs_dot) / (sBs_dot - ys_dot)
+                     y_bar = theta * y_vec + (1.0 - theta) * Bs_vec
+-                    
++
+                     # Use damped vectors for update
+                     final_y = y_bar
+                     final_rho_y = 1.0 / (sigma * sBs_dot) # Guaranteed positive
++                    # QED_HESSIAN_RESET_NEG_CURV: count consecutive curvature
++                    # violations (negative/insufficient curvature) so the
++                    # reset conditions above can recompute the exact Hessian +
++                    # restart BFGS after enough of them.
++                    if _QED_HESS_RESET_N is not None:
++                        self.consecutive_skips += 1
+                 else:
+                     # Standard BFGS
+                     final_y = y_vec
+                     final_rho_y = 1.0 / ys_dot
++                    if _QED_HESS_RESET_N is not None:
++                        self.consecutive_skips = 0
+                 
+                 # 4. Update History with SAFE vector
+                 # Store (s, y_bar, Bs_vec, rho_y_bar, rho_Bs)
+@@ -11224,7 +11310,57 @@ class PFHamiltonianGenerator:
+ 
+             print("number of skips", self.consecutive_skips)
+ 
+-            if self.density_norm_change > 0.025 and qn_optimization == True or self.predicted_energy > 0 or qn_count == 1:
++            # "energy increased" trigger -- one of three mutually exclusive
++            # definitions, all REPLACING the default rather than adding to it:
++            #   default : self.predicted_energy > 0   (the step's *predicted*
++            #             model energy)
++            #   v2      : energy_change_actual > 0    (the actual CI energy
++            #             change across microiterations, E^k - E^{k-1})
++            #   v6      : _qn_bad_step                (the last QN step's own
++            #             second-order energy change was positive, i.e. the
++            #             step actually went uphill -- the developer's stated
++            #             criterion)
++            #
++            # v6 was originally OR'd into the reset conditions on top of the
++            # default predicted-energy test. That made it dead code: measured
++            # over the MgH+ seeds 1-3 runs, 372 of 523 QN steps raised the
++            # actual energy and NOT ONE of them had predicted_energy <= 0, so
++            # the default trigger had already fired every single time and v6
++            # was strictly subsumed (independently confirmed with
++            # QED_TRACE_RESET on lih/h2o/beh2: `bad=1` in 8 of 400 reset
++            # checks, another trigger true in all 8, decisive in 0). Testing
++            # "reset when the step actually went uphill" as a hypothesis
++            # requires it to REPLACE the predicted-energy test, which is what
++            # this does.
++            if _QED_RESET_ON_BAD_STEP:
++                _energy_up = _qn_bad_step
++            elif _QED_ENERGY_ACTUAL:
++                _energy_up = energy_change_actual > 0
++            else:
++                _energy_up = self.predicted_energy > 0
++            _reset_ref = (self.density_norm_change > 0.025 and qn_optimization == True) or _energy_up or qn_count == 1
++            if _QED_HESS_RESET_N is not None and self.consecutive_skips >= _QED_HESS_RESET_N:
++                _reset_ref = True
++            # (v6's trigger is now folded into _energy_up above, replacing the
++            # predicted-energy test rather than OR-ing onto it -- see there.)
++            # v7: a rejected step means the current model produced a bad step ->
++            # rebuild the exact Hessian and restart BFGS from the current point.
++            if _QED_QN_REJECT and _qn_rejected:
++                _reset_ref = True
++            if os.environ.get("QED_TRACE_RESET") is not None:
++                # `energy` is whichever definition is active (see _energy_up
++                # above); `bad`/`pred` are the two candidate definitions
++                # printed unconditionally so a run under any variant still
++                # shows what the others would have decided.
++                print("RESETTRACE fired=%d dens=%d energy=%d qn1=%d skips=%d bad=%d pred=%d qn_on=%d" % (
++                    _reset_ref,
++                    (self.density_norm_change > 0.025 and qn_optimization == True),
++                    _energy_up, qn_count == 1,
++                    (_QED_HESS_RESET_N is not None and self.consecutive_skips >= _QED_HESS_RESET_N),
++                    _qn_bad_step,
++                    self.predicted_energy > 0,
++                    qn_optimization == True), flush=True)
++            if _reset_ref:
+                 self.A_tilde_zero = copy.deepcopy(A_tilde2)
+                 self.G_blocks_zero = copy.deepcopy(G_blocks)
+                 self.reduced_hessian_diagonal_zero = copy.deepcopy(self.reduced_hessian_diagonal)
+@@ -11258,8 +11394,13 @@ class PFHamiltonianGenerator:
+             if qn_optimization == True:
+                 
+                 print("--- Doing Direct BFGS Step (Kreplin Eq. 63) ---")
+-                
+-                if self.density_norm_change > 0.025 and qn_optimization == True or self.predicted_energy > 0 or qn_count == 1 or self.consecutive_skips >= 3:
++
++                _skip_thresh = _QED_HESS_RESET_N if _QED_HESS_RESET_N is not None else 3
++                # _energy_up already carries v2's/v6's replacement definition
++                # (see its assignment above); no per-variant term is OR'd on
++                # here, so this stays the same condition as _reset_ref plus
++                # the ungated consecutive-skips test.
++                if (self.density_norm_change > 0.025 and qn_optimization == True) or _energy_up or qn_count == 1 or self.consecutive_skips >= _skip_thresh:
+                     print("solve step for original hessian")
+                     _qn_gltr_dump_inputs = None
+                     if _CPP_CASSCF_VALIDATION_DIR:
+@@ -11361,6 +11502,7 @@ class PFHamiltonianGenerator:
+                 self.predicted_energy = predicted_energy2
+ 
+                 start = timer()
++                _U3_before_trial = copy.deepcopy(self.U3)   # v7: restore on reject
+                 Rai = np.zeros((self.n_act_orb, self.n_in_a))
+                 Rvi = np.zeros((self.n_virtual, self.n_in_a))
+                 Rva = np.zeros((self.n_virtual, self.n_act_orb))
+@@ -11404,14 +11546,39 @@ class PFHamiltonianGenerator:
+                 self.predicted_energy = predicted_energy2
+                 if energy_change > 0:
+                     print("qwrqwrq")
++                    _qn_bad_step = True
+                 else:
+                     print("erewrw")
++                    _qn_bad_step = False
+                 print("microiteration predicted energy", predicted_energy2, flush=True)
+                 end = timer()
+                 print("build unitary matrix and recheck energy took", end - start)
+                 qn_count +=1
+-                self.U2 = np.einsum("pq,qs->ps", self.U2, self.U_delta)
+-                
++
++                # v7 (QED_QN_REJECT): the stock QN branch below applies U_delta
++                # unconditionally, even when energy_change > 0.  Under v7 an
++                # energy-raising step is rejected: U2/U3/current_energy are left
++                # untouched and the persistent QN trust radius is shrunk so the
++                # next attempt is smaller.  On acceptance the trust radius is
++                # updated by the same step_control()/ratio rule the non-QN
++                # branch already uses.
++                _qn_reject_now = _QED_QN_REJECT and energy_change > 0
++                if _qn_reject_now:
++                    self.U3 = _U3_before_trial      # undo the trial rotation
++                    _qn_trust_radius = 0.7 * _qn_trust_radius
++                    _qn_rejected = True
++                    print("QNREJECT step rejected, qn trust radius ->", _qn_trust_radius, flush=True)
++                else:
++                    _qn_rejected = False
++                    if _QED_QN_REJECT:
++                        _qn_trust_radius = self.step_control(
++                            energy_change / predicted_energy2, _qn_trust_radius
++                        )
++                    self.U2 = np.einsum("pq,qs->ps", self.U2, self.U_delta)
++
++                # The integral transform runs either way: on rejection U2 is
++                # unchanged, so this simply regenerates the same integrals the
++                # trailing CI solve needs (the arrays are zeroed just above).
+                 active_twoeint[:, :, :, :] = 0.0
+                 active_fock_core[:, :] = 0.0
+                 d_cmo[:, :] = 0.0
+@@ -11422,7 +11589,8 @@ class PFHamiltonianGenerator:
+                 end1 = timer()
+                 print("second order integral transformation took", end1 - start1)
+                 count += 1
+-                current_energy = zero_energy + second_order_energy_change
++                if not _qn_reject_now:
++                    current_energy = zero_energy + second_order_energy_change
+                 hard_case = 0
+ 
+ 
+@@ -12219,7 +12387,7 @@ class PFHamiltonianGenerator:
+                         )
+                     if energy_change < 0.0 or hard_case == 2:
+                         print("step norm", np.linalg.norm(step))
+-                        if step_norm < 0.05: 
++                        if step_norm < 0.05 and not _QED_DISABLE_QN:
+                             print("activate qn optimization")
+                             qn_optimization = True
+                             qn_count +=1
