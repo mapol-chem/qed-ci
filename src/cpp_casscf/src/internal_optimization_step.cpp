@@ -214,7 +214,9 @@ void CasscfInternalOptimizationStep::run(CasscfContext& context, double /*E0*/, 
             if (ci_result.eigenvalues.size() > 1) {
                 for (int r = 0; r < ci_result.eigenvalues.size(); ++r) {
                     CASSCF_LOG(context.log, PrintLevel::Debug,
-                               "    [root] " << r << " E=" << fmt12(ci_result.eigenvalues(r)));
+                               "    [root] " << r << " E=" << fmt12(ci_result.eigenvalues(r)) << " res="
+                               << fmte(r < static_cast<int>(ci_result.root_residuals.size())
+                                           ? ci_result.root_residuals[r] : 0.0));
                 }
             }
 

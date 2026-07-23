@@ -32,6 +32,9 @@ int get_ci_print_level(void);
 // read immediately after get_roots (see ci_solver.c's own doc comment).
 int get_last_ci_iterations(void);
 
+// Residual norm of root `root` from the most recent get_roots() CI solve.
+double get_last_ci_root_residual(int root);
+
 // ci_solver.c -- CI graph/string-table setup (computed once per active-space
 // definition, reused for a whole CASSCF run; see CasscfCiSetup, not yet
 // ported as of this header's writing).

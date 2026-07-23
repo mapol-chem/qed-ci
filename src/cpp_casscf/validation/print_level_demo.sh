@@ -122,3 +122,33 @@ else
   echo "# skipped: build the driver first (cmake --build build -j) and generate"
   echo "#   the bootstrap dump: python dump_lih_case.py --dump-dir dumps_macro_lih"
 fi
+
+echo
+echo "############################################################"
+echo "# Part 3: harder case -- H2O CAS(4,4), STATE-AVERAGED over 2 roots"
+echo "############################################################"
+echo "# With davidson_roots>1 each [ci] record lists every root: the [root] /"
+echo "# [ci.root] lines give per-root energy AND per-root residual (res= on the"
+echo "# summary line stays the root-AVERAGED residual)."
+H2ODUMP="$HERE/dumps_macro_h2o_2root"
+if [[ -x "$DRV" ]]; then
+  if [[ ! -d "$H2ODUMP" ]]; then
+    echo "# generating the H2O 2-root macro dump (needs psi4)..."
+    OMP_NUM_THREADS=1 python "$HERE/dump_lih_case.py" --molecule h2o --davidson-roots 2 \
+      --nact-orbs 4 --nact-els 4 --dump-dir "$H2ODUMP" >"$OUT/h2o_dump.log" 2>&1
+  fi
+  if [[ -d "$H2ODUMP" ]]; then
+    log="$OUT/cpp_h2o_debug.log"
+    "$DRV" "$H2ODUMP" --print-level=debug >"$log" 2>&1
+    echo "# macro 1 CI solves (state-averaged, 2 roots), structured records:"
+    awk '/MACROITERATION 1 =/{p=1} /MACROITERATION 2 =/{p=0}
+         p && /MACROITERATION|\[(macro|ci|ci.root|internal|micro|qn|orb|restart|root)/ {print}' \
+      "$log" | sed 's/^/    /' | head -22
+    echo
+    grep -E "converged=|C\+\+  avg_energy=|\|diff\|" "$log" | sed 's/^/    /'
+  else
+    echo "# skipped: could not generate the H2O dump (see $OUT/h2o_dump.log)"
+  fi
+else
+  echo "# skipped: driver not built"
+fi

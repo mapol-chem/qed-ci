@@ -16,6 +16,10 @@ void set_ci_print_level(int level);
 /* Number of Davidson iterations the most recent CI solve (get_roots) took. */
 int get_last_ci_iterations(void);
 
+/* Residual norm of root `root` from the most recent CI solve (0.0 if out of
+ * range). constdouble[4] only carries the root-averaged residual. */
+double get_last_ci_root_residual(int root);
+
 void matrix_product(double* A, double* B, double* C, int m,int n,int k);
 void get_graph(size_t N, size_t n_o, int* Y);
 int* string_to_obtlist(size_t string, int nmo, int* length);

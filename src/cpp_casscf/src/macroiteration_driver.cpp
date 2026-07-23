@@ -101,7 +101,9 @@ MacroiterationResult MacroiterationDriver::run(Matrix eigenvecs0, double avg_ene
             // individual roots are not listed (only spin exceptions are).
             for (int r = 0; r < ci_result.eigenvalues.size(); ++r) {
                 CASSCF_LOG(context.log, PrintLevel::Debug,
-                           "  [ci.root] root=" << r << " E=" << fmt12(ci_result.eigenvalues(r)));
+                           "  [ci.root] root=" << r << " E=" << fmt12(ci_result.eigenvalues(r)) << " res="
+                           << fmte(r < static_cast<int>(ci_result.root_residuals.size())
+                                       ? ci_result.root_residuals[r] : 0.0));
             }
         }
 

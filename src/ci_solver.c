@@ -48,6 +48,19 @@ int get_last_ci_iterations(void) {
     return last_ci_iterations;
 }
 
+/* Per-root residual norms of the most recent CI solve. Same global+getter
+ * approach as last_ci_iterations (constdouble[4] only carries the root-AVERAGED
+ * residual, so per-root norms have no return channel otherwise). Capacity 64 is
+ * far above the ~10 roots any run uses. */
+#define CI_MAX_ROOTS 64
+static double last_ci_root_residuals[CI_MAX_ROOTS] = {0.0};
+static int last_ci_nroots = 0;
+
+double get_last_ci_root_residual(int root) {
+    if (root < 0 || root >= last_ci_nroots || root >= CI_MAX_ROOTS) return 0.0;
+    return last_ci_root_residuals[root];
+}
+
 
 void matrix_product(double* A, double* B, double* C, int m, int n, int k) {
      cblas_dgemm(CblasRowMajor, CblasNoTrans, CblasNoTrans, m, n, k, 1.0, A, k, B, n, 0.0, C, n);
@@ -1823,6 +1836,11 @@ void davidson_spin(double* h1e, double* h2e, double* d_cmo, double* Hdiag, doubl
 	    //constdouble[4] = sqrt(dum)/nroots;
             constint[8] = 0;
 	    last_ci_iterations = a + 1;
+	    last_ci_nroots = nroots;
+	    for (int i = 0; i < nroots && i < CI_MAX_ROOTS; i++) {
+	        double rr = cblas_ddot(H_dim, w + i * H_dim, 1, w + i * H_dim, 1);
+	        last_ci_root_residuals[i] = sqrt(rr);
+	    }
 	    if (get_ci_print_level() >= 1) printf("converged\n");
 	    report_final_spin(eigenvecs, nroots, Sdiag, table, b_array, num_links0, n_o_ac, num_alpha, N_p, target_spin);
     	    fflush(stdout);
@@ -1830,6 +1848,11 @@ void davidson_spin(double* h1e, double* h2e, double* d_cmo, double* Hdiag, doubl
 	}
 	if ((a==maxiter-1) && (unconv > 0)) {
 	    last_ci_iterations = a + 1;
+	    last_ci_nroots = nroots;
+	    for (int i = 0; i < nroots && i < CI_MAX_ROOTS; i++) {
+	        double rr = cblas_ddot(H_dim, w + i * H_dim, 1, w + i * H_dim, 1);
+	        last_ci_root_residuals[i] = sqrt(rr);
+	    }
 	    printf("Maximum iteration reaches. Please increase maxiter!\n");
             //cblas_dgemm(CblasRowMajor, CblasTrans, CblasNoTrans, nroots, H_dim, L, 1.0, G, L, Q, H_dim, 0.0, eigenvecs, H_dim);
 	    cblas_dcopy(nroots, theta, 1, eigenvals, 1);

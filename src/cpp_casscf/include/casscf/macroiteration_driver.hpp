@@ -6,6 +6,7 @@
 
 #include <functional>
 #include <optional>
+#include <vector>
 
 namespace casscf {
 
@@ -54,6 +55,10 @@ struct CiStateAverageResult {
     // Number of Davidson iterations this CI solve took (get_last_ci_iterations()).
     // Diagnostic only -- surfaced in the [ci] log records.
     int ci_iterations = 0;
+
+    // Per-root residual norms (get_last_ci_root_residual()); residual_norm above
+    // is only the root-averaged value. Diagnostic only. Empty if not populated.
+    std::vector<double> root_residuals;
 };
 
 // Not yet implemented: needs the CI Davidson solver (c_get_roots) and the
