@@ -218,3 +218,62 @@ them in `cpp_casscf/`. Start from `cpp_casscf/README.md`'s status table and the
 
 A few CASSCF pieces are documented but incomplete; see the "What's still open"
 section of `cpp_casscf/README.md`. The C-backend changes themselves are stable.
+
+---
+
+## 5. The reference wiring — how the C++ driver is called end to end
+
+`tools/run_macroiteration_driver.cpp` is the complete, working example of
+"start from an input, construct the objects, run CASSCF, read the result." Read
+it alongside this — the template to copy for your own integration is phases
+3–6 below; only phase 2 (where the starting state comes from) changes.
+
+**1. Parse args** — dump directory, `--print-level=`, `--disable-qn`.
+
+**2. Load the starting state.** The tool reads a "bootstrap dump" (the CASSCF
+starting point Python captured before its macroiteration loop): dimensions, the
+scalar config, and the tensors/matrices.
+> In *your* integration this is the one part you replace — the starting state
+> (`H_spatial2`, `d_cmo`, `J`, `K`, the initial CI vector `eigenvecs`, the
+> state-averaged RDMs, weights, `E_core`, `target_spin`, Davidson config, …)
+> comes from your SCF + integral setup, not from files.
+
+**3. Fill the three state structs:**
+- `CasscfContext context` — the **single shared, mutable** state every
+  collaborator reads and writes: `H_spatial2` / `d_cmo` / `J` / `K`, the
+  `occupied_*` blocks (**pre-size these to `(n_occupied)^4`; a 0-sized `Tensor4`
+  segfaults on first commit**), `U_total = I`, and `context.log`.
+- `CasscfPhysicalConstants constants` — `N_p`, `omega`, `Enuc`, `weight`, …
+- `CasscfCiConfig ci_config` — Davidson roots / subspace dims / threshold,
+  `target_spin` (the spin option from §3), …
+
+**4. Construct the CI setup, the four collaborators, and the driver:**
+```cpp
+CasscfCiSetup setup(dims, ci_config, constants, H_spatial2, J, K, E_core);   // CI graph/tables
+CasscfCiStateAverageSolver           ci_solver(dims, ci_config, constants, setup, context); // the CI solve ("CASCI")
+CasscfIntegralTransformer            integral_transformer(context, dims);                   // 4-index transforms
+CasscfInternalOptimizationStep       internal_step(dims, constants, ci_solver, integral_transformer);
+CasscfMicroiterationOptimizationStep microiteration_step(dims, constants, ci_solver, /*max_micro=*/20, qn_policy);
+MacroiterationDriver driver(driver_config, ci_solver, internal_step, microiteration_step, integral_transformer);
+```
+Those four `Casscf*` collaborators **are** the CASSCF outer loop (CI solve,
+inactive-active rotation, microiteration orbital optimization, integral
+transform). They are the classes whose tensor-contraction kernels you retarget
+onto TAMM (§4).
+
+**5. Run — one call:**
+```cpp
+MacroiterationResult result = driver.run(eigenvecs, avg_energy0, context);
+```
+This is the entire macroiteration loop. It mutates `context` in place and returns
+`result.avg_energy` / `result.eigenvalues` / `result.eigenvectors` /
+`result.converged` / `result.macroiterations_run`.
+
+**6. Report** — the tool prints the energy, compares to the dump's Python value,
+and runs the post-convergence root analysis (`analyze_roots` /
+`print_root_analysis`). `MacroiterationDriver` itself is deliberately
+reporting-free; assembling the final report is the caller's job.
+
+To see it run against the Python reference side by side, use
+`validation/casscf_python_vs_cpp.sh` (a small, commented Python-writes-dump →
+C++-replays-dump demo).
