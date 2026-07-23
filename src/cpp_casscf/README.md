@@ -5,6 +5,13 @@ trust-region subproblem solvers from `helper_PFCI.py`. Purpose: get a
 correctness-checkable, mechanically-portable C++ layer in place before
 retargeting onto TAMM's distributed tensor API.
 
+> **Handing the C backend to a TAMM integrator?** See [`AGENTS.md`](AGENTS.md) --
+> a self-contained handoff covering the drop-in `ci_solver.c/.h` / `orbital.c/.h`
+> update, the print/diagnostic API (`set_ci_print_level`, `get_last_ci_iterations`,
+> `get_last_ci_root_residual`), the `target_spin` spin option, and a scoped
+> CASCI->CASSCF effort assessment. (Named `AGENTS.md` so an AI coding agent
+> auto-loads it.)
+
 ## Status
 
 | Component | State | Python source |
