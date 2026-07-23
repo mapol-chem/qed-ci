@@ -1,9 +1,16 @@
 # Integrating the updated C backend (`ci_solver.c/.h`, `orbital.c/.h`)
 
-Notes for the collaborator maintaining a TAMM integration of the plain-C
-CASCI/CASSCF backend. Covers: (1) what changed and how to pull it in, (2) the
-new print/diagnostic controls, (3) how to request a spin state, and (4) how far
-CASCI is from the full CASSCF.
+> **What this file is.** A self-contained handoff for an AI coding agent (e.g.
+> opencode) working on the TAMM integration of this plain-C CASCI/CASSCF backend.
+> It is named `AGENTS.md` so your agent picks it up automatically. Drop it at the
+> root of the project where `ci_solver.c/.h` and `orbital.c/.h` are integrated
+> (or paste its contents into your existing `AGENTS.md`). It does not depend on
+> reading any other file, though it points at `cpp_casscf/README.md` in the
+> upstream `qed-ci` repo for deeper reference.
+
+Covers: (1) what changed and how to pull it in, (2) the new print/diagnostic
+controls, (3) how to request a spin state, and (4) how far CASCI is from the full
+CASSCF.
 
 Everything below is **backward compatible** — the signatures of `get_roots`,
 `davidson_spin`, and `davidson` are unchanged. You can drop in the new
