@@ -21,6 +21,7 @@
 //
 // Generate the dump with (from cpp_casscf/validation/):
 //   python dump_lih_case.py --dump-dir dumps_macro_lih
+#include "casscf/ci_orbital_backend.hpp"
 #include "casscf/ci_setup.hpp"
 #include "casscf/ci_state_average_solver.hpp"
 #include "casscf/integral_transformer.hpp"
@@ -179,6 +180,10 @@ int main(int argc, char** argv) {
     CasscfContext context;
     context.log.level = print_level;
     context.log.os = &std::cout;
+    // Sync the plain-C backend's own stdout to the chosen level -- otherwise
+    // ci_solver.c defaults to Trace and prints its per-iteration tables/timing/
+    // memory regardless of --print-level.
+    set_ci_print_level(static_cast<int>(print_level));
     context.H_spatial2 = H_spatial2;
     context.d_cmo = d_cmo;
     context.J = J;

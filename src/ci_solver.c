@@ -772,7 +772,7 @@ void get_string(double* h1e, double* h2e, double* H_diag, int* b_array, int* tab
     get_graph(N,n_o,Y);
     t = clock() - t;
     double time_taken = ((double)t)/CLOCKS_PER_SEC;
-    printf("get_graph took %f seconds to execute \n", time_taken);
+    if (get_ci_print_level() >= 3) printf("get_graph took %f seconds to execute \n", time_taken);
 
     rows = num_alpha*(N*(n_o-N)+N+n_in_a);
     cols = 4;
@@ -783,7 +783,7 @@ void get_string(double* h1e, double* h2e, double* H_diag, int* b_array, int* tab
     ftime = omp_get_wtime();
     time_taken = ((double)t)/CLOCKS_PER_SEC;
     exec_time = ftime - itime;
-    printf("buil_H_diag took %f seconds to execute \n", exec_time);
+    if (get_ci_print_level() >= 3) printf("buil_H_diag took %f seconds to execute \n", exec_time);
 
     t = clock();
     single_replacement_list(num_alpha, N, n_o, Y, table);   
@@ -791,7 +791,7 @@ void get_string(double* h1e, double* h2e, double* H_diag, int* b_array, int* tab
     single_annihilation_list2(N,n_o, n_in_a, Y,table_annihilation);
     t = clock() - t;
     time_taken = ((double)t)/CLOCKS_PER_SEC;
-    printf("single_replacement_list took %f seconds to execute \n", time_taken);
+    if (get_ci_print_level() >= 3) printf("single_replacement_list took %f seconds to execute \n", time_taken);
 
     int num_links = N * (n_o-N) + N;
     build_b_array(table, b_array, num_alpha, num_links, n_o);
@@ -1353,7 +1353,7 @@ void get_roots(double* h1e, double* h2e, double* d_cmo, double* Hdiag, double* S
     }
     ftime = omp_get_wtime();
     exec_time = ftime - itime;
-    printf("Complete Davidson in %f seconds\n", exec_time);
+    if (get_ci_print_level() >= 3) printf("Complete Davidson in %f seconds\n", exec_time);
     fflush(stdout);
 
 }
@@ -1805,7 +1805,7 @@ void davidson_spin(double* h1e, double* h2e, double* d_cmo, double* Hdiag, doubl
 	    }
 	    //constdouble[4] = sqrt(dum)/nroots;
             constint[8] = 0;
-	    printf("converged\n");
+	    if (get_ci_print_level() >= 1) printf("converged\n");
 	    report_final_spin(eigenvecs, nroots, Sdiag, table, b_array, num_links0, n_o_ac, num_alpha, N_p, target_spin);
     	    fflush(stdout);
 	    break;

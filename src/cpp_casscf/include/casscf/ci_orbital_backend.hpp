@@ -21,6 +21,13 @@
 // itself an Eigen::MatrixXd (see integral_transformer.cpp for the pattern).
 extern "C" {
 
+// CI print level (0=Silent, 1=Normal, 2=Debug, 3=Trace; matches
+// casscf::PrintLevel). Governs ci_solver.c's own stdout (per-iteration tables,
+// timing, memory, spin checkpoint). The C++ driver syncs this to context.log.level
+// so --print-level also quiets the C backend, which otherwise defaults to Trace.
+void set_ci_print_level(int level);
+int get_ci_print_level(void);
+
 // ci_solver.c -- CI graph/string-table setup (computed once per active-space
 // definition, reused for a whole CASSCF run; see CasscfCiSetup, not yet
 // ported as of this header's writing).
