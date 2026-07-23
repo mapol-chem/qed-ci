@@ -218,7 +218,11 @@ void print_root_analysis(const RootAnalysisResult& result, const Dimensions& dim
             os << buf << " alpha " << format_index_list(d.alpha) << "    beta "
                << format_index_list(d.beta);
             std::snprintf(buf, sizeof(buf), " %4.1d", d.photon);
-            os << buf << " photon excitation ranke " << d.excitation_rank << "\n";
+            // "excitation rank" (corrected): the Python's analyze_roots block
+            // (helper_PFCI.py:2093) misspells this label "excitation ranke";
+            // its own SA-CASSCF block (helper_PFCI.py:2773) spells it correctly.
+            // This is a deliberate cosmetic deviation from the ported line's typo.
+            os << buf << " photon excitation rank " << d.excitation_rank << "\n";
         }
     }
 }

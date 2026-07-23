@@ -21,9 +21,11 @@ namespace casscf {
 // Three near-identical copies of this block exist in the Python
 // (helper_PFCI.py:1959, 2618, 5457). This ports the FIRST (the __init__
 // post-CI-solve one, the only one carrying the excitation-rank accumulation
-// -- confirmed by grep: "excitation ranke" appears at exactly one line,
-// helper_PFCI.py:2072). The other two are strictly smaller subsets of the
-// same logic and can reuse this if they are ever needed.
+// -- confirmed by grep: the misspelled label "excitation ranke" appears at
+// exactly one line, helper_PFCI.py:2093, which is this block's print, though
+// print_root_analysis deliberately corrects that typo (see its doc comment).
+// The other two are strictly smaller subsets of the same logic and can reuse
+// this if they are ever needed.
 //
 // Index decoding, transcribed literally from helper_PFCI.py:2003-2032:
 //     Idet     = position % num_det
@@ -104,12 +106,14 @@ RootAnalysisResult analyze_roots(const Matrix& eigenvecs, const Vector& eigenval
 // `if j <= 10` print cap. Kept separate from analyze_roots so the analysis is
 // testable without scraping text.
 //
-// Documented deviation: Python prints `eigenvals[i]` and `total_spin` with
-// str()/repr() float formatting, which C++ iostreams cannot reproduce
+// Documented deviations: (1) Python prints `eigenvals[i]` and `total_spin`
+// with str()/repr() float formatting, which C++ iostreams cannot reproduce
 // character-for-character in general. This uses %.12g, so those two fields
 // may differ in trailing digits from the Python log while every other field
 // (the %20.12lf amplitude, %9.3d position, %4.1d photon, orbital lists,
-// excitation rank) matches exactly.
+// excitation rank) matches exactly. (2) The label is spelled "excitation rank";
+// the ported Python line (helper_PFCI.py:2093) misspells it "excitation ranke",
+// which this deliberately corrects (a cosmetic deviation only).
 void print_root_analysis(const RootAnalysisResult& result, const Dimensions& dims,
                          std::ostream& os);
 

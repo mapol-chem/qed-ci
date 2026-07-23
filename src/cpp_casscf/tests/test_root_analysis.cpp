@@ -365,8 +365,10 @@ int main() {
                             "CONTRIBUTIONS") != std::string::npos,
                    1, "print: emits the Python's header line");
         expect_int(out.find("singlet 1") != std::string::npos, 1, "print: emits the singlet label");
-        expect_int(out.find("excitation ranke") != std::string::npos, 1,
-                   "print: keeps the Python's 'excitation ranke' spelling");
+        expect_int(out.find("excitation rank ") != std::string::npos, 1,
+                   "print: emits the corrected 'excitation rank' label");
+        expect_int(out.find("excitation ranke") != std::string::npos, 0,
+                   "print: does NOT emit the Python's 'excitation ranke' typo");
         // 4 determinants here, all under the cap -> 4 amplitude lines.
         long alpha_lines = 0;
         for (size_t p = out.find("alpha "); p != std::string::npos; p = out.find("alpha ", p + 1)) {
