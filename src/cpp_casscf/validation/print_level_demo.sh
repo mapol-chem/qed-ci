@@ -86,6 +86,8 @@ echo "#   [macro]    per-macroiteration energy summary"
 echo "#   [ci]       a CI solve; phase=macro|internal|micro says which one"
 echo "#   [internal] internal (inactive-active) optimization iteration"
 echo "#   [micro]    microiteration-optimization outer pass (x orbital steps + 1 CI)"
+echo "#   [qn]       QN trajectory decision: hessian=exact|bfgs + why (first-qn /"
+echo "#              pred>0 / dnorm>0.025), ref_reset, damped (curvature skip)"
 echo "#   [orb]      one orbital trust-region step: solver, ACCEPT/reject, hard"
 echo "#              case, step norm, actual/predicted dE, trust old->new, energy"
 echo "# Count by level:"
@@ -113,7 +115,7 @@ if [[ -x "$DRV" && -d "$DUMP" ]]; then
   echo "# (macro 1: runaway CI -> internal rotation -> microiterations of"
   echo "#  x orbital steps + 1 CI), structured records only:"
   awk '/MACROITERATION 1 =/{p=1} /MACROITERATION 2 =/{p=0}
-       p && /MACROITERATION|\[(macro|ci|internal|micro|orb|restart)/ {print}' \
+       p && /MACROITERATION|\[(macro|ci|internal|micro|qn|orb|restart)/ {print}' \
     "$OUT/cpp_debug.log" | sed 's/^/    /' | head -30
 else
   echo "# skipped: build the driver first (cmake --build build -j) and generate"

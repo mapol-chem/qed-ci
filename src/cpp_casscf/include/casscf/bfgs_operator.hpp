@@ -65,8 +65,9 @@ public:
     // Bs_vec = apply(s_vec) against the *current* (pre-update) history,
     // applies Powell damping if the curvature condition `y.s >= 0.1*s.Bs`
     // fails, then appends the new entry and pops the oldest if history
-    // exceeds m_history.
-    void update(const Vector& s_vec, const Vector& y_vec);
+    // exceeds m_history. Returns true iff Powell damping was applied (the
+    // "curvature skip"), for diagnostics.
+    bool update(const Vector& s_vec, const Vector& y_vec);
 
     // helper_PFCI.py:11180-11187 / 12183-12187: adopt a new reference
     // point and clear all history.

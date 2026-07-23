@@ -24,7 +24,7 @@ Vector BfgsOperator::apply(const Vector& v) const {
     return sigma;
 }
 
-void BfgsOperator::update(const Vector& s_vec, const Vector& y_vec) {
+bool BfgsOperator::update(const Vector& s_vec, const Vector& y_vec) {
     const Vector Bs_vec = apply(s_vec);
     const double ys_dot = y_vec.dot(s_vec);
     const double sBs_dot = s_vec.dot(Bs_vec);
@@ -32,7 +32,8 @@ void BfgsOperator::update(const Vector& s_vec, const Vector& y_vec) {
 
     Vector final_y;
     double final_rho_y = 0.0;
-    if (ys_dot < damping_sigma * sBs_dot) {
+    const bool damped = (ys_dot < damping_sigma * sBs_dot);
+    if (damped) {
         const double theta = ((1.0 - damping_sigma) * sBs_dot) / (sBs_dot - ys_dot);
         final_y = theta * y_vec + (1.0 - theta) * Bs_vec;
         final_rho_y = 1.0 / (damping_sigma * sBs_dot);
@@ -44,6 +45,7 @@ void BfgsOperator::update(const Vector& s_vec, const Vector& y_vec) {
 
     history_.push_back(BfgsHistoryEntry{s_vec, final_y, Bs_vec, final_rho_y, rho_Bs});
     if (static_cast<int>(history_.size()) > m_history_) history_.erase(history_.begin());
+    return damped;
 }
 
 void BfgsOperator::reset_reference(Matrix U_zero, Matrix A_tilde_zero, Tensor4 G_zero) {

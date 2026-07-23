@@ -349,8 +349,9 @@ void CasscfMicroiterationOptimizationStep::run(CasscfContext& context, const Mat
         // just-rebuilt vs. previous-pass-end reduced_gradient. Gated
         // qn_count > 1 -- the first QN pass (qn_count == 1) has no prior
         // BFGS-era step/gradient pair to form y/s from yet.
+        int qn_damped = -1; // -1 = BFGS update not run this pass; else 0/1 = Powell "curvature skip"
         if (qn_count > 1 && bfgs) {
-            bfgs->update(last_accepted_step, reduced_gradient - old_reduced_gradient);
+            qn_damped = bfgs->update(last_accepted_step, reduced_gradient - old_reduced_gradient) ? 1 : 0;
         }
 
         // helper_PFCI.py:11227-11235: top-of-loop BFGS reference-point
@@ -362,7 +363,8 @@ void CasscfMicroiterationOptimizationStep::run(CasscfContext& context, const Mat
         // Python evaluates it unconditionally every pass -- see header doc
         // comment (deviation 1) for why this is behavior-preserving.
         const BfgsReferenceState ref_state{density_norm_change, predicted_energy, qn_count, consecutive_skips};
-        if (qn_optimization && should_reset_bfgs_reference_point(ref_state, qn_optimization)) {
+        const bool reset_ref_point = qn_optimization && should_reset_bfgs_reference_point(ref_state, qn_optimization);
+        if (reset_ref_point) {
             if (!bfgs) {
                 bfgs.emplace(U2_, A_tilde_full, fi.G, dims);
             } else {
@@ -385,6 +387,30 @@ void CasscfMicroiterationOptimizationStep::run(CasscfContext& context, const Mat
             accepted_count = 0;
 
             const bool solve_against_exact_hessian = should_reset_bfgs_reference(ref_state, qn_optimization);
+
+            // The QN "trajectory" decisions, which otherwise are invisible:
+            //  - hessian=exact|bfgs: whether this pass rebuilds+solves the exact
+            //    orbital Hessian (QN-GLTR) or solves the running BFGS one (QN-BFGS).
+            //  - why=: which clause of should_reset_bfgs_reference forced exact --
+            //    first-qn / pred>0 (predicted energy positive) / dnorm>0.025
+            //    (density change large) / skips>=3 (dead in the active path); "bfgs"
+            //    means none fired, so the BFGS approximation is used.
+            //  - ref_reset: whether the BFGS reference point was rebuilt this pass.
+            //  - damped: the previous step's BFGS update Powell-damped the curvature
+            //    ("curvature skip"); -1 = no update ran this pass.
+            const char* qn_why = ref_state.qn_count == 1              ? "first-qn"
+                               : ref_state.predicted_energy > 0.0     ? "pred>0"
+                               : ref_state.density_norm_change > 0.025 ? "dnorm>0.025"
+                               : ref_state.consecutive_skips >= 3      ? "skips>=3"
+                                                                       : "bfgs";
+            CASSCF_LOG(context.log, PrintLevel::Debug,
+                       "  [qn]   pass=" << microiteration
+                       << " hessian=" << (solve_against_exact_hessian ? "exact" : "bfgs")
+                       << " why=" << qn_why << " ref_reset=" << (reset_ref_point ? 1 : 0)
+                       << " dnorm=" << fmte(ref_state.density_norm_change)
+                       << " pred=" << fmte(ref_state.predicted_energy)
+                       << " qn_count=" << ref_state.qn_count << " damped=" << qn_damped);
+
             Vector step;
             if (solve_against_exact_hessian) {
                 // "solve step for original hessian", helper_PFCI.py:11263-11298:
