@@ -1429,7 +1429,12 @@ static void report_final_spin(double* eigenvecs, int nroots, double* Sdiag, int*
     }
     size_t H_dim = (N_p + 1) * (size_t)num_alpha * num_alpha;
     double desired = target_spin * (target_spin + 1.0);
-    int verbose = (level >= 2); /* Debug/Trace: every root; Normal: exceptions only */
+    /* Full per-root table only at Trace (the per-CI-solve spin table is
+     * Trace-shaped detail, like the per-iteration ROOT table). At Silent it is
+     * off; at Normal AND Debug it reports by exception -- only a contaminated
+     * root is printed -- so Debug (the level for reading the orbital-opt flow)
+     * isn't buried under an "ok" table on every CI solve. */
+    int verbose = (level >= 3); /* Trace: every root; Normal/Debug: exceptions only */
     int printed_header = 0;
     for (int i = 0; i < nroots; i++) {
         double total_spin = check_total_spin(eigenvecs + (size_t)i * H_dim, Sdiag, table,
