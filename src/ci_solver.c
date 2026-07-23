@@ -1438,7 +1438,9 @@ static void report_final_spin(double* eigenvecs, int nroots, double* Sdiag, int*
                        (fabs(fabs(total_spin) - desired) > CI_SPIN_DEVIATION_THRESHOLD);
         if (verbose) {
             if (!printed_header) {
-                printf("  ROOT       WFN TOTAL SPIN <S^2>        DESIRED <S^2>       STATUS\n");
+                /* Field widths match the data row below (%4d %20.12lf %20.12lf   %s). */
+                printf("%4s %20s %20s   %s\n", "ROOT", "WFN TOTAL SPIN <S^2>",
+                       "DESIRED <S^2>", "STATUS");
                 printed_header = 1;
             }
             const char* status = (target_spin < 0.0) ? "(no spin target)"
@@ -3763,7 +3765,11 @@ void getMemory2(
         }
     }
     fclose(file);
-    printf("resident%20.12lf peak resident%20.12lf\n",(double)*currRealMem/1024.0/1024.0,(double)*peakRealMem/1024.0/1024.0);
-
+    /* Per-iteration memory readout: diagnostic only (callers still get the
+     * values through the out-pointers above), so print it only at the highest
+     * level. */
+    if (get_ci_print_level() >= 3) {
+        printf("resident%20.12lf peak resident%20.12lf\n",(double)*currRealMem/1024.0/1024.0,(double)*peakRealMem/1024.0/1024.0);
+    }
 }
 
