@@ -13,6 +13,9 @@ typedef void (*callback_)(double* h1e, double* h2e, double* d_cmo, double* c_vec
 int get_ci_print_level(void);
 void set_ci_print_level(int level);
 
+/* Number of Davidson iterations the most recent CI solve (get_roots) took. */
+int get_last_ci_iterations(void);
+
 void matrix_product(double* A, double* B, double* C, int m,int n,int k);
 void get_graph(size_t N, size_t n_o, int* Y);
 int* string_to_obtlist(size_t string, int nmo, int* length);

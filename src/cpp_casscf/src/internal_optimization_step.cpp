@@ -206,7 +206,17 @@ void CasscfInternalOptimizationStep::run(CasscfContext& context, double /*E0*/, 
             CASSCF_LOG(context.log, PrintLevel::Debug,
                        "  [ci]  phase=internal iter=" << microiteration << " E=" << fmt12(ci_result.avg_energy)
                        << " res=" << fmte(ci_result.residual_norm)
+                       << " roots=" << ci_result.eigenvalues.size()
+                       << " iters=" << ci_result.ci_iterations
                        << " conv=" << (ci_converged ? 1 : 0));
+            // Per-root energies when state-averaging over more than one root
+            // (res is the root-averaged residual the C backend returns).
+            if (ci_result.eigenvalues.size() > 1) {
+                for (int r = 0; r < ci_result.eigenvalues.size(); ++r) {
+                    CASSCF_LOG(context.log, PrintLevel::Debug,
+                               "    [root] " << r << " E=" << fmt12(ci_result.eigenvalues(r)));
+                }
+            }
 
             // helper_PFCI.py:7756-7758.
             if (predicted_energy != 0.0) {

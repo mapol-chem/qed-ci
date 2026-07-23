@@ -50,6 +50,10 @@ struct CiStateAverageResult {
     // just an echoed threshold. Used by MicroiterationOptimizationStep's
     // QN-adjacent "total_norm" outer-loop break (helper_PFCI.py:11243-11256).
     double residual_norm = 0.0;
+
+    // Number of Davidson iterations this CI solve took (get_last_ci_iterations()).
+    // Diagnostic only -- surfaced in the [ci] log records.
+    int ci_iterations = 0;
 };
 
 // Not yet implemented: needs the CI Davidson solver (c_get_roots) and the

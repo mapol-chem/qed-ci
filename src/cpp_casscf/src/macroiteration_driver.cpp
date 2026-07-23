@@ -94,6 +94,7 @@ MacroiterationResult MacroiterationDriver::run(Matrix eigenvecs0, double avg_ene
                        "[ci]    phase=macro E=" << fmt12(ci_result.avg_energy)
                        << " res=" << fmte(ci_result.residual_norm)
                        << " roots=" << ci_result.eigenvalues.size()
+                       << " iters=" << ci_result.ci_iterations
                        << " conv=" << (ci_result.ci_diagonalization_converged ? 1 : 0));
 
             // [ci.root] -- per-root detail is Debug and above; at Normal the

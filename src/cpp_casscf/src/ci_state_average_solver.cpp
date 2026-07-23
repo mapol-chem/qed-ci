@@ -153,6 +153,7 @@ CiStateAverageResult CasscfCiStateAverageSolver::solve(const Matrix& eigenvecs_g
     // helper_PFCI.py:7699/7712-7728-ish: constint[8] == 0 after the call
     // means the Davidson diagonalization converged.
     result.ci_diagonalization_converged = (constint[8] == 0);
+    result.ci_iterations = get_last_ci_iterations();
     // helper_PFCI.py:12433 (current_residual = self.constdouble[4]):
     // constdouble(4) is overwritten in place by get_roots -- see
     // CiStateAverageResult::residual_norm's own doc comment.

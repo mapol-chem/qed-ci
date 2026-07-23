@@ -36,6 +36,18 @@ void set_ci_print_level(int level) {
     ci_print_level = level;
 }
 
+/* Number of Davidson iterations the most recent CI solve took (set at the
+ * converged/maxiter exit of davidson_spin/davidson). A module global + getter
+ * rather than an extra constint/constdouble slot, so the Python caller -- which
+ * allocates constint as exactly np.zeros(9) -- needs no change and cannot
+ * overflow. Read immediately after a synchronous get_roots() call (no concurrent
+ * CI solves at that level, so no race). */
+static int last_ci_iterations = 0;
+
+int get_last_ci_iterations(void) {
+    return last_ci_iterations;
+}
+
 
 void matrix_product(double* A, double* B, double* C, int m, int n, int k) {
      cblas_dgemm(CblasRowMajor, CblasNoTrans, CblasNoTrans, m, n, k, 1.0, A, k, B, n, 0.0, C, n);
@@ -1810,12 +1822,14 @@ void davidson_spin(double* h1e, double* h2e, double* d_cmo, double* Hdiag, doubl
 	    }
 	    //constdouble[4] = sqrt(dum)/nroots;
             constint[8] = 0;
+	    last_ci_iterations = a + 1;
 	    if (get_ci_print_level() >= 1) printf("converged\n");
 	    report_final_spin(eigenvecs, nroots, Sdiag, table, b_array, num_links0, n_o_ac, num_alpha, N_p, target_spin);
     	    fflush(stdout);
 	    break;
 	}
 	if ((a==maxiter-1) && (unconv > 0)) {
+	    last_ci_iterations = a + 1;
 	    printf("Maximum iteration reaches. Please increase maxiter!\n");
             //cblas_dgemm(CblasRowMajor, CblasTrans, CblasNoTrans, nroots, H_dim, L, 1.0, G, L, Q, H_dim, 0.0, eigenvecs, H_dim);
 	    cblas_dcopy(nroots, theta, 1, eigenvals, 1);
@@ -2131,12 +2145,14 @@ void davidson(double* h1e, double* h2e, double* d_cmo, double* Hdiag, double* ei
 	        constdouble[4] += sqrt(dum)/nroots;
 	    }
 	    //constdouble[4] = sqrt(dum)/nroots;
-            constint[8] = 0;	    
+            constint[8] = 0;
+	    last_ci_iterations = a + 1;
 	    printf("converged\n");
     	    fflush(stdout);
 	    break;
 	}
 	if ((a==maxiter-1) && (unconv > 0)) {
+	    last_ci_iterations = a + 1;
 	    printf("Maximum iteration reaches. Please increase maxiter!\n");
             cblas_dgemm(CblasRowMajor, CblasTrans, CblasNoTrans, nroots, H_dim, L, 1.0, G, L, Q, H_dim, 0.0, eigenvecs, H_dim);
 	    cblas_dcopy(nroots, theta, 1, eigenvals, 1);

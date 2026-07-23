@@ -28,6 +28,10 @@ extern "C" {
 void set_ci_print_level(int level);
 int get_ci_print_level(void);
 
+// Number of Davidson iterations the most recent get_roots() CI solve took;
+// read immediately after get_roots (see ci_solver.c's own doc comment).
+int get_last_ci_iterations(void);
+
 // ci_solver.c -- CI graph/string-table setup (computed once per active-space
 // definition, reused for a whole CASSCF run; see CasscfCiSetup, not yet
 // ported as of this header's writing).
