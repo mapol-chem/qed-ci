@@ -27,6 +27,7 @@
 #include "casscf/internal_optimization_step.hpp"
 #include "casscf/macroiteration_driver.hpp"
 #include "casscf/microiteration_optimization_step.hpp"
+#include "casscf/root_analysis.hpp"
 
 #include <cmath>
 #include <cstdio>
@@ -261,6 +262,20 @@ int main(int argc, char** argv) {
     std::printf("C++  avg_energy=%.12f\n", result.avg_energy);
     std::printf("Python avg_energy=%.12f\n", python_avg_energy);
     std::printf("|diff|=%.3e\n", std::abs(result.avg_energy - python_avg_energy));
+
+    // Post-convergence root analysis (the "ACTIVE PART OF DETERMINANTS THAT HAVE
+    // THE MOST IMPORTANT CONTRIBUTIONS" block, up to 11 dominant determinants per
+    // root -- port of helper_PFCI.py:1959-2077 via analyze_roots/print_root_analysis).
+    // The MacroiterationDriver itself is deliberately reporting-free (orchestration
+    // only, see its doc comment); this end-to-end tool is where the final report is
+    // assembled from the converged CI state. Printed at every print level (part of
+    // every print option), like the tool's other result output, mirroring the
+    // Python's always-on root analysis.
+    std::ostream& os = context.log.os != nullptr ? *context.log.os : std::cout;
+    ExcitationRankAccumulators accumulators(/*n_act_el=*/2 * n_act_a);
+    RootAnalysisResult analysis =
+        analyze_roots(result.eigenvectors, result.eigenvalues, setup, dims, n_act_a, N_p, accumulators);
+    print_root_analysis(analysis, dims, os);
 
     return 0;
 }
