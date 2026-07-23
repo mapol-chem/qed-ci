@@ -11,6 +11,31 @@
 #define MIN(x, y) (((x) < (y)) ? (x) : (y))
 #define BIGNUM 1E100
 
+/* CI-solver verbosity. Numeric levels match the C++ port's casscf::PrintLevel
+ * (0=Silent, 1=Normal, 2=Debug, 3=Trace, see cpp_casscf/include/casscf/logging.hpp)
+ * so a caller can pass its own level straight through. The per-Davidson-iteration
+ * ROOT/RESIDUAL table and iteration/timing chatter print only at Trace; at Normal
+ * spin is reported by exception (only contaminated roots), and the full spin table
+ * appears at Debug/Trace.
+ *
+ * Default is Trace: the Python path historically printed everything, and the C++
+ * port's Trace level is explicitly defined to reproduce that, so defaulting high
+ * keeps existing behavior until a caller opts down. Override once via the
+ * QED_PRINT_LEVEL env var, or explicitly via set_ci_print_level(). */
+static int ci_print_level = -1; /* -1 = not yet initialized */
+
+int get_ci_print_level(void) {
+    if (ci_print_level < 0) {
+        const char* env = getenv("QED_PRINT_LEVEL");
+        ci_print_level = (env != NULL) ? atoi(env) : 3; /* default Trace */
+    }
+    return ci_print_level;
+}
+
+void set_ci_print_level(int level) {
+    ci_print_level = level;
+}
+
 
 void matrix_product(double* A, double* B, double* C, int m, int n, int k) {
      cblas_dgemm(CblasRowMajor, CblasNoTrans, CblasNoTrans, m, n, k, 1.0, A, k, B, n, 0.0, C, n);
@@ -1381,7 +1406,55 @@ void first_order_spin_projection(double* s_vector, double* Sdiag, double* Sdiag_
 }
 
 
-void davidson_spin(double* h1e, double* h2e, double* d_cmo, double* Hdiag, double* Sdiag, double* Sdiag_projection, double* eigenvals, double* eigenvecs, int* table, 
+/* Diagnostic spin checkpoint: run ONCE at the end of a CI Davidson solve
+ * (converged, or maxiter/"runaway" exit) rather than every iteration. The
+ * per-iteration check_total_spin call was ~12% of total CI time (measured on
+ * MgH+ CAS(8,12), see cpp_casscf/validation/ci_phase_experiment) and the
+ * convergence test never used it -- convergence is decided by residual norm
+ * only. Reports each root's <S^2> once, and warns if it deviates from the
+ * requested target_spin*(target_spin+1). target_spin < 0 is the "no spin
+ * target" sentinel, so only the value is printed in that case. */
+/* Threshold for calling a root spin-contaminated. Matches the C++ port's
+ * casscf::kSpinDeviationThreshold (logging.hpp): ~5e-5 of the O(1) gap between
+ * adjacent spin states, far above the ~1e-17 converged noise floor, far below
+ * any physically meaningful contamination. */
+#define CI_SPIN_DEVIATION_THRESHOLD 1e-4
+
+static void report_final_spin(double* eigenvecs, int nroots, double* Sdiag, int* table,
+                              int* b_array, int num_links0, int n_o_ac, int num_alpha,
+                              int N_p, double target_spin) {
+    int level = get_ci_print_level();
+    if (level <= 0) {
+        return; /* Silent: no spin diagnostics at all */
+    }
+    size_t H_dim = (N_p + 1) * (size_t)num_alpha * num_alpha;
+    double desired = target_spin * (target_spin + 1.0);
+    int verbose = (level >= 2); /* Debug/Trace: every root; Normal: exceptions only */
+    int printed_header = 0;
+    for (int i = 0; i < nroots; i++) {
+        double total_spin = check_total_spin(eigenvecs + (size_t)i * H_dim, Sdiag, table,
+                                             b_array, num_links0, n_o_ac, num_alpha, N_p);
+        int deviates = (target_spin >= 0.0) &&
+                       (fabs(fabs(total_spin) - desired) > CI_SPIN_DEVIATION_THRESHOLD);
+        if (verbose) {
+            if (!printed_header) {
+                printf("  ROOT       WFN TOTAL SPIN <S^2>        DESIRED <S^2>       STATUS\n");
+                printed_header = 1;
+            }
+            const char* status = (target_spin < 0.0) ? "(no spin target)"
+                               : deviates ? "*** WARNING: SPIN CONTAMINATION ***" : "ok";
+            printf("%4d %20.12lf %20.12lf   %s\n", i, total_spin, desired, status);
+        } else if (deviates) {
+            /* Normal: report spin by exception only -- flag the contaminated root */
+            printf("*** WARNING: CI root %d spin contamination: <S^2>=%20.12lf, "
+                   "desired %20.12lf (deviation %.2e)\n",
+                   i, total_spin, desired, fabs(fabs(total_spin) - desired));
+        }
+    }
+    fflush(stdout);
+}
+
+void davidson_spin(double* h1e, double* h2e, double* d_cmo, double* Hdiag, double* Sdiag, double* Sdiag_projection, double* eigenvals, double* eigenvecs, int* table,
 		int* table_creation, int* table_annihilation, int* b_array, int *constint, double *constdouble, int* index_Hdiag, 
 		bool casscf, double target_spin, callback_ build_sigma) {
     //unpack constant
@@ -1405,8 +1478,12 @@ void davidson_spin(double* h1e, double* h2e, double* d_cmo, double* Hdiag, doubl
     bool break_degeneracy = false;         
     int num_alpha = binomialCoeff(n_o_ac, N_ac);
     size_t H_dim = (N_p + 1) * num_alpha * num_alpha;
-    printf("target_spin %20.12lf\n",target_spin); 
-    printf(" indim%d", indim); 
+    /* Trace-only per-iteration/diagnostic output (see get_ci_print_level).
+     * At Normal/Debug the CI solver stays quiet apart from per-solve
+     * convergence and (level-gated) spin reporting. */
+    int trace = (get_ci_print_level() >= 3);
+    if (trace) printf("target_spin %20.12lf\n",target_spin);
+    if (trace) printf(" indim%d", indim);
     if (casscf == true) {
         //maxiter = 3;
         indim = nroots;
@@ -1417,8 +1494,8 @@ void davidson_spin(double* h1e, double* h2e, double* d_cmo, double* Hdiag, doubl
             indim += 1;
         }
     }
-    printf(" maxiter%d", maxiter); 
-    
+    if (trace) printf(" maxiter%d", maxiter);
+
 
     int num_links0 = N_ac*(n_o_ac-N_ac)+N_ac;
     //for (int i = 0; i < H_dim; i++) {
@@ -1427,7 +1504,7 @@ void davidson_spin(double* h1e, double* h2e, double* d_cmo, double* Hdiag, doubl
     //}
     
     int L = indim;
-    printf(" indim%d H_dim %zu\n", indim, H_dim); 
+    if (trace) printf(" indim%d H_dim %zu\n", indim, H_dim);
     double* Hdiag2 = (double*)malloc(H_dim*sizeof(double));
     cblas_dcopy(H_dim,Hdiag,1,Hdiag2,1);
     double* Q = (double*) malloc(maxdim*H_dim*sizeof(double));
@@ -1463,12 +1540,12 @@ void davidson_spin(double* h1e, double* h2e, double* d_cmo, double* Hdiag, doubl
 	double itime, ftime, exec_time;
         itime = omp_get_wtime();
 
-        build_sigma(h1e, h2e, d_cmo, Q, S, table, table_creation, table_annihilation, 
-                        N_ac, n_o_ac, n_o_in, nmo, L, N_p, Enuc, dc, omega, d_exp, E_core, break_degeneracy); 
+        build_sigma(h1e, h2e, d_cmo, Q, S, table, table_creation, table_annihilation,
+                        N_ac, n_o_ac, n_o_in, nmo, L, N_p, Enuc, dc, omega, d_exp, E_core, break_degeneracy);
 
         ftime = omp_get_wtime();
         exec_time = ftime - itime;
-        printf("build sigma took %f seconds to execute \n", exec_time);
+        if (trace) printf("build sigma took %f seconds to execute \n", exec_time);
         double* G = (double*) malloc(L*L*sizeof(double));
         memset(G, 0, L*L*sizeof(double));
         double* newS = (double*) malloc(L*H_dim*sizeof(double));
@@ -1598,10 +1675,11 @@ void davidson_spin(double* h1e, double* h2e, double* d_cmo, double* Hdiag, doubl
     bool restarted = true;
     //memset(S, 0, maxdim*H_dim*sizeof(double));
     for (int a = 0; a < maxiter; a++) {
-        printf("\n"); 
-                
-        printf("ITERATION%4d subspace size%4d\n", a+1, L);
-        
+        if (trace) {
+            printf("\n");
+            printf("ITERATION%4d subspace size%4d\n", a+1, L);
+        }
+
 	double itime, ftime, exec_time;
         itime = omp_get_wtime();
         if (!restarted && L_prev > 0 && L > L_prev) {
@@ -1655,7 +1733,7 @@ void davidson_spin(double* h1e, double* h2e, double* d_cmo, double* Hdiag, doubl
         //////////////build_sigma_s_fourth_power(Q, S, Sdiag_projection, b_array, table, num_links0, n_o_ac, num_alpha, L, N_p, 0.1);
         ftime = omp_get_wtime();
         exec_time = ftime - itime;
-        printf("build sigma took %f seconds to execute \n", exec_time);
+        if (trace) printf("build sigma took %f seconds to execute \n", exec_time);
         double* G = (double*) malloc(L*L*sizeof(double));
         memset(G, 0, L*L*sizeof(double));
 
@@ -1690,12 +1768,15 @@ void davidson_spin(double* h1e, double* h2e, double* d_cmo, double* Hdiag, doubl
 
         
 
-        printf("  ROOT      RESIDUAL NORM        EIGENVALUE          WFN TOTAL SPIN      CONVERGENCE\n");
+        if (trace) printf("  ROOT      RESIDUAL NORM        EIGENVALUE          CONVERGENCE\n");
 	int unconv = 0;
         for (int i = 0; i < nroots; i++) {
             double dotval = cblas_ddot(H_dim, w+i*H_dim, 1, w+i*H_dim, 1);
             double residual_norm = sqrt(dotval);
-	    double total_spin = check_total_spin(eigenvecs +i*H_dim, Sdiag, table, b_array, num_links0, n_o_ac, num_alpha, N_p);
+	    /* <S^2> is no longer computed here every iteration -- it is a purely
+	     * diagnostic quantity (convergence uses residual_norm only) and was
+	     * ~12% of CI time. It is now reported once at the solve's exit via
+	     * report_final_spin (converged / maxiter blocks below). */
             if (residual_norm < threshold) {
                 convergence_check[i] = true;
 	    }
@@ -1705,7 +1786,7 @@ void davidson_spin(double* h1e, double* h2e, double* d_cmo, double* Hdiag, doubl
                 unconv += 1;
 	    }
 
-            printf("%4d %20.12lf %20.12lf %20.12lf          %s\n",i, residual_norm, theta[i], total_spin, convergence_check[i]?"true":"false");
+            if (trace) printf("%4d %20.12lf %20.12lf          %s\n",i, residual_norm, theta[i], convergence_check[i]?"true":"false");
         }
         
     	fflush(stdout);
@@ -1720,9 +1801,10 @@ void davidson_spin(double* h1e, double* h2e, double* d_cmo, double* Hdiag, doubl
 		}
 	        constdouble[4] += sqrt(dum)/nroots;	
 	    }
-	    //constdouble[4] = sqrt(dum)/nroots;	
-            constint[8] = 0;	    
+	    //constdouble[4] = sqrt(dum)/nroots;
+            constint[8] = 0;
 	    printf("converged\n");
+	    report_final_spin(eigenvecs, nroots, Sdiag, table, b_array, num_links0, n_o_ac, num_alpha, N_p, target_spin);
     	    fflush(stdout);
 	    break;
 	}
@@ -1734,15 +1816,16 @@ void davidson_spin(double* h1e, double* h2e, double* d_cmo, double* Hdiag, doubl
 	    for (int i = 0; i < nroots; i++) {
                 double dum = 0.0;
                 for (size_t j = 0; j < H_dim; j++) {
-	 	    dum += w[i * H_dim +j] * w[i * H_dim +j];	
+	 	    dum += w[i * H_dim +j] * w[i * H_dim +j];
 		}
-	        constdouble[4] += sqrt(dum)/nroots;	
+	        constdouble[4] += sqrt(dum)/nroots;
 	    }
-	    //constdouble[4] = sqrt(dum)/nroots;	
+	    //constdouble[4] = sqrt(dum)/nroots;
+	    report_final_spin(eigenvecs, nroots, Sdiag, table, b_array, num_links0, n_o_ac, num_alpha, N_p, target_spin);
     	    fflush(stdout);
 	    break;
 	}
-	if (unconv > 0) {
+	if (trace && unconv > 0) {
 	    printf("unconverged roots\n");
             for (int i = 0; i < unconv; i++) {
 	    	printf("%4d", unconverged_idx[i]);
@@ -1773,12 +1856,12 @@ void davidson_spin(double* h1e, double* h2e, double* d_cmo, double* Hdiag, doubl
             }
 	    //printf("\n");
         }
-	
+
         // Update L_prev BEFORE modifying Q
         L_prev = L;
-        
+
         if (Lmax-L < unconv) {
-            printf("maximum subspace reaches, restart!\n");		
+            if (trace) printf("maximum subspace reaches, restart!\n");
             memset(w, 0, nroots*H_dim*sizeof(double));
             cblas_dgemm(CblasRowMajor, CblasTrans, CblasNoTrans, nroots, H_dim, L, 1.0, G, L, Q, H_dim, 0.0, w, H_dim);
             memset(Q, 0, maxdim*H_dim*sizeof(double));
@@ -1839,7 +1922,7 @@ void davidson_spin(double* h1e, double* h2e, double* d_cmo, double* Hdiag, doubl
 
         free(G);
         free(w2);
-        printf("\n"); 
+        if (trace) printf("\n");
     }
     free(Q);
     free(S);
