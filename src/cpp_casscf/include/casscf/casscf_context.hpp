@@ -33,12 +33,6 @@ struct CasscfContext {
     // so the library stays quiet unless a driver opts in -- see logging.hpp.
     Logger log;
 
-    // Current macroiteration index, set by MacroiterationDriver::run before it
-    // calls the collaborators each pass. Purely a label for [micro]/[orb]/
-    // [internal] log records so they correlate with the driver's [macro]/[ci]
-    // records; no algorithmic role.
-    int macroiteration = 0;
-
     // --- Full molecular-orbital-space state ---
     Matrix H_spatial2; // (nmo, nmo) -- one-electron Hamiltonian in the current MO basis
     Matrix d_cmo;       // (nmo, nmo) -- PF dipole-coupling integrals in the current MO basis

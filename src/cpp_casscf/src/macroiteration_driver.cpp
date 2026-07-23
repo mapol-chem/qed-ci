@@ -61,7 +61,12 @@ MacroiterationResult MacroiterationDriver::run(Matrix eigenvecs0, double avg_ene
 
     int macroiteration = 0;
     for (; macroiteration < config_.max_macroiterations; ++macroiteration) {
-        context.macroiteration = macroiteration; // label for [micro]/[orb]/[internal] records
+        // Once-per-macroiteration banner: the macroiteration number is written
+        // here, in caps, so the [ci]/[macro]/[internal]/[micro]/[orb] records
+        // below don't repeat macro= on every line.
+        CASSCF_LOG(context.log, PrintLevel::Normal,
+                   "\n========== MACROITERATION " << macroiteration << " ==========");
+
         if (macroiteration > 0) {
             // helper_PFCI.py:2395-2521: CI diagonalization + state-averaged
             // RDM build, behind CiStateAverageSolver.
@@ -82,10 +87,11 @@ MacroiterationResult MacroiterationDriver::run(Matrix eigenvecs0, double avg_ene
             context.D_tuvw_avg = ci_result.D_tuvw_avg;
             context.Dpe_tu_avg = ci_result.Dpe_tu_avg;
 
-            // [ci] -- one record per macroiteration-level CI solve.
+            // [ci] -- the macroiteration-level ("runaway") CI solve: run to
+            // convergence against the freshly-rotated integrals from the
+            // previous macroiteration.
             CASSCF_LOG(context.log, PrintLevel::Normal,
-                       "[ci]     macro=" << macroiteration << " phase=macro"
-                       << " E=" << fmt12(ci_result.avg_energy)
+                       "[ci]    phase=macro E=" << fmt12(ci_result.avg_energy)
                        << " res=" << fmte(ci_result.residual_norm)
                        << " roots=" << ci_result.eigenvalues.size()
                        << " conv=" << (ci_result.ci_diagonalization_converged ? 1 : 0));
@@ -94,8 +100,7 @@ MacroiterationResult MacroiterationDriver::run(Matrix eigenvecs0, double avg_ene
             // individual roots are not listed (only spin exceptions are).
             for (int r = 0; r < ci_result.eigenvalues.size(); ++r) {
                 CASSCF_LOG(context.log, PrintLevel::Debug,
-                           "[ci.root] macro=" << macroiteration << " root=" << r
-                           << " E=" << fmt12(ci_result.eigenvalues(r)));
+                           "  [ci.root] root=" << r << " E=" << fmt12(ci_result.eigenvalues(r)));
             }
         }
 
@@ -105,10 +110,10 @@ MacroiterationResult MacroiterationDriver::run(Matrix eigenvecs0, double avg_ene
             config_.on_macroiteration_end(macroiteration, old_avg_energy, new_avg_energy);
         }
 
-        // [macro] -- the top-level per-macroiteration record.
+        // [macro] -- the top-level per-macroiteration energy summary (the
+        // iteration number is in the banner above).
         CASSCF_LOG(context.log, PrintLevel::Normal,
-                   "[macro]  iter=" << macroiteration
-                   << " E=" << fmt12(new_avg_energy)
+                   "[macro] E=" << fmt12(new_avg_energy)
                    << " dE=" << fmte(new_avg_energy - old_avg_energy));
 
         if (std::abs(new_avg_energy - old_avg_energy) < config_.energy_convergence) {
@@ -154,6 +159,11 @@ MacroiterationResult MacroiterationDriver::run(Matrix eigenvecs0, double avg_ene
             // the microiteration step starting from the complementary
             // (virtual-inactive / virtual-active) rotation instead of
             // identity.
+            CASSCF_LOG(context.log, PrintLevel::Debug,
+                       "[restart] internal-rotation norm=" << fmte(Rai.norm())
+                       << " > " << fmte(config_.internal_rotation_restart_threshold)
+                       << " -- absorbing internal rotation, rerunning microiteration");
+
             Matrix Rvi = Matrix::Zero(dims.n_virtual, dims.n_in_a);
             Matrix Rva = Matrix::Zero(dims.n_virtual, dims.n_act_orb);
             Matrix U_delta = build_unitary_matrix(Rai, Rvi, Rva, dims);

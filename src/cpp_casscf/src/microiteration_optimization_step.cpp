@@ -340,7 +340,7 @@ void CasscfMicroiterationOptimizationStep::run(CasscfContext& context, const Mat
 
         // Per-outer-microiteration orbital-optimization summary.
         CASSCF_LOG(context.log, PrintLevel::Debug,
-                   "[micro]  macro=" << context.macroiteration << " micro=" << microiteration
+                   "[micro] micro=" << microiteration
                    << " E=" << fmt12(current_energy) << " grad=" << fmte(reduced_gradient.norm())
                    << " n_neg=" << n_negative << " qn=" << (qn_optimization ? 1 : 0));
 
@@ -451,11 +451,11 @@ void CasscfMicroiterationOptimizationStep::run(CasscfContext& context, const Mat
             // QN steps are unconditionally accepted (single trial, no
             // accept/reject loop) -- helper_PFCI.py:11346-ff.
             CASSCF_LOG(context.log, PrintLevel::Debug,
-                       "[orb]    macro=" << context.macroiteration << " micro=" << microiteration
-                       << " step=0 solver=" << (solve_against_exact_hessian ? "QN-GLTR" : "QN-BFGS")
-                       << " trust=" << fmte(trust_radius) << " hc=0"
+                       "  [orb]  micro=" << microiteration << " step=0 solver="
+                       << (solve_against_exact_hessian ? "QN-GLTR" : "QN-BFGS") << " ACCEPT hc=0"
                        << " snorm=" << fmte(step.norm()) << " dE=" << fmte(second_order_energy_change)
-                       << " pred=" << fmte(predicted_energy2) << " accept=1");
+                       << " pred=" << fmte(predicted_energy2) << " trust=" << fmte(trust_radius)
+                       << " E=" << fmt12(current_energy));
         } else {
             accepted_count = 0; // helper_PFCI.py:11438
             int orbital_optimization_step = 0;
@@ -550,14 +550,7 @@ void CasscfMicroiterationOptimizationStep::run(CasscfContext& context, const Mat
                 }
 
                 const bool accepted = (energy_change < 0.0 || hard_case == 2);
-                // Per-inner-step orbital-optimization trace. step_index is the
-                // 0-based inner counter before the accept branch increments it.
-                CASSCF_LOG(context.log, PrintLevel::Debug,
-                           "[orb]    macro=" << context.macroiteration << " micro=" << microiteration
-                           << " step=" << orbital_optimization_step << " solver=" << solver_name
-                           << " trust=" << fmte(trust_radius_used) << " hc=" << hard_case
-                           << " snorm=" << fmte(step_norm) << " dE=" << fmte(energy_change)
-                           << " pred=" << fmte(predicted_energy2) << " accept=" << (accepted ? 1 : 0));
+                const int step_index = orbital_optimization_step; // before accept-branch increment
 
                 if (accepted) {
                     // helper_PFCI.py:12222-12228: QN activation check, BEFORE
@@ -625,6 +618,17 @@ void CasscfMicroiterationOptimizationStep::run(CasscfContext& context, const Mat
                     // reduced_gradient.
                     trust_radius = 0.5 * trust_radius;
                 }
+
+                // Per-inner-step orbital-optimization trace, emitted after the
+                // accept/reject so trust shows the used->updated radius and E is
+                // the (possibly-updated) current energy.
+                CASSCF_LOG(context.log, PrintLevel::Debug,
+                           "  [orb]  micro=" << microiteration << " step=" << step_index
+                           << " solver=" << solver_name << " " << (accepted ? "ACCEPT" : "reject")
+                           << " hc=" << hard_case << " snorm=" << fmte(step_norm)
+                           << " dE=" << fmte(energy_change) << " pred=" << fmte(predicted_energy2)
+                           << " trust=" << fmte(trust_radius_used) << "->" << fmte(trust_radius)
+                           << " E=" << fmt12(current_energy));
             }
         }
 
@@ -657,6 +661,15 @@ void CasscfMicroiterationOptimizationStep::run(CasscfContext& context, const Mat
         context.Dpe_tu_avg = ci_result.Dpe_tu_avg;
         density_norm_change = (context.D_tu_avg - D_tu_avg_old).norm(); // helper_PFCI.py:12449
         current_residual = ci_result.residual_norm;                    // helper_PFCI.py:12433
+
+        // The one CI solve per microiteration pass. maxit shows the Davidson
+        // cap: 5 before QN (Kreplin "uncoupled"), 10000 (=> run to convergence)
+        // once qn_count>0 (coupled, gradient-scaled threshold).
+        CASSCF_LOG(context.log, PrintLevel::Debug,
+                   "  [ci]  phase=micro pass=" << microiteration << " E=" << fmt12(ci_result.avg_energy)
+                   << " res=" << fmte(ci_result.residual_norm)
+                   << " conv=" << (ci_result.ci_diagonalization_converged ? 1 : 0)
+                   << " maxit=" << davidson_maxiter_override.value());
 
         ++microiteration;
     }

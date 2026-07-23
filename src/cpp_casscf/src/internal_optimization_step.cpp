@@ -14,10 +14,15 @@
 namespace casscf {
 namespace {
 
-// Scientific-notation formatting for log records (see logging.hpp).
+// Fixed-width numeric formatting for log records (see logging.hpp).
 std::string fmte(double x) {
     char buf[40];
     std::snprintf(buf, sizeof(buf), "%.3e", x);
+    return buf;
+}
+std::string fmt12(double x) {
+    char buf[40];
+    std::snprintf(buf, sizeof(buf), "%.12f", x);
     return buf;
 }
 
@@ -194,6 +199,15 @@ void CasscfInternalOptimizationStep::run(CasscfContext& context, double /*E0*/, 
             sad.Dpe_tu_avg = ci_result.Dpe_tu_avg;
             ci_converged = ci_result.ci_diagonalization_converged;
 
+            // The CI solve that follows each accepted internal orbital step.
+            // No Davidson-maxiter override here (unlike the microiteration
+            // step's cap-5 uncoupled solves): this runs to convergence, cap
+            // config_.davidson_maxiter (default 100).
+            CASSCF_LOG(context.log, PrintLevel::Debug,
+                       "  [ci]  phase=internal iter=" << microiteration << " E=" << fmt12(ci_result.avg_energy)
+                       << " res=" << fmte(ci_result.residual_norm)
+                       << " conv=" << (ci_converged ? 1 : 0));
+
             // helper_PFCI.py:7756-7758.
             if (predicted_energy != 0.0) {
                 trust_radius = step_control(er.energy_change / predicted_energy, trust_radius);
@@ -215,13 +229,15 @@ void CasscfInternalOptimizationStep::run(CasscfContext& context, double /*E0*/, 
             trust_radius = 0.5 * trust_radius;
         }
 
-        // Per-internal-microiteration (inactive-active rotation) trace.
+        // Per-internal-iteration (inactive-active rotation) trace, after the
+        // accept/reject so trust shows the used->updated radius.
         CASSCF_LOG(context.log, PrintLevel::Debug,
-                   "[internal] macro=" << context.macroiteration << " micro=" << microiteration
-                   << " solver=LSTRS trust=" << fmte(trust_radius_used)
-                   << " hc=" << (hard_case_is_interior ? 2 : 0) << " snorm=" << fmte(step.norm())
-                   << " dE=" << fmte(er.energy_change) << " pred=" << fmte(predicted_energy)
-                   << " grad=" << fmte(gradient_ai.norm()) << " accept=" << (er.accepted ? 1 : 0));
+                   "[internal] iter=" << microiteration << " solver=LSTRS "
+                   << (er.accepted ? "ACCEPT" : "reject") << " hc=" << (hard_case_is_interior ? 2 : 0)
+                   << " snorm=" << fmte(step.norm()) << " dE=" << fmte(er.energy_change)
+                   << " pred=" << fmte(predicted_energy) << " trust=" << fmte(trust_radius_used) << "->"
+                   << fmte(trust_radius) << " E=" << fmt12(current_energy)
+                   << " grad=" << fmte(gradient_ai.norm()));
 
         // helper_PFCI.py:7820-7824.
         if ((gradient_ai.norm() < 1e-4 && ci_converged) || microiteration == max_microiterations_) {

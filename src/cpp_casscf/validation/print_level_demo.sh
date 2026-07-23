@@ -80,11 +80,15 @@ echo
 echo "############################################################"
 echo "# Part 2: C++ port -- run_macroiteration_driver --print-level"
 echo "############################################################"
-echo "# The C++ driver emits key=value records: [macro] per macroiteration,"
-echo "# [ci] per CI solve, and the ORBITAL-OPTIMIZATION records [internal]"
-echo "# (inactive-active rotation), [micro] (per orbital microiteration), and"
-echo "# [orb] (per trust-region inner step: solver, trust radius, hard case,"
-echo "# step norm, actual/predicted dE, accept). Count by level:"
+echo "# The C++ driver writes a MACROITERATION N banner once per macroiteration,"
+echo "# then key=value records (macro= is not repeated). Tags:"
+echo "#   [macro]    per-macroiteration energy summary"
+echo "#   [ci]       a CI solve; phase=macro|internal|micro says which one"
+echo "#   [internal] internal (inactive-active) optimization iteration"
+echo "#   [micro]    microiteration-optimization outer pass (x orbital steps + 1 CI)"
+echo "#   [orb]      one orbital trust-region step: solver, ACCEPT/reject, hard"
+echo "#              case, step norm, actual/predicted dE, trust old->new, energy"
+echo "# Count by level:"
 DRV="$HERE/../build/run_macroiteration_driver"
 DUMP="$HERE/dumps_macro_lih"
 if [[ -x "$DRV" && -d "$DUMP" ]]; then
@@ -94,11 +98,11 @@ if [[ -x "$DRV" && -d "$DUMP" ]]; then
   for lvl in silent normal debug trace; do
     log="$OUT/cpp_${lvl}.log"
     "$DRV" "$DUMP" --print-level=$lvl >"$log" 2>&1
-    m=$(grep -cE '^\[macro\]' "$log")
-    c=$(grep -cE '^\[ci\]'    "$log")
-    ii=$(grep -cE '^\[internal\]' "$log")
-    mi=$(grep -cE '^\[micro\]' "$log")
-    o=$(grep -cE '^\[orb\]'   "$log")
+    m=$(grep -cE '\[macro\]' "$log")
+    c=$(grep -cE '\[ci\] ' "$log")          # excludes [ci.root]
+    ii=$(grep -cE '\[internal\]' "$log")
+    mi=$(grep -cE '\[micro\]' "$log")
+    o=$(grep -cE '\[orb\]' "$log")
     ra=$(grep -qE 'most important determinants' "$log" && echo yes || echo no)
     printf "%-8s | %-8s %-6s %-10s %-8s %-7s | %s\n" "$lvl" "$m" "$c" "$ii" "$mi" "$o" "$ra"
   done
@@ -106,8 +110,10 @@ if [[ -x "$DRV" && -d "$DUMP" ]]; then
 
   echo
   echo "# The full CASSCF trace of ONE macroiteration at --print-level=debug"
-  echo "# (macro 1: CI solve -> internal rotation -> orbital microiterations):"
-  awk '/^\[ci\] .*macro=1 /{p=1} p{print} /^\[macro\]  iter=1 /{f=1} f&&/^\[ci\] .*macro=2 /{exit}' \
+  echo "# (macro 1: runaway CI -> internal rotation -> microiterations of"
+  echo "#  x orbital steps + 1 CI), structured records only:"
+  awk '/MACROITERATION 1 =/{p=1} /MACROITERATION 2 =/{p=0}
+       p && /MACROITERATION|\[(macro|ci|internal|micro|orb|restart)/ {print}' \
     "$OUT/cpp_debug.log" | sed 's/^/    /' | head -30
 else
   echo "# skipped: build the driver first (cmake --build build -j) and generate"
