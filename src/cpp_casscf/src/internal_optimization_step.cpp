@@ -6,11 +6,20 @@
 #include "casscf/lstrs_solver.hpp"
 #include "casscf/orbital_rotation.hpp"
 
+#include <cstdio>
 #include <memory>
+#include <string>
 #include <utility>
 
 namespace casscf {
 namespace {
+
+// Scientific-notation formatting for log records (see logging.hpp).
+std::string fmte(double x) {
+    char buf[40];
+    std::snprintf(buf, sizeof(buf), "%.3e", x);
+    return buf;
+}
 
 StateAverageData make_state_average_data(const CasscfContext& context, const CasscfPhysicalConstants& constants) {
     StateAverageData sad;
@@ -140,6 +149,7 @@ void CasscfInternalOptimizationStep::run(CasscfContext& context, double /*E0*/, 
             current_energy, eigenvecs, it.h1, it.d_cmo1, it.J, it.K, hard_case_is_interior ? 2 : 0, sad, dims);
         const double predicted_energy = internal_optimization_predicted_energy(gradient_ai, hessian_ai, step);
 
+        const double trust_radius_used = trust_radius; // before step_control/halving below
         if (er.accepted) {
             // helper_PFCI.py:7794 (self.U1 = einsum("pq,qs->ps", self.U1, self.U_delta)).
             U1 = U1 * U_delta;
@@ -204,6 +214,14 @@ void CasscfInternalOptimizationStep::run(CasscfContext& context, double /*E0*/, 
             // helper_PFCI.py:7815-7819.
             trust_radius = 0.5 * trust_radius;
         }
+
+        // Per-internal-microiteration (inactive-active rotation) trace.
+        CASSCF_LOG(context.log, PrintLevel::Debug,
+                   "[internal] macro=" << context.macroiteration << " micro=" << microiteration
+                   << " solver=LSTRS trust=" << fmte(trust_radius_used)
+                   << " hc=" << (hard_case_is_interior ? 2 : 0) << " snorm=" << fmte(step.norm())
+                   << " dE=" << fmte(er.energy_change) << " pred=" << fmte(predicted_energy)
+                   << " grad=" << fmte(gradient_ai.norm()) << " accept=" << (er.accepted ? 1 : 0));
 
         // helper_PFCI.py:7820-7824.
         if ((gradient_ai.norm() < 1e-4 && ci_converged) || microiteration == max_microiterations_) {

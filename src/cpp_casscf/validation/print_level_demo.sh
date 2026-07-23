@@ -80,21 +80,35 @@ echo
 echo "############################################################"
 echo "# Part 2: C++ port -- run_macroiteration_driver --print-level"
 echo "############################################################"
+echo "# The C++ driver emits key=value records: [macro] per macroiteration,"
+echo "# [ci] per CI solve, and the ORBITAL-OPTIMIZATION records [internal]"
+echo "# (inactive-active rotation), [micro] (per orbital microiteration), and"
+echo "# [orb] (per trust-region inner step: solver, trust radius, hard case,"
+echo "# step norm, actual/predicted dE, accept). Count by level:"
 DRV="$HERE/../build/run_macroiteration_driver"
 DUMP="$HERE/dumps_macro_lih"
 if [[ -x "$DRV" && -d "$DUMP" ]]; then
-  printf "%-8s | %-9s %-9s %-9s | %s\n" LEVEL "[macro]" "[ci]" "[orb]" "rootanalysis"
-  printf -- "-----------------------------------------------------------------\n"
+  printf "%-8s | %-8s %-6s %-10s %-8s %-7s | %s\n" \
+    LEVEL "[macro]" "[ci]" "[internal]" "[micro]" "[orb]" "rootanalysis"
+  printf -- "-------------------------------------------------------------------------\n"
   for lvl in silent normal debug trace; do
     log="$OUT/cpp_${lvl}.log"
     "$DRV" "$DUMP" --print-level=$lvl >"$log" 2>&1
     m=$(grep -cE '^\[macro\]' "$log")
     c=$(grep -cE '^\[ci\]'    "$log")
+    ii=$(grep -cE '^\[internal\]' "$log")
+    mi=$(grep -cE '^\[micro\]' "$log")
     o=$(grep -cE '^\[orb\]'   "$log")
     ra=$(grep -qE 'most important determinants' "$log" && echo yes || echo no)
-    printf "%-8s | %-9s %-9s %-9s | %s\n" "$lvl" "$m" "$c" "$o" "$ra"
+    printf "%-8s | %-8s %-6s %-10s %-8s %-7s | %s\n" "$lvl" "$m" "$c" "$ii" "$mi" "$o" "$ra"
   done
   echo "# Full C++ logs: $OUT/cpp_<level>.log"
+
+  echo
+  echo "# The full CASSCF trace of ONE macroiteration at --print-level=debug"
+  echo "# (macro 1: CI solve -> internal rotation -> orbital microiterations):"
+  awk '/^\[ci\] .*macro=1 /{p=1} p{print} /^\[macro\]  iter=1 /{f=1} f&&/^\[ci\] .*macro=2 /{exit}' \
+    "$OUT/cpp_debug.log" | sed 's/^/    /' | head -30
 else
   echo "# skipped: build the driver first (cmake --build build -j) and generate"
   echo "#   the bootstrap dump: python dump_lih_case.py --dump-dir dumps_macro_lih"

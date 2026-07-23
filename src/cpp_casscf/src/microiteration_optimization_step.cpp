@@ -18,13 +18,29 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdio>
 #include <functional>
 #include <memory>
 #include <optional>
+#include <string>
 #include <utility>
 
 namespace casscf {
 namespace {
+
+// Fixed-width numeric formatting for log records (see logging.hpp / the
+// matching helpers in macroiteration_driver.cpp): energies at 12 decimals,
+// small quantities in scientific notation.
+std::string fmt12(double x) {
+    char buf[40];
+    std::snprintf(buf, sizeof(buf), "%.12f", x);
+    return buf;
+}
+std::string fmte(double x) {
+    char buf[40];
+    std::snprintf(buf, sizeof(buf), "%.3e", x);
+    return buf;
+}
 
 // helper_PFCI.py:12111-12119: dense materialization of the matrix-free
 // operator via unit-vector probing, needed because minres_solve (this
@@ -322,6 +338,12 @@ void CasscfMicroiterationOptimizationStep::run(CasscfContext& context, const Mat
         reduced_gradient = extract_reduced_gradient(gr.gradient_tilde, index_map);
         int n_negative = static_cast<int>((hd.reduced_hessian_diagonal.array() < 0.0).count());
 
+        // Per-outer-microiteration orbital-optimization summary.
+        CASSCF_LOG(context.log, PrintLevel::Debug,
+                   "[micro]  macro=" << context.macroiteration << " micro=" << microiteration
+                   << " E=" << fmt12(current_energy) << " grad=" << fmte(reduced_gradient.norm())
+                   << " n_neg=" << n_negative << " qn=" << (qn_optimization ? 1 : 0));
+
         // helper_PFCI.py:11175-11223: damped-BFGS history update, using the
         // step accepted on the PREVIOUS pass (either branch) and the
         // just-rebuilt vs. previous-pass-end reduced_gradient. Gated
@@ -425,6 +447,15 @@ void CasscfMicroiterationOptimizationStep::run(CasscfContext& context, const Mat
 
             ++accepted_count;
             current_energy = zero_energy + second_order_energy_change;
+
+            // QN steps are unconditionally accepted (single trial, no
+            // accept/reject loop) -- helper_PFCI.py:11346-ff.
+            CASSCF_LOG(context.log, PrintLevel::Debug,
+                       "[orb]    macro=" << context.macroiteration << " micro=" << microiteration
+                       << " step=0 solver=" << (solve_against_exact_hessian ? "QN-GLTR" : "QN-BFGS")
+                       << " trust=" << fmte(trust_radius) << " hc=0"
+                       << " snorm=" << fmte(step.norm()) << " dE=" << fmte(second_order_energy_change)
+                       << " pred=" << fmte(predicted_energy2) << " accept=1");
         } else {
             accepted_count = 0; // helper_PFCI.py:11438
             int orbital_optimization_step = 0;
@@ -453,6 +484,14 @@ void CasscfMicroiterationOptimizationStep::run(CasscfContext& context, const Mat
                     small_gradient_convergence = true;
                     break;
                 }
+
+                // Captured for the [orb] log record below: the trust radius
+                // this solve used (before step_control updates it) and which
+                // trust-region solver the gradient/curvature dispatch selected.
+                const double trust_radius_used = trust_radius;
+                const char* solver_name = (gradient_norm <= 1e-3) ? "Newton"
+                                        : (n_negative == 0)        ? "GLTR"
+                                                                   : "DavLSTRS";
 
                 Vector step;
                 int hard_case = 0;
@@ -510,7 +549,17 @@ void CasscfMicroiterationOptimizationStep::run(CasscfContext& context, const Mat
                     convergence_threshold = std::min(0.01 * gradient_norm, gradient_norm * gradient_norm);
                 }
 
-                if (energy_change < 0.0 || hard_case == 2) {
+                const bool accepted = (energy_change < 0.0 || hard_case == 2);
+                // Per-inner-step orbital-optimization trace. step_index is the
+                // 0-based inner counter before the accept branch increments it.
+                CASSCF_LOG(context.log, PrintLevel::Debug,
+                           "[orb]    macro=" << context.macroiteration << " micro=" << microiteration
+                           << " step=" << orbital_optimization_step << " solver=" << solver_name
+                           << " trust=" << fmte(trust_radius_used) << " hc=" << hard_case
+                           << " snorm=" << fmte(step_norm) << " dE=" << fmte(energy_change)
+                           << " pred=" << fmte(predicted_energy2) << " accept=" << (accepted ? 1 : 0));
+
+                if (accepted) {
                     // helper_PFCI.py:12222-12228: QN activation check, BEFORE
                     // self.U2 is updated below. helper_PFCI.py:12229-12233
                     // (the qn_count==1 reference-point capture) is NOT

@@ -61,6 +61,7 @@ MacroiterationResult MacroiterationDriver::run(Matrix eigenvecs0, double avg_ene
 
     int macroiteration = 0;
     for (; macroiteration < config_.max_macroiterations; ++macroiteration) {
+        context.macroiteration = macroiteration; // label for [micro]/[orb]/[internal] records
         if (macroiteration > 0) {
             // helper_PFCI.py:2395-2521: CI diagonalization + state-averaged
             // RDM build, behind CiStateAverageSolver.
