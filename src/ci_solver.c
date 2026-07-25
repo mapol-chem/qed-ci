@@ -1486,8 +1486,218 @@ static void report_final_spin(double* eigenvecs, int nroots, double* Sdiag, int*
     fflush(stdout);
 }
 
+/* ================================================================== *
+ *  Direct Slater-Condon build of the CI guess blocks (Algorithm 3).   *
+ *                                                                     *
+ *  Replaces the L full-space sigma-vector products the guess used to  *
+ *  extract H_00 (= G) and S^2_00 (= Gs): build_sigma / build_sigma_s_ *
+ *  square applied to L unit vectors, then projected out via G=S*Q^T.  *
+ *  Here we evaluate the L x L blocks directly from occupation-list     *
+ *  differences, touching ONLY the L selected determinants.            *
+ *                                                                     *
+ *  Bit-faithful to build_sigma's operator + index conventions:        *
+ *    1e (active core-Fock F^c):  h1e[t*n_o_ac + u]   (no inactive off) *
+ *    2e chemist (tu|vw):         h2e[((t+n_in)*n_occ+(u+n_in))*n_occ^2 *
+ *                                     + ((v+n_in)*n_occ+(w+n_in))]     *
+ *    dipole d_tu:                d_cmo[(t+n_in)*n_occ + (u+n_in)]      *
+ *    block-diagonal constant:    m*omega + Enuc + dc + E_core          *
+ *    cross-block (m <-> m+-1):   -sqrt(max(m,m')*omega/2) * dipole op, *
+ *                                 plus scalar -(-sqrt)*d_exp on 0-diff *
+ *  Occupation lists are active-orbital indices in [0, n_o_ac).        *
+ *  Determinant global index d = m*num_dets + ia*num_alpha + ib.       *
+ * ================================================================== */
+static inline double sc_twoe(const double* h2e, int t, int u, int v, int w, int n_occ, int n_in) {
+    /* chemist (tu|vw); active orbitals offset by n_in, exactly as sigma12/sigma3 */
+    size_t tu = (size_t)(t + n_in) * n_occ + (u + n_in);
+    size_t vw = (size_t)(v + n_in) * n_occ + (w + n_in);
+    return h2e[tu * (size_t)n_occ * n_occ + vw];
+}
+
+void build_guess_blocks_scrules(double* G_out, double* Gs_out, const int* sel, int L,
+        const double* h1e, const double* h2e, const double* d_cmo, const double* Sdiag,
+        int N_ac, int n_o_ac, int n_o_in, int N_p, int num_alpha,
+        double Enuc, double dc, double omega, double d_exp, double E_core) {
+    int n_occ = n_o_ac + n_o_in;
+    int n_in = n_o_in;
+    (void)N_p;
+    size_t num_dets = (size_t)num_alpha * num_alpha;
+
+    /* graph for index -> string (rebuilt locally so davidson_spin's signature
+       is untouched; same call get_string uses) */
+    int grows = N_ac * (n_o_ac - N_ac + 1);
+    int* Y = (int*) malloc((size_t)grows * 3 * sizeof(int));
+    get_graph(N_ac, n_o_ac, Y);
+
+    /* decode each selected determinant once */
+    int*    mm  = (int*)    malloc(L * sizeof(int));
+    size_t* Idt = (size_t*) malloc(L * sizeof(size_t));
+    size_t* SA  = (size_t*) malloc(L * sizeof(size_t));
+    size_t* SB  = (size_t*) malloc(L * sizeof(size_t));
+    int**   AA  = (int**)   malloc(L * sizeof(int*));
+    int**   BB  = (int**)   malloc(L * sizeof(int*));
+    int*    nA  = (int*)    malloc(L * sizeof(int));
+    int*    nB  = (int*)    malloc(L * sizeof(int));
+    for (int i = 0; i < L; i++) {
+        size_t d = (size_t) sel[i];
+        size_t Idet = d % num_dets;
+        Idt[i] = Idet;
+        mm[i]  = (int)((d - Idet) / num_dets);
+        int ib = (int)(Idet % num_alpha);
+        int ia = (int)((Idet - ib) / num_alpha);
+        SA[i] = index_to_string(ia, N_ac, n_o_ac, Y);
+        SB[i] = index_to_string(ib, N_ac, n_o_ac, Y);
+        AA[i] = string_to_obtlist(SA[i], n_o_ac, &nA[i]);
+        BB[i] = string_to_obtlist(SB[i], n_o_ac, &nB[i]);
+    }
+
+    /* build_sigma's h1e is the E-operator "modified" one-electron integral
+       k_ps = F^c_ps - 0.5 * sum_r (pr|rs)  (the -1/2 delta_qr E_ps piece of
+       H = sum k E + 1/2 (pq|rs) E_pq E_rs folded into the 1e).  Rebuild the
+       physical active core-Fock F^c so the standard determinant Slater-Condon
+       formulas below apply without double-counting exchange. */
+    double* hp = (double*) malloc((size_t)n_o_ac * n_o_ac * sizeof(double));
+    for (int p = 0; p < n_o_ac; p++)
+        for (int s = 0; s < n_o_ac; s++) {
+            double v = h1e[p * n_o_ac + s];
+            for (int r = 0; r < n_o_ac; r++) v += 0.5 * sc_twoe(h2e, p, r, r, s, n_occ, n_in);
+            hp[p * n_o_ac + s] = v;
+        }
+
+    #pragma omp parallel for schedule(dynamic)
+    for (int i = 0; i < L; i++) {
+        for (int j = 0; j < L; j++) {
+            double h = 0.0, s2 = 0.0;
+            int dm = mm[i] - mm[j];
+            size_t xa = SA[i] ^ SA[j];
+            size_t xb = SB[i] ^ SB[j];
+            int da = __builtin_popcountll(xa) / 2;
+            int db = __builtin_popcountll(xb) / 2;
+
+            if (dm == 0) {
+                /* ---- S^2_00 (block-diagonal in photon) ---- */
+                if (i == j) {
+                    s2 = Sdiag[Idt[i]];
+                } else if (da == 1 && db == 1) {
+                    /* spin-flip: alpha p->q must mirror beta q->p */
+                    int a = __builtin_ctzll(SA[j] & ~SA[i]); /* alpha hole  (in ket) */
+                    int r = __builtin_ctzll(SA[i] & ~SA[j]); /* alpha particle (bra) */
+                    int b = __builtin_ctzll(SB[j] & ~SB[i]); /* beta  hole  (in ket) */
+                    int s = __builtin_ctzll(SB[i] & ~SB[j]); /* beta  particle (bra) */
+                    if (r == b && s == a) {
+                        int pa = phase_single_excitation(a, r, SA[j]);
+                        int pb = phase_single_excitation(b, s, SB[j]);
+                        s2 = -(double)(pa * pb);
+                    }
+                }
+
+                /* ---- H_00 electronic (plain determinant Slater-Condon) ---- */
+                int diff = da + db;
+                if (diff == 0) {
+                    double e = 0.0;
+                    for (int x = 0; x < nA[i]; x++) e += hp[AA[i][x] * n_o_ac + AA[i][x]];
+                    for (int x = 0; x < nB[i]; x++) e += hp[BB[i][x] * n_o_ac + BB[i][x]];
+                    for (int x = 0; x < nA[i]; x++)
+                        for (int y = x + 1; y < nA[i]; y++) {
+                            int p = AA[i][x], q = AA[i][y];
+                            e += sc_twoe(h2e, p, p, q, q, n_occ, n_in) - sc_twoe(h2e, p, q, q, p, n_occ, n_in);
+                        }
+                    for (int x = 0; x < nB[i]; x++)
+                        for (int y = x + 1; y < nB[i]; y++) {
+                            int p = BB[i][x], q = BB[i][y];
+                            e += sc_twoe(h2e, p, p, q, q, n_occ, n_in) - sc_twoe(h2e, p, q, q, p, n_occ, n_in);
+                        }
+                    for (int x = 0; x < nA[i]; x++)
+                        for (int y = 0; y < nB[i]; y++) {
+                            int p = AA[i][x], q = BB[i][y];
+                            e += sc_twoe(h2e, p, p, q, q, n_occ, n_in);
+                        }
+                    h = e + mm[i] * omega + Enuc + dc + E_core;
+                } else if (diff == 1) {
+                    int a, r, alpha;
+                    if (da == 1) { a = __builtin_ctzll(SA[j] & ~SA[i]); r = __builtin_ctzll(SA[i] & ~SA[j]); alpha = 1; }
+                    else         { a = __builtin_ctzll(SB[j] & ~SB[i]); r = __builtin_ctzll(SB[i] & ~SB[j]); alpha = 0; }
+                    double e = hp[r * n_o_ac + a];
+                    /* same-spin common orbitals give Coulomb - exchange; opposite spin Coulomb only */
+                    int  ns  = alpha ? nA[i] : nB[i];
+                    int* os  = alpha ? AA[i] : BB[i];   /* same-spin occ (common, since a,r excluded by being the diff) */
+                    int  nos = alpha ? nB[i] : nA[i];
+                    int* oos = alpha ? BB[i] : AA[i];   /* opposite-spin occ */
+                    for (int x = 0; x < ns; x++) {
+                        int p = os[x];
+                        if (p == r || p == a) continue;
+                        e += sc_twoe(h2e, r, a, p, p, n_occ, n_in) - sc_twoe(h2e, r, p, p, a, n_occ, n_in);
+                    }
+                    for (int x = 0; x < nos; x++) {
+                        int p = oos[x];
+                        e += sc_twoe(h2e, r, a, p, p, n_occ, n_in);
+                    }
+                    int ph = phase_single_excitation(a, r, alpha ? SA[j] : SB[j]);
+                    h = ph * e;
+                } else if (diff == 2) {
+                    if (da == 2) {
+                        int a1 = __builtin_ctzll(SA[j] & ~SA[i]);
+                        int a2 = __builtin_ctzll((SA[j] & ~SA[i]) & ~(1UL << a1));
+                        int r1 = __builtin_ctzll(SA[i] & ~SA[j]);
+                        int r2 = __builtin_ctzll((SA[i] & ~SA[j]) & ~(1UL << r1));
+                        double val = sc_twoe(h2e, r1, a1, r2, a2, n_occ, n_in) - sc_twoe(h2e, r1, a2, r2, a1, n_occ, n_in);
+                        size_t s = SA[j];
+                        int p1 = phase_single_excitation(a1, r1, s);
+                        s = (s & ~(1UL << a1)) | (1UL << r1);
+                        int p2 = phase_single_excitation(a2, r2, s);
+                        h = (p1 * p2) * val;
+                    } else if (db == 2) {
+                        int a1 = __builtin_ctzll(SB[j] & ~SB[i]);
+                        int a2 = __builtin_ctzll((SB[j] & ~SB[i]) & ~(1UL << a1));
+                        int r1 = __builtin_ctzll(SB[i] & ~SB[j]);
+                        int r2 = __builtin_ctzll((SB[i] & ~SB[j]) & ~(1UL << r1));
+                        double val = sc_twoe(h2e, r1, a1, r2, a2, n_occ, n_in) - sc_twoe(h2e, r1, a2, r2, a1, n_occ, n_in);
+                        size_t s = SB[j];
+                        int p1 = phase_single_excitation(a1, r1, s);
+                        s = (s & ~(1UL << a1)) | (1UL << r1);
+                        int p2 = phase_single_excitation(a2, r2, s);
+                        h = (p1 * p2) * val;
+                    } else { /* da==1, db==1 : one alpha, one beta (opposite spin, no exchange) */
+                        int a = __builtin_ctzll(SA[j] & ~SA[i]);
+                        int r = __builtin_ctzll(SA[i] & ~SA[j]);
+                        int b = __builtin_ctzll(SB[j] & ~SB[i]);
+                        int s = __builtin_ctzll(SB[i] & ~SB[j]);
+                        double val = sc_twoe(h2e, r, a, s, b, n_occ, n_in);
+                        int pa = phase_single_excitation(a, r, SA[j]);
+                        int pb = phase_single_excitation(b, s, SB[j]);
+                        h = (pa * pb) * val;
+                    }
+                }
+            } else if (dm == 1 || dm == -1) {
+                /* ---- dipole coupling m <-> m+-1 (one-electron operator) ---- */
+                int mmax = mm[i] > mm[j] ? mm[i] : mm[j];
+                double pref = -sqrt(mmax * omega / 2.0);
+                int diff = da + db;
+                if (diff == 0) {
+                    double dsum = 0.0;
+                    for (int x = 0; x < nA[i]; x++) { int p = AA[i][x]; dsum += d_cmo[(p + n_in) * (size_t)n_occ + (p + n_in)]; }
+                    for (int x = 0; x < nB[i]; x++) { int p = BB[i][x]; dsum += d_cmo[(p + n_in) * (size_t)n_occ + (p + n_in)]; }
+                    h = pref * (dsum - d_exp);
+                } else if (diff == 1) {
+                    int a, r, alpha;
+                    if (da == 1) { a = __builtin_ctzll(SA[j] & ~SA[i]); r = __builtin_ctzll(SA[i] & ~SA[j]); alpha = 1; }
+                    else         { a = __builtin_ctzll(SB[j] & ~SB[i]); r = __builtin_ctzll(SB[i] & ~SB[j]); alpha = 0; }
+                    int ph = phase_single_excitation(a, r, alpha ? SA[j] : SB[j]);
+                    h = pref * ph * d_cmo[(r + n_in) * (size_t)n_occ + (a + n_in)];
+                }
+            }
+
+            G_out[(size_t)i * L + j]  = h;
+            Gs_out[(size_t)i * L + j] = s2;
+        }
+    }
+    for (int i = 0; i < L; i++) { free(AA[i]); free(BB[i]); }
+    free(mm); free(Idt); free(SA); free(SB); free(AA); free(BB); free(nA); free(nB);
+    free(hp);
+    free(Y);
+}
+
 void davidson_spin(double* h1e, double* h2e, double* d_cmo, double* Hdiag, double* Sdiag, double* Sdiag_projection, double* eigenvals, double* eigenvecs, int* table,
-		int* table_creation, int* table_annihilation, int* b_array, int *constint, double *constdouble, int* index_Hdiag, 
+		int* table_creation, int* table_annihilation, int* b_array, int *constint, double *constdouble, int* index_Hdiag,
 		bool casscf, double target_spin, callback_ build_sigma) {
     //unpack constant
 
@@ -1553,6 +1763,7 @@ void davidson_spin(double* h1e, double* h2e, double* d_cmo, double* Hdiag, doubl
     int min_pos;
     if (casscf == false) {
         //use unit vectors as guess
+        int* sel = (int*) malloc(indim * sizeof(int)); /* selected determinant indices (Algorithm 3 direct block) */
         for (int i = 0; i < indim; i++) {
             minimum = Hdiag2[0];
             min_pos = 0;
@@ -1563,43 +1774,64 @@ void davidson_spin(double* h1e, double* h2e, double* d_cmo, double* Hdiag, doubl
                 }
             }
             Q[i * H_dim + min_pos] = 1.0;
+            sel[i] = min_pos;
             Hdiag2[min_pos] = BIGNUM;
            // lambda_oldp[i] = minimum;
         }
 
-        memset(S, 0, maxdim*H_dim*sizeof(double));
-        
-	double itime, ftime, exec_time;
-        itime = omp_get_wtime();
+        /* CI guess blocks H_00 (G) and S^2_00 (Gs), Algorithm 3.
+         * Default: direct Slater-Condon build (build_guess_blocks_scrules --
+         * touches only the L selected determinants).  QED_GUESS_SIGMA=1
+         * restores the legacy build via L full-space sigma-vector products.
+         * QED_GUESS_COMPARE=1 builds both and reports the max discrepancy. */
+        int guess_sigma = 0; { const char* e = getenv("QED_GUESS_SIGMA");   if (e && atoi(e) != 0) guess_sigma = 1; }
+        int guess_cmp   = 0; { const char* e = getenv("QED_GUESS_COMPARE"); if (e && atoi(e) != 0) guess_cmp   = 1; }
 
-        build_sigma(h1e, h2e, d_cmo, Q, S, table, table_creation, table_annihilation,
-                        N_ac, n_o_ac, n_o_in, nmo, L, N_p, Enuc, dc, omega, d_exp, E_core, break_degeneracy);
-
-        ftime = omp_get_wtime();
-        exec_time = ftime - itime;
-        if (trace) printf("build sigma took %f seconds to execute \n", exec_time);
-        double* G = (double*) malloc(L*L*sizeof(double));
+        double* G    = (double*) malloc(L*L*sizeof(double));
         memset(G, 0, L*L*sizeof(double));
         double* newS = (double*) malloc(L*H_dim*sizeof(double));
         memset(newS, 0, L*H_dim*sizeof(double));
-        double* Gs = (double*) malloc(L*L*sizeof(double));
+        double* Gs   = (double*) malloc(L*L*sizeof(double));
         memset(Gs, 0, L*L*sizeof(double));
 
-  
-        //for (int a = 0; a < maxdim; a++) {
-        //    for (int b = 0; b < H_dim; b++) {
-        //    	printf("%d %d %20.12lf\n",a,b, S[a*H_dim +b]);
-        //    }
-        //    	printf("\n");
+        if (guess_sigma || guess_cmp) {
+            /* legacy: L full-space sigma-vector products, projected to the L x L block */
+            memset(S, 0, maxdim*H_dim*sizeof(double));
+            double itime = omp_get_wtime();
+            build_sigma(h1e, h2e, d_cmo, Q, S, table, table_creation, table_annihilation,
+                            N_ac, n_o_ac, n_o_in, nmo, L, N_p, Enuc, dc, omega, d_exp, E_core, break_degeneracy);
+            if (trace) printf("build sigma took %f seconds to execute \n", omp_get_wtime() - itime);
+            cblas_dgemm(CblasRowMajor, CblasNoTrans, CblasTrans, L, L, H_dim, 1.0, S, H_dim, Q, H_dim, 0.0, G, L);
+            build_sigma_s_square(Q, newS, Sdiag, b_array, table, num_links0, n_o_ac, num_alpha, L, N_p, 1.0);
+            cblas_dgemm(CblasRowMajor, CblasNoTrans, CblasTrans, L, L, H_dim, 1.0, newS, H_dim, Q, H_dim, 0.0, Gs, L);
+        }
 
-        //}
-        cblas_dgemm(CblasRowMajor, CblasNoTrans, CblasTrans, L, L, H_dim, 1.0, S, H_dim, Q, H_dim, 0.0, G, L);
- 
-        
-        build_sigma_s_square(Q, newS, Sdiag, b_array, table, num_links0, n_o_ac, num_alpha, L, N_p, 1.0);
-        cblas_dgemm(CblasRowMajor, CblasNoTrans, CblasTrans, L, L, H_dim, 1.0, newS, H_dim, Q, H_dim, 0.0, Gs, L);
-	
-	symmetric_eigenvalue_problem(Gs, L, theta);
+        if (!guess_sigma) {
+            /* direct Slater-Condon block build (default) */
+            double* Gd  = guess_cmp ? (double*) malloc((size_t)L*L*sizeof(double)) : G;
+            double* Gsd = guess_cmp ? (double*) malloc((size_t)L*L*sizeof(double)) : Gs;
+            double itime = omp_get_wtime();
+            build_guess_blocks_scrules(Gd, Gsd, sel, L, h1e, h2e, d_cmo, Sdiag,
+                    N_ac, n_o_ac, n_o_in, N_p, num_alpha, Enuc, dc, omega, d_exp, E_core);
+            if (trace) printf("direct guess block build took %f seconds to execute \n", omp_get_wtime() - itime);
+            if (guess_cmp) {
+                double maxDiag = 0.0, maxOff = 0.0, maxS = 0.0;
+                for (int a = 0; a < L; a++)
+                    for (int b = 0; b < L; b++) {
+                        double gh = fabs(Gd[a*L+b] - G[a*L+b]);
+                        double gs = fabs(Gsd[a*L+b] - Gs[a*L+b]);
+                        if (a == b) { if (gh > maxDiag) maxDiag = gh; } else { if (gh > maxOff) maxOff = gh; }
+                        if (gs > maxS) maxS = gs;
+                    }
+                printf("[guess-direct] L=%d  Gdiag_max=%.3e  Goff_max=%.3e  Gs_max=%.3e\n", L, maxDiag, maxOff, maxS);
+                fflush(stdout);
+                cblas_dcopy((MKL_INT)((size_t)L*L), Gd, 1, G, 1);
+                cblas_dcopy((MKL_INT)((size_t)L*L), Gsd, 1, Gs, 1);
+                free(Gd); free(Gsd);
+            }
+        }
+
+		symmetric_eigenvalue_problem(Gs, L, theta);
         //for (int i = 0; i < L; i++) {
         //    printf("%20.12lf\n", theta[i]);
 	//}
@@ -1676,6 +1908,7 @@ void davidson_spin(double* h1e, double* h2e, double* d_cmo, double* Hdiag, doubl
 	//    printf("\n");
 	//}
 	L = indim;
+        free(sel);
         free(G);
         free(Gs);
         free(newS);
@@ -1841,7 +2074,7 @@ void davidson_spin(double* h1e, double* h2e, double* d_cmo, double* Hdiag, doubl
 	        double rr = cblas_ddot(H_dim, w + i * H_dim, 1, w + i * H_dim, 1);
 	        last_ci_root_residuals[i] = sqrt(rr);
 	    }
-	    if (get_ci_print_level() >= 1) printf("converged\n");
+	    if (get_ci_print_level() >= 3) printf("converged\n");
 	    report_final_spin(eigenvecs, nroots, Sdiag, table, b_array, num_links0, n_o_ac, num_alpha, N_p, target_spin);
     	    fflush(stdout);
 	    break;
