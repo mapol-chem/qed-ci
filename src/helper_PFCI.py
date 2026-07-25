@@ -40,6 +40,41 @@ from scipy.sparse.linalg import LinearOperator
 from timeit import default_timer as timer
 from scipy.linalg import eigh_tridiagonal
 from collections import deque
+
+# --- CI-cost experiment knobs (both default-no-op) --------------------------
+# Profiling of the real MgH+ CAS(8,12) runs (see
+# cpp_casscf/validation/ci_cost_experiment/README.md) showed the CI step is
+# 71% of total runtime, and within it the COUPLED (qn_count > 0) CI solves in
+# microiteration_optimization6 are ~79% of all Davidson time -- 833 calls,
+# mean 25.9 iterations, 16.2 s each. By contrast the whole orbital side
+# (orbital sigma, gradient, Hessian diagonal, intermediates, all integral
+# transforms, LSTRS/GLTR expand+residual) is 0.05% of runtime.
+#
+#   QED_CI_UNCOUPLED_MAXITER : the Kreplin uncoupled CI cap        (default 5)
+#   QED_CI_COUPLED_FACTOR    : the 0.1 in 0.1*||g_orb||            (default 0.1)
+#
+# The coupled threshold is tied to the orbital gradient, so it tightens as the
+# optimization converges; measured cost of that tightening is mean iterations
+# rising 23.9 -> 29.9 from the largest to the smallest gradient-norm quartile.
+# Kreplin/Werner's precondition is qualitative ("CI residual substantially
+# lower than the last orbital gradient"), so 0.1 is a choice, not a derived
+# value -- which is what makes it worth sweeping.
+_QED_CI_UNCOUPLED_MAXITER = int(os.environ.get("QED_CI_UNCOUPLED_MAXITER", "5"))
+_QED_CI_COUPLED_FACTOR = float(os.environ.get("QED_CI_COUPLED_FACTOR", "0.1"))
+#
+#   QED_DISABLE_QN : never activate quasi-Newton / coupled CI  (default 0 = off)
+#
+# QN activation (microiteration_optimization6, the `step_norm < 0.05` trigger on
+# an accepted step) is what flips the micro CI solve from the Kreplin UNCOUPLED
+# cap (constint[8] = _QED_CI_UNCOUPLED_MAXITER, default 5) to COUPLED
+# (constint[8] = 10000, run to a 0.1*||g_orb||-scaled threshold). Setting this to
+# 1 keeps the whole run uncoupled, which is the apples-to-apples setting for
+# comparing against an UNCOUPLED-CI reference (e.g. the Molpro c10h8 benchmark in
+# examples/c10h8.out) and also matches the cpp_casscf port, whose QN/BFGS path is
+# deliberately not wired up. Gates the LIVE site only (microiteration_optimization6
+# ~12328); the byte-identical block in dead microiteration_optimization5 (~10639)
+# is untouched.
+_QED_DISABLE_QN = int(os.environ.get("QED_DISABLE_QN", "0"))
 import numba as nb
 from scipy.linalg import eigh, cho_factor, cho_solve, solve_triangular
 
@@ -2562,6 +2597,21 @@ class PFHamiltonianGenerator:
                                 # eigenvecs = np.zeros((self.davidson_roots, H_dim))
                                 # eigenvecs[:,:] = 0.0
                                 # print("heyhey5", eigenvecs)
+                                # --- cold-start-between-macroiterations experiment (QED_COLD_START_CI) ---
+                                # Default off => warm start (casscf=True, Q = previous macro's CI
+                                # vector, which is a stale eigenvector of the previous macro's
+                                # Hamiltonian).  When on => cold start (casscf=False): a fresh
+                                # Algorithm-3 spin-adapted guess each macro, with a configurable
+                                # large guess subspace (QED_COLD_START_INDIM / _MAXDIM).  This is now
+                                # cheap thanks to the direct Slater-Condon guess-block build in
+                                # ci_solver.c.  constint[5]/[6] (indim/maxdim) are set only for this
+                                # cold solve and restored immediately after.
+                                _cold = int(os.environ.get("QED_COLD_START_CI", "0"))
+                                if _cold:
+                                    _sv_indim = int(self.constint[5])
+                                    _sv_maxdim = int(self.constint[6])
+                                    self.constint[5] = int(os.environ.get("QED_COLD_START_INDIM", str(_sv_indim)))
+                                    self.constint[6] = int(os.environ.get("QED_COLD_START_MAXDIM", str(_sv_maxdim)))
                                 c_get_roots(
                                     gkl2,
                                     occupied_J,
@@ -2578,9 +2628,12 @@ class PFHamiltonianGenerator:
                                     self.constint,
                                     self.constdouble,
                                     self.index_Hdiag,
-                                    True,
+                                    (not _cold),
                                     self.target_spin,
                                 )
+                                if _cold:
+                                    self.constint[5] = _sv_indim
+                                    self.constint[6] = _sv_maxdim
                                 old_avg_energy = new_avg_energy
                                 avg_energy = 0.0
                                 for i in range(self.davidson_roots):
@@ -2941,14 +2994,33 @@ class PFHamiltonianGenerator:
                             print(
                                 "norm of internal step", np.linalg.norm(Rai), flush=True
                             )
-                            if np.linalg.norm(Rai) > 1e-4:
-                                # print("u2 before", self.U2,flush = True)
+                            # EXPERIMENT (env-gated, default-no-op): repeat the
+                            # internal-rotation correction up to _max_inner times
+                            # instead of exactly once. Werner's WMK paper allows
+                            # either "repeat until R_ij ~ 0" or the cheaper
+                            # "once per macroiteration" approximation; this code
+                            # implements once, and QED_INTERNAL_RESTART_MAX=1
+                            # (default) reproduces that exactly. Set >1 to loop.
+                            # Each pass: (1) extract internal Rai from the
+                            # current R, (2) absorb it EXACTLY into the basis via
+                            # the internal integral transform (all orders, not
+                            # the 2nd-order model -- this is why it can beat the
+                            # x^4-wrong micro), (3) restart the micro from the
+                            # external part only, (4) recompute R.
+                            _max_inner = int(os.environ.get("QED_INTERNAL_RESTART_MAX", "1"))
+                            _inner = 0
+                            while np.linalg.norm(Rai) > 1e-4 and _inner < _max_inner:
                                 print(
-                                    "RESTART MICROITERATION TO CORRECT INTERNAL ROTATION"
+                                    "RESTART MICROITERATION TO CORRECT INTERNAL ROTATION",
+                                    _inner, flush=True,
                                 )
+                                # (1)+(2): internal-only unitary from the current
+                                # Rai, absorbed exactly into J/K/H/d_cmo.
+                                Rai_int = np.zeros((self.n_act_orb, self.n_in_a))
+                                Rai_int[:, :] = R[self.n_in_a : self.n_occupied, : self.n_in_a]
                                 Rvi = np.zeros((self.n_virtual, self.n_in_a))
                                 Rva = np.zeros((self.n_virtual, self.n_act_orb))
-                                self.build_unitary_matrix(Rai, Rvi, Rva)
+                                self.build_unitary_matrix(Rai_int, Rvi, Rva)
                                 self.K = np.ascontiguousarray(self.K)
                                 start1 = timer()
                                 c_full_transformation_internal_optimization(
@@ -2970,16 +3042,18 @@ class PFHamiltonianGenerator:
                                 print(
                                     "full internal transformation took", end1 - start1
                                 )
-                                # self.full_transformation_internal_optimization(self.U_delta, self.H_spatial2, self.d_cmo, self.J, self.K)
                                 self.U_total = np.einsum(
                                     "pq,qs->ps", self.U_total, self.U_delta
                                 )
-                                Rai[:, :] = 0.0
+                                # (3): restart micro from the external part of
+                                # the CURRENT R (recomputed each pass, not held
+                                # at the first pass's value).
+                                Rai0 = np.zeros((self.n_act_orb, self.n_in_a))
                                 Rvi[:, :] = R[self.n_occupied :, : self.n_in_a]
                                 Rva[:, :] = R[
                                     self.n_occupied :, self.n_in_a : self.n_occupied
                                 ]
-                                self.build_unitary_matrix(Rai, Rvi, Rva)
+                                self.build_unitary_matrix(Rai0, Rvi, Rva)
                                 start1 = timer()
                                 self.microiteration_optimization6(
                                     self.U_delta,
@@ -2989,14 +3063,17 @@ class PFHamiltonianGenerator:
                                 )
                                 end1 = timer()
                                 print("microiteration took", end1 - start1)
-                                Rkl = 0.5 * (
-                                    self.U2[: self.n_occupied, : self.n_occupied]
-                                    - self.U2.T[: self.n_occupied, : self.n_occupied]
-                                )
+                                # (4): recompute the full R and its internal part.
+                                R = 0.5 * (self.U2 - self.U2.T)
                                 Rai = np.zeros((self.n_act_orb, self.n_in_a))
-                                Rai[:, :] = Rkl[
+                                Rai[:, :] = R[
                                     self.n_in_a : self.n_occupied, : self.n_in_a
                                 ]
+                                _inner += 1
+                                print(
+                                    "norm of internal step after", _inner,
+                                    np.linalg.norm(Rai), flush=True,
+                                )
                             print(
                                 "norm of internal step after",
                                 np.linalg.norm(Rai),
@@ -7778,7 +7855,10 @@ class PFHamiltonianGenerator:
                 self.constdouble[3] = self.d_exp - d_diag
                 self.constdouble[4] = 1e-5
                 self.constdouble[5] = self.E_core
-                self.constint[8] = 5
+                # Same uncoupled cap knob as microiteration_optimization6's
+                # (default 5) -- internal_optimization3 is the other live site
+                # running the Kreplin uncoupled-CI strategy.
+                self.constint[8] = _QED_CI_UNCOUPLED_MAXITER
                 eigenvals = np.zeros((self.davidson_roots))
                 # eigenvecs = np.zeros((self.davidson_roots, H_dim))
                 # eigenvecs[:,:] = 0.0
@@ -12259,7 +12339,7 @@ class PFHamiltonianGenerator:
                         )
                     if energy_change < 0.0 or hard_case == 2:
                         print("step norm", np.linalg.norm(step))
-                        if step_norm < 0.05: 
+                        if step_norm < 0.05 and not _QED_DISABLE_QN:
                             print("activate qn optimization")
                             qn_optimization = True
                             qn_count +=1
@@ -12438,15 +12518,35 @@ class PFHamiltonianGenerator:
             self.constdouble[3] = self.d_exp - d_diag
             self.constdouble[4] = 1e-9
             self.constdouble[5] = self.E_core2
-            self.constint[8] = 5
-            if qn_count > 0: 
-                self.constdouble[4] = 0.1 * np.linalg.norm(reduced_gradient)
+            # Experiment knobs, default-no-op -- see the definitions at the
+            # top of this file. This is the LIVE coupled-CI site
+            # (microiteration_optimization6); the byte-identical block in
+            # microiteration_optimization5 is dead code (no callers) and is
+            # deliberately left untouched.
+            self.constint[8] = _QED_CI_UNCOUPLED_MAXITER
+            if qn_count > 0:
+                self.constdouble[4] = _QED_CI_COUPLED_FACTOR * np.linalg.norm(reduced_gradient)
                 self.constint[8] = 10000
             print("number of CI iteration", self.constint[8])
             eigenvals = np.zeros((self.davidson_roots))
             # eigenvecs = np.zeros((self.davidson_roots, H_dim))
             # eigenvecs[:,:] = 0.0
             # print("heyhey5", eigenvecs)
+            # --- cold-start-microiteration experiment (QED_COLD_START_MICRO) ---
+            # Default off => warm start (casscf=True, Q = previous micro's CI
+            # vector).  When on => cold start (casscf=False): a fresh Algorithm-3
+            # spin-adapted guess with a configurable large subspace
+            # (QED_COLD_START_MICRO_INDIM / _MAXDIM), then the (still constint[8]-
+            # capped, e.g. 5) Davidson refinement -- tests whether a fresh
+            # large-subspace guess gives a smaller residual after the fixed cap
+            # than the stale warm start.  constint[5]/[6] restored right after.
+            # Independent of the macro-level QED_COLD_START_CI toggle.
+            _cold_micro = int(os.environ.get("QED_COLD_START_MICRO", "0"))
+            if _cold_micro:
+                _svm_indim = int(self.constint[5])
+                _svm_maxdim = int(self.constint[6])
+                self.constint[5] = int(os.environ.get("QED_COLD_START_MICRO_INDIM", str(_svm_indim)))
+                self.constint[6] = int(os.environ.get("QED_COLD_START_MICRO_MAXDIM", str(_svm_maxdim)))
             c_get_roots(
                 gkl2,
                 occupied_J,
@@ -12463,9 +12563,12 @@ class PFHamiltonianGenerator:
                 self.constint,
                 self.constdouble,
                 self.index_Hdiag,
-                True,
+                (not _cold_micro),
                 self.target_spin,
             )
+            if _cold_micro:
+                self.constint[5] = _svm_indim
+                self.constint[6] = _svm_maxdim
             end = timer()
             print("CI step took", end - start)
 
