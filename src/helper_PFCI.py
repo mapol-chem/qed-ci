@@ -30,6 +30,7 @@ from ctypes import *
 import os
 import psutil
 import copy
+import weakref  # build_intermediates' L cache invalidates by weak ref to J/K
 import scipy.sparse
 import ortho_script
 from ortho_script import ortho_orbs
@@ -75,6 +76,38 @@ _QED_CI_COUPLED_FACTOR = float(os.environ.get("QED_CI_COUPLED_FACTOR", "0.1"))
 # ~12328); the byte-identical block in dead microiteration_optimization5 (~10639)
 # is untouched.
 _QED_DISABLE_QN = int(os.environ.get("QED_DISABLE_QN", "0"))
+#
+#   QED_USE_MINRES : solve Hx=-g with preconditioned MINRES  (default 1 = ON)
+#
+# Unlike the knobs above this one is NOT default-no-op: minres_solve replaces
+# linear_equation_solve/LinearRMSolver at all four "gradient is small, use
+# Newton step" / hard_case==2 call sites (internal microiteration_optimization5
+# ~10586,10634 and the live microiteration_optimization6 ~12263,12305).  See
+# minres_solve's docstring for why: LinearRMSolver solves the normal equations
+# S^T S a = -S^T g, squaring the condition number of a Hessian that is
+# near-singular precisely when this branch fires.  Set to 0 to restore the old
+# path for an A/B comparison; the scipy-minres fallback that follows a
+# non-converged solve is untouched either way.
+_QED_USE_MINRES = int(os.environ.get("QED_USE_MINRES", "1"))
+#
+#   QED_PROFILE_INTERMEDIATES : per-section timing of build_intermediates
+#                               (default 0 = off, no-op)
+#
+# build_intermediates is the single largest orbital-side cost in the c10h8
+# profile (64.8 s / 102 calls) and is rebuilt every MICROiteration. This splits
+# it into its ~17 constituent contractions so the density-INDEPENDENT parts
+# (notably `self.L = 4K - K^T - J`, which only changes when J/K are retransformed
+# at a macroiteration boundary) can be separated from the ones that genuinely
+# must track self.D_tu_avg. See the aggregation one-liner in the function body.
+_QED_PROFILE_INTERMEDIATES = int(os.environ.get("QED_PROFILE_INTERMEDIATES", "0"))
+#
+#   QED_VERIFY_L_CACHE : rebuild L on every cache HIT and compare  (default 0)
+#
+# Turns build_intermediates' L/temp1 cache into a checked cache: any missed
+# invalidation raises instead of silently producing a wrong orbital Hessian.
+# Costs the very savings the cache buys, so it is a correctness harness, not a
+# production setting -- run it once after touching anything that writes J/K.
+_QED_VERIFY_L_CACHE = int(os.environ.get("QED_VERIFY_L_CACHE", "0"))
 import numba as nb
 from scipy.linalg import eigh, cho_factor, cho_solve, solve_triangular
 
@@ -785,9 +818,23 @@ def c_gram_schmidt_add(Q, rows, cols, rows2):
     cfunctions.gram_schmidt_add(Q, rows, cols, rows2)
 
 
+# Bumped by every C routine below that writes J/K.  Both of them take J/K as
+# OUTPUT buffers and fill them IN PLACE (the internal-optimization one passes
+# them as input *and* output), so the Python object identity is unchanged by a
+# transformation -- an identity/weakref test cannot detect it.  Anything caching
+# a quantity derived from J/K (see build_intermediates' L/temp1 cache) must key
+# on this epoch.  Bumping here rather than at the call sites means new call
+# sites are covered automatically; bumping unconditionally (even when the arrays
+# passed are not self.J/self.K) is deliberate -- over-invalidating only costs a
+# rebuild, whereas under-invalidating silently corrupts the orbital Hessian.
+_JK_WRITE_EPOCH = 0
+
+
 def c_full_transformation_macroiteration(
     U, h2e, J, K, index_map_pq, index_map_kl, nmo, n_occupied
 ):
+    global _JK_WRITE_EPOCH
+    _JK_WRITE_EPOCH += 1
     cfunctions.full_transformation_macroiteration(
         U, h2e, J, K, index_map_pq, index_map_kl, nmo, n_occupied
     )
@@ -796,6 +843,8 @@ def c_full_transformation_macroiteration(
 def c_full_transformation_internal_optimization(
     U, J, K, h1, d_cmo, Jt, Kt, h1t, d_cmot, index_map_ab, index_map_kl, nmo, n_occupied
 ):
+    global _JK_WRITE_EPOCH
+    _JK_WRITE_EPOCH += 1
     cfunctions.full_transformation_internal_optimization(
         U,
         J,
@@ -5924,6 +5973,23 @@ class PFHamiltonianGenerator:
             rot_dim = self.nmo
         else:
             rot_dim = self.n_occupied
+
+        # Per-section profiling, gated on QED_PROFILE_INTERMEDIATES (default
+        # 0 = off).  Replaces the hand-commented "build intermediate step N"
+        # timers that were scattered through this function; the labels below
+        # keep the same section boundaries.  Emits one `BI_PROF <label> <secs>`
+        # line per section per call -- aggregate over a run with:
+        #   grep '^BI_PROF ' log | awk '{s[$2]+=$3; n[$2]++}
+        #     END{for(k in s) printf "%-22s %8.2f %6d %8.4f\n", k, s[k], n[k], s[k]/n[k]}' | sort -k2 -rn
+        _prof_t = timer() if _QED_PROFILE_INTERMEDIATES else 0.0
+
+        def _bi_mark(label):
+            nonlocal _prof_t
+            if _QED_PROFILE_INTERMEDIATES:
+                _now = timer()
+                print(f"BI_PROF {label} {_now - _prof_t:.6f}")
+                _prof_t = _now
+
         # start = timer()
         self.fock_core = copy.deepcopy(self.H_spatial2)
         self.fock_core += 2.0 * np.einsum(
@@ -5940,6 +6006,7 @@ class PFHamiltonianGenerator:
         self.E_core = 0.0
         self.E_core += np.einsum("jj->", self.H_spatial2[: self.n_in_a, : self.n_in_a])
         self.E_core += np.einsum("jj->", self.fock_core[: self.n_in_a, : self.n_in_a])
+        _bi_mark("fock_core_Ecore")
         # end   = timer()
         # print("build intermediate step 1", end - start)
 
@@ -5954,41 +6021,119 @@ class PFHamiltonianGenerator:
                 self.n_in_a : self.n_occupied,
             ]
         )
-        self.L = np.zeros((self.n_occupied, self.n_in_a, rot_dim, rot_dim))
+        _bi_mark("active_twoeint_copy")
         self.fock_general = np.zeros((rot_dim, rot_dim))
-        # print (np.shape(self.L))
-        # start = timer()
-        self.L = (
-            4.0 * self.K[:, : self.n_in_a, :rot_dim, :rot_dim]
-            - self.K.transpose(0, 1, 3, 2)[:, : self.n_in_a, :rot_dim, :rot_dim]
-            - self.J[:, : self.n_in_a, :rot_dim, :rot_dim]
+        # `self.L = 4K - K^T - J` is a PURE FUNCTION of self.J/self.K, which are
+        # only rebound when the integrals are retransformed at a macroiteration
+        # boundary (the full_transformation_macroiteration / transform_JK_with_df
+        # branches around line 3145).  It does NOT depend on the RDMs.
+        #
+        # The rest of this routine legitimately rebuilds every microiteration:
+        # that mirrors Kreplin's Uncoupled(CI) ("the one- and two-particle RDMs
+        # are recalculated, and the orbital optimization is restarted"), and our
+        # measured rate -- 9.2 microiterations per macroiteration on c10h8 -- sits
+        # inside their N_micro range of 5/7/20.  L simply has no business being
+        # inside that density-tracking rebuild: it was being built 101 times on a
+        # c10h8 run that needed it 11 times, at 0.27 s and ~1.2 GB of traffic each
+        # (44% of build_intermediates; see QED_PROFILE_INTERMEDIATES).
+        #
+        # INVALIDATION -- read this before touching it.  J/K change in TWO
+        # different ways and the cache must catch both:
+        #   (a) REBOUND to new arrays  (build_JK_from_df at ~1484/~1710,
+        #       transform_JK_with_df at ~3145)  -> caught by the weakref identity
+        #       test below;
+        #   (b) OVERWRITTEN IN PLACE by the C backend -- c_full_transformation_
+        #       macroiteration (~3127) and c_full_transformation_internal_
+        #       optimization (~3051 and ~8131, the latter inside
+        #       internal_optimization3).  These pass J/K as output buffers, so
+        #       the Python object identity does NOT change.  An identity or
+        #       weakref test CANNOT see this.  Caught by _JK_WRITE_EPOCH, which
+        #       those two wrappers bump.
+        # An earlier version of this cache used the weakref test ALONE.  It
+        # silently served a stale L after every integral transformation; c10h8
+        # then diverged (macro 2 came out at -382.69 vs the correct -383.48).
+        # Do not drop the epoch check.
+        #
+        # `temp1` (J_tt - 0.5 K_tt) shares this cache for the same reason.
+        #
+        # NOTE self.L is also read outside this routine (helper_PFCI.py:8987 and
+        # :9041, both inside the second-order integral transformation), so the
+        # cached array must be -- and is -- bit-identical to a fresh build.
+        # Checked: no consumer, here or there, writes into self.L or temp1 in
+        # place (8987 is `local_temp1 += self.L[...]`, which mutates the local),
+        # which is what makes it safe to hold these across microiterations.
+        _L_ref_J = getattr(self, "_L_cache_J", None)
+        _L_ref_K = getattr(self, "_L_cache_K", None)
+        _L_is_current = (
+            _L_ref_J is not None
+            and _L_ref_K is not None
+            and _L_ref_J() is self.J
+            and _L_ref_K() is self.K
+            and getattr(self, "_L_cache_rot_dim", None) == rot_dim
+            and getattr(self, "_L_cache_epoch", None) == _JK_WRITE_EPOCH
         )
-        
-        temp1 = (
-            self.J[
-                self.n_in_a : self.n_occupied,
-                self.n_in_a : self.n_occupied,
-                :rot_dim,
-                :rot_dim,
-            ]
-            - 0.5
-            * self.K[
-                self.n_in_a : self.n_occupied,
-                self.n_in_a : self.n_occupied,
-                :rot_dim,
-                :rot_dim,
-            ]
-        )
+        if _L_is_current and _QED_VERIFY_L_CACHE:
+            # Paranoia mode: rebuild and compare, so a missed invalidation shows
+            # up as a loud mismatch instead of a silently wrong Hessian.
+            _L_check = (
+                4.0 * self.K[:, : self.n_in_a, :rot_dim, :rot_dim]
+                - self.K.transpose(0, 1, 3, 2)[:, : self.n_in_a, :rot_dim, :rot_dim]
+                - self.J[:, : self.n_in_a, :rot_dim, :rot_dim]
+            )
+            if not np.array_equal(_L_check, self.L):
+                raise RuntimeError(
+                    "L cache is STALE: J/K changed without bumping "
+                    "_JK_WRITE_EPOCH or rebinding. max|dL| = "
+                    f"{np.abs(_L_check - self.L).max():.6e}"
+                )
+            del _L_check
+        if not _L_is_current:
+            # (the `self.L = np.zeros(...)` that used to sit here was dead -- a
+            #  293 MB memset discarded by the very next statement.)
+            self.L = (
+                4.0 * self.K[:, : self.n_in_a, :rot_dim, :rot_dim]
+                - self.K.transpose(0, 1, 3, 2)[:, : self.n_in_a, :rot_dim, :rot_dim]
+                - self.J[:, : self.n_in_a, :rot_dim, :rot_dim]
+            )
+            # temp1 = J_tt,rs - 0.5 K_tt,rs is likewise a pure function of J/K
+            # (26 MB at c10h8 dims), so it shares this cache rather than getting
+            # a second, identical weakref guard.  Its single consumer is the
+            # fock_general einsum immediately below.
+            self._temp1_cache = (
+                self.J[
+                    self.n_in_a : self.n_occupied,
+                    self.n_in_a : self.n_occupied,
+                    :rot_dim,
+                    :rot_dim,
+                ]
+                - 0.5
+                * self.K[
+                    self.n_in_a : self.n_occupied,
+                    self.n_in_a : self.n_occupied,
+                    :rot_dim,
+                    :rot_dim,
+                ]
+            )
+            self._L_cache_J = weakref.ref(self.J)
+            self._L_cache_K = weakref.ref(self.K)
+            self._L_cache_rot_dim = rot_dim
+            self._L_cache_epoch = _JK_WRITE_EPOCH
+        _bi_mark("L_build")
+
+        temp1 = self._temp1_cache
+        _bi_mark("temp1_build")
         # start = timer()
         self.fock_general += self.fock_core[:rot_dim, :rot_dim] + np.einsum(
             "tu,turs->rs", D_tu_avg, temp1, optimize="optimal"
         )
+        _bi_mark("fock_general")
         
         off_diagonal_constant = self.calculate_off_diagonal_photon_constant(eigenvecs)
         A[:, : self.n_in_a] = 2.0 * (
             self.fock_general[:, : self.n_in_a]
             + self.d_cmo[:rot_dim, : self.n_in_a] * off_diagonal_constant
         )
+        _bi_mark("A_inactive")
 
        
         A[:, self.n_in_a : self.n_occupied] = np.einsum(
@@ -5997,6 +6142,7 @@ class PFHamiltonianGenerator:
             D_tu_avg,
             optimize="optimal",
         )
+        _bi_mark("A_act_fock")
         # end   = timer()
         # print("build intermediate step 4", end - start)
         # print(np.shape(self.active_twoeint))
@@ -6014,6 +6160,7 @@ class PFHamiltonianGenerator:
         )
         # end   = timer()
         # print("build intermediate step 5", end - start)
+        _bi_mark("A_act_2rdm")
         # start = timer()
         A[:, self.n_in_a : self.n_occupied] += -np.sqrt(self.omega / 2) * np.einsum(
             "rt,tu->ru",
@@ -6025,16 +6172,27 @@ class PFHamiltonianGenerator:
             self.fock_general[:rot_dim, :rot_dim]
             + off_diagonal_constant * self.d_cmo[:rot_dim, :rot_dim]
         )
+        _bi_mark("A_act_dipole_temp2")
         # end1   = timer()
         # print("build intermediate step 7_0", end1 - start1)
         # start1 = timer()
-        G[: self.n_in_a, : self.n_in_a, :, :] = 2.0 * np.einsum(
-            "rs,ij->ijrs", temp2, np.eye(self.n_in_a), optimize="optimal"
-        )
-        # end1   = timer()
-        # print("build intermediate step 7_1", end1 - start1)
-        # start1 = timer()
-        G[: self.n_in_a, : self.n_in_a, :, :] += 2.0 * self.L[: self.n_in_a, :, :, :]
+        # Was:
+        #   G[:ni,:ni,:,:]  = 2.0 * einsum("rs,ij->ijrs", temp2, eye(ni))
+        #   G[:ni,:ni,:,:] += 2.0 * L[:ni]
+        # The einsum materialized delta_ij (x) temp2 as a full (ni,ni,rot,rot)
+        # array -- 218 MB at c10h8 dims -- of which only the ni diagonal (i==j)
+        # pairs are nonzero: 29 of 841, so 96.6% of what it wrote was zeros that
+        # the `+= 2L` on the next line then overwrote.  Measured at 14.0 s of the
+        # 61.1 s build_intermediates total (23%).
+        # Now: assign the 2L part first, then add temp2 on the i==j diagonal
+        # only.  Algebraically identical (fancy-indexing (i,i) pairs are unique,
+        # so the += is a well-defined gather/scatter), 7.5 MB of adds instead of
+        # a 218 MB einsum.
+        G[: self.n_in_a, : self.n_in_a, :, :] = 2.0 * self.L[: self.n_in_a, :, :, :]
+        _bi_mark("G_ij_plus_2L")
+        _ii = np.arange(self.n_in_a)
+        G[_ii, _ii, :, :] += 2.0 * temp2
+        _bi_mark("G_ij_diag_temp2")
         # end1   = timer()
         # print("build intermediate step 7_2", end1 - start1)
         # end   = timer()
@@ -6047,12 +6205,14 @@ class PFHamiltonianGenerator:
             self.L[self.n_in_a :, :, :, :],
             optimize="optimal",
         )
+        _bi_mark("G_ti_D_times_L")
         # end   = timer()
         # print("build intermediate step 8", end - start)
         # start = timer()
         G[: self.n_in_a, self.n_in_a : self.n_occupied, :, :] = G[
             self.n_in_a : self.n_occupied, : self.n_in_a, :, :
         ].transpose(1, 0, 3, 2)
+        _bi_mark("G_it_transpose")
 
         # end   = timer()
         # print("build intermediate step 9", end - start)
@@ -6063,6 +6223,7 @@ class PFHamiltonianGenerator:
             D_tu_avg,
             optimize="optimal",
         )
+        _bi_mark("G_tu_fock_outer")
         # end   = timer()
         # print("build intermediate step 10", end - start)
         # start = timer()
@@ -6079,6 +6240,7 @@ class PFHamiltonianGenerator:
         )
         # end   = timer()
         # print("build intermediate step 11", end - start)
+        _bi_mark("G_tu_J_2rdm")
         # start = timer()
         G[self.n_in_a :, self.n_in_a :, :, :] += 2.0 * np.einsum(
             "vwrs,tvuw->turs",
@@ -6093,6 +6255,7 @@ class PFHamiltonianGenerator:
         )
         # end   = timer()
         # print("build intermediate step 12", end - start)
+        _bi_mark("G_tu_K_2rdm")
         # start = timer()
         G[self.n_in_a :, self.n_in_a :, :, :] += -np.sqrt(self.omega / 2) * np.einsum(
             "rs,tu->turs",
@@ -6100,6 +6263,7 @@ class PFHamiltonianGenerator:
             Dpe_tu_avg,
             optimize="optimal",
         )
+        _bi_mark("G_tu_dipole")
         
     
 
@@ -8462,6 +8626,11 @@ class PFHamiltonianGenerator:
         G_ij = np.ascontiguousarray(G_ij)
         G_ti = np.ascontiguousarray(G_ti)
         G_tu = np.ascontiguousarray(G_tu)
+        # build_sigma_reduced7 is jitted with an explicit float64[:,::1] signature,
+        # so R_reduced must be C-contiguous.  The un-jitted build_sigma_reduced4
+        # this path replaced accepted any layout; microiteration_predicted_energy2
+        # can hand us a strided step.  (sigma_reduced is an output -- do NOT copy.)
+        R_reduced = np.ascontiguousarray(R_reduced)
 
         return self.build_sigma_reduced7(
             U,
@@ -8485,6 +8654,12 @@ class PFHamiltonianGenerator:
     def orbital_sigma(
         self, U, A_tilde, G, R_reduced, sigma_reduced, num_states, pointer
     ):
+        """Dense-G1 sigma build.  SUPERSEDED by orbital_sigma3/build_sigma_reduced7,
+        which take the (G_ij, G_ti, G_tu) blocks instead.  No live caller remains:
+        the full (nmo*n_occupied) square G1 this needs is no longer materialized
+        anywhere in microiteration_optimization6.  Kept for reference only --
+        build_sigma_reduced4 below is otherwise identical to build_sigma_reduced7.
+        """
         nmo = self.nmo
         index_map = self.index_map
         index_map_size = self.index_map_size
@@ -8865,11 +9040,28 @@ class PFHamiltonianGenerator:
         E_core += 4.0 * np.einsum(
             "ir,ri->", self.fock_core[: self.n_in_a, :], T[:, : self.n_in_a]
         )
-        temp1 = np.zeros((self.n_in_a, self.n_in_a, self.nmo, self.nmo))
-        temp1 = np.einsum("rs,ij->ijrs", self.fock_core, np.eye(self.n_in_a))
-        temp1 += self.L[: self.n_in_a, :, :, :]
-        temp2 = np.zeros((self.nmo, self.n_in_a))
-        temp2 = np.einsum("ijrs,sj->ri", temp1, T[:, : self.n_in_a])
+        # Was:
+        #   temp1  = zeros((ni,ni,nmo,nmo))                  <- dead, rebound below
+        #   temp1  = einsum("rs,ij->ijrs", fock_core, eye(ni))
+        #   temp1 += L[:ni]
+        #   temp2  = einsum("ijrs,sj->ri", temp1, T[:, :ni])
+        # temp1 was a full (ni,ni,nmo,nmo) array -- 218 MB at c10h8 dims, of
+        # which only the ni diagonal (i==j) pairs are nonzero, so 96.6% of it was
+        # zeros -- materialized purely to be contracted away on the next line.
+        # Same pattern as the G_ij one in build_intermediates, and this routine
+        # ("second order integral transformation") is 38.2 s / 159 calls, 13% of
+        # the c10h8 optimization.
+        # Split the contraction instead:
+        #   temp2[r,i] = sum_{j,s} (fock_core[r,s] delta_ij + L[i,j,r,s]) T[s,j]
+        #              = sum_s fock_core[r,s] T[s,i]  +  sum_{j,s} L[i,j,r,s] T[s,j]
+        # Algebraically exact.  Splitting one accumulation into two does reorder
+        # the floating-point sum, so results move at the ~1e-16 relative level;
+        # the L contraction below is left in exactly its original einsum form
+        # (no `optimize=`) so that half is unchanged bit-for-bit.
+        temp2 = self.fock_core @ T[:, : self.n_in_a]
+        temp2 += np.einsum(
+            "ijrs,sj->ri", self.L[: self.n_in_a, :, :, :], T[:, : self.n_in_a]
+        )
         E_core += 2.0 * np.einsum("ri,ri->", T[:, : self.n_in_a], temp2)
         
 
@@ -8879,7 +9071,8 @@ class PFHamiltonianGenerator:
         # active_fock_core[:,:] = copy.deepcopy(self.active_fock_core)
         temp3 = np.zeros((self.nmo, self.n_act_orb))
         temp3 = np.einsum(
-            "rs,su->ru", self.fock_core, U[:, self.n_in_a : self.n_occupied]
+            "rs,su->ru", self.fock_core, U[:, self.n_in_a : self.n_occupied],
+            optimize=True,
         )
         active_fock_core[:, :] = np.einsum(
             "rt,ru->tu", U[:, self.n_in_a : self.n_occupied], temp3
@@ -8890,6 +9083,7 @@ class PFHamiltonianGenerator:
             "turs,si->turi",
             self.J[self.n_in_a : self.n_occupied, self.n_in_a : self.n_occupied, :, :],
             U[:, : self.n_in_a],
+            optimize=True,
         )
         active_fock_core[:, :] += 2.0 * np.einsum(
             "ri,turi->tu", U[:, : self.n_in_a], temp4
@@ -8907,6 +9101,7 @@ class PFHamiltonianGenerator:
             "turs,si->turi",
             self.K[self.n_in_a : self.n_occupied, self.n_in_a : self.n_occupied, :, :],
             U[:, : self.n_in_a],
+            optimize=True,
         )
         active_fock_core[:, :] -= np.einsum("ri,turi->tu", U[:, : self.n_in_a], temp4)
         active_fock_core[:, :] += np.einsum(
@@ -8937,8 +9132,9 @@ class PFHamiltonianGenerator:
             "vwrs,su->vwru",
             self.J[self.n_in_a : self.n_occupied, self.n_in_a : self.n_occupied, :, :],
             U[:, self.n_in_a : self.n_occupied],
+            optimize=True,
         )
-        temp7 = np.einsum("vwru,rt->vwtu", temp6, U[:, self.n_in_a : self.n_occupied])
+        temp7 = np.einsum("vwru,rt->vwtu", temp6, U[:, self.n_in_a : self.n_occupied], optimize=True)
         # print(np.shape(active_twoeint),np.shape(temp7) )
 
         active_twoeint[:, :, :, :] += temp7[:, :, :, :]
@@ -8947,38 +9143,58 @@ class PFHamiltonianGenerator:
             "tvrs,sw->tvrw",
             self.K[self.n_in_a : self.n_occupied, self.n_in_a : self.n_occupied, :, :],
             T[:, self.n_in_a : self.n_occupied],
+            optimize=True,
         )
-        temp7 = np.einsum("tvrw,ru->tvuw", temp6, T[:, self.n_in_a : self.n_occupied])
+        temp7 = np.einsum("tvrw,ru->tvuw", temp6, T[:, self.n_in_a : self.n_occupied], optimize=True)
         # active_twoeint[:,:,:,:] = temp7[:,:,:,:]
         # active_twoeint[:,:,:,:] += temp7.transpose(2,1,0,3)
         # active_twoeint[:,:,:,:] += temp7.transpose(0,3,2,1)
         # active_twoeint[:,:,:,:] += temp7.transpose(2,3,0,1)
-        temp7 = np.einsum("tvrw,ru->tuvw", temp6, T[:, self.n_in_a : self.n_occupied])
+        temp7 = np.einsum("tvrw,ru->tuvw", temp6, T[:, self.n_in_a : self.n_occupied], optimize=True)
         active_twoeint[:, :, :, :] += temp7[:, :, :, :]
         active_twoeint[:, :, :, :] += temp7.transpose(1, 0, 2, 3)
         active_twoeint[:, :, :, :] += temp7.transpose(0, 1, 3, 2)
         active_twoeint[:, :, :, :] += temp7.transpose(1, 0, 3, 2)
 
-        temp8 = np.einsum("pq,qs->ps", self.d_cmo, U)
-        d_cmo[:, :] = np.einsum("ps,pr->rs", temp8, U)
+        temp8 = np.einsum("pq,qs->ps", self.d_cmo, U, optimize=True)
+        d_cmo[:, :] = np.einsum("ps,pr->rs", temp8, U, optimize=True)
 
        
 
-    def microiteration_exact_energy(self, U, A, G):
+    def microiteration_exact_energy(self, U, A, G_blocks):
         # print("test U")
         # print(U)
 
+        # Blocked form of the former dense product over the full
+        # (nmo*n_occupied) square G1.  G1 is no longer built: its four quadrants
+        # are G_ij / G_ti / G_ti.T / G_tu, flattened with (r,k) -> r*n_block + k,
+        # the same convention build_sigma_reduced7 assumes (helper_PFCI.py:8760).
+        # Equivalent to the previous
+        #     B = 2.0 * A_rk + np.dot(T_rk, G1);  E = np.dot(T_rk, B)
+        # since G1 is symmetric and the blocks tile it exactly.
+        G_ij, G_ti, G_tu = G_blocks
         T = U - np.eye(self.nmo)
-        T_rk = T[:, : self.n_occupied].reshape(self.nmo * self.n_occupied)
-        A_rk = A[:, : self.n_occupied].reshape(self.nmo * self.n_occupied)
+        T_i = np.ascontiguousarray(T[:, : self.n_in_a]).reshape(
+            self.nmo * self.n_in_a
+        )
+        T_a = np.ascontiguousarray(
+            T[:, self.n_in_a : self.n_occupied]
+        ).reshape(self.nmo * self.n_act_orb)
+        A_i = np.ascontiguousarray(A[:, : self.n_in_a]).reshape(
+            self.nmo * self.n_in_a
+        )
+        A_a = np.ascontiguousarray(
+            A[:, self.n_in_a : self.n_occupied]
+        ).reshape(self.nmo * self.n_act_orb)
         # B = np.zeros((self.nmo, self.n_occupied))
         # B = 2.0 * A[:,:self.n_occupied] + np.einsum("klrs,sl->rk", G, T[:,:self.n_occupied])
-        B = 2.0 * A_rk + np.dot(T_rk, G)
+        B_i = 2.0 * A_i + np.dot(T_i, G_ij) + np.dot(T_a, G_ti)
+        B_a = 2.0 * A_a + np.dot(T_i, G_ti.T) + np.dot(T_a, G_tu)
         # E = np.einsum("rk, rk->",T[:,:self.n_occupied], B)
-        E = np.dot(T_rk, B)
+        E = np.dot(T_i, B_i) + np.dot(T_a, B_a)
         # print("ccvcvc", B)
         # c= np.einsum("rk, rk->",T[:,:self.n_occupied], B)
-        c = np.dot(T_rk, B)
+        # c = np.dot(T_rk, B)   # dead recomputation of E; T_rk/B no longer built
         # d=np.einsum("rk, rk->",T[:,:self.n_in_a], B[:,:self.n_in_a])
         # E1 = E0 + np.einsum("rk, rk->",T[:,:self.n_in_a], B[:,:self.n_in_a])
         # print("uuunn", c)
@@ -9619,14 +9835,20 @@ class PFHamiltonianGenerator:
         energy += np.einsum("a,ab,b->", step, reduced_hessian, step)
         return energy
 
-    def microiteration_predicted_energy2(self, U, reduced_gradient, A_tilde, G, step):
+    def microiteration_predicted_energy2(
+        self, U, reduced_gradient, A_tilde, G_blocks, step
+    ):
         # energy = 2.0 * np.einsum("a,a->", reduced_gradient, step)
         energy = 2.0 * np.dot(reduced_gradient, step)
 
         step2 = step.reshape(1, self.index_map_size)
         sigma_reduced = np.zeros((1, self.index_map_size))
         # self.build_sigma_reduced2(U, A_tilde, G, step2, sigma_reduced, 1, 0)
-        self.orbital_sigma(U, A_tilde, G, step2, sigma_reduced, 1, 0)
+        # orbital_sigma3/build_sigma_reduced7 is the blocked equivalent of the
+        # former orbital_sigma/build_sigma_reduced4: the two kernels are
+        # identical apart from the single np.dot(R1, G1) becoming the four
+        # blocked dots at helper_PFCI.py:8765-8768.
+        self.orbital_sigma3(U, A_tilde, G_blocks, step2, sigma_reduced, 1, 0)
 
         # energy += np.einsum("ip,p->", sigma_reduced,step)
         sigma_reduced = sigma_reduced.reshape((self.index_map_size))
@@ -9726,25 +9948,26 @@ class PFHamiltonianGenerator:
             #G1 = G.transpose(3, 1, 2, 0).reshape(
             #    self.nmo * self.n_occupied, self.nmo * self.n_occupied
             #)
-            G1 = G.transpose(3, 1, 2, 0)
-            G_ij = G1[:, :self.n_in_a, :, :self.n_in_a].reshape(
+            # G_t is a free view (transpose only); the three reshapes below are
+            # the copies that actually cost.  The full (nmo*n_occupied) square
+            # G1 used to be materialized here too -- a second, larger copy --
+            # but every consumer now takes the blocks, so it is gone.
+            G_t = G.transpose(3, 1, 2, 0)
+            G_ij = G_t[:, :self.n_in_a, :, :self.n_in_a].reshape(
                 self.nmo * self.n_in_a, self.nmo * self.n_in_a    
             )
-            G_ti = G1[:, self.n_in_a:, :, :self.n_in_a].reshape(
+            G_ti = G_t[:, self.n_in_a:, :, :self.n_in_a].reshape(
                 self.nmo * self.n_act_orb, self.nmo * self.n_in_a    
             )
-            G_tu = G1[:, self.n_in_a:, :, self.n_in_a:].reshape(
+            G_tu = G_t[:, self.n_in_a:, :, self.n_in_a:].reshape(
                 self.nmo * self.n_act_orb, self.nmo * self.n_act_orb 
             )
             G_blocks = (G_ij, G_ti, G_tu)
-            G1 = G1.reshape(
-                self.nmo * self.n_occupied, self.nmo * self.n_occupied
-            )
 
             end1 = timer()
             print("transpose matrix G took", end1 - start1)
             start1 = timer()
-            initial_energy_change = self.microiteration_exact_energy(self.U2, A, G1)
+            initial_energy_change = self.microiteration_exact_energy(self.U2, A, G_blocks)
             end1 = timer()
             print("calculate initial exact energy took", end1 - start1)
             current_energy = zero_energy + initial_energy_change
@@ -9888,7 +10111,7 @@ class PFHamiltonianGenerator:
                     convergence = 1
                     break
                 print("calling pcg for trust region") 
-                step_p, oo = self.solve_pcg_trust_region(self.U2, A_tilde2, G1, reduced_gradient, self.reduced_hessian_diagonal, trust_radius, tol=1e-8, max_iter=1000)
+                step_p, oo = self.solve_pcg_trust_region(self.U2, A_tilde2, G_blocks, reduced_gradient, self.reduced_hessian_diagonal, trust_radius, tol=1e-8, max_iter=1000)
                 print(oo)
                 # new augmented hessian
                 beta = 0
@@ -10270,7 +10493,7 @@ class PFHamiltonianGenerator:
 
                                  lambda_tilde = tau1 * tau1 * lambda1 + tau2 * tau2 * lambda2
                                  psi_tilde = 0.5 * self.microiteration_predicted_energy2(
-                                     self.U2, reduced_gradient, A_tilde2, G1, x_tilde
+                                     self.U2, reduced_gradient, A_tilde2, G_blocks, x_tilde
                                  )
                                  if qs > 1.0 or np.abs(qs - 1.0) < 2e-308:
                                      print(
@@ -10313,7 +10536,7 @@ class PFHamiltonianGenerator:
                                                      self.U2,
                                                      reduced_gradient,
                                                      A_tilde2,
-                                                     G1,
+                                                     G_blocks,
                                                      x_tilde,
                                                  )
                                              )
@@ -10509,7 +10732,8 @@ class PFHamiltonianGenerator:
                                  #step = x
                                  denom = self.reduced_hessian_diagonal
                                  max_iter = 20  
-                                 solution, converged = self.linear_equation_solve(self.U2, A_tilde2, G1, reduced_gradient, denom, max_iter, conv_thresh=1e-6)
+                                 _solve_newton = self.minres_solve if _QED_USE_MINRES else self.linear_equation_solve
+                                 solution, converged = _solve_newton(self.U2, A_tilde2, G_blocks, reduced_gradient, denom, max_iter, conv_thresh=1e-6)
                                  if not converged:
                                      print("\n--- Falling back to MINRES solver ---")
                                      iteration_count = [0]
@@ -10523,7 +10747,7 @@ class PFHamiltonianGenerator:
                                          f"Rel Residual: {relative_residual:.4e}")
                                      H1_op = LinearOperator(
                                          (self.index_map_size, self.index_map_size),
-                                         matvec=lambda Q: self.mv2(self.U2, A_tilde2, G1, Q, 1, 0, 0),
+                                         matvec=lambda Q: self.mv2(self.U2, A_tilde2, G_blocks, Q, 1, 0, 0),
                                      )
                                      solution, exitCode = minres(H1_op, -reduced_gradient, rtol=1e-6, callback=callback)
                                      print(f"MINRES exit code: {exitCode}")
@@ -10557,7 +10781,8 @@ class PFHamiltonianGenerator:
                     #print("exitcode", exitCode)
                     denom = self.reduced_hessian_diagonal
                     max_iter = 20  
-                    solution,converged = self.linear_equation_solve(self.U2, A_tilde2, G1, reduced_gradient, denom, max_iter, conv_thresh=1e-6)
+                    _solve_newton = self.minres_solve if _QED_USE_MINRES else self.linear_equation_solve
+                    solution,converged = _solve_newton(self.U2, A_tilde2, G_blocks, reduced_gradient, denom, max_iter, conv_thresh=1e-6)
                     if not converged:
                         print("\n--- Falling back to MINRES solver ---")
                         iteration_count = [0]
@@ -10573,7 +10798,7 @@ class PFHamiltonianGenerator:
    
                         H1_op = LinearOperator(
                             (self.index_map_size, self.index_map_size),
-                            matvec=lambda Q: self.mv2(self.U2, A_tilde2, G1, Q, 1, 0, 0),
+                            matvec=lambda Q: self.mv2(self.U2, A_tilde2, G_blocks, Q, 1, 0, 0),
                         )
                         solution, exitCode = minres(H1_op, -reduced_gradient, rtol=1e-6, callback=callback)
                         print(f"MINRES exit code: {exitCode}")
@@ -10612,7 +10837,7 @@ class PFHamiltonianGenerator:
 
                 self.U3 = np.einsum("pq,qs->ps", self.U3, self.U_delta)
                 second_order_energy_change = self.microiteration_exact_energy(
-                    self.U3, A, G1
+                    self.U3, A, G_blocks
                 )
                 # exact_energy2 = self.microiteration_exact_energy(self.U3, A2, G2)
                 # print("exact energy2", exact_energy2, flush = True)
@@ -10632,7 +10857,7 @@ class PFHamiltonianGenerator:
 
                 # predicted_energy1 = self.microiteration_predicted_energy(reduced_gradient, reduced_hessian, step)
                 predicted_energy2 = self.microiteration_predicted_energy2(
-                    self.U2, reduced_gradient, A_tilde2, G1, step
+                    self.U2, reduced_gradient, A_tilde2, G_blocks, step
                 )
                 if predicted_energy2 < 0:
                     reduce_predicted_energy = 1
@@ -11201,24 +11426,25 @@ class PFHamiltonianGenerator:
             #G1 = G.transpose(3, 1, 2, 0).reshape(
             #    self.nmo * self.n_occupied, self.nmo * self.n_occupied
             #)
-            G1 = G.transpose(3, 1, 2, 0)
-            G_ij = G1[:, :self.n_in_a, :, :self.n_in_a].reshape(
+            # G_t is a free view (transpose only); the three reshapes below are
+            # the copies that actually cost.  The full (nmo*n_occupied) square
+            # G1 used to be materialized here too -- a second, larger copy --
+            # but every consumer now takes the blocks, so it is gone.
+            G_t = G.transpose(3, 1, 2, 0)
+            G_ij = G_t[:, :self.n_in_a, :, :self.n_in_a].reshape(
                 self.nmo * self.n_in_a, self.nmo * self.n_in_a    
             )
-            G_ti = G1[:, self.n_in_a:, :, :self.n_in_a].reshape(
+            G_ti = G_t[:, self.n_in_a:, :, :self.n_in_a].reshape(
                 self.nmo * self.n_act_orb, self.nmo * self.n_in_a    
             )
-            G_tu = G1[:, self.n_in_a:, :, self.n_in_a:].reshape(
+            G_tu = G_t[:, self.n_in_a:, :, self.n_in_a:].reshape(
                 self.nmo * self.n_act_orb, self.nmo * self.n_act_orb 
             )
             G_blocks = (G_ij, G_ti, G_tu)
-            G1 = G1.reshape(
-                self.nmo * self.n_occupied, self.nmo * self.n_occupied
-            )
             end1 = timer()
             print("transpose matrix G took", end1 - start1)
             start1 = timer()
-            initial_energy_change = self.microiteration_exact_energy(self.U2, A, G1)
+            initial_energy_change = self.microiteration_exact_energy(self.U2, A, G_blocks)
             end1 = timer()
             print("calculate initial exact energy took", end1 - start1)
             current_energy = zero_energy + initial_energy_change
@@ -11469,7 +11695,7 @@ class PFHamiltonianGenerator:
 
                 print("step norm", step_norm)
                 predicted_energy2 = self.microiteration_predicted_energy2(
-                    self.U2, reduced_gradient, A_tilde2, G1, step
+                    self.U2, reduced_gradient, A_tilde2, G_blocks, step
                 )
                 #while predicted_energy2 >0:
                 #    step = step * 0.5
@@ -11499,7 +11725,7 @@ class PFHamiltonianGenerator:
 
                 self.U3 = np.einsum("pq,qs->ps", self.U3, self.U_delta)
                 second_order_energy_change = self.microiteration_exact_energy(
-                    self.U3, A, G1
+                    self.U3, A, G_blocks
                 )
                 # exact_energy2 = self.microiteration_exact_energy(self.U3, A2, G2)
                 # print("exact energy2", exact_energy2, flush = True)
@@ -11519,7 +11745,7 @@ class PFHamiltonianGenerator:
 
                 # predicted_energy1 = self.microiteration_predicted_energy(reduced_gradient, reduced_hessian, step)
                 predicted_energy2 = self.microiteration_predicted_energy2(
-                    self.U2, reduced_gradient, A_tilde2, G1, step
+                    self.U2, reduced_gradient, A_tilde2, G_blocks, step
                 )
                 self.predicted_energy = predicted_energy2
                 if energy_change > 0:
@@ -11964,7 +12190,7 @@ class PFHamiltonianGenerator:
 
                                      lambda_tilde = tau1 * tau1 * lambda1 + tau2 * tau2 * lambda2
                                      psi_tilde = 0.5 * self.microiteration_predicted_energy2(
-                                         self.U2, reduced_gradient, A_tilde2, G1, x_tilde
+                                         self.U2, reduced_gradient, A_tilde2, G_blocks, x_tilde
                                      )
                                      if qs > 1.0 or np.abs(qs - 1.0) < 2e-308:
                                          print(
@@ -12007,7 +12233,7 @@ class PFHamiltonianGenerator:
                                                          self.U2,
                                                          reduced_gradient,
                                                          A_tilde2,
-                                                         G1,
+                                                         G_blocks,
                                                          x_tilde,
                                                      )
                                                  )
@@ -12185,7 +12411,8 @@ class PFHamiltonianGenerator:
                                      #step = x
                                      denom = self.reduced_hessian_diagonal
                                      max_iter = 20  
-                                     solution, converged = self.linear_equation_solve(self.U2, A_tilde2, G1, reduced_gradient, denom, max_iter, conv_thresh=1e-6)
+                                     _solve_newton = self.minres_solve if _QED_USE_MINRES else self.linear_equation_solve
+                                     solution, converged = _solve_newton(self.U2, A_tilde2, G_blocks, reduced_gradient, denom, max_iter, conv_thresh=1e-6)
                                      if not converged:
                                          print("\n--- Falling back to MINRES solver ---")
                                          iteration_count = [0]
@@ -12199,7 +12426,7 @@ class PFHamiltonianGenerator:
                                              f"Rel Residual: {relative_residual:.4e}")
                                          H1_op = LinearOperator(
                                              (self.index_map_size, self.index_map_size),
-                                             matvec=lambda Q: self.mv2(self.U2, A_tilde2, G1, Q, 1, 0, 0),
+                                             matvec=lambda Q: self.mv2(self.U2, A_tilde2, G_blocks, Q, 1, 0, 0),
                                          )
                                          solution, exitCode = minres(H1_op, -reduced_gradient, rtol=1e-6, callback=callback)
                                          print(f"MINRES exit code: {exitCode}")
@@ -12227,7 +12454,8 @@ class PFHamiltonianGenerator:
                         
                         denom = self.reduced_hessian_diagonal
                         max_iter = 20  
-                        solution,converged = self.linear_equation_solve(self.U2, A_tilde2, G1, reduced_gradient, denom, max_iter, conv_thresh=1e-6)
+                        _solve_newton = self.minres_solve if _QED_USE_MINRES else self.linear_equation_solve
+                        solution,converged = _solve_newton(self.U2, A_tilde2, G_blocks, reduced_gradient, denom, max_iter, conv_thresh=1e-6)
                         if not converged:
                             print("\n--- Falling back to MINRES solver ---")
                             iteration_count = [0]
@@ -12243,7 +12471,7 @@ class PFHamiltonianGenerator:
    
                             H1_op = LinearOperator(
                                 (self.index_map_size, self.index_map_size),
-                                matvec=lambda Q: self.mv2(self.U2, A_tilde2, G1, Q, 1, 0, 0),
+                                matvec=lambda Q: self.mv2(self.U2, A_tilde2, G_blocks, Q, 1, 0, 0),
                             )
                             solution, exitCode = minres(H1_op, -reduced_gradient, rtol=1e-6, callback=callback)
                             print(f"MINRES exit code: {exitCode}")
@@ -12301,7 +12529,7 @@ class PFHamiltonianGenerator:
 
                     self.U3 = np.einsum("pq,qs->ps", self.U3, self.U_delta)
                     second_order_energy_change = self.microiteration_exact_energy(
-                        self.U3, A, G1
+                        self.U3, A, G_blocks
                     )
                     # exact_energy2 = self.microiteration_exact_energy(self.U3, A2, G2)
                     # print("exact energy2", exact_energy2, flush = True)
@@ -12321,7 +12549,7 @@ class PFHamiltonianGenerator:
 
                     # predicted_energy1 = self.microiteration_predicted_energy(reduced_gradient, reduced_hessian, step)
                     predicted_energy2 = self.microiteration_predicted_energy2(
-                        self.U2, reduced_gradient, A_tilde2, G1, step
+                        self.U2, reduced_gradient, A_tilde2, G_blocks, step
                     )
                     self.predicted_energy = predicted_energy2
                     if predicted_energy2 < 0:
@@ -12745,6 +12973,21 @@ class PFHamiltonianGenerator:
             self.build_gradient(self.U2, A, G, gradient_tilde, A_tilde2, True)
             G1 = G.transpose(3, 1, 2, 0).reshape(
                 self.nmo * self.n_occupied, self.nmo * self.n_occupied
+            )
+            # Davidson_augmented_hessian_solve3 (this dead branch's solver) still
+            # takes the dense G1, but microiteration_predicted_energy2/mv2 are
+            # block-only now, so build the blocks here too.
+            _G_t = G.transpose(3, 1, 2, 0)
+            G_blocks = (
+                _G_t[:, : self.n_in_a, :, : self.n_in_a].reshape(
+                    self.nmo * self.n_in_a, self.nmo * self.n_in_a
+                ),
+                _G_t[:, self.n_in_a :, :, : self.n_in_a].reshape(
+                    self.nmo * self.n_act_orb, self.nmo * self.n_in_a
+                ),
+                _G_t[:, self.n_in_a :, :, self.n_in_a :].reshape(
+                    self.nmo * self.n_act_orb, self.nmo * self.n_act_orb
+                ),
             )
             end = timer()
             # self.build_gradient2(self.U2, A, G, hessian_tilde, gradient_tilde, A_tilde2, True)
@@ -13291,7 +13534,7 @@ class PFHamiltonianGenerator:
 
                             lambda_tilde = tau1 * tau1 * lambda1 + tau2 * tau2 * lambda2
                             psi_tilde = 0.5 * self.microiteration_predicted_energy2(
-                                self.U2, reduced_gradient, A_tilde2, G1, x_tilde
+                                self.U2, reduced_gradient, A_tilde2, G_blocks, x_tilde
                             )
                             if qs > 1.0 or np.abs(qs - 1.0) < 2e-308:
                                 print(
@@ -13334,7 +13577,7 @@ class PFHamiltonianGenerator:
                                                 self.U2,
                                                 reduced_gradient,
                                                 A_tilde2,
-                                                G1,
+                                                G_blocks,
                                                 x_tilde,
                                             )
                                         )
@@ -13523,7 +13766,7 @@ class PFHamiltonianGenerator:
                             H1_op = LinearOperator(
                                 (self.index_map_size, self.index_map_size),
                                 matvec=lambda Q: self.mv2(
-                                    self.U2, A_tilde2, G1, Q, 1, 0, 0
+                                    self.U2, A_tilde2, G_blocks, Q, 1, 0, 0
                                 ),
                             )
                             x, exitCode = minres(H1_op, -reduced_gradient, rtol=1e-6)
@@ -13543,7 +13786,7 @@ class PFHamiltonianGenerator:
                     Q = np.zeros((1, self.index_map_size))
                     H1_op = LinearOperator(
                         (self.index_map_size, self.index_map_size),
-                        matvec=lambda Q: self.mv2(self.U2, A_tilde2, G1, Q, 1, 0, 0),
+                        matvec=lambda Q: self.mv2(self.U2, A_tilde2, G_blocks, Q, 1, 0, 0),
                     )
                     x, exitCode = minres(H1_op, -reduced_gradient, rtol=1e-6)
                     print("exitcode", exitCode)
@@ -13758,7 +14001,7 @@ class PFHamiltonianGenerator:
 
                 # predicted_energy1 = self.microiteration_predicted_energy(reduced_gradient, reduced_hessian, step)
                 predicted_energy2 = self.microiteration_predicted_energy2(
-                    self.U2, reduced_gradient, A_tilde2, G1, step
+                    self.U2, reduced_gradient, A_tilde2, G_blocks, step
                 )
                 print("microiteration predicted energy", predicted_energy2, flush=True)
                 if predicted_energy2 < 0:
@@ -13827,6 +14070,21 @@ class PFHamiltonianGenerator:
                     # self.build_gradient2(self.U2, A, G, hessian_tilde, gradient_tilde, A_tilde2, True)
                     G1 = G.transpose(3, 1, 2, 0).reshape(
                         self.nmo * self.n_occupied, self.nmo * self.n_occupied
+                    )
+                    # Davidson_augmented_hessian_solve3 (this dead branch's solver) still
+                    # takes the dense G1, but microiteration_predicted_energy2/mv2 are
+                    # block-only now, so build the blocks here too.
+                    _G_t = G.transpose(3, 1, 2, 0)
+                    G_blocks = (
+                        _G_t[:, : self.n_in_a, :, : self.n_in_a].reshape(
+                            self.nmo * self.n_in_a, self.nmo * self.n_in_a
+                        ),
+                        _G_t[:, self.n_in_a :, :, : self.n_in_a].reshape(
+                            self.nmo * self.n_act_orb, self.nmo * self.n_in_a
+                        ),
+                        _G_t[:, self.n_in_a :, :, self.n_in_a :].reshape(
+                            self.nmo * self.n_act_orb, self.nmo * self.n_act_orb
+                        ),
                     )
                     print("build gradient took", end - start)
 
@@ -14077,6 +14335,21 @@ class PFHamiltonianGenerator:
             self.build_gradient(self.U2, A, G, gradient_tilde, A_tilde2, True)
             G1 = G.transpose(3, 1, 2, 0).reshape(
                 self.nmo * self.n_occupied, self.nmo * self.n_occupied
+            )
+            # Davidson_augmented_hessian_solve3 (this dead branch's solver) still
+            # takes the dense G1, but microiteration_predicted_energy2/mv2 are
+            # block-only now, so build the blocks here too.
+            _G_t = G.transpose(3, 1, 2, 0)
+            G_blocks = (
+                _G_t[:, : self.n_in_a, :, : self.n_in_a].reshape(
+                    self.nmo * self.n_in_a, self.nmo * self.n_in_a
+                ),
+                _G_t[:, self.n_in_a :, :, : self.n_in_a].reshape(
+                    self.nmo * self.n_act_orb, self.nmo * self.n_in_a
+                ),
+                _G_t[:, self.n_in_a :, :, self.n_in_a :].reshape(
+                    self.nmo * self.n_act_orb, self.nmo * self.n_act_orb
+                ),
             )
             end = timer()
             # self.build_gradient2(self.U2, A, G, hessian_tilde, gradient_tilde, A_tilde2, True)
@@ -16482,9 +16755,165 @@ class PFHamiltonianGenerator:
 
         return Q
 
-    def linear_equation_solve(self, U, A_tilde, G1, reduced_gradient, denom, max_iter, conv_thresh=1e-6):
+    def minres_solve(self, U, A_tilde, G_blocks, reduced_gradient, denom, max_iter, conv_thresh=1e-6):
+        """
+        Diagonally-preconditioned MINRES (Paige & Saunders) for the Newton
+        equations  H x = -g,  where H is the reduced orbital Hessian applied
+        matrix-free through self.mv2 and g is `reduced_gradient`.
+
+        Drop-in replacement for linear_equation_solve: same argument list, same
+        (solution, converged) return contract, so the call sites can dispatch
+        between the two on _QED_USE_MINRES without any other change.
+
+        Why replace linear_equation_solve here.  That routine drives
+        LinearRMSolver, which minimizes ||H c + g||^2 over its stored subspace
+        -- i.e. it forms and solves the NORMAL equations S^T S a = -S^T g with
+        S = H C.  Two consequences: the effective condition number is
+        cond(H)^2, which is exactly the wrong property near the singular
+        Hessians this branch is called on; and every iteration rebuilds the
+        size x size `mat`/`overlap` matrices from scratch and re-transforms the
+        whole basis, i.e. O(k^2 n) work on top of the one mv2.  MINRES gets the
+        same minimum-residual property from a three-term Lanczos recurrence:
+        one mv2 and O(n) work per iteration, no subspace storage, and it
+        operates on cond(H) rather than cond(H)^2.
+
+        H is symmetric but INDEFINITE here (self.reduced_hessian_diagonal
+        routinely has negative entries -- that count is what n_negative
+        measures), which is why this is MINRES and not CG.
+
+        Preconditioner: M = max(|denom|, 1e-6), elementwise.  MINRES requires
+        an SPD preconditioner, so the absolute value is mandatory, not a
+        safeguard -- `denom` is self.reduced_hessian_diagonal and is signed.
+        This is the same construction solve_pcg_trust_region already uses
+        (M_diag = np.abs(M_diag), then np.maximum against epsilon=1e-6).
+        Note this differs from how linear_equation_solve used `denom`: it
+        divided the residual by the SIGNED diagonal to form the next trial
+        vector.
+
+        Deviation from linear_equation_solve, flagged rather than silently
+        dropped: that routine, when ||g|| < 1e-3, replaced the initial residual
+        with one built from a random trial vector.  There is no analogue here
+        and none is needed -- MINRES starts from x0 = 0, for which the residual
+        is exactly -g, and a small ||g|| simply means a small solution.  The
+        random start also made that routine non-reproducible run to run.
+        """
+        eps = np.finfo(np.float64).eps
+
+        # --- Preconditioner M (SPD by construction), and psolve = r / M ---
+        M_diag = np.abs(np.asarray(denom, dtype=np.float64))
+        M_diag = np.maximum(M_diag, 1e-6)
+        # ||r||_2 <= sqrt(max(M)) * ||r||_{M^-1}, since r^T M^-1 r >= ||r||^2 / max(M).
+        # phibar below is exactly ||r_k||_{M^-1}, so this converts the free
+        # recurrence quantity into a rigorous upper bound on the true residual
+        # norm -- no extra mv2 per iteration to monitor convergence.
+        bound_factor = np.sqrt(np.max(M_diag))
+
+        b = -np.asarray(reduced_gradient, dtype=np.float64).ravel()
+        n = b.shape[0]
+        x = np.zeros(n)
+
+        print("--------------------------------------------")
+        print("--- Start solving Hx=-g equations (preconditioned MINRES) ---")
+        print("--------------------------------------------")
+
+        # --- Set up the first Lanczos vector ---
+        r1 = b.copy()
+        y = r1 / M_diag
+        beta1 = np.dot(r1, y)
+        if beta1 < 0.0:
+            # Cannot happen mathematically for SPD M; clamp rather than raise so
+            # a roundoff-level sign flip can't kill the whole optimization.
+            beta1 = 0.0
+        if beta1 == 0.0:
+            print("PMINRES: rhs is zero, x = 0 is exact")
+            return x, True
+        beta1 = np.sqrt(beta1)
+
+        oldb = 0.0
+        beta = beta1
+        dbar = 0.0
+        epsln = 0.0
+        phibar = beta1
+        cs = -1.0
+        sn = 0.0
+        w = np.zeros(n)
+        w2 = np.zeros(n)
+        r2 = r1
+
+        converged = False
+        itn = 0
+        for itn in range(1, max_iter + 1):
+            # --- Lanczos step: v = M^-1-normalized next basis vector ---
+            v = y / beta
+            y = self.mv2(U, A_tilde, G_blocks, v, 1, 0, 0).ravel()
+            if itn >= 2:
+                y = y - (beta / oldb) * r1
+            alfa = np.dot(v, y)
+            y = y - (alfa / beta) * r2
+            r1 = r2
+            r2 = y
+            y = r2 / M_diag
+            oldb = beta
+            beta = np.dot(r2, y)
+            if beta < 0.0:
+                beta = 0.0
+            beta = np.sqrt(beta)
+
+            # --- Apply the previous plane rotation Q_{k-1} ---
+            oldeps = epsln
+            delta = cs * dbar + sn * alfa
+            gbar = sn * dbar - cs * alfa
+            epsln = sn * beta
+            dbar = -cs * beta
+
+            # --- Compute and apply the next plane rotation Q_k ---
+            gamma = max(np.sqrt(gbar * gbar + beta * beta), eps)
+            cs = gbar / gamma
+            sn = beta / gamma
+            phi = cs * phibar
+            phibar = sn * phibar
+
+            # --- Update the solution ---
+            w1 = w2
+            w2 = w
+            w = (v - oldeps * w1 - delta * w2) / gamma
+            x = x + phi * w
+
+            residual_bound = bound_factor * phibar
+            print(f"PMINRES Iter: {itn:3d}   Residual Norm (bound): {residual_bound:.4e}")
+
+            if residual_bound < conv_thresh:
+                converged = True
+                break
+            if beta <= eps * max(1.0, oldb):
+                # Krylov space exhausted: x already minimizes the residual over
+                # the full invariant subspace, so verify and stop either way.
+                print("PMINRES: Lanczos breakdown (invariant subspace reached)")
+                break
+
+        # One true residual evaluation (a single extra mv2 for the whole solve,
+        # not one per iteration) so the caller's `converged` flag reflects
+        # ||Hx + g||, the same quantity linear_equation_solve tested against.
+        true_residual = np.linalg.norm(
+            self.mv2(U, A_tilde, G_blocks, x, 1, 0, 0).ravel() - b
+        )
+        converged = bool(true_residual < conv_thresh)
+        print(f"PMINRES: true residual ||Hx+g|| = {true_residual:.4e} after {itn} iterations")
+        if converged:
+            print("\n--- Convergence Achieved ---")
+            print("total iteration", itn)
+        else:
+            print("\n--- Solver did not converge within max iterations ---")
+        return x, converged
+
+
+    def linear_equation_solve(self, U, A_tilde, G_blocks, reduced_gradient, denom, max_iter, conv_thresh=1e-6):
         """
         Main driver loop to solve the linear system Ax + b = 0.
+
+        Superseded by minres_solve above (see its docstring for why); kept as
+        the _QED_USE_MINRES=0 comparison path and as the TAMM/cpp_casscf port
+        reference, whose LinearRMSolver mirrors this routine.
         """
         #self._reset()
         residual = reduced_gradient.copy()
@@ -16497,7 +16926,7 @@ class PFHamiltonianGenerator:
             if norm > 1e-12:
                 trial_0 /= norm
 
-            sigma = self.mv2(U, A_tilde, G1, trial_0, 1, 0, 0)
+            sigma = self.mv2(U, A_tilde, G_blocks, trial_0, 1, 0, 0)
             residual = sigma + reduced_gradient
 
         #print("initial guess", residual)
@@ -16528,7 +16957,7 @@ class PFHamiltonianGenerator:
             if norm > 1e-12:
                 trial_c /= norm
 
-            sigma = self.mv2(U, A_tilde, G1, trial_c, 1, 0, 0)
+            sigma = self.mv2(U, A_tilde, G_blocks, trial_c, 1, 0, 0)
             #print("sigma", sigma)
             residual_old =copy.deepcopy(residual)
             residual = solver_sym.update_subspace_and_extrapolate(trial_c, sigma)
@@ -16544,7 +16973,7 @@ class PFHamiltonianGenerator:
         return solver_sym.get_solution(), False
 
 
-    def solve_pcg_trust_region(self, U, A_tilde, G1, g, M_diag, trust_radius, tol=1e-8, max_iter=1000):
+    def solve_pcg_trust_region(self, U, A_tilde, G_blocks, g, M_diag, trust_radius, tol=1e-8, max_iter=1000):
         """
         Solves the trust-region subproblem using Preconditioned Conjugate Gradient (Steihaug-CG).
     
@@ -16597,7 +17026,7 @@ class PFHamiltonianGenerator:
             
             # --- This is the main matrix-vector product ---
             
-            Hd = self.mv2(U, A_tilde, G1, d, 1, 0, 0)
+            Hd = self.mv2(U, A_tilde, G_blocks, d, 1, 0, 0)
             # --- This is the Positive-Definite (Curvature) Check ---
             d_H_d = np.dot(d, Hd)
             print(d_H_d)
@@ -17100,56 +17529,69 @@ class PFHamiltonianGenerator:
         sigma_reduced = sigma_reduced.flatten()
         return sigma_reduced
 
-    def mv2(self, U, A_tilde, G, R_reduced, num_states, pointer, eigval):
+    def mv2(self, U, A_tilde, G_blocks, R_reduced, num_states, pointer, eigval):
         R_reduced = R_reduced.reshape((1, self.index_map_size)).astype(np.float64)
         nmo = self.nmo
         index_map = self.index_map
         index_map_size = self.index_map_size
         n_occupied = self.n_occupied
+        n_inactive = self.n_in_a
+        n_active = self.n_act_orb
+        G_ij, G_ti, G_tu = G_blocks
+        G_ij = np.ascontiguousarray(G_ij)
+        G_ti = np.ascontiguousarray(G_ti)
+        G_tu = np.ascontiguousarray(G_tu)
         # print("U dtype:", U.dtype, "shape:", U.shape)
         # print("A_tilde dtype:", A_tilde.dtype, "shape:", A_tilde.shape)
         # print("index_map dtype:", index_map.dtype, "shape:", index_map.shape)
         # print("G dtype:", G.dtype, "shape:", G.shape)
         # print("R_reduced dtype:", R_reduced.dtype, "shape:", R_reduced.shape)
-        return self.build_sigma_reduced5(
+        return self.build_sigma_reduced8(
             U,
             A_tilde,
             index_map,
-            G,
+            G_ij,
+            G_ti,
+            G_tu,
             R_reduced,
             num_states,
             pointer,
             nmo,
             index_map_size,
             n_occupied,
+            n_inactive,
+            n_active,
             eigval,
         )
 
     @staticmethod
     @nb.jit(
-        """float64[::1](float64[:,::1], float64[:,::1], int64[:,::1], float64[:,::1], float64[:,::1], 
-            int64, int64, int64, int64, int64, float64)""",
+        """float64[::1](float64[:,::1], float64[:,::1], int64[:,::1], float64[:,::1], float64[:,::1], float64[:,::1], float64[:,::1],
+            int64, int64, int64, int64, int64, int64, int64, float64)""",
         nopython=True,
         cache=True,
         fastmath=True,
         parallel=False,
     )
-    def build_sigma_reduced5(
+    def build_sigma_reduced8(
         U,
         A_tilde,
         index_map,
-        G,
+        G_ij,
+        G_ti,
+        G_tu,
         R_reduced,
         num_states,
         pointer,
         nmo,
         index_map_size,
         n_occupied,
+        n_inactive,
+        n_active,
         eigval,
     ):
         assert U.shape == (nmo, nmo)
         assert A_tilde.shape == (nmo, nmo)
-        assert G.shape == (nmo * n_occupied, nmo * n_occupied)
         sigma_reduced = np.zeros((1, index_map_size))
         R_total = np.zeros((num_states, nmo, n_occupied))
         #print("oivdpw", num_states)
@@ -17194,17 +17636,32 @@ class PFHamiltonianGenerator:
         #                a -= U[q,l] * R_total[i,s,l]
         #                #temp1[i,q,s] -= U[q,l] * R_total[i,s,l]
         #            temp1[i,q,s] += a
-        R1 = np.ascontiguousarray(temp1)
-        R1 = np.reshape(R1, (num_states, nmo * n_occupied))
-        R2 = np.zeros((num_states, nmo * n_occupied))
+        # The flat R1/R2 staging that used to sit here fed the single dense
+        # np.dot(R1, G1); the blocked product below consumes temp1 directly, so
+        # it is gone (build_sigma_reduced7 has no equivalent either).
         ##for i in nb.prange(num_states):
         ##    for r in range(nmo):
         ##        for k in range(n_occupied):
         ##            a = R1[i][r*n_occupied+k] - temp1[i,r,k]
         ##            if np.abs(a) > 1e-14: print("LARGE error")
 
-        temp1 = np.dot(R1, G)
-        # temp2 = temp1.reshape(num_states, nmo, n_occupied)
+        # Blocked replacement for the former  temp1 = np.dot(R1, G1)  over the
+        # full (nmo*n_occupied) square G1.  Identical to the block section of
+        # build_sigma_reduced7 (helper_PFCI.py:8760-8775): the G blocks are
+        # flattened with index (r,k) -> r*n_block_occ + k, and the (i,t)
+        # quadrant is recovered as G_ti.T by the Hessian's pair-exchange
+        # symmetry.  temp1 here is (num_states, nmo, n_occupied).
+        R_i_tensor = temp1[:, :, :n_inactive]
+        R_a_tensor = temp1[:, :, n_inactive:]
+        R1_i = R_i_tensor.copy().reshape(num_states, nmo * n_inactive)
+        R1_a = R_a_tensor.copy().reshape(num_states, nmo * n_active)
+
+        sigma_i = np.dot(R1_i, G_ij) + np.dot(R1_a, G_ti)
+        sigma_a = np.dot(R1_i, G_ti.T) + np.dot(R1_a, G_tu)
+
+        temp2 = np.zeros((num_states, nmo, n_occupied))
+        temp2[:, :, :n_inactive] = sigma_i.reshape(num_states, nmo, n_inactive)
+        temp2[:, :, n_inactive:] = sigma_a.reshape(num_states, nmo, n_active)
         # for r in nb.prange(nmo):
         #    for i in range(num_states):
         #        for k in range(n_occupied):
@@ -17225,7 +17682,6 @@ class PFHamiltonianGenerator:
         #######    R3 = np.dot(R1[i,:], G)
         #######    R2[i,:] = R3
 
-        temp2 = temp1.reshape(num_states, nmo, n_occupied)
         temp2 = temp2.transpose(0, 2, 1)
         temp2 = np.ascontiguousarray(temp2)
         temp2 = np.reshape(temp2, (num_states * n_occupied, nmo))
@@ -17486,3 +17942,82 @@ class PFHamiltonianGenerator:
                         beta2,
                         "       1 photon",
                     )
+
+
+# --- Optional method-level timing for the microiteration solver machinery ----
+#
+#   QED_PROFILE_MICRO : time the trust-region solver entry points (default 0)
+#
+# Profiling the microiteration loop with the existing print-timers left ~31.6 s
+# of a 290 s c10h8 run (11%) unattributed -- all of it inside the trust-region
+# dispatch, where the ~740 MINRES iterations live.  This wraps the relevant
+# methods ON THE CLASS rather than editing call sites: several of these are
+# reached from three or more branches of microiteration_optimization6's
+# dispatch, so wrapping the method covers every branch automatically and avoids
+# mis-editing a deeply nested region.  Strict no-op when the knob is unset.
+#
+# Each call emits `MICRO_PROF <method> <secs>`.  Aggregate with:
+#   grep '^MICRO_PROF ' log | awk '{s[$2]+=$3;n[$2]++}
+#     END{for(k in s) printf "%-36s %8.2f %7d %9.5f\n",k,s[k],n[k],s[k]/n[k]}' | sort -k2 -rn
+#
+# NOTE THE TIMINGS NEST: mv2 is called from inside minres_solve /
+# linear_equation_solve / solve_pcg_trust_region / orbital_sigma3, and
+# orbital_sigma3 from inside the GLTR and Davidson solvers.  Summing all labels
+# double-counts; subtract inner from outer when building a budget.
+_QED_PROFILE_MICRO = int(os.environ.get("QED_PROFILE_MICRO", "0"))
+
+if _QED_PROFILE_MICRO:
+
+    def _install_micro_profilers(cls, names):
+        for _name in names:
+            _orig = getattr(cls, _name, None)
+            if _orig is None:
+                print(f"MICRO_PROF_WARNING no such method: {_name}")
+                continue
+
+            def _make(orig, name):
+                def _wrapper(self, *args, **kwargs):
+                    _t = timer()
+                    try:
+                        return orig(self, *args, **kwargs)
+                    finally:
+                        print(f"MICRO_PROF {name} {timer() - _t:.6f}")
+
+                return _wrapper
+
+            setattr(cls, _name, _make(_orig, _name))
+
+    _install_micro_profilers(
+        PFHamiltonianGenerator,
+        (
+            "solve_gltr_trust_region",
+            "solve_gltr_with_operator",
+            "solve_pcg_trust_region",
+            "Davidson_augmented_hessian_solve6",
+            "minres_solve",
+            "linear_equation_solve",
+            "mv2",
+            "orbital_sigma3",
+            "microiteration_exact_energy",
+            "microiteration_predicted_energy2",
+            # --- internal_optimization3 and everything it calls -------------
+            # 27.5 s / 9 calls on c10h8, of which ~19.3 s is already attributed
+            # to the two integral-transformation timers ("full internal
+            # transformation" 12.66, "internal transformation" 6.59); these
+            # cover the remaining ~8.3 s.  The LSTRS loop inside
+            # internal_optimization3 is INLINE (not a method), so its cost shows
+            # up as internal_optimization3 minus the sum of the children below.
+            "internal_optimization3",
+            "build_intermediates_internal",
+            "build_gradient_and_hessian",
+            "internal_optimization_predicted_energy",
+            "internal_optimization_exact_energy",
+            "calculate_ci_dependent_energy",
+            "internal_transformation",
+            "full_transformation_internal_optimization",
+            "step_control",
+            "build_state_average_rdms",
+            "build_unitary_matrix",
+            "calculate_off_diagonal_photon_constant",
+        ),
+    )
