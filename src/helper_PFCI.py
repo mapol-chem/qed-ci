@@ -108,6 +108,156 @@ _QED_PROFILE_INTERMEDIATES = int(os.environ.get("QED_PROFILE_INTERMEDIATES", "0"
 # Costs the very savings the cache buys, so it is a correctness harness, not a
 # production setting -- run it once after touching anything that writes J/K.
 _QED_VERIFY_L_CACHE = int(os.environ.get("QED_VERIFY_L_CACHE", "0"))
+#
+#   QED_SOLVER_STATS : count trust-region solver work                (default 0)
+#
+# Records, per orbital-optimization solve: which solver ran, how many outer
+# iterations it took, how many Hessian-vector products (orbital_sigma3 / mv2)
+# and dense bordered eigensolves (projection_step2) it consumed, and which
+# termination branch it exited through.  Answers "are we paying for solver
+# refinement or for building the Davidson subspace?" -- we take ~15.5 Hessian
+# applications per orbital step where Molpro takes ~6.9, and the two have very
+# different fixes (looser exit tolerance vs. a better preconditioner).
+# Prints an aggregate table at the end of the run.  Zero effect when unset.
+_QED_SOLVER_STATS = int(os.environ.get("QED_SOLVER_STATS", "0"))
+#
+#   QED_MINRES_TRACE : print a per-iteration MINRES residual        (default 1)
+#
+# The scipy-MINRES fallback in the small-gradient Newton branch reports its own
+# residual from a callback.  scipy does not hand the callback a residual, only
+# xk, so producing that line costs a FULL EXTRA HESSIAN-VECTOR PRODUCT per
+# MINRES iteration -- on top of the one the algorithm itself needs.  Set to 0 to
+# keep the iteration count but skip the residual line and its matvec.  Default 1
+# preserves the existing output exactly.
+_QED_MINRES_TRACE = int(os.environ.get("QED_MINRES_TRACE", "1"))
+#
+#   QED_GLTR_TOL_SCALE : multiplier on the GLTR exit tolerance     (default 1.0)
+#
+# solve_gltr_trust_region is called with tol=1e-7 at all three live sites; it
+# exits when the Lanczos residual be*|y[-1]| drops below tol.  GLTR is 30.2% of
+# c10h8's Hessian-vector products (770 / 2549) and the QED_SOLVER_STATS trace
+# says 52 of 68 GLTR solves terminate "Interior (Newton)" -- i.e. strictly
+# inside the trust region, where tol controls linear-solve accuracy only, not
+# whether the step is on the right boundary point.  This knob scales tol so
+# that claim can be A/B'd on a real system; 1.0 reproduces current behavior
+# exactly.
+_QED_GLTR_TOL_SCALE = float(os.environ.get("QED_GLTR_TOL_SCALE", "1.0"))
+#
+#   QED_NEWTON_MAXITER : iteration cap on the Newton-step solve     (default 20)
+#
+# Both live "gradient is small, use Newton step" sites (microiteration_
+# optimization6 ~12690 and the hard_case==2 site ~12641) call minres_solve with
+# max_iter=20; failing to reach conv_thresh there hands the system to scipy
+# MINRES, which restarts from x0=0, runs UNPRECONDITIONED, and stops on a
+# relative test rather than the absolute 1e-6 the caller wanted -- i.e. the
+# fallback is strictly more expensive than continuing the preconditioned solve.
+# c10h8 never exceeds 12 iterations so this knob is a no-op there; it exists to
+# test whether raising the cap lets MgH+ (56 of 147 solves fall back) converge
+# without scipy at all.
+_QED_NEWTON_MAXITER = int(os.environ.get("QED_NEWTON_MAXITER", "20"))
+#
+#   QED_LSTRS_NORM_TOL : LSTRS boundary tolerance |(||s||-D)/D|   (default 1e-3)
+#
+# The LSTRS alpha-bisection keeps iterating until the step norm matches the
+# trust radius to this relative accuracy.  Gates the two LIVE sites --
+# internal_optimization3 (~7912, dense/bordered) and microiteration_
+# optimization6 (~12415, matrix-free Davidson) -- not the micro_opt5 or
+# ah_orbital_optimization twins, which do not fire in the measured runs.
+# Worth sweeping because the trust radius it is being matched against is
+# itself only updated in coarse 0.7x / 1.2x / 0.5x jumps, so 0.1% accuracy
+# against a quantity known to ~30% is not obviously earning its iterations:
+# c10h8 spends 3.67 LSTRS iterations/solve at ~23 matvecs each (771 total,
+# 30% of the run), so one saved iteration per solve is ~200 matvecs.
+_QED_LSTRS_NORM_TOL = float(os.environ.get("QED_LSTRS_NORM_TOL", "1e-3"))
+#
+#   QED_STEP_CONTROL : step-norm-aware trust-radius update      (default 0 = off)
+#
+# Fixes two independent trust-region defects, both measured on c10h8:
+#
+# (a) Delta GREW on steps that Delta never constrained.  step_control multiplies
+#     by 1.2 whenever ratio > 0.75, but 43 of the 46 growth events in the run
+#     were on GLTR "Interior (Newton)" steps -- a good ratio there says the
+#     model held over a SHORT step, not that a longer one would be safe.  Delta
+#     therefore ratcheted to the 0.75 cap during easy steps and was far too
+#     large when a hard one arrived (boundary reject rate 46.7% vs 11.3%
+#     interior).  With the knob on, growth requires ||s|| >= 0.8*Delta.
+#
+# (b) The REJECT branch shrank Delta relative to ITSELF (0.5*Delta), ignoring
+#     the rejected step.  For an interior step that changes nothing -- the
+#     solver returns the identical vector -- so the same Newton step was
+#     computed and rejected three times in a row before Delta finally fell
+#     below its norm (0.5 -> 0.25 -> 0.125 -> 0.0625, step 0.079 throughout).
+#     With the knob on, Delta_new = 0.5*||s_rejected||, the standard rule
+#     (Nocedal & Wright Alg. 4.1) chosen precisely because s may be interior.
+#     Since ||s|| <= Delta always, this is never weaker than the old rule and
+#     is IDENTICAL for boundary steps -- only interior rejections change.
+#
+# Deliberately NOT changed: the ratio<=0.25 shrink (0.7*Delta) on ACCEPTED
+# steps, which has the same step-norm-blindness but was not implicated in any
+# measured rejection cascade.
+_QED_STEP_CONTROL = int(os.environ.get("QED_STEP_CONTROL", "0"))
+#
+#   QED_LSTRS_EPS_HC : quasi-optimality tolerance for x_tilde   (default 1e-6)
+#
+# The LSTRS quasi-optimal exit (hard_case=3) accepts x_tilde when
+#   (mu_2 - mu_1) * tau2^2 * (1 + Delta^2)  <  -2 * eta * psi_tilde,
+# eta = eps_hc/(1 - eps_hc).  eps_hc IS the relative suboptimality you are
+# willing to accept in the model decrease, so 1e-6 demands x_tilde be within
+# ~one part in a million of the exact optimum -- and it shows: on c10h8 the
+# x_tilde construction runs on 54 of 73 LSTRS iterations and the test accepts
+# it ZERO times (terminations are 9 hard_case=0 and 19 hard_case=2, no
+# hard_case=3 at all).  Raising this is the direct lever on "exit earlier with
+# a provably near-optimal step" -- unlike QED_LSTRS_NORM_TOL, which was
+# measured NOT to be the binding exit condition.  Gates the two LIVE sites,
+# internal_optimization3 (~7974) and microiteration_optimization6 (~12486).
+_QED_LSTRS_EPS_HC = float(os.environ.get("QED_LSTRS_EPS_HC", "1e-6"))
+#
+#   QED_TRUST_PERSIST : keep the trust radius across microiterations  (default 0)
+#
+# microiteration_optimization6 resets trust_radius = 0.5 at the top of EVERY
+# microiteration (~11689), discarding whatever the previous one learned.  With
+# N_orbital_optimization_steps normally 1, the inner accept/reject loop takes a
+# single accepted step and exits, so across microiterations this is not a trust
+# region at all -- it is "try 0.5, halve until the energy goes down".  Measured
+# on c10h8: 13 of 14 rejections are on orbital step 0 of a microiteration, every
+# cascade starts at Delta = 0.5, and the accepted radii are 0.031-0.25.
+# NOTE the open question this knob is meant to answer: the rejections cluster at
+# MICROITERATION 1, i.e. straight after a macroiteration's CI solve and integral
+# transformation, so the carried radius is one that was learned on the PREVIOUS
+# macroiteration's surface.  Whether it still predicts anything there is exactly
+# what has to be measured -- do not assume it does.
+_QED_TRUST_PERSIST = int(os.environ.get("QED_TRUST_PERSIST", "0"))
+#
+#   QED_SCHEDULE_NATURAL : schedule off the first step computed   (default 0 = off)
+#
+# microiteration_optimization6 picks N_microiterations / N_orbital_optimization_
+# steps from step_norm at (microiteration 0, orbital step 0) -- Molpro's "solve
+# one step, measure it, then decide how often to re-solve the CI" idea.  But the
+# branch sits in the ACCEPT path and a rejection does not increment
+# orbital_optimization_step, so after a rejection cascade it reads the shrunken
+# accepted norm instead of the natural step length.  c10h8, measured: call 8
+# schedules on 0.0313 after 4 rejections (-> 20/1) when its first step was
+# 0.0790 (-> 7/3); call 10 schedules on 0.0625 after 3 (-> 7/3) when its first
+# was 0.4923 (-> 5/4).  Both first steps were GLTR "Interior (Newton)" -- the
+# trust radius never bound them -- so the natural length is already in hand and
+# this costs zero extra Hessian-vector products.  Default 0 is exact no-op.
+_QED_SCHEDULE_NATURAL = int(os.environ.get("QED_SCHEDULE_NATURAL", "0"))
+#
+#   QED_GLTR_REUSE : reuse the GLTR Lanczos basis on a retry   (default 0 = off)
+#
+# When a step is rejected, the reject branch (~13037) shrinks the trust radius
+# and changes NOTHING else: self.U2 is updated only in the accept branch, self.U3
+# is re-seeded from it at ~12148, and the gradient / Hessian diagonal are rebuilt
+# only on accept.  The GLTR Lanczos recurrence depends on (H, M_abs, r) alone --
+# the radius enters only at the CHECK A/B subproblem -- so the retry rebuilds a
+# bit-identical Krylov space at full matvec cost.  Measured c10h8: rows 37-40 of
+# one cascade rebuild the same basis 4 times (0.4923 -> 0.25 -> 0.125 -> 0.0625).
+# With this on, only the tridiagonal subproblem is re-solved.  The accepted step
+# is unchanged, so unlike every trust-radius change tried this session the
+# trajectory is IDENTICAL -- there is no convergence risk to trade off.
+# Wired to solve_gltr_trust_region only; solve_gltr_with_operator (the QN/BFGS
+# twin) is untouched and does not fire with QED_DISABLE_QN=1.
+_QED_GLTR_REUSE = int(os.environ.get("QED_GLTR_REUSE", "0"))
 import numba as nb
 from scipy.linalg import eigh, cho_factor, cho_solve, solve_triangular
 
@@ -119,6 +269,216 @@ from scipy.linalg import eigh, cho_factor, cho_solve, solve_triangular
 # when the env var is unset.
 _CPP_CASSCF_VALIDATION_DIR = os.environ.get("CPP_CASSCF_VALIDATION_DIR")
 _cpp_casscf_validation_counters = {}
+
+
+# --- Optional trust-region solver statistics (QED_SOLVER_STATS) -------------
+class _SolverStats:
+    """Counts solver work so it can be attributed per solve.
+
+    ``matvecs`` counts Hessian-vector products (orbital_sigma3 counts
+    ``num_states`` of them per call, since it builds that many at once; mv2
+    builds one).  ``bordered`` counts dense bordered eigensolves
+    (projection_step2), which is what an LSTRS iteration costs on the small
+    internal block where no matrix-free product is involved.
+    """
+
+    class _Span:
+        __slots__ = ("site", "mv0", "bd0", "tr0")
+
+        def __init__(self, site, mv0, bd0, tr0):
+            self.site, self.mv0, self.bd0, self.tr0 = site, mv0, bd0, tr0
+
+    def __init__(self):
+        self.matvecs = 0
+        self.bordered = 0
+        self.records = []
+        self.trace = []
+
+    def matvec(self, n=1):
+        self.matvecs += n
+
+    def bordered_solve(self):
+        self.bordered += 1
+
+    def trace_iter(self, resid, step_norm, tol):
+        self.trace.append((resid, step_norm, tol))
+
+    def begin(self, site):
+        return self._Span(site, self.matvecs, self.bordered, len(self.trace))
+
+    def end(self, span, iters=None, status=None):
+        if span is None:
+            return
+        if iters is None and isinstance(status, str):
+            # GLTR reports its Lanczos count inside the status string, e.g.
+            # "Boundary iter 7" / "Interior (Newton) iter 3".
+            tail = status.rsplit(" ", 1)[-1]
+            if tail.isdigit():
+                iters = int(tail)
+                status = status.rsplit(" ", 1)[0].rsplit(" iter", 1)[0]
+        self.records.append(
+            {
+                "site": span.site,
+                "iters": iters,
+                "status": status,
+                "matvecs": self.matvecs - span.mv0,
+                "bordered": self.bordered - span.bd0,
+                "trace": self.trace[span.tr0 :],
+            }
+        )
+        del self.trace[span.tr0 :]
+
+    def report(self, extra=None):
+        if not self.records:
+            print("\n[solver-stats] no solves recorded")
+            return
+        by = {}
+        for r in self.records:
+            b = by.setdefault(r["site"], [])
+            b.append(r)
+        print("\n" + "=" * 92)
+        print("SOLVER STATISTICS (QED_SOLVER_STATS=1)")
+        print("=" * 92)
+        print(
+            "%-26s %7s %10s %10s %12s %10s %10s"
+            % ("site", "solves", "iters", "it/solve", "matvecs", "mv/solve", "mv/iter")
+        )
+        print("-" * 92)
+        # These spans sit INSIDE lstrs_davidson, so their matvecs are already
+        # counted there -- list them separately or the totals double-count.
+        nested = {"davidson_ah_warmstart", "davidson_ah_coldbuild", "newton_in_lstrs"}
+        tot_mv = tot_solves = 0
+        for site in sorted(s for s in by if s not in nested):
+            rs = by[site]
+            n = len(rs)
+            it = sum(r["iters"] or 0 for r in rs)
+            mv = sum(r["matvecs"] for r in rs)
+            bd = sum(r["bordered"] for r in rs)
+            unit = mv if mv else bd
+            tag = site + ("" if mv else " (bordered)")
+            print(
+                "%-26s %7d %10d %10.2f %12d %10.2f %10s"
+                % (
+                    tag,
+                    n,
+                    it,
+                    it / n if n else 0.0,
+                    unit,
+                    unit / n if n else 0.0,
+                    ("%.2f" % (unit / it)) if it else "-",
+                )
+            )
+            tot_mv += mv
+            tot_solves += n
+        print("-" * 92)
+        print(
+            "%-26s %7d %10s %10s %12d"
+            % ("TOTAL", tot_solves, "", "", self.matvecs)
+        )
+        print("  (total Hessian-vector products over the whole run: %d)" % self.matvecs)
+        print("  (total dense bordered eigensolves:                 %d)" % self.bordered)
+
+        inner = sorted(s for s in by if s in nested)
+        if inner:
+            print("\nnested inside lstrs_davidson (already counted above):")
+            print(
+                "  %-24s %7s %10s %12s %10s"
+                % ("site", "solves", "iters", "matvecs", "mv/solve")
+            )
+            for site in inner:
+                rs = by[site]
+                n = len(rs)
+                it = sum(r["iters"] or 0 for r in rs)
+                mv = sum(r["matvecs"] for r in rs)
+                print(
+                    "  %-24s %7d %10d %12d %10.2f"
+                    % (site, n, it, mv, mv / n if n else 0.0)
+                )
+
+        # How much of the iteration count is spent squeezing the last digits?
+        # For every solve that left a per-iteration convergence trace (GLTR),
+        # find the first iteration whose residual was already within 10x / 100x
+        # of the tolerance actually used.  The gap is what a looser exit would
+        # have saved -- directly, not by extrapolation.
+        traced = [r for r in self.records if r.get("trace")]
+        if traced:
+            print("\nwould a looser exit tolerance have stopped earlier?")
+            print(
+                "  %-22s %8s %10s %10s %10s"
+                % ("site", "solves", "iters", "at 10x tol", "at 100x tol")
+            )
+            bysite = {}
+            for r in traced:
+                bysite.setdefault(r["site"], []).append(r)
+            for site in sorted(bysite):
+                rs = bysite[site]
+                tot = e10 = e100 = 0
+                for r in rs:
+                    tr = r["trace"]
+                    n = r["iters"] or len(tr)
+                    tot += n
+                    for mult, acc in ((10.0, "e10"), (100.0, "e100")):
+                        hit = next(
+                            (
+                                i + 1
+                                for i, (res, _sn, tol) in enumerate(tr)
+                                if res < mult * tol
+                            ),
+                            n,
+                        )
+                        if acc == "e10":
+                            e10 += min(hit, n)
+                        else:
+                            e100 += min(hit, n)
+                print(
+                    "  %-22s %8d %10d %10d %10d"
+                    % (site, len(rs), tot, e10, e100)
+                )
+            print(
+                "  (an 'at Nx tol' column far below 'iters' means the solver is"
+                " grinding past\n   the point where the step stopped changing"
+                " -- i.e. a looser exit is nearly free)"
+            )
+
+        # termination-branch distribution, per site
+        print("\ntermination branch (hard_case / GLTR status) by site:")
+        for site in sorted(by):
+            dist = {}
+            for r in by[site]:
+                dist[r["status"]] = dist.get(r["status"], 0) + 1
+            if len(dist) == 1 and None in dist:
+                continue
+            print(
+                "  %-24s %s"
+                % (
+                    site,
+                    ", ".join(
+                        "%s:%d" % (k, v) for k, v in sorted(dist.items(), key=str)
+                    ),
+                )
+            )
+        if extra:
+            for line in extra:
+                print("  " + line)
+        print("=" * 92)
+
+
+_solver_stats = _SolverStats()
+
+
+def _stats_begin(site):
+    return _solver_stats.begin(site) if _QED_SOLVER_STATS else None
+
+
+def _stats_end(span, iters=None, status=None):
+    if _QED_SOLVER_STATS:
+        _solver_stats.end(span, iters=iters, status=status)
+
+
+if _QED_SOLVER_STATS:
+    import atexit
+
+    atexit.register(_solver_stats.report)
 
 
 def _dump_cpp_casscf_validation_case(kind, **arrays):
@@ -7486,6 +7846,7 @@ class PFHamiltonianGenerator:
                     # aug_hessian_eigenvecs = np.zeros((dim00,2))
                     # aug_hessian_eigenvals = np.zeros(2)
                     print("trust radius", trust_radius)
+                    _stats_span = _stats_begin("lstrs_internal")
                     while True:
                         print("****************************")
                         print("lstrs iteration", count10, "beta", beta)
@@ -7651,7 +8012,7 @@ class PFHamiltonianGenerator:
                             phi2_p,
                         )
                         if (
-                            np.abs((step10_norm - trust_radius) / trust_radius) <= 1e-3
+                            np.abs((step10_norm - trust_radius) / trust_radius) <= _QED_LSTRS_NORM_TOL
                             and mu9[0] <= 0
                         ):
                             step = step10
@@ -7672,7 +8033,7 @@ class PFHamiltonianGenerator:
                         print(np.dot(w9[:, :2].T, w9[:, :2]))
 
                         # construct quasi-optimal step
-                        epsilon_hc = 1e-6
+                        epsilon_hc = _QED_LSTRS_EPS_HC  # QED_LSTRS_EPS_HC, default 1e-6
                         eta = epsilon_hc / (1 - epsilon_hc)
                         tau1 = 1
                         tau2 = 1
@@ -7865,6 +8226,9 @@ class PFHamiltonianGenerator:
                         if count10 == 50:
                             break
                     print("check hard case", hard_case)
+                    _stats_end(
+                        _stats_span, iters=count10, status="hard_case=%d" % hard_case
+                    )
                     if hard_case == 1:
                         first_component[:] = x2[:]
                         if x2_norm > trust_radius:
@@ -8346,10 +8710,15 @@ class PFHamiltonianGenerator:
             scale,
         )
 
-    def step_control(self, ratio, trust_radius):
+    def step_control(self, ratio, trust_radius, step_norm=None):
         if ratio >= 0 and ratio <= 0.25:
             trust_radius = 0.7 * trust_radius
         if ratio > 0.75:
+            # QED_STEP_CONTROL (a): only widen the region if the step actually
+            # pressed against it.  An interior step tells us nothing about
+            # whether a larger Delta would still be trustworthy.
+            if _QED_STEP_CONTROL and step_norm is not None and step_norm < 0.8 * trust_radius:
+                return trust_radius
             trust_radius = 1.2 * trust_radius
             if trust_radius > 0.75:
                 trust_radius = 0.75
@@ -8616,6 +8985,9 @@ class PFHamiltonianGenerator:
     def orbital_sigma3(
         self, U, A_tilde, G_blocks, R_reduced, sigma_reduced, num_states, pointer
     ):
+        if _QED_SOLVER_STATS:
+            # builds num_states Hessian-vector products in one call
+            _solver_stats.matvec(num_states)
         nmo = self.nmo
         index_map = self.index_map
         index_map_size = self.index_map_size
@@ -11354,14 +11726,28 @@ class PFHamiltonianGenerator:
         microiteration = 0
         qn_optimization = False
         qn_count = 0
-        self.consecutive_skips = 0 
+        self.consecutive_skips = 0
+        # QED_SCHEDULE_NATURAL: norm of the first step this call computes, latched
+        # before any rejection shrinks the trust radius (see ~12900).
+        first_step_norm = None
         while microiteration < N_microiterations:
             print("\n")
             print("\n")
             print("MICROITERATION", microiteration + 1, flush=True)
 
             # while(microiteration < 2):
-            trust_radius = 0.5
+            # QED_TRUST_PERSIST: carry the trust radius across microiterations
+            # instead of resetting it to 0.5 here.  Measured on c10h8: 13 of the
+            # 14 rejections occur on the FIRST orbital step of a microiteration,
+            # every cascade starting at Delta = 0.5, and the radii those cascades
+            # finally accept are 0.031-0.25.  Since N_orbital_optimization_steps
+            # is usually 1, the inner loop takes one accepted step and exits, so
+            # this reset discards the step length essentially every time it is
+            # learned.  Default 0 reproduces current behavior exactly.
+            if not _QED_TRUST_PERSIST:
+                trust_radius = 0.5
+            else:
+                print("carried trust radius", trust_radius, flush=True)
             A[:, :] = 0.0
             G[:, :, :, :] = 0.0
             start = timer()
@@ -11622,6 +12008,7 @@ class PFHamiltonianGenerator:
                             m_diag=self.reduced_hessian_diagonal_zero,
                             trust_radius=trust_radius,
                         )
+                    _stats_span = _stats_begin("gltr_qn")
                     step_p, shift_lambda, status = self.solve_gltr_trust_region(
                                    self.U_zero,
                                    self.A_tilde_zero,
@@ -11632,6 +12019,7 @@ class PFHamiltonianGenerator:
                                    max_iter=1000,
                                    tol=1e-7
                          )
+                    _stats_end(_stats_span, status=status)
                     if _qn_gltr_dump_inputs is not None:
                         # gradient=the actual noised r solve_gltr_trust_region used,
                         # not reduced_gradient -- see that function's doc comment.
@@ -11666,11 +12054,13 @@ class PFHamiltonianGenerator:
                         )
                     # OR adapt your GLTR call:
                     # You effectively need to solve (B + lambda*I) step = -g
+                    _stats_span = _stats_begin("gltr_qn_bfgs")
                     step_p, shift_lambda, status= self.solve_gltr_with_operator(B_op, reduced_gradient,
                                                           self.reduced_hessian_diagonal_zero,
                                                                             trust_radius,
                                                                             max_iter=1000,
                                                                             tol=1e-7)
+                    _stats_end(_stats_span, status=status)
                     if _qn_bfgs_dump_inputs is not None:
                         # gradient=the actual noised r solve_gltr_with_operator used,
                         # not reduced_gradient -- see that function's doc comment.
@@ -11840,6 +12230,7 @@ class PFHamiltonianGenerator:
                                      m_diag=self.reduced_hessian_diagonal,
                                      trust_radius=trust_radius,
                                  )
+                             _stats_span = _stats_begin("gltr")
                              step_p, shift_lambda, status = self.solve_gltr_trust_region(
                                    self.U2,
                                    A_tilde2,
@@ -11850,6 +12241,7 @@ class PFHamiltonianGenerator:
                                    max_iter=1000,
                                    tol=1e-7
                              )
+                             _stats_end(_stats_span, status=status)
                              if _gltr_dump_inputs is not None:
                                  # gradient=the actual noised r solve_gltr_trust_region used,
                                  # not reduced_gradient -- see that function's doc comment.
@@ -11925,6 +12317,7 @@ class PFHamiltonianGenerator:
                                  aug_hessian_eigenvals = np.zeros(2)
                                  print("trust radius", trust_radius)
                                  self.collapse_subspace_check = False
+                                 _stats_span = _stats_begin("lstrs_davidson")
                                  while True:
                                      print("****************************")
                                      print("lstrs iteration", count10, "beta", beta)
@@ -12142,7 +12535,7 @@ class PFHamiltonianGenerator:
                                      )
                                      if (
                                          np.abs((step10_norm - trust_radius) / trust_radius)
-                                         <= 1e-3
+                                         <= _QED_LSTRS_NORM_TOL
                                          and mu9[0] <= 0
                                      ):
                                          step = step10
@@ -12166,7 +12559,7 @@ class PFHamiltonianGenerator:
                                      print(np.dot(w9[:, :2].T, w9[:, :2]))
 
                                      # construct quasi-optimal step
-                                     epsilon_hc = 1e-6 
+                                     epsilon_hc = _QED_LSTRS_EPS_HC  # QED_LSTRS_EPS_HC, default 1e-6
                                      eta = epsilon_hc / (1 - epsilon_hc)
                                      tau1 = 1
                                      tau2 = 1
@@ -12192,7 +12585,18 @@ class PFHamiltonianGenerator:
                                      psi_tilde = 0.5 * self.microiteration_predicted_energy2(
                                          self.U2, reduced_gradient, A_tilde2, G_blocks, x_tilde
                                      )
-                                     if qs > 1.0 or np.abs(qs - 1.0) < 2e-308:
+                                     # The quasi-optimal test below reads mu9[1]/vv2/uu2, i.e. the
+                                     # SECOND root -- but Davidson_augmented_hessian_solve6 only
+                                     # converges it once alpha_range <= 1e-5 (nroots 1 -> 2, ~16350).
+                                     # While the range is wide, root 1 is whatever the current
+                                     # subspace happens to give, so accepting x_tilde on it would
+                                     # act on an unconverged vector.  At the default eps_hc = 1e-6
+                                     # the test never passes and this is moot (c10h8: 54 x_tilde
+                                     # constructions, 0 hard_case=3 exits), but loosening eps_hc
+                                     # removes that accidental protection -- so gate the exit on
+                                     # the same condition that makes the second root real.
+                                     _second_root_converged = alpha_range <= 1e-5
+                                     if (qs > 1.0 or np.abs(qs - 1.0) < 2e-308) and _second_root_converged:
                                          print(
                                              "x_tilde norm1",
                                              np.linalg.norm(x_tilde),
@@ -12354,6 +12758,11 @@ class PFHamiltonianGenerator:
                                      if count10 == 50:
                                          break
                                  print("check hard case", hard_case)
+                                 _stats_end(
+                                     _stats_span,
+                                     iters=count10,
+                                     status="hard_case=%d" % hard_case,
+                                 )
                                  if hard_case == 1:
                                      first_component[:] = x2[:]
                                      if x2_norm > trust_radius:
@@ -12409,8 +12818,9 @@ class PFHamiltonianGenerator:
                                      #x, exitCode = minres(H1_op, -reduced_gradient, rtol=1e-6)
                                      #print("exitcode", exitCode)
                                      #step = x
+                                     _stats_span_n = _stats_begin("newton_in_lstrs")
                                      denom = self.reduced_hessian_diagonal
-                                     max_iter = 20  
+                                     max_iter = _QED_NEWTON_MAXITER  # QED_NEWTON_MAXITER, default 20
                                      _solve_newton = self.minres_solve if _QED_USE_MINRES else self.linear_equation_solve
                                      solution, converged = _solve_newton(self.U2, A_tilde2, G_blocks, reduced_gradient, denom, max_iter, conv_thresh=1e-6)
                                      if not converged:
@@ -12419,6 +12829,9 @@ class PFHamiltonianGenerator:
                                          def callback(xk):
                                              """Callback function called at each iteration"""
                                              iteration_count[0] += 1
+                                             if not _QED_MINRES_TRACE:
+                                                 return
+                                             # costs one extra mv2 -- see QED_MINRES_TRACE
                                              absolute_residual = np.linalg.norm(H1_op.matvec(xk) + reduced_gradient)
                                              relative_residual = absolute_residual / np.linalg.norm(reduced_gradient)
                                              print(f"MINRES Iter: {iteration_count[0]:3d}   "
@@ -12436,6 +12849,7 @@ class PFHamiltonianGenerator:
                                          else:
                                              print(f"MINRES warning: exit code {exitCode}")
                                      #print("step norm2", np.linalg.norm(solution))
+                                     _stats_end(_stats_span_n, status="newton")
                                      hard_case = 2
                                      step = solution
 
@@ -12451,9 +12865,9 @@ class PFHamiltonianGenerator:
 
                     else:
                         print("gradient is small, use Newton step")
-                        
+                        _stats_span = _stats_begin("newton_small_gradient")
                         denom = self.reduced_hessian_diagonal
-                        max_iter = 20  
+                        max_iter = _QED_NEWTON_MAXITER  # QED_NEWTON_MAXITER, default 20
                         _solve_newton = self.minres_solve if _QED_USE_MINRES else self.linear_equation_solve
                         solution,converged = _solve_newton(self.U2, A_tilde2, G_blocks, reduced_gradient, denom, max_iter, conv_thresh=1e-6)
                         if not converged:
@@ -12462,8 +12876,10 @@ class PFHamiltonianGenerator:
                             def callback(xk):
                                 """Callback function called at each iteration"""
                                 iteration_count[0] += 1
+                                if not _QED_MINRES_TRACE:
+                                    return
+                                # costs one extra mv2 -- see QED_MINRES_TRACE
                                 absolute_residual = np.linalg.norm(H1_op.matvec(xk) + reduced_gradient)
-                                residual = np.linalg.norm(H1_op.matvec(xk) + reduced_gradient)
                                 relative_residual = absolute_residual / np.linalg.norm(reduced_gradient)
                                 print(f"MINRES Iter: {iteration_count[0]:3d}   "
                                 f"Abs Residual: {absolute_residual:.4e}   "
@@ -12481,6 +12897,7 @@ class PFHamiltonianGenerator:
                             else:
                                 print(f"MINRES warning: exit code {exitCode}")
                         #print("step norm2", np.linalg.norm(solution))
+                        _stats_end(_stats_span, status="newton")
                         hard_case = 2
                         step = solution
                         #print(step)
@@ -12507,6 +12924,17 @@ class PFHamiltonianGenerator:
                         )
 
                     step_norm = np.linalg.norm(step)
+
+                    # QED_SCHEDULE_NATURAL: latch the first step computed at
+                    # (microiteration 0, orbital step 0) before any rejection has had
+                    # a chance to shrink the trust radius.  See the schedule branch
+                    # below for why the accepted norm is the wrong quantity.
+                    if (
+                        microiteration == 0
+                        and orbital_optimization_step == 0
+                        and first_step_norm is None
+                    ):
+                        first_step_norm = step_norm
 
                     print("step norm", step_norm)
                     #print("step", step)
@@ -12589,10 +13017,32 @@ class PFHamiltonianGenerator:
                         if microiteration == 0 and orbital_optimization_step == 0:
                             # convergence_threshold = min(0.01 * gradient_norm, np.power(gradient_norm,2))
                             # convergence_threshold = 0.01 * gradient_norm
-                            if step_norm > 0.1:
+                            # QED_SCHEDULE_NATURAL: score the schedule on the FIRST
+                            # step computed here, not the first one accepted.  A
+                            # rejection does not increment orbital_optimization_step,
+                            # so after a cascade this branch reads the post-shrink
+                            # norm -- the trust region's retreat rather than the local
+                            # step scale.  Measured c10h8: call 8 accepts 0.0313 after
+                            # 4 rejections and picks the default 20/1 although its
+                            # first (unconstrained Newton) step was 0.0790 -> 7/3;
+                            # call 10 accepts 0.0625 after 3 and picks 7/3 although
+                            # its first step was 0.4923 -> 5/4.  Both first steps came
+                            # back "Interior (Newton)", i.e. the trust radius never
+                            # bound them, so this costs no extra matvecs.
+                            schedule_norm = step_norm
+                            if _QED_SCHEDULE_NATURAL and first_step_norm is not None:
+                                schedule_norm = first_step_norm
+                                print(
+                                    "schedule step norm (natural)",
+                                    schedule_norm,
+                                    "accepted",
+                                    step_norm,
+                                    flush=True,
+                                )
+                            if schedule_norm > 0.1:
                                 N_microiterations = 5
                                 N_orbital_optimization_steps = 4
-                            elif step_norm <= 0.1 and step_norm > 0.05:
+                            elif schedule_norm <= 0.1 and schedule_norm > 0.05:
                                 N_microiterations = 7
                                 N_orbital_optimization_steps = 3
                             print("number of microiteration", N_microiterations, flush=True)
@@ -12604,7 +13054,7 @@ class PFHamiltonianGenerator:
                         orbital_optimization_step += 1
                         ratio = energy_change / predicted_energy2
                         print("compare model with actual energy change", ratio)
-                        trust_radius = self.step_control(ratio, trust_radius)
+                        trust_radius = self.step_control(ratio, trust_radius, step_norm)
 
                         #self.build_gradient_and_hessian(self.U2, A, G, gradient_tilde, hessian_tilde, True)
                         # print(np.shape(gradient_tilde), flush = True)
@@ -12676,7 +13126,12 @@ class PFHamiltonianGenerator:
                         # restart = False
                         # guess_vector = trial_vector
                         reduce_step = 1
-                        trust_radius = 0.5 * trust_radius
+                        # QED_STEP_CONTROL (b): tie the shrink to the REJECTED STEP, not to
+                        # Delta itself -- otherwise an interior step is returned unchanged.
+                        if _QED_STEP_CONTROL:
+                            trust_radius = 0.5 * step_norm
+                        else:
+                            trust_radius = 0.5 * trust_radius
                         print("Reject step, restart", flush=True)
                         print("new trust radius", trust_radius, flush=True)
                 # if convergence == 1:
@@ -15434,8 +15889,12 @@ class PFHamiltonianGenerator:
         n = len(g)
         if max_iter is None or max_iter > n:
             max_iter = n
-    
-        Q = np.zeros((max_iter + 1, n)) 
+
+        # QED_GLTR_TOL_SCALE (see the knob block at the top of this file);
+        # no-op at the default 1.0.
+        tol = tol * _QED_GLTR_TOL_SCALE
+
+        Q = np.zeros((max_iter + 1, n))
         alpha = np.zeros(max_iter)
         beta = np.zeros(max_iter)
         
@@ -15660,9 +16119,14 @@ class PFHamiltonianGenerator:
             #        if verbose: print(f"{k:<5} | {min_eig: .4e}   | {step_norm_val:.4e}   | {resid_val:.4e}   | CONVERGED (Stagnation)")
             #        return p_current, final_lambda, f"Stagnation iter {k+1}"
     
+            if _QED_SOLVER_STATS:
+                # per-Lanczos-iteration convergence trace: lets the report say how
+                # many iterations earlier this solve could have exited at a looser
+                # tolerance, without spending an extra matvec to find out.
+                _solver_stats.trace_iter(resid_val, step_norm_val, tol)
             if verbose:
                 print(f"{k:<5} | {min_eig: .4e}   | {step_norm_val:.4e}   | {resid_val:.4e}   | {status_tag}")
-    
+
         return p_current if p_current is not None else np.zeros(n), 0.0, "Failure"
 
 
@@ -15675,18 +16139,58 @@ class PFHamiltonianGenerator:
         n = len(g)
         if max_iter is None or max_iter > n:
             max_iter = n
-    
-        Q = np.zeros((max_iter + 1, n)) 
+
+        # QED_GLTR_TOL_SCALE (see the knob block at the top of this file);
+        # no-op at the default 1.0.
+        tol = tol * _QED_GLTR_TOL_SCALE
+
+        Q = np.zeros((max_iter + 1, n))
         alpha = np.zeros(max_iter)
         beta = np.zeros(max_iter)
-        
-        M_abs = np.abs(M_diag) + 1e-12 
-        
-        #r = g.copy()
-        # NEW: Add microscopic noise to see hidden negative curvature
-        noise_scale = 1e-6 * np.linalg.norm(g)
-        noise = np.random.randn(n)
-        r = g + noise_scale * noise
+
+        M_abs = np.abs(M_diag) + 1e-12
+
+        # QED_GLTR_REUSE: a rejected step re-enters this solver with the SAME
+        # Hessian and gradient and only a smaller radius -- the reject branch
+        # (~13037) touches nothing else, self.U3 is re-seeded from self.U2 at
+        # ~12148, and only the ACCEPT branch updates U2 / rebuilds the gradient
+        # and the Hessian diagonal.  The Lanczos recurrence below depends only on
+        # (H, M_abs, r): the radius enters at CHECK A/B, never in the vectors.
+        # So the cached basis is EXACT for the retry and the step is bit-identical
+        # to what a cold rebuild produces -- the property GLTR is built on
+        # (Gould/Lucidi/Roma/Toint: re-solution over a sequence of radii).
+        # Keyed on the CONTENT of g and M_diag, so an accepted step invalidates
+        # the cache automatically with no manual bookkeeping.
+        _cache = getattr(self, "_gltr_cache", None)
+        _n_cached = 0
+        if (
+            _QED_GLTR_REUSE
+            and _cache is not None
+            and _cache["n"] == n
+            and radius < _cache["radius"]
+            and np.array_equal(_cache["g"], g)
+            and np.array_equal(_cache["M_diag"], M_diag)
+        ):
+            _n_cached = _cache["kmax"] + 1
+            # Reuse the cached NOISED gradient too: the noise is redrawn per call,
+            # and a different r generates a different Krylov space -- exactly what
+            # the cache exists to avoid.
+            r = _cache["r"].copy()
+            alpha[:_n_cached] = _cache["alpha"][:_n_cached]
+            beta[:_n_cached] = _cache["beta"][:_n_cached]
+            _nq = min(_n_cached + 1, max_iter + 1)
+            Q[:_nq] = _cache["Q"][:_nq]
+            if verbose:
+                print(
+                    f"GLTR: reusing {_n_cached} cached Lanczos vectors "
+                    f"(radius {_cache['radius']:.4f} -> {radius:.4f})"
+                )
+        else:
+            #r = g.copy()
+            # NEW: Add microscopic noise to see hidden negative curvature
+            noise_scale = 1e-6 * np.linalg.norm(g)
+            noise = np.random.randn(n)
+            r = g + noise_scale * noise
         # Validation instrumentation: capture the actual realized (post-noise)
         # gradient so the C++ port can be replayed against the literal vector
         # Python used (GltrConfig.add_noise = false, fed this r directly) --
@@ -15717,37 +16221,61 @@ class PFHamiltonianGenerator:
         for k in range(max_iter):
             v_curr = Q[k]
 
-            v_curr_reshaped = v_curr.reshape(1, n)
-            H_v = np.zeros_like(v_curr_reshaped)
-            self.orbital_sigma3(U, A_tilde, G_blocks, v_curr_reshaped, H_v, 1, 0)
-            H_v = H_v.reshape(n)
-            
-            al = np.dot(v_curr, H_v)
-            alpha[k] = al
-            
-            w = H_v / M_abs
-            if k == 0:
-                r_next = w - al * v_curr
+            if k < _n_cached:
+                # QED_GLTR_REUSE hit: alpha[k], beta[k] and Q[k+1] were produced by
+                # the discarded solve from the identical (H, M_abs, r).  Skip the
+                # Hessian-vector product -- that is the entire point of the cache.
+                al = alpha[k]
+                be = beta[k]
             else:
-                r_next = w - al * v_curr - beta[k-1] * Q[k-1]
-                
-            for j in range(k + 1):
-                overlap = np.dot(r_next, Q[j] * M_abs)
-                r_next = r_next - overlap * Q[j]
-    
-            inner_prod = np.dot(r_next, r_next * M_abs)
-            be = np.sqrt(max(0.0, inner_prod)) 
-            beta[k] = be
-            
-            solve_final = False
-            if be < 1e-12:
-                solve_final = True
-                curr_betas = beta[:k]
-            else:
-                if k < max_iter - 1:
+                v_curr_reshaped = v_curr.reshape(1, n)
+                H_v = np.zeros_like(v_curr_reshaped)
+                self.orbital_sigma3(U, A_tilde, G_blocks, v_curr_reshaped, H_v, 1, 0)
+                H_v = H_v.reshape(n)
+
+                al = np.dot(v_curr, H_v)
+                alpha[k] = al
+
+                w = H_v / M_abs
+                if k == 0:
+                    r_next = w - al * v_curr
+                else:
+                    r_next = w - al * v_curr - beta[k-1] * Q[k-1]
+
+                for j in range(k + 1):
+                    overlap = np.dot(r_next, Q[j] * M_abs)
+                    r_next = r_next - overlap * Q[j]
+
+                inner_prod = np.dot(r_next, r_next * M_abs)
+                be = np.sqrt(max(0.0, inner_prod))
+                beta[k] = be
+
+                if be >= 1e-12 and k < max_iter - 1:
                     Q[k+1] = r_next / be
-                curr_betas = beta[:k]
-    
+
+            solve_final = be < 1e-12
+            curr_betas = beta[:k]
+
+            if _QED_GLTR_REUSE:
+                # Bank the basis as it grows, so ANY of the returns below leaves a
+                # usable cache.  Q is trimmed to what has actually been filled
+                # (the full array is max_iter+1 rows and would pin ~46 MB on c10h8).
+                # Never shrink below what we inherited: a retry that converges in
+                # fewer iterations than the cached solve must not truncate the
+                # basis for the NEXT retry in the same cascade.
+                _bank = max(k, _n_cached - 1)
+                self._gltr_cache = {
+                    "n": n,
+                    "g": g.copy(),
+                    "M_diag": M_diag.copy(),
+                    "r": r.copy(),
+                    "alpha": alpha[:_bank+1].copy(),
+                    "beta": beta[:_bank+1].copy(),
+                    "Q": Q[:min(_bank+2, max_iter+1)].copy(),
+                    "kmax": _bank,
+                    "radius": radius,
+                }
+
             curr_alphas = alpha[:k+1]
             try:
                 w_eig, v_eig = eigh_tridiagonal(curr_alphas, curr_betas)
@@ -15905,9 +16433,14 @@ class PFHamiltonianGenerator:
             #        if verbose: print(f"{k:<5} | {min_eig: .4e}   | {step_norm_val:.4e}   | {resid_val:.4e}   | CONVERGED (Stagnation)")
             #        return p_current, final_lambda, f"Stagnation iter {k+1}"
     
+            if _QED_SOLVER_STATS:
+                # per-Lanczos-iteration convergence trace: lets the report say how
+                # many iterations earlier this solve could have exited at a looser
+                # tolerance, without spending an extra matvec to find out.
+                _solver_stats.trace_iter(resid_val, step_norm_val, tol)
             if verbose:
                 print(f"{k:<5} | {min_eig: .4e}   | {step_norm_val:.4e}   | {resid_val:.4e}   | {status_tag}")
-    
+
         return p_current if p_current is not None else np.zeros(n), 0.0, "Failure"
 
 
@@ -15929,6 +16462,16 @@ class PFHamiltonianGenerator:
         guess_vector,
         restart
     ):
+        # Attributes this Davidson solve's matvecs separately from the LSTRS
+        # bisection that wraps it, split by how the subspace was seeded.
+        # NOTE the parameter name reads backwards: restart=True means "restart
+        # FROM the previous search space" (Q = deepcopy(guess_vector), the warm
+        # start used for every alpha after the first), while restart=False
+        # builds a fresh guess subspace from |g|/H_diag.  So restart=True is the
+        # CHEAP path.  Labelled by what they do, not by the flag's name.
+        _stats_span_d = _stats_begin(
+            "davidson_ah_warmstart" if restart else "davidson_ah_coldbuild"
+        )
         # Analyze problem structure
         n_negative = np.sum(reduced_hessian_diagonal < 0)
         min_diag = np.min(reduced_hessian_diagonal)
@@ -16753,6 +17296,7 @@ class PFHamiltonianGenerator:
                     # print(Q)
                 end = timer()
 
+        _stats_end(_stats_span_d, status="warm" if restart else "cold")
         return Q
 
     def minres_solve(self, U, A_tilde, G_blocks, reduced_gradient, denom, max_iter, conv_thresh=1e-6):
@@ -16800,8 +17344,23 @@ class PFHamiltonianGenerator:
         eps = np.finfo(np.float64).eps
 
         # --- Preconditioner M (SPD by construction), and psolve = r / M ---
-        M_diag = np.abs(np.asarray(denom, dtype=np.float64))
-        M_diag = np.maximum(M_diag, 1e-6)
+        M_diag_raw = np.abs(np.asarray(denom, dtype=np.float64))
+        M_diag = np.maximum(M_diag_raw, 1e-6)
+        if _QED_SOLVER_STATS:
+            # Diagnostic for "is the Jacobi preconditioner the bottleneck?".
+            # The 1e-6 floor is ABSOLUTE, so any entry it catches gets
+            # M^-1 = 1e6 -- a huge amplification applied to exactly the
+            # near-null directions that make this branch fire in the first
+            # place.  n_floored > 0 means the floor, not the diagonal, is
+            # setting the preconditioned spectrum; the effective condition
+            # number max(M)/min(M) bounds how much Jacobi can help at all.
+            _n_floored = int(np.count_nonzero(M_diag_raw < 1e-6))
+            print(
+                "PMINRES precond: |diag| min %.3e max %.3e  floored %d/%d  "
+                "cond(M) %.3e"
+                % (M_diag_raw.min(), M_diag_raw.max(), _n_floored,
+                   M_diag_raw.size, M_diag.max() / M_diag.min())
+            )
         # ||r||_2 <= sqrt(max(M)) * ||r||_{M^-1}, since r^T M^-1 r >= ||r||^2 / max(M).
         # phibar below is exactly ||r_k||_{M^-1}, so this converts the free
         # recurrence quantity into a rigorous upper bound on the true residual
@@ -16841,6 +17400,8 @@ class PFHamiltonianGenerator:
         r2 = r1
 
         converged = False
+        bound_converged = False  # exited on the rigorous ||Hx+g||_2 upper bound
+        residual_bound = np.inf
         itn = 0
         for itn in range(1, max_iter + 1):
             # --- Lanczos step: v = M^-1-normalized next basis vector ---
@@ -16884,6 +17445,7 @@ class PFHamiltonianGenerator:
 
             if residual_bound < conv_thresh:
                 converged = True
+                bound_converged = True
                 break
             if beta <= eps * max(1.0, oldb):
                 # Krylov space exhausted: x already minimizes the residual over
@@ -16891,9 +17453,32 @@ class PFHamiltonianGenerator:
                 print("PMINRES: Lanczos breakdown (invariant subspace reached)")
                 break
 
-        # One true residual evaluation (a single extra mv2 for the whole solve,
-        # not one per iteration) so the caller's `converged` flag reflects
-        # ||Hx + g||, the same quantity linear_equation_solve tested against.
+        if bound_converged:
+            # `residual_bound` is a RIGOROUS UPPER BOUND on ||Hx + g||_2 (see
+            # bound_factor above: ||r||_2 <= sqrt(max(M)) * ||r||_{M^-1}, and
+            # phibar IS ||r||_{M^-1}).  Having broken on it, ||Hx + g|| <
+            # conv_thresh is already proved, so evaluating the true residual can
+            # only re-confirm what we know -- at the cost of one full mv2.
+            # Measured on c10h8: 97 of 97 solves exit here (none reaches the
+            # iteration cap), so skipping it is 97 Hessian applications, 3.8% of
+            # that run's 2548, for a bit-identical x and `converged` flag.
+            # The bound runs a measured 3.3-6.8x above the true residual, so
+            # this exit is conservative, never optimistic.
+            print(
+                f"PMINRES: residual bound {residual_bound:.4e} < {conv_thresh:.1e} "
+                f"after {itn} iterations (bound is rigorous; no verification mv2)"
+            )
+            print("\n--- Convergence Achieved ---")
+            print("total iteration", itn)
+            return x, True
+
+        # Reached only on the iteration cap or a Lanczos breakdown, where the
+        # recurrence bound never certified convergence.  One true residual
+        # evaluation (a single extra mv2 for the whole solve, not one per
+        # iteration) so the caller's `converged` flag reflects ||Hx + g||, the
+        # same quantity linear_equation_solve tested against -- the bound is
+        # conservative, so a solve can still be converged in truth after
+        # failing to prove it.
         true_residual = np.linalg.norm(
             self.mv2(U, A_tilde, G_blocks, x, 1, 0, 0).ravel() - b
         )
@@ -17449,6 +18034,8 @@ class PFHamiltonianGenerator:
     def projection_step2(
         self, gradient_tilde, hessian_tilde, aug_eigenvecs, alpha, dim0
     ):
+        if _QED_SOLVER_STATS:
+            _solver_stats.bordered_solve()
         augmented_hessian = np.zeros((dim0, dim0))
         # print("projected_gradient", gradient_tilde, flush = True)
 
@@ -17530,6 +18117,8 @@ class PFHamiltonianGenerator:
         return sigma_reduced
 
     def mv2(self, U, A_tilde, G_blocks, R_reduced, num_states, pointer, eigval):
+        if _QED_SOLVER_STATS:
+            _solver_stats.matvec(1)
         R_reduced = R_reduced.reshape((1, self.index_map_size)).astype(np.float64)
         nmo = self.nmo
         index_map = self.index_map
