@@ -228,20 +228,22 @@ _QED_LSTRS_EPS_HC = float(os.environ.get("QED_LSTRS_EPS_HC", "1e-6"))
 # what has to be measured -- do not assume it does.
 _QED_TRUST_PERSIST = int(os.environ.get("QED_TRUST_PERSIST", "0"))
 #
-#   QED_SCHEDULE_NATURAL : schedule off the first step computed   (default 0 = off)
-#
-# microiteration_optimization6 picks N_microiterations / N_orbital_optimization_
-# steps from step_norm at (microiteration 0, orbital step 0) -- Molpro's "solve
-# one step, measure it, then decide how often to re-solve the CI" idea.  But the
-# branch sits in the ACCEPT path and a rejection does not increment
-# orbital_optimization_step, so after a rejection cascade it reads the shrunken
-# accepted norm instead of the natural step length.  c10h8, measured: call 8
-# schedules on 0.0313 after 4 rejections (-> 20/1) when its first step was
-# 0.0790 (-> 7/3); call 10 schedules on 0.0625 after 3 (-> 7/3) when its first
-# was 0.4923 (-> 5/4).  Both first steps were GLTR "Interior (Newton)" -- the
-# trust radius never bound them -- so the natural length is already in hand and
-# this costs zero extra Hessian-vector products.  Default 0 is exact no-op.
-_QED_SCHEDULE_NATURAL = int(os.environ.get("QED_SCHEDULE_NATURAL", "0"))
+# (RETIRED 2026-07-29: QED_SCHEDULE_NATURAL.)  It scheduled
+# N_microiterations / N_orbital_optimization_steps off the FIRST step computed
+# at (microiteration 0, orbital step 0) rather than the first ACCEPTED one, on
+# the argument that a rejection cascade makes the accept branch read a
+# post-shrink norm.  Removed because the accepted norm is the right quantity
+# after all.  Require the scheduling step to be BOTH unconstrained and actually
+# energy-lowering and the two coincide in every case: an interior step accepted
+# first try IS the accepted step; an interior step that is REJECTED leads to a
+# cascade whose accepted step sits exactly on the shrunken boundary (measured on
+# c10h8: accepted = first / 2^rejections in all 7 cascades, since step_control
+# shrinks to 0.5*||s_rejected||); and a bound first step has ||s|| == Delta,
+# i.e. the initial radius 0.5 carrying no information (7 of 19 c10h8 calls).
+# The only three calls where the knob changed a decision all latched a REJECTED
+# Newton step -- including the run's worst step, model ratio -74.6 -- and the
+# run cost more (2379 vs 2223 matvecs).  A rejected step's length is evidence
+# the model was wrong, not evidence of the natural step scale.
 #
 #   QED_GLTR_REUSE : reuse the GLTR Lanczos basis on a retry   (default 0 = off)
 #
@@ -258,6 +260,12 @@ _QED_SCHEDULE_NATURAL = int(os.environ.get("QED_SCHEDULE_NATURAL", "0"))
 # Wired to solve_gltr_trust_region only; solve_gltr_with_operator (the QN/BFGS
 # twin) is untouched and does not fire with QED_DISABLE_QN=1.
 _QED_GLTR_REUSE = int(os.environ.get("QED_GLTR_REUSE", "0"))
+#
+#   QED_MV_BENCH : one-shot matvec cost-vs-batch-size curve   (default 0 = off)
+#
+# Prints a timing table at the first microiteration and changes nothing else.
+# See the benchmark block in microiteration_optimization6 for what it separates.
+_QED_MV_BENCH = int(os.environ.get("QED_MV_BENCH", "0"))
 import numba as nb
 from scipy.linalg import eigh, cho_factor, cho_solve, solve_triangular
 
@@ -283,19 +291,33 @@ class _SolverStats:
     """
 
     class _Span:
-        __slots__ = ("site", "mv0", "bd0", "tr0")
+        __slots__ = ("site", "mv0", "bd0", "tr0", "sec0")
 
-        def __init__(self, site, mv0, bd0, tr0):
+        def __init__(self, site, mv0, bd0, tr0, sec0):
             self.site, self.mv0, self.bd0, self.tr0 = site, mv0, bd0, tr0
+            self.sec0 = sec0
 
     def __init__(self):
         self.matvecs = 0
         self.bordered = 0
         self.records = []
         self.trace = []
+        # Wall time actually spent building Hessian-vector products, and the
+        # same split by BATCH SIZE (how many vectors one call built).  The
+        # matvec COUNT alone cannot say whether a matvec percentage is a wall
+        # percentage -- c10h8's wall clock is integral-transformation bound --
+        # and a per-call fixed overhead would make 507 one-vector GLTR calls
+        # cost far more than the same vectors built in batches.
+        self.matvec_secs = 0.0
+        self.mv_hist = {}
 
-    def matvec(self, n=1):
+    def matvec(self, n=1, secs=0.0):
         self.matvecs += n
+        self.matvec_secs += secs
+        h = self.mv_hist.setdefault(n, [0, 0, 0.0])
+        h[0] += 1
+        h[1] += n
+        h[2] += secs
 
     def bordered_solve(self):
         self.bordered += 1
@@ -304,7 +326,9 @@ class _SolverStats:
         self.trace.append((resid, step_norm, tol))
 
     def begin(self, site):
-        return self._Span(site, self.matvecs, self.bordered, len(self.trace))
+        return self._Span(
+            site, self.matvecs, self.bordered, len(self.trace), self.matvec_secs
+        )
 
     def end(self, span, iters=None, status=None):
         if span is None:
@@ -322,6 +346,7 @@ class _SolverStats:
                 "iters": iters,
                 "status": status,
                 "matvecs": self.matvecs - span.mv0,
+                "mv_secs": self.matvec_secs - span.sec0,
                 "bordered": self.bordered - span.bd0,
                 "trace": self.trace[span.tr0 :],
             }
@@ -340,8 +365,17 @@ class _SolverStats:
         print("SOLVER STATISTICS (QED_SOLVER_STATS=1)")
         print("=" * 92)
         print(
-            "%-26s %7s %10s %10s %12s %10s %10s"
-            % ("site", "solves", "iters", "it/solve", "matvecs", "mv/solve", "mv/iter")
+            "%-26s %7s %10s %10s %12s %10s %10s %10s"
+            % (
+                "site",
+                "solves",
+                "iters",
+                "it/solve",
+                "matvecs",
+                "mv/solve",
+                "mv/iter",
+                "mv wall s",
+            )
         )
         print("-" * 92)
         # These spans sit INSIDE lstrs_davidson, so their matvecs are already
@@ -354,10 +388,11 @@ class _SolverStats:
             it = sum(r["iters"] or 0 for r in rs)
             mv = sum(r["matvecs"] for r in rs)
             bd = sum(r["bordered"] for r in rs)
+            sec = sum(r.get("mv_secs", 0.0) for r in rs)
             unit = mv if mv else bd
             tag = site + ("" if mv else " (bordered)")
             print(
-                "%-26s %7d %10d %10.2f %12d %10.2f %10s"
+                "%-26s %7d %10d %10.2f %12d %10.2f %10s %10.2f"
                 % (
                     tag,
                     n,
@@ -366,6 +401,7 @@ class _SolverStats:
                     unit,
                     unit / n if n else 0.0,
                     ("%.2f" % (unit / it)) if it else "-",
+                    sec,
                 )
             )
             tot_mv += mv
@@ -377,6 +413,27 @@ class _SolverStats:
         )
         print("  (total Hessian-vector products over the whole run: %d)" % self.matvecs)
         print("  (total dense bordered eigensolves:                 %d)" % self.bordered)
+        print(
+            "  (total WALL TIME inside those products:            %.2f s)"
+            % self.matvec_secs
+        )
+
+        # Cost per matvec as a function of how many vectors one call built.  If
+        # s/vector falls with batch size there is a fixed per-call overhead, and
+        # the one-vector-at-a-time solvers (GLTR, MINRES) are paying it on every
+        # single product while the Davidson paths amortize it.
+        if self.mv_hist:
+            print("\nmatvec cost by batch size (vectors built per orbital_sigma3 call):")
+            print(
+                "  %-12s %8s %10s %10s %12s"
+                % ("batch size", "calls", "vectors", "wall s", "s/vector")
+            )
+            for k in sorted(self.mv_hist):
+                calls, vecs, sec = self.mv_hist[k]
+                print(
+                    "  %-12d %8d %10d %10.2f %12.5f"
+                    % (k, calls, vecs, sec, sec / vecs if vecs else 0.0)
+                )
 
         inner = sorted(s for s in by if s in nested)
         if inner:
@@ -8985,9 +9042,7 @@ class PFHamiltonianGenerator:
     def orbital_sigma3(
         self, U, A_tilde, G_blocks, R_reduced, sigma_reduced, num_states, pointer
     ):
-        if _QED_SOLVER_STATS:
-            # builds num_states Hessian-vector products in one call
-            _solver_stats.matvec(num_states)
+        _mv_t0 = timer() if _QED_SOLVER_STATS else None
         nmo = self.nmo
         index_map = self.index_map
         index_map_size = self.index_map_size
@@ -9004,7 +9059,7 @@ class PFHamiltonianGenerator:
         # can hand us a strided step.  (sigma_reduced is an output -- do NOT copy.)
         R_reduced = np.ascontiguousarray(R_reduced)
 
-        return self.build_sigma_reduced7(
+        _ret = self.build_sigma_reduced7(
             U,
             A_tilde,
             index_map,
@@ -9021,6 +9076,12 @@ class PFHamiltonianGenerator:
             n_inactive,
             n_active
         )
+        if _QED_SOLVER_STATS:
+            # builds num_states Hessian-vector products in one call; the timed
+            # region includes the ascontiguousarray prep above, which is part of
+            # what a caller pays to get one matvec.
+            _solver_stats.matvec(num_states, timer() - _mv_t0)
+        return _ret
 
 
     def orbital_sigma(
@@ -11727,9 +11788,6 @@ class PFHamiltonianGenerator:
         qn_optimization = False
         qn_count = 0
         self.consecutive_skips = 0
-        # QED_SCHEDULE_NATURAL: norm of the first step this call computes, latched
-        # before any rejection shrinks the trust radius (see ~12900).
-        first_step_norm = None
         while microiteration < N_microiterations:
             print("\n")
             print("\n")
@@ -11880,6 +11938,34 @@ class PFHamiltonianGenerator:
             self.build_hessian_diagonal(self.U2, G, A_tilde2)
             end = timer()
             print("build hessian diagonal took", end - start)
+            # QED_MV_BENCH: one-shot cost curve of the Hessian-vector product as a
+            # function of how many vectors are built per call.  QED_SOLVER_STATS
+            # measured 0.01855 s/vector for the 2074 one-vector calls (GLTR,
+            # MINRES) against 0.00267 s/vector for the batched Davidson calls --
+            # 6.9x.  This separates the two possible causes: a fixed per-call
+            # overhead (cost = c + k*n, attackable on every call) versus streaming
+            # the ~320 MB of G blocks once per call regardless of n (bandwidth
+            # bound, only amortizable by batching).  Timings only; no state is
+            # touched, and the sigma output goes to a scratch buffer.
+            if _QED_MV_BENCH and not getattr(self, "_mv_bench_done", False):
+                self._mv_bench_done = True
+                _n = self.index_map_size
+                _gb = 8.0 * sum(b.size for b in G_blocks) / 1e9
+                print(f"\n--- MATVEC BATCH BENCHMARK (n={_n}, G blocks {_gb:.3f} GB) ---")
+                print(f"{'batch':<8}{'reps':<6}{'wall s':>10}{'s/call':>12}{'s/vector':>12}")
+                for _bs in (1, 1, 2, 4, 8, 16, 32):
+                    _reps = 5 if _bs <= 4 else 2
+                    _R = np.ascontiguousarray(np.random.randn(_bs, _n))
+                    _S = np.zeros((_bs, _n))
+                    _t0 = timer()
+                    for _ in range(_reps):
+                        self.orbital_sigma3(self.U2, A_tilde2, G_blocks, _R, _S, _bs, 0)
+                    _t = timer() - _t0
+                    print(
+                        f"{_bs:<8}{_reps:<6}{_t:>10.4f}{_t/_reps:>12.5f}"
+                        f"{_t/(_reps*_bs):>12.5f}"
+                    )
+                print("--- END MATVEC BATCH BENCHMARK ---\n", flush=True)
             if _CPP_CASSCF_VALIDATION_DIR:
                 _dump_cpp_casscf_validation_case(
                     "build_hessian_diagonal",
@@ -12925,17 +13011,6 @@ class PFHamiltonianGenerator:
 
                     step_norm = np.linalg.norm(step)
 
-                    # QED_SCHEDULE_NATURAL: latch the first step computed at
-                    # (microiteration 0, orbital step 0) before any rejection has had
-                    # a chance to shrink the trust radius.  See the schedule branch
-                    # below for why the accepted norm is the wrong quantity.
-                    if (
-                        microiteration == 0
-                        and orbital_optimization_step == 0
-                        and first_step_norm is None
-                    ):
-                        first_step_norm = step_norm
-
                     print("step norm", step_norm)
                     #print("step", step)
                     start = timer()
@@ -13017,28 +13092,12 @@ class PFHamiltonianGenerator:
                         if microiteration == 0 and orbital_optimization_step == 0:
                             # convergence_threshold = min(0.01 * gradient_norm, np.power(gradient_norm,2))
                             # convergence_threshold = 0.01 * gradient_norm
-                            # QED_SCHEDULE_NATURAL: score the schedule on the FIRST
-                            # step computed here, not the first one accepted.  A
-                            # rejection does not increment orbital_optimization_step,
-                            # so after a cascade this branch reads the post-shrink
-                            # norm -- the trust region's retreat rather than the local
-                            # step scale.  Measured c10h8: call 8 accepts 0.0313 after
-                            # 4 rejections and picks the default 20/1 although its
-                            # first (unconstrained Newton) step was 0.0790 -> 7/3;
-                            # call 10 accepts 0.0625 after 3 and picks 7/3 although
-                            # its first step was 0.4923 -> 5/4.  Both first steps came
-                            # back "Interior (Newton)", i.e. the trust radius never
-                            # bound them, so this costs no extra matvecs.
+                            # Schedules N_microiterations / N_orbital_optimization_
+                            # steps off the norm of the first ACCEPTED step -- the
+                            # step that actually lowered the exact energy.  See the
+                            # retired-knob note at the top of this file for why the
+                            # first COMPUTED step is not a better measure.
                             schedule_norm = step_norm
-                            if _QED_SCHEDULE_NATURAL and first_step_norm is not None:
-                                schedule_norm = first_step_norm
-                                print(
-                                    "schedule step norm (natural)",
-                                    schedule_norm,
-                                    "accepted",
-                                    step_norm,
-                                    flush=True,
-                                )
                             if schedule_norm > 0.1:
                                 N_microiterations = 5
                                 N_orbital_optimization_steps = 4
@@ -18117,8 +18176,7 @@ class PFHamiltonianGenerator:
         return sigma_reduced
 
     def mv2(self, U, A_tilde, G_blocks, R_reduced, num_states, pointer, eigval):
-        if _QED_SOLVER_STATS:
-            _solver_stats.matvec(1)
+        _mv_t0 = timer() if _QED_SOLVER_STATS else None
         R_reduced = R_reduced.reshape((1, self.index_map_size)).astype(np.float64)
         nmo = self.nmo
         index_map = self.index_map
@@ -18135,7 +18193,7 @@ class PFHamiltonianGenerator:
         # print("index_map dtype:", index_map.dtype, "shape:", index_map.shape)
         # print("G dtype:", G.dtype, "shape:", G.shape)
         # print("R_reduced dtype:", R_reduced.dtype, "shape:", R_reduced.shape)
-        return self.build_sigma_reduced8(
+        _ret = self.build_sigma_reduced8(
             U,
             A_tilde,
             index_map,
@@ -18152,6 +18210,9 @@ class PFHamiltonianGenerator:
             n_active,
             eigval,
         )
+        if _QED_SOLVER_STATS:
+            _solver_stats.matvec(1, timer() - _mv_t0)
+        return _ret
 
     @staticmethod
     @nb.jit(
