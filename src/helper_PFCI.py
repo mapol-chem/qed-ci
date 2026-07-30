@@ -266,6 +266,18 @@ _QED_GLTR_REUSE = int(os.environ.get("QED_GLTR_REUSE", "0"))
 # Prints a timing table at the first microiteration and changes nothing else.
 # See the benchmark block in microiteration_optimization6 for what it separates.
 _QED_MV_BENCH = int(os.environ.get("QED_MV_BENCH", "0"))
+#
+#   QED_JD_MAXITER / QED_JD_TOL : inner PCG budget in inner_solve_pcg
+#                                 (defaults 5 / 0.1 = the original values)
+#
+# inner_solve_pcg solves the Jacobi-Davidson correction equation
+# (I-Q)(H-theta I)(I-Q) v = -r with PCG.  Every inner iteration is one sigma
+# build, so these two knobs trade inner matvecs against OUTER Davidson
+# iterations -- each of which also costs a sigma build, plus orthogonalization
+# and the projected eigensolve.  Solving the correction equation harder is only
+# worth it if it removes more outer iterations than the inner ones it adds.
+_QED_JD_MAXITER = int(os.environ.get("QED_JD_MAXITER", "5"))
+_QED_JD_TOL = float(os.environ.get("QED_JD_TOL", "0.1"))
 import numba as nb
 from scipy.linalg import eigh, cho_factor, cho_solve, solve_triangular
 
@@ -310,6 +322,12 @@ class _SolverStats:
         # cost far more than the same vectors built in batches.
         self.matvec_secs = 0.0
         self.mv_hist = {}
+        # Block width available to the Jacobi-Davidson correction solve, i.e.
+        # how many roots it could solve for in one batched sigma build.
+        self.jd_widths = {}
+
+    def jd_width(self, w):
+        self.jd_widths[w] = self.jd_widths.get(w, 0) + 1
 
     def matvec(self, n=1, secs=0.0):
         self.matvecs += n
@@ -496,6 +514,12 @@ class _SolverStats:
                 " grinding past\n   the point where the step stopped changing"
                 " -- i.e. a looser exit is nearly free)"
             )
+
+        if self.jd_widths:
+            print("\nJacobi-Davidson correction solve, roots unconverged per entry:")
+            print("  (block width a batched solve could use; 1 means nothing to block)")
+            for w in sorted(self.jd_widths):
+                print("  width %d: %d entries" % (w, self.jd_widths[w]))
 
         # termination-branch distribution, per site
         print("\ntermination branch (hard_case / GLTR status) by site:")
@@ -11939,31 +11963,39 @@ class PFHamiltonianGenerator:
             end = timer()
             print("build hessian diagonal took", end - start)
             # QED_MV_BENCH: one-shot cost curve of the Hessian-vector product as a
-            # function of how many vectors are built per call.  QED_SOLVER_STATS
-            # measured 0.01855 s/vector for the 2074 one-vector calls (GLTR,
-            # MINRES) against 0.00267 s/vector for the batched Davidson calls --
-            # 6.9x.  This separates the two possible causes: a fixed per-call
-            # overhead (cost = c + k*n, attackable on every call) versus streaming
-            # the ~320 MB of G blocks once per call regardless of n (bandwidth
-            # bound, only amortizable by batching).  Timings only; no state is
-            # touched, and the sigma output goes to a scratch buffer.
+            # function of how many vectors are built per call.  The question it
+            # answers is what a BATCHED product would be worth: the four GEMMs at
+            # 9373-9376 read the whole 0.319 GB of G regardless of the vector
+            # count, so if their cost is flat in the batch size then any solver
+            # that can ask for several products at once gets them nearly free.
+            # Reports the MINIMUM over repetitions, not the mean: the first
+            # version of this used the mean and was run while the machine was
+            # loaded, which inflated the large-batch points and made batching look
+            # 3x worse than it is.  Timings only; no state is touched, and the
+            # sigma output goes to a scratch buffer.
             if _QED_MV_BENCH and not getattr(self, "_mv_bench_done", False):
                 self._mv_bench_done = True
                 _n = self.index_map_size
                 _gb = 8.0 * sum(b.size for b in G_blocks) / 1e9
                 print(f"\n--- MATVEC BATCH BENCHMARK (n={_n}, G blocks {_gb:.3f} GB) ---")
-                print(f"{'batch':<8}{'reps':<6}{'wall s':>10}{'s/call':>12}{'s/vector':>12}")
-                for _bs in (1, 1, 2, 4, 8, 16, 32):
-                    _reps = 5 if _bs <= 4 else 2
+                print(f"{'batch':<8}{'reps':<6}{'best s/call':>13}{'s/vector':>12}{'vs batch1':>11}")
+                _base = None
+                for _bs in (1, 2, 4, 8, 16, 32):
                     _R = np.ascontiguousarray(np.random.randn(_bs, _n))
                     _S = np.zeros((_bs, _n))
-                    _t0 = timer()
+                    _reps = 7
+                    self.orbital_sigma3(self.U2, A_tilde2, G_blocks, _R, _S, _bs, 0)
+                    _best = None
                     for _ in range(_reps):
+                        _t0 = timer()
                         self.orbital_sigma3(self.U2, A_tilde2, G_blocks, _R, _S, _bs, 0)
-                    _t = timer() - _t0
+                        _dt = timer() - _t0
+                        _best = _dt if _best is None else min(_best, _dt)
+                    if _base is None:
+                        _base = _best
                     print(
-                        f"{_bs:<8}{_reps:<6}{_t:>10.4f}{_t/_reps:>12.5f}"
-                        f"{_t/(_reps*_bs):>12.5f}"
+                        f"{_bs:<8}{_reps:<6}{_best:>13.5f}{_best/_bs:>12.5f}"
+                        f"{_best/_base:>10.2f}x"
                     )
                 print("--- END MATVEC BATCH BENCHMARK ---\n", flush=True)
             if _CPP_CASSCF_VALIDATION_DIR:
@@ -15657,7 +15689,14 @@ class PFHamiltonianGenerator:
             return Hp.flatten() # Return a 1D vector
 
         # === PCG Algorithm ===
-        max_inner_iter = 5 
+        # QED_JD_MAXITER: inner iteration cap.  Each inner iteration is one
+        # sigma build, so this trades inner matvecs against OUTER Davidson
+        # iterations (which each cost a matvec plus orthogonalization plus the
+        # projected eigensolve).  Default 5 = the original value.
+        max_inner_iter = _QED_JD_MAXITER
+        _stats_span_jd = _stats_begin("jd_inner_pcg")
+        _jd_iters = 0
+        _jd_exit = "cap"
         v_corr = np.zeros(H_dim)    # Initial guess: 0
         r = -residual_k             # RHS of (H - theta*I)v = -r
 
@@ -15676,6 +15715,7 @@ class PFHamiltonianGenerator:
             p_proj = project_out(p) # This is (I-Q_conv)*p
             q = apply_H_minus_theta(p_proj, theta_k) # This is (H-theta)*(I-Q_conv)*p
             q = project_out(q) # This is (I-Q_conv)*(H-theta)*(I-Q_conv)*p
+            _jd_iters += 1
 
             alpha = rho / np.dot(p_proj, q)
 
@@ -15687,7 +15727,8 @@ class PFHamiltonianGenerator:
             #     break
             # ⭐️ ADD THIS EARLY EXIT ⭐️
             # Check if the *inner* residual is 10x smaller than the *outer* residual
-            if np.linalg.norm(r) < 0.1 * np.linalg.norm(residual_k):
+            if np.linalg.norm(r) < _QED_JD_TOL * np.linalg.norm(residual_k):
+                _jd_exit = "tol"
                 break
             # 2. Apply preconditioner: z = P_inv * r
             z = r / P_diag
@@ -15700,6 +15741,7 @@ class PFHamiltonianGenerator:
 
             p = z + beta * p # p is implicitly projected in the next loop
 
+        _stats_end(_stats_span_jd, iters=_jd_iters, status=_jd_exit)
         return v_corr
 
 
@@ -17223,8 +17265,16 @@ class PFHamiltonianGenerator:
                     # NOW use the robust (but tuned-down) Jacobi-Davidson solver
                     # to prevent the 70-iteration stall for Root 1.
                     
-                    Q_conv = full_eigvecs2[converged_indices, :] 
-                
+                    Q_conv = full_eigvecs2[converged_indices, :]
+
+                    if _QED_SOLVER_STATS:
+                        # How wide could a BLOCKED correction solve be here?  This
+                        # branch is guarded by "at least one root converged", and
+                        # nroots is 1 or 2, so the answer is expected to be 1 --
+                        # i.e. there is nothing to block across.  Counted rather
+                        # than assumed.
+                        _solver_stats.jd_width(len(unconverged_idx))
+
                     for i in range(len(unconverged_idx)):
                         idx = unconverged_idx[i]
                         current_residual = w[idx, :]
