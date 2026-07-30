@@ -339,13 +339,29 @@ _QED_G_SYMV = int(os.environ.get("QED_G_SYMV", "0"))
 # Output is BIT-EXACT against the numpy path (verified at tile 8/16/32/64), and
 # the index convention is unchanged, so no consumer sees any difference -- this
 # is purely how the same bytes get moved.  Tile 32 is used; 16 and 64 are within
-# 30% of it, so the choice is not delicate.
+# 30% of it, so the choice is not delicate.  Set QED_G_TILED_CHECK=1 to re-verify
+# that bit-exactness in situ, at the real dimensions (~12125).
 #
 # The buffers are allocated once and reused across microiterations, which is part
 # of the win: the numpy path allocates 319 MB of fresh pages every microiteration
-# and eats the first-touch faults.  Safe because the only consumers that outlive
-# a microiteration take a copy.deepcopy (~12232, ~13268).
-_QED_G_TILED = int(os.environ.get("QED_G_TILED", "0"))
+# and eats the first-touch faults.  Safe because the kernel writes every element
+# of each buffer on every call (the loops span the full s/l/r/k ranges, so nothing
+# stale can survive), and the only consumers that outlive a microiteration take a
+# copy.deepcopy (~12366, ~13402).
+#
+# DEFAULT ON since the c10h8 A/B of 2026-07-30.  Three legs back to back on an
+# otherwise idle box, over an identical 103 calls to this section:
+#     transpose matrix G   20.47 s -> 5.73 s   (3.57x)
+#     optimization took   278.73 s -> 255.23 s (-8.4%)
+# and it composes with QED_G_SYMV (5.64 s with both on; the matvec's -18% is
+# undisturbed).  The 3.57x here against 7.01x in the standalone probe is the
+# expected direction -- the real process holds 33 GB resident and a colder memory
+# system.  NOTE that the A/B cannot itself prove bit-exactness: this run is
+# nondeterministic well upstream of CASSCF (two legs with identical settings
+# diverge in the CQED-RHF SCF at ~1e-11, from threaded-BLAS reduction order), so
+# the legs' final energies differ either way.  QED_G_TILED_CHECK is what proves
+# it; set QED_G_TILED=0 to fall back to the numpy path.
+_QED_G_TILED = int(os.environ.get("QED_G_TILED", "1"))
 import numba as nb
 from scipy.linalg import eigh, cho_factor, cho_solve, solve_triangular
 import ctypes as _ctypes
@@ -12126,6 +12142,41 @@ class PFHamiltonianGenerator:
                 # Same three arrays, same index convention, bit-for-bit; only the
                 # copy loop differs.  See the QED_G_TILED note at the top.
                 G_ij, G_ti, G_tu = self.tiled_G_blocks(G)
+                # QED_G_TILED_CHECK: one-shot proof, in situ and at the real
+                # dimensions, that the tiled copy reproduces the numpy path
+                # EXACTLY (np.array_equal, not allclose -- a permuted copy moves
+                # bytes and must not perturb a single ulp).  This exists because
+                # the c10h8 A/B cannot demonstrate bit-exactness on its own: the
+                # run is nondeterministic well upstream of here (two legs with
+                # identical settings diverge in the CQED-RHF SCF, at the ~1e-11
+                # level, from threaded-BLAS reduction order), so the two legs'
+                # final energies differ whether or not this copy is faithful.
+                if int(os.environ.get("QED_G_TILED_CHECK", "0")) and not getattr(
+                    self, "_g_tiled_checked", False
+                ):
+                    self._g_tiled_checked = True
+                    _Gt = G.transpose(3, 1, 2, 0)
+                    _ref = (
+                        _Gt[:, : self.n_in_a, :, : self.n_in_a].reshape(
+                            self.nmo * self.n_in_a, self.nmo * self.n_in_a
+                        ),
+                        _Gt[:, self.n_in_a :, :, : self.n_in_a].reshape(
+                            self.nmo * self.n_act_orb, self.nmo * self.n_in_a
+                        ),
+                        _Gt[:, self.n_in_a :, :, self.n_in_a :].reshape(
+                            self.nmo * self.n_act_orb, self.nmo * self.n_act_orb
+                        ),
+                    )
+                    for _nm, _a, _b in zip(("G_ij", "G_ti", "G_tu"),
+                                           (G_ij, G_ti, G_tu), _ref):
+                        if not np.array_equal(_a, _b):
+                            raise RuntimeError(
+                                f"QED_G_TILED: {_nm} {_a.shape} differs from the "
+                                f"numpy path, max|d| = {np.abs(_a - _b).max():.6e}"
+                            )
+                        print(f"[G_TILED_CHECK] {_nm} {_a.shape} bit-identical",
+                              flush=True)
+                    del _Gt, _ref
             else:
                 G_t = G.transpose(3, 1, 2, 0)
                 G_ij = G_t[:, :self.n_in_a, :, :self.n_in_a].reshape(
