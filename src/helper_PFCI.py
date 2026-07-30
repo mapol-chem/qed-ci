@@ -292,7 +292,24 @@ _QED_JD_TOL = float(os.environ.get("QED_JD_TOL", "0.1"))
 #     non-GEMM code in build_sigma_reduced7   0.59 ms (7.2%)
 # G_ij is SYMMETRIC to 1 ulp (verify with QED_G_SYM_CHECK; see the note at the
 # G_blocks build site), so a symmetric product reads one 109 MB triangle instead
-# of the full 218 MB square.  Measured 2.40x on that term: 4.49 -> 1.87 ms.
+# of the full 218 MB square.
+#
+# HOW BIG THE WIN IS DEPENDS ON THE PROCESS, SO USE THE IN-SITU NUMBER: 2.40x
+# (4.49 -> 1.87 ms) in a bare process, but only ~1.5x (6.00 -> 3.80 ms) once psi4
+# is imported, which is what every real driver does.  1.5x is the number that
+# matters and it is self-consistent: 0.59 * (1 - 1/1.5) = 19.7% predicted against
+# a MEASURED 19.0% cut in c10h8 matvec wall time.
+#
+# Thread count does not change any of this, checked 1/2/4/8/16/32 plus default:
+# results identical to 1.6e-12 at every setting and the ratio stays in 1.34-1.61x,
+# because in a psi4-loaded process NEITHER path scales -- numba's np.dot sits at
+# ~36 GB/s and dsymv at ~24-29 GB/s no matter what MKL_NUM_THREADS says.  (numba's
+# np.dot is NOT numpy's: nopython code binds scipy's cython_blas, and numpy's
+# dgemv DOES thread in the same process, 4.48 ms vs numba's 6.00 ms.  numba dsymv
+# at 3.80 ms still beats all four variants, so this is the right call here -- but
+# the numba/numpy BLAS gap is a separate ~1.3x lead on every other big product.)
+# There is no numba-prange/MKL-OpenMP nesting to worry about: the call sites are
+# jitted parallel=False, so MKL's threads are the only ones in play.
 #
 # numba's np.dot always lowers to dgemm/dgemv and has no symmetric form, so
 # dsymv is bound by hand below.  Gated on num_states == 1: a batched call would
@@ -302,6 +319,33 @@ _QED_JD_TOL = float(os.environ.get("QED_JD_TOL", "0.1"))
 # c10h8 run are single-vector, so the gate costs almost nothing.  (A blocked
 # dsymm would cover both cases and is the natural extension.)
 _QED_G_SYMV = int(os.environ.get("QED_G_SYMV", "0"))
+#
+#   QED_G_TILED : blocked build of the G_ij/G_ti/G_tu blocks   (default 0 = off)
+#
+# "transpose matrix G" is 15.7 s of a c10h8 run, second only to build
+# intermediates, and it is ONE numpy statement: G.transpose(3,1,2,0) sliced and
+# reshaped into the three blocks (~12070).  G is stored (k,l,r,s) with s
+# contiguous, and that permutation drags s all the way to OUTERMOST, so the copy
+# moves 8-byte scattered elements: measured 0.151 s per microiteration for 638 MB
+# of traffic = 4.2 GB/s, against 43.0 GB/s for a memcpy of the same volume.  The
+# 0.151 s x 103 microiterations reproduces the observed 15.7 s exactly.
+#
+# The permutation is a plain transpose in disguise -- for fixed (k,l,r) the source
+# is contiguous in s, and for fixed (s,l,r) the destination is contiguous in k --
+# so blocking over (s,k) lets both tiles sit in cache.  Measured at c10h8 dims:
+#     numpy, as shipped          0.1511 s    4.2 GB/s   1.00x
+#     numba tiled, tile 32       0.0216 s   29.6 GB/s   7.01x
+#     (pure memcpy floor)        0.0148 s   43.0 GB/s  10.19x
+# Output is BIT-EXACT against the numpy path (verified at tile 8/16/32/64), and
+# the index convention is unchanged, so no consumer sees any difference -- this
+# is purely how the same bytes get moved.  Tile 32 is used; 16 and 64 are within
+# 30% of it, so the choice is not delicate.
+#
+# The buffers are allocated once and reused across microiterations, which is part
+# of the win: the numpy path allocates 319 MB of fresh pages every microiteration
+# and eats the first-touch faults.  Safe because the only consumers that outlive
+# a microiteration take a copy.deepcopy (~12232, ~13268).
+_QED_G_TILED = int(os.environ.get("QED_G_TILED", "0"))
 import numba as nb
 from scipy.linalg import eigh, cho_factor, cho_solve, solve_triangular
 import ctypes as _ctypes
@@ -368,6 +412,39 @@ else:
         ctypes pointer into their compilation.
         """
         y += np.dot(x, A)
+
+
+# QED_G_TILED's kernel.  out[s, l, r, k] = G[k0 + k, l0 + l, r, s], i.e. exactly
+# one quadrant of G.transpose(3, 1, 2, 0), blocked over (s, k) -- the two axes
+# that trade places -- so a tile of each fits in cache.  Loop order inside a tile
+# is (l, r, s, k): r is the axis both sides step contiguously over, and it is
+# innermost-but-two on purpose, because making it innermost costs the (s, k)
+# blocking that the whole point of this is.  See the QED_G_TILED note above for
+# the measurements.  No ctypes here, so cache=True is safe.
+@nb.jit(
+    "void(float64[:,:,:,::1], float64[:,:,:,::1], int64, int64, int64)",
+    nopython=True,
+    cache=True,
+    fastmath=True,
+    parallel=True,
+)
+def _transpose_G_block(G, out, l0, k0, TS):
+    nmo = out.shape[0]
+    nl = out.shape[1]
+    nk = out.shape[3]
+    n_s_tiles = (nmo + TS - 1) // TS
+    n_k_tiles = (nk + TS - 1) // TS
+    for s_tile in nb.prange(n_s_tiles):
+        s_lo = s_tile * TS
+        s_hi = min(s_lo + TS, nmo)
+        for k_tile in range(n_k_tiles):
+            k_lo = k_tile * TS
+            k_hi = min(k_lo + TS, nk)
+            for l in range(nl):
+                for r in range(nmo):
+                    for s in range(s_lo, s_hi):
+                        for k in range(k_lo, k_hi):
+                            out[s, l, r, k] = G[k0 + k, l0 + l, r, s]
 
 # --- Optional validation instrumentation for the cpp_casscf port -----------
 # When CPP_CASSCF_VALIDATION_DIR is set, a handful of trust-region solver
@@ -9151,6 +9228,39 @@ class PFHamiltonianGenerator:
                 r = self.index_map[j][0]
                 k = self.index_map[j][1]
                 sigma_reduced[i][j + pointer] = sigma_total[i][r][k]
+    def tiled_G_blocks(self, G):
+        """QED_G_TILED: the (G_ij, G_ti, G_tu) blocks, built by a tiled copy.
+
+        Drop-in replacement for the G.transpose(3,1,2,0) slice-and-reshape at
+        ~12070, producing BIT-IDENTICAL arrays with the same index convention
+        (rows (s,l), columns (r,k)) -- see the QED_G_TILED note at the top of the
+        file for why the numpy version only reaches 4.2 GB/s and this reaches
+        29.6.  Buffers are allocated on first use and reused thereafter.
+        """
+        ni = self.n_in_a
+        na = self.n_act_orb
+        nmo = self.nmo
+        # (l-range start, k-range start, nl, nk) for each block, matching the
+        # three quadrants the numpy path slices out.
+        spec = (
+            ("ij", 0, 0, ni, ni),
+            ("ti", ni, 0, na, ni),
+            ("tu", ni, ni, na, na),
+        )
+        bufs = getattr(self, "_g_tiled_bufs", None)
+        if bufs is None or bufs["dims"] != (nmo, ni, na):
+            bufs = {"dims": (nmo, ni, na)}
+            for name, _l0, _k0, nl, nk in spec:
+                bufs[name] = np.zeros((nmo, nl, nmo, nk))
+            self._g_tiled_bufs = bufs
+        out = []
+        for name, l0, k0, nl, nk in spec:
+            buf = bufs[name]
+            _transpose_G_block(G, buf, l0, k0, 32)
+            # free view: buf is C-contiguous, so this is a reshape, not a copy
+            out.append(buf.reshape(nmo * nl, nmo * nk))
+        return tuple(out)
+
     def orbital_sigma3(
         self, U, A_tilde, G_blocks, R_reduced, sigma_reduced, num_states, pointer
     ):
@@ -12012,16 +12122,21 @@ class PFHamiltonianGenerator:
             # the copies that actually cost.  The full (nmo*n_occupied) square
             # G1 used to be materialized here too -- a second, larger copy --
             # but every consumer now takes the blocks, so it is gone.
-            G_t = G.transpose(3, 1, 2, 0)
-            G_ij = G_t[:, :self.n_in_a, :, :self.n_in_a].reshape(
-                self.nmo * self.n_in_a, self.nmo * self.n_in_a    
-            )
-            G_ti = G_t[:, self.n_in_a:, :, :self.n_in_a].reshape(
-                self.nmo * self.n_act_orb, self.nmo * self.n_in_a    
-            )
-            G_tu = G_t[:, self.n_in_a:, :, self.n_in_a:].reshape(
-                self.nmo * self.n_act_orb, self.nmo * self.n_act_orb 
-            )
+            if _QED_G_TILED:
+                # Same three arrays, same index convention, bit-for-bit; only the
+                # copy loop differs.  See the QED_G_TILED note at the top.
+                G_ij, G_ti, G_tu = self.tiled_G_blocks(G)
+            else:
+                G_t = G.transpose(3, 1, 2, 0)
+                G_ij = G_t[:, :self.n_in_a, :, :self.n_in_a].reshape(
+                    self.nmo * self.n_in_a, self.nmo * self.n_in_a
+                )
+                G_ti = G_t[:, self.n_in_a:, :, :self.n_in_a].reshape(
+                    self.nmo * self.n_act_orb, self.nmo * self.n_in_a
+                )
+                G_tu = G_t[:, self.n_in_a:, :, self.n_in_a:].reshape(
+                    self.nmo * self.n_act_orb, self.nmo * self.n_act_orb
+                )
             G_blocks = (G_ij, G_ti, G_tu)
             # QED_G_SYM_CHECK: one-shot verification that the two diagonal
             # orbital-Hessian blocks are symmetric.  G_ij[(a,b),(c,d)] = G[d,b,c,a],
