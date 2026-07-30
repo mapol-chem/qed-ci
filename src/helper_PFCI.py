@@ -362,6 +362,45 @@ _QED_G_SYMV = int(os.environ.get("QED_G_SYMV", "0"))
 # the legs' final energies differ either way.  QED_G_TILED_CHECK is what proves
 # it; set QED_G_TILED=0 to fall back to the numpy path.
 _QED_G_TILED = int(os.environ.get("QED_G_TILED", "1"))
+#
+#   QED_BI_FASTPATH : the two uniform hotspots of build_intermediates (default 0)
+#
+# QED_PROFILE_INTERMEDIATES on c10h8 (103 calls, 28.27 s, and the BI_PROF marks
+# sum to the printed total exactly, so nothing hides between them):
+#     G_ij_plus_2L    10.03 s   0.0974 s/call   min 0.0939 max 0.1192
+#     G_ti_D_times_L   6.93 s   0.0673 s/call   min 0.0635 max 0.1185
+#     L_build          5.59 s   but only 19 of 103 calls rebuild (cache works)
+# The first two are paid on EVERY call -- 17.0 s of a 244 s optimization -- and
+# both were running an order of magnitude under the memory system:
+#
+#   :6813  G[:ni,:ni,:,:] = 2.0 * self.L[:ni,:,:,:]
+#          The `2.0 *` materializes a full 218 MB temporary, which is then copied
+#          into a STRIDED destination (G's axis 1 has extent n_occupied=39, the
+#          slice takes n_in_a=29).  So four passes over 218 MB instead of two:
+#          measured 6.0 GB/s against this box's 43 GB/s memcpy floor.
+#          np.multiply(..., out=...) writes straight through.  Multiplying by 2.0
+#          is EXACT in binary floating point, so this variant is bit-identical --
+#          measured dev exactly 0.0, not merely small.
+#
+#   :6824  G[ni:no,:ni,:,:] = einsum("tv,vjrs->tjrs", D_tu_avg, L[ni:])
+#          A (10,10) matrix against a 75 MB tensor.  L[ni:] is contiguous, so
+#          this is a clean GEMM once reshaped to (n_act, n_in*rot*rot) -- no
+#          transpose needed -- and einsum was getting 2.4 GB/s.
+#
+# Standalone at c10h8 dims: 4.26x and 4.07x respectively.  Note that np.dot into
+# a FRESH array is only 1.67x while np.dot into a PERSISTENT buffer is 4.07x --
+# allocating and first-touching 75 MB every call costs more than the BLAS does,
+# the same effect that makes QED_G_TILED reuse its buffers.  np.dot requires a
+# C-contiguous out=, and G's destination slice is strided, hence buffer + copy.
+#
+# NOT bit-exact on the second site: BLAS and einsum sum in different orders, so
+# expect ~1e-16 relative there (measured 3.5e-16).  Same class of change as
+# QED_G_SYMV, which moved the final c10h8 energy by 5.7e-12.
+#
+# Standalone ratios are optimistic -- this probe's process holds none of the real
+# run's 33 GB (QED_G_TILED measured 7.01x standalone and 3.57x in situ), so treat
+# these as an upper bound until the c10h8 A/B is run.
+_QED_BI_FASTPATH = int(os.environ.get("QED_BI_FASTPATH", "0"))
 import numba as nb
 from scipy.linalg import eigh, cho_factor, cho_solve, solve_triangular
 import ctypes as _ctypes
@@ -6810,7 +6849,16 @@ class PFHamiltonianGenerator:
         # only.  Algebraically identical (fancy-indexing (i,i) pairs are unique,
         # so the += is a well-defined gather/scatter), 7.5 MB of adds instead of
         # a 218 MB einsum.
-        G[: self.n_in_a, : self.n_in_a, :, :] = 2.0 * self.L[: self.n_in_a, :, :, :]
+        if _QED_BI_FASTPATH:
+            # Same values, bit-for-bit (x2.0 is exact); the temporary is gone.
+            # See the QED_BI_FASTPATH note at the top of the file.
+            np.multiply(
+                self.L[: self.n_in_a, :, :, :],
+                2.0,
+                out=G[: self.n_in_a, : self.n_in_a, :, :],
+            )
+        else:
+            G[: self.n_in_a, : self.n_in_a, :, :] = 2.0 * self.L[: self.n_in_a, :, :, :]
         _bi_mark("G_ij_plus_2L")
         _ii = np.arange(self.n_in_a)
         G[_ii, _ii, :, :] += 2.0 * temp2
@@ -6821,12 +6869,34 @@ class PFHamiltonianGenerator:
         # print("build intermediate step 7", end - start)
 
         # start = timer()
-        G[self.n_in_a : self.n_occupied, : self.n_in_a, :, :] = np.einsum(
-            "tv,vjrs->tjrs",
-            D_tu_avg,
-            self.L[self.n_in_a :, :, :, :],
-            optimize="optimal",
-        )
+        if _QED_BI_FASTPATH:
+            # "tv,vjrs->tjrs" with v contracted and t free is a plain GEMM once
+            # the (v, j, r, s) block is flattened: self.L[n_in_a:] slices only
+            # axis 0 of a C-contiguous array, so the reshape below is a free
+            # view and no transpose is needed.  np.dot demands a C-contiguous
+            # out=, and G's destination is a strided slice, so the product lands
+            # in a buffer that is allocated once and reused -- writing into a
+            # fresh 75 MB array every call costs more than the GEMM (1.67x vs
+            # 4.07x standalone).  See the QED_BI_FASTPATH note at the top.
+            _La = self.L[self.n_in_a :, :, :, :]
+            _buf = getattr(self, "_bi_gti_buf", None)
+            if _buf is None or _buf.shape != _La.shape:
+                _buf = np.zeros(_La.shape)
+                self._bi_gti_buf = _buf
+            _nv = _La.shape[0]
+            np.dot(
+                D_tu_avg,
+                _La.reshape(_nv, -1),
+                out=_buf.reshape(_nv, -1),
+            )
+            G[self.n_in_a : self.n_occupied, : self.n_in_a, :, :] = _buf
+        else:
+            G[self.n_in_a : self.n_occupied, : self.n_in_a, :, :] = np.einsum(
+                "tv,vjrs->tjrs",
+                D_tu_avg,
+                self.L[self.n_in_a :, :, :, :],
+                optimize="optimal",
+            )
         _bi_mark("G_ti_D_times_L")
         # end   = timer()
         # print("build intermediate step 8", end - start)
