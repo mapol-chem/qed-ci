@@ -363,7 +363,7 @@ _QED_G_SYMV = int(os.environ.get("QED_G_SYMV", "0"))
 # it; set QED_G_TILED=0 to fall back to the numpy path.
 _QED_G_TILED = int(os.environ.get("QED_G_TILED", "1"))
 #
-#   QED_BI_FASTPATH : the two uniform hotspots of build_intermediates (default 0)
+#   QED_BI_FASTPATH : the two uniform hotspots of build_intermediates (default 1)
 #
 # QED_PROFILE_INTERMEDIATES on c10h8 (103 calls, 28.27 s, and the BI_PROF marks
 # sum to the printed total exactly, so nothing hides between them):
@@ -397,10 +397,22 @@ _QED_G_TILED = int(os.environ.get("QED_G_TILED", "1"))
 # expect ~1e-16 relative there (measured 3.5e-16).  Same class of change as
 # QED_G_SYMV, which moved the final c10h8 energy by 5.7e-12.
 #
-# Standalone ratios are optimistic -- this probe's process holds none of the real
-# run's 33 GB (QED_G_TILED measured 7.01x standalone and 3.57x in situ), so treat
-# these as an upper bound until the c10h8 A/B is run.
-_QED_BI_FASTPATH = int(os.environ.get("QED_BI_FASTPATH", "0"))
+# DEFAULT ON since the c10h8 A/B of 2026-07-30, both legs back to back with the
+# profiler on and the baseline re-measured in-session:
+#     G_ij_plus_2L         10.06 -> 2.21 s    4.55x
+#     G_ti_D_times_L        6.89 -> 1.85 s    3.72x
+#     build intermediates  28.82 -> 15.59 s   -46%
+#     optimization took   251.06 -> 229.49 s  -8.6%
+#     10 macros both; energy -383.5044493792576 vs ...574 (2e-13)
+# Every other BI_PROF section came in at 1.00-1.06x, which is what confines the
+# effect to the two edited statements.  Set QED_BI_FASTPATH=0 to fall back.
+#
+# NOTE that the standalone probe UNDERSTATED this (4.26x -> 4.55x in situ),
+# the reverse of QED_G_TILED (7.01x standalone -> 3.57x in situ).  The rule is
+# not "standalone is always optimistic": removing ALLOCATIONS pays MORE under the
+# real run's memory pressure, while merely reordering ACCESS pays less.  Classify
+# which kind of fix it is before trusting a standalone number.
+_QED_BI_FASTPATH = int(os.environ.get("QED_BI_FASTPATH", "1"))
 import numba as nb
 from scipy.linalg import eigh, cho_factor, cho_solve, solve_triangular
 import ctypes as _ctypes
