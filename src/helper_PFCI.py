@@ -318,7 +318,16 @@ _QED_JD_TOL = float(os.environ.get("QED_JD_TOL", "0.1"))
 # one 218 MB dgemm pass -- a large loss.  2083 of the 2085 real matvecs in a
 # c10h8 run are single-vector, so the gate costs almost nothing.  (A blocked
 # dsymm would cover both cases and is the natural extension.)
-_QED_G_SYMV = int(os.environ.get("QED_G_SYMV", "0"))
+#
+# DEFAULT ON since 2026-07-30.  The knob had been held at 0 for one reason only:
+# the ctypes binding cost 5.6 s of numba recompile per process, which cancelled
+# the -6.6 s it saves on matvec (c10h8 A/B: matvec wall 36.04 -> 29.47 s, -18.2%,
+# but `optimization took` moved only 255.23 -> 254.27 s).  That penalty is gone
+# now that dsymv is bound BY SYMBOL NAME -- see the _symv_accumulate note below --
+# so the matvec cut reaches the wall clock instead of paying for a recompile.
+# The switch to MKL's dsymv_ that the symbol binding implies was verified
+# BIT-IDENTICAL to the previous scipy/cython_blas path (max|d| exactly 0.0).
+_QED_G_SYMV = int(os.environ.get("QED_G_SYMV", "1"))
 #
 #   QED_G_TILED : blocked build of the G_ij/G_ti/G_tu blocks   (default 0 = off)
 #
@@ -416,29 +425,73 @@ _QED_BI_FASTPATH = int(os.environ.get("QED_BI_FASTPATH", "1"))
 import numba as nb
 from scipy.linalg import eigh, cho_factor, cho_solve, solve_triangular
 import ctypes as _ctypes
-from numba.extending import get_cython_function_address as _nb_cython_addr
+import llvmlite.binding as _llvm
+from numba import types as _nbtypes
 
 # _symv_accumulate(A, x, y) computes y += A @ x for a symmetric, C-contiguous A.
 #
-# THE ctypes POINTER IS BOUND ONLY WHEN THE KNOB IS ON, AND THAT IS DELIBERATE.
-# A nopython function holding a ctypes address is a "dynamic global": numba
-# refuses to write it to the on-disk cache (it would bake an absolute address
-# that ASLR invalidates in the next process), and that refusal PROPAGATES to
-# build_sigma_reduced7/_8, which reference this helper.  Losing their cache
-# costs a MEASURED 5.6 s of recompilation per process (warm import 2.26 s ->
-# 7.79 s) -- comparable to everything the knob saves on a single c10h8 run.  So
-# when QED_G_SYMV is off the helper is a plain dgemv accumulate with no ctypes
-# anywhere, the big functions stay cacheable, and the default path is exactly
-# what it was.  Turning the knob on trades that 5.6 s for the 2.4x.
-if _QED_G_SYMV:
+# dsymv IS BOUND BY SYMBOL NAME, AND UNCONDITIONALLY.  Two bugs are designed out
+# here; both were real and both are described in the QED_G_SYMV note above.
+#
+# (1) THE CACHE PENALTY.  This used to bind dsymv through a ctypes address
+#     obtained from get_cython_function_address.  A nopython function holding a
+#     ctypes address is a "dynamic global": numba refuses to write it to the
+#     on-disk cache (it would bake an absolute address that ASLR invalidates in
+#     the next process) and the refusal PROPAGATES to build_sigma_reduced7/_8,
+#     which reference this helper -- a MEASURED 5.6 s of recompile per process,
+#     comparable to everything the knob saved on one c10h8 run.  A symbol-name
+#     binding puts no address in the IR, so cache=True survives; verified by the
+#     artifacts appearing on disk and a cold second process loading them.
+#
+# (2) THE SILENTLY-INERT KNOB.  Numba's cache key is a function's own source, NOT
+#     which helper the module bound, so gating the BINDING on the knob meant a
+#     knob-on process could load an artifact compiled against the dgemv stand-in
+#     and do nothing at all -- silently, since both variants compute the same
+#     numbers.  That is why the decorators used to carry cache=(_QED_G_SYMV==0).
+#     Binding dsymv ALWAYS removes the ambiguity at the root: there is now only
+#     one _symv_accumulate, so build_sigma_reduced7/_8 have one cached artifact
+#     that is correct for either setting, and QED_G_SYMV is a pure RUNTIME flag
+#     (the `use_symv` argument, tested at the call site).  Nothing is lost by
+#     binding when the knob is off: with use_symv == 0 the branch is never taken.
+#
+# WHICH LIBRARY.  scipy.linalg.cython_blas exports no ELF symbol for dsymv (it
+# publishes Cython capsules), so binding by name necessarily means binding a real
+# BLAS .so.  libmkl_rt is already resident in any process that imports psi4, is
+# what ci_solver.c/orbital.c link against, and exports `dsymv_` in the LP64
+# interface -- 32-bit int, which is exactly what the marshalling below already
+# assumed.  (It also exports the ILP64 `dsymv_64_`; do NOT bind that one without
+# widening the integers.)  Measured against the previous ctypes path at c10h8
+# dims: BIT-IDENTICAL output, max|d| exactly 0.0, and the same speed (2.02 vs
+# 1.90 ms, both ~55 GB/s on the triangle, against 4.98 ms for the full dgemv).
+def _find_dsymv_library():
+    """First libmkl_rt that loads; None if there is none."""
+    for _cand in (
+        os.path.join(sys.prefix, "lib", "libmkl_rt.so.2"),
+        os.path.join(sys.prefix, "lib", "libmkl_rt.so.1"),
+        os.path.join(sys.prefix, "lib", "libmkl_rt.so"),
+        "libmkl_rt.so.2",
+        "libmkl_rt.so",
+    ):
+        try:
+            _ctypes.CDLL(_cand)
+            return _cand
+        except OSError:
+            continue
+    return None
+
+
+_DSYMV_LIB = _find_dsymv_library()
+if _DSYMV_LIB is not None:
+    _llvm.load_library_permanently(_DSYMV_LIB)
     #   void dsymv(char *uplo, int *n, double *alpha, double *a, int *lda,
     #              double *x, int *incx, double *beta, double *y, int *incy)
     # Fortran BLAS takes everything by reference, so every argument goes over as
     # a void* and the scalars have to be handed over as one-element arrays.
-    _dsymv_addr = _nb_cython_addr("scipy.linalg.cython_blas", "dsymv")
-    _raw_dsymv = _ctypes.CFUNCTYPE(None, *([_ctypes.c_void_p] * 10))(_dsymv_addr)
+    _dsymv = _nbtypes.ExternalFunction(
+        "dsymv_", _nbtypes.void(*([_nbtypes.voidptr] * 10))
+    )
 
-    @nb.njit(fastmath=True, cache=False)
+    @nb.njit(fastmath=True, cache=True)
     def _symv_accumulate(A, x, y):
         """y += A @ x, reading one triangle of A only.
 
@@ -457,7 +510,7 @@ if _QED_G_SYMV:
         _beta[0] = 1.0
         _uplo = np.empty(1, dtype=np.uint8)
         _uplo[0] = 76  # ord('L')
-        _raw_dsymv(
+        _dsymv(
             _uplo.ctypes.data,
             _n.ctypes.data,
             _alpha.ctypes.data,
@@ -470,14 +523,14 @@ if _QED_G_SYMV:
             _inc.ctypes.data,
         )
 else:
+    # No MKL: fall back to dgemv and force the knob off, so a machine without it
+    # runs the documented default path rather than a symmetric product that is
+    # silently reading the whole matrix anyway.
+    _QED_G_SYMV = 0
+
     @nb.njit(fastmath=True, cache=True)
     def _symv_accumulate(A, x, y):
-        """Cacheable stand-in: same result via dgemv, reading all of A.
-
-        Never executed with the knob off (the call sites also test use_symv at
-        run time); it exists so the call sites still type-check without pulling a
-        ctypes pointer into their compilation.
-        """
+        """Stand-in with identical results via dgemv, reading all of A."""
         y += np.dot(x, A)
 
 
@@ -9622,14 +9675,16 @@ class PFHamiltonianGenerator:
         """void(float64[:,::1], float64[:,::1], int64[:,::1], float64[:,::1], float64[:,::1], float64[:,::1], float64[:,::1], float64[:,::1],
             int64, int64, int64, int64, int64, int64, int64, int64)""",
         nopython=True,
-        # cache=False WHEN QED_G_SYMV IS ON, AND THAT IS NOT COSMETIC.  Numba's
-        # cache key is the function's own source and signature; it does NOT see
-        # which _symv_accumulate variant the module bound.  Leaving cache=True
-        # therefore loads an artifact compiled against the dgemv stand-in and the
-        # knob does nothing at all -- silently, since both variants compute the
-        # same numbers.  Measured: with cache=True the knob-on import was 2.2 s
-        # (a cache hit) instead of the ~8 s a real recompile takes.
-        cache=(_QED_G_SYMV == 0),
+        # cache=True unconditionally.  This used to be cache=(_QED_G_SYMV == 0),
+        # because numba's cache key is the function's own source and does NOT see
+        # which _symv_accumulate the module bound -- so a knob-on process could
+        # load an artifact compiled against the dgemv stand-in and the knob would
+        # do nothing, silently, both variants computing the same numbers.  That
+        # is fixed at the root: dsymv is now bound by SYMBOL NAME and
+        # UNCONDITIONALLY, so there is exactly one _symv_accumulate and one
+        # correct artifact, and QED_G_SYMV only selects a branch at run time via
+        # the use_symv argument.  See the _symv_accumulate note.
+        cache=True,
         fastmath=True,
         parallel=False,
     )
@@ -9707,8 +9762,8 @@ class PFHamiltonianGenerator:
         # QED_G_SYMV arrives as the runtime argument use_symv rather than being
         # read from the module global, so both settings compile from identical
         # source and nothing here depends on numba's branch pruning.  What keeps
-        # the on-disk cache honest is cache=(_QED_G_SYMV == 0) on the decorator --
-        # see the note there.  G_ij is symmetric, so dsymv reads one 109 MB
+        # the on-disk cache honest is that dsymv is bound unconditionally and by
+        # symbol name -- see the note there.  G_ij is symmetric, so dsymv reads one 109 MB
         # triangle where dgemv reads the whole 218 MB square: measured 2.40x on
         # this term at c10h8 dims.  See the module-level QED_G_SYMV note for why
         # this is gated on num_states == 1.
@@ -18654,7 +18709,7 @@ class PFHamiltonianGenerator:
         """float64[::1](float64[:,::1], float64[:,::1], int64[:,::1], float64[:,::1], float64[:,::1], float64[:,::1], float64[:,::1],
             int64, int64, int64, int64, int64, int64, int64, float64, int64)""",
         nopython=True,
-        cache=(_QED_G_SYMV == 0),   # see build_sigma_reduced7 for why
+        cache=True,   # see build_sigma_reduced7 / _symv_accumulate for why
         fastmath=True,
         parallel=False,
     )
