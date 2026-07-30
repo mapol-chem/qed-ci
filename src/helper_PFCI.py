@@ -278,8 +278,96 @@ _QED_MV_BENCH = int(os.environ.get("QED_MV_BENCH", "0"))
 # worth it if it removes more outer iterations than the inner ones it adds.
 _QED_JD_MAXITER = int(os.environ.get("QED_JD_MAXITER", "5"))
 _QED_JD_TOL = float(os.environ.get("QED_JD_TOL", "0.1"))
+#
+#   QED_G_SYMV : exploit the symmetry of G_ij in the matvec   (default 0 = off)
+#
+# The Hessian-vector product is memory-bandwidth bound at MACHINE PEAK, not
+# compute bound: at c10h8 dims (nmo=180, n_in_a=29, n_act_orb=10) the four GEMMs
+# at :9397-9400 stream 0.394 GB for ~54 MFLOP -- 0.25 flop/byte -- and measure
+# 48 GB/s, which is all this box has.  So the only way to make it faster is to
+# read fewer bytes, and the numbers say exactly where:
+#     G_ij  218 MB  read once   4.48 ms   <- 59% of the whole matvec
+#     G_ti   75 MB  read twice  1.74 ms      (fits in the 36 MB L3 on the
+#     G_tu   26 MB  read once   0.30 ms       second pass, so it is cheap)
+#     non-GEMM code in build_sigma_reduced7   0.59 ms (7.2%)
+# G_ij is SYMMETRIC to 1 ulp (verify with QED_G_SYM_CHECK; see the note at the
+# G_blocks build site), so a symmetric product reads one 109 MB triangle instead
+# of the full 218 MB square.  Measured 2.40x on that term: 4.49 -> 1.87 ms.
+#
+# numba's np.dot always lowers to dgemm/dgemv and has no symmetric form, so
+# dsymv is bound by hand below.  Gated on num_states == 1: a batched call would
+# have to stream the triangle once PER VECTOR (dsymv is a matrix-VECTOR product),
+# which for the 41-vector Davidson cold-build guess would be 41 x 109 MB against
+# one 218 MB dgemm pass -- a large loss.  2083 of the 2085 real matvecs in a
+# c10h8 run are single-vector, so the gate costs almost nothing.  (A blocked
+# dsymm would cover both cases and is the natural extension.)
+_QED_G_SYMV = int(os.environ.get("QED_G_SYMV", "0"))
 import numba as nb
 from scipy.linalg import eigh, cho_factor, cho_solve, solve_triangular
+import ctypes as _ctypes
+from numba.extending import get_cython_function_address as _nb_cython_addr
+
+# _symv_accumulate(A, x, y) computes y += A @ x for a symmetric, C-contiguous A.
+#
+# THE ctypes POINTER IS BOUND ONLY WHEN THE KNOB IS ON, AND THAT IS DELIBERATE.
+# A nopython function holding a ctypes address is a "dynamic global": numba
+# refuses to write it to the on-disk cache (it would bake an absolute address
+# that ASLR invalidates in the next process), and that refusal PROPAGATES to
+# build_sigma_reduced7/_8, which reference this helper.  Losing their cache
+# costs a MEASURED 5.6 s of recompilation per process (warm import 2.26 s ->
+# 7.79 s) -- comparable to everything the knob saves on a single c10h8 run.  So
+# when QED_G_SYMV is off the helper is a plain dgemv accumulate with no ctypes
+# anywhere, the big functions stay cacheable, and the default path is exactly
+# what it was.  Turning the knob on trades that 5.6 s for the 2.4x.
+if _QED_G_SYMV:
+    #   void dsymv(char *uplo, int *n, double *alpha, double *a, int *lda,
+    #              double *x, int *incx, double *beta, double *y, int *incy)
+    # Fortran BLAS takes everything by reference, so every argument goes over as
+    # a void* and the scalars have to be handed over as one-element arrays.
+    _dsymv_addr = _nb_cython_addr("scipy.linalg.cython_blas", "dsymv")
+    _raw_dsymv = _ctypes.CFUNCTYPE(None, *([_ctypes.c_void_p] * 10))(_dsymv_addr)
+
+    @nb.njit(fastmath=True, cache=False)
+    def _symv_accumulate(A, x, y):
+        """y += A @ x, reading one triangle of A only.
+
+        BLAS is column-major and A here is row-major, but a symmetric matrix is
+        its own transpose, so the same bytes serve both interpretations and no
+        copy is needed -- 'L' and 'U' merely swap which physical triangle gets
+        touched.  beta=1.0 accumulates into y in place, so nothing is allocated.
+        """
+        _n = np.empty(1, dtype=np.int32)
+        _n[0] = A.shape[0]
+        _inc = np.empty(1, dtype=np.int32)
+        _inc[0] = 1
+        _alpha = np.empty(1, dtype=np.float64)
+        _alpha[0] = 1.0
+        _beta = np.empty(1, dtype=np.float64)
+        _beta[0] = 1.0
+        _uplo = np.empty(1, dtype=np.uint8)
+        _uplo[0] = 76  # ord('L')
+        _raw_dsymv(
+            _uplo.ctypes.data,
+            _n.ctypes.data,
+            _alpha.ctypes.data,
+            A.ctypes.data,
+            _n.ctypes.data,   # lda == n: A is a contiguous square block
+            x.ctypes.data,
+            _inc.ctypes.data,
+            _beta.ctypes.data,
+            y.ctypes.data,
+            _inc.ctypes.data,
+        )
+else:
+    @nb.njit(fastmath=True, cache=True)
+    def _symv_accumulate(A, x, y):
+        """Cacheable stand-in: same result via dgemv, reading all of A.
+
+        Never executed with the knob off (the call sites also test use_symv at
+        run time); it exists so the call sites still type-check without pulling a
+        ctypes pointer into their compilation.
+        """
+        y += np.dot(x, A)
 
 # --- Optional validation instrumentation for the cpp_casscf port -----------
 # When CPP_CASSCF_VALIDATION_DIR is set, a handful of trust-region solver
@@ -9098,7 +9186,8 @@ class PFHamiltonianGenerator:
             index_map_size,
             n_occupied,
             n_inactive,
-            n_active
+            n_active,
+            _QED_G_SYMV,
         )
         if _QED_SOLVER_STATS:
             # builds num_states Hessian-vector products in one call; the timed
@@ -9323,9 +9412,16 @@ class PFHamiltonianGenerator:
     @staticmethod
     @nb.jit(
         """void(float64[:,::1], float64[:,::1], int64[:,::1], float64[:,::1], float64[:,::1], float64[:,::1], float64[:,::1], float64[:,::1],
-            int64, int64, int64, int64, int64, int64, int64)""",
+            int64, int64, int64, int64, int64, int64, int64, int64)""",
         nopython=True,
-        cache=True,
+        # cache=False WHEN QED_G_SYMV IS ON, AND THAT IS NOT COSMETIC.  Numba's
+        # cache key is the function's own source and signature; it does NOT see
+        # which _symv_accumulate variant the module bound.  Leaving cache=True
+        # therefore loads an artifact compiled against the dgemv stand-in and the
+        # knob does nothing at all -- silently, since both variants compute the
+        # same numbers.  Measured: with cache=True the knob-on import was 2.2 s
+        # (a cache hit) instead of the ~8 s a real recompile takes.
+        cache=(_QED_G_SYMV == 0),
         fastmath=True,
         parallel=False,
     )
@@ -9344,13 +9440,19 @@ class PFHamiltonianGenerator:
         index_map_size,
         n_occupied,
         n_inactive,
-        n_active
+        n_active,
+        use_symv,
     ):
 
         assert U.shape == (nmo, nmo)
         assert A_tilde.shape == (nmo, nmo)
         R_total = np.zeros((num_states, nmo, n_occupied))
-        print("num_states", num_states)
+        # A debug `print("num_states", num_states)` used to sit here.  In a
+        # nopython function that is one GIL acquisition + one write per
+        # Hessian-vector product: measured at 0.27 ms of an 8.18 ms call, i.e.
+        # 0.6 s over the 2083 single-vector matvecs of a c10h8 run, and ~2000
+        # lines of a 21 MB log.  (The same print remains in the retired
+        # build_sigma_reduced4 above, which has no live caller.)
         #for j in nb.prange(index_map_size):
         for j in range(index_map_size):
             r = index_map[j][0]
@@ -9392,10 +9494,22 @@ class PFHamiltonianGenerator:
         # 3. Perform the cache-friendly blocked matrix multiplication.
         # We use the G_ij, G_ti, G_tu blocks you passed in.
         # We use the symmetry G_it = G_ti.T
-        
+
         # Calculate the inactive block of sigma: (num_states, nmo * n_inactive)
-        sigma_i = np.dot(R1_i, G_ij) + np.dot(R1_a, G_ti)
-        
+        # QED_G_SYMV arrives as the runtime argument use_symv rather than being
+        # read from the module global, so both settings compile from identical
+        # source and nothing here depends on numba's branch pruning.  What keeps
+        # the on-disk cache honest is cache=(_QED_G_SYMV == 0) on the decorator --
+        # see the note there.  G_ij is symmetric, so dsymv reads one 109 MB
+        # triangle where dgemv reads the whole 218 MB square: measured 2.40x on
+        # this term at c10h8 dims.  See the module-level QED_G_SYMV note for why
+        # this is gated on num_states == 1.
+        if use_symv == 1 and num_states == 1:
+            sigma_i = np.dot(R1_a, G_ti)
+            _symv_accumulate(G_ij, R1_i[0], sigma_i[0])
+        else:
+            sigma_i = np.dot(R1_i, G_ij) + np.dot(R1_a, G_ti)
+
         # Calculate the active block of sigma: (num_states, nmo * n_active)
         sigma_a = np.dot(R1_i, G_ti.T) + np.dot(R1_a, G_tu)
 
@@ -11909,6 +12023,28 @@ class PFHamiltonianGenerator:
                 self.nmo * self.n_act_orb, self.nmo * self.n_act_orb 
             )
             G_blocks = (G_ij, G_ti, G_tu)
+            # QED_G_SYM_CHECK: one-shot verification that the two diagonal
+            # orbital-Hessian blocks are symmetric.  G_ij[(a,b),(c,d)] = G[d,b,c,a],
+            # so this is the statement G[p,q,r,s] == G[q,p,s,r]; the code already
+            # relies on the off-diagonal half of it by writing G_it as G_ti.T at
+            # :9400.  Measured on H2O 6-31g CAS(6,5), 3 roots, cavity on:
+            # rel max|B-B.T| = 2.8e-16 for G_ij and 2.3e-16 for G_tu, i.e. 1 ulp.
+            # This matters because the matvec is memory-bandwidth bound at machine
+            # peak (48 GB/s on the 218 MB G_ij at c10h8 dims), so a symmetric
+            # product that reads only one triangle is a measured 2.4x on the
+            # dominant term -- see the QED_G_SYMV note at the top of the file.
+            if int(os.environ.get("QED_G_SYM_CHECK", "0")) and not getattr(
+                self, "_g_sym_checked", False
+            ):
+                self._g_sym_checked = True
+                for _nm, _B in (("G_ij", G_ij), ("G_tu", G_tu)):
+                    _s = np.abs(_B).max()
+                    _d = np.abs(_B - _B.T).max()
+                    print(
+                        f"[G_SYM_CHECK] {_nm} {_B.shape} max|B|={_s:.6e} "
+                        f"max|B-B.T|={_d:.6e} rel={_d/max(_s,1e-300):.3e}",
+                        flush=True,
+                    )
             end1 = timer()
             print("transpose matrix G took", end1 - start1)
             start1 = timer()
@@ -18259,6 +18395,7 @@ class PFHamiltonianGenerator:
             n_inactive,
             n_active,
             eigval,
+            _QED_G_SYMV,
         )
         if _QED_SOLVER_STATS:
             _solver_stats.matvec(1, timer() - _mv_t0)
@@ -18267,9 +18404,9 @@ class PFHamiltonianGenerator:
     @staticmethod
     @nb.jit(
         """float64[::1](float64[:,::1], float64[:,::1], int64[:,::1], float64[:,::1], float64[:,::1], float64[:,::1], float64[:,::1],
-            int64, int64, int64, int64, int64, int64, int64, float64)""",
+            int64, int64, int64, int64, int64, int64, int64, float64, int64)""",
         nopython=True,
-        cache=True,
+        cache=(_QED_G_SYMV == 0),   # see build_sigma_reduced7 for why
         fastmath=True,
         parallel=False,
     )
@@ -18289,6 +18426,7 @@ class PFHamiltonianGenerator:
         n_inactive,
         n_active,
         eigval,
+        use_symv,
     ):
         assert U.shape == (nmo, nmo)
         assert A_tilde.shape == (nmo, nmo)
@@ -18356,7 +18494,15 @@ class PFHamiltonianGenerator:
         R1_i = R_i_tensor.copy().reshape(num_states, nmo * n_inactive)
         R1_a = R_a_tensor.copy().reshape(num_states, nmo * n_active)
 
-        sigma_i = np.dot(R1_i, G_ij) + np.dot(R1_a, G_ti)
+        # QED_G_SYMV, as in build_sigma_reduced7 -- see the note there and the
+        # module-level block.  mv2 always passes num_states == 1, so the gate is
+        # always taken when the knob is on; it is written the same way as the
+        # twin so the two stay comparable.
+        if use_symv == 1 and num_states == 1:
+            sigma_i = np.dot(R1_a, G_ti)
+            _symv_accumulate(G_ij, R1_i[0], sigma_i[0])
+        else:
+            sigma_i = np.dot(R1_i, G_ij) + np.dot(R1_a, G_ti)
         sigma_a = np.dot(R1_i, G_ti.T) + np.dot(R1_a, G_tu)
 
         temp2 = np.zeros((num_states, nmo, n_occupied))
