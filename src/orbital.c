@@ -16,8 +16,14 @@ void full_transformation_macroiteration(double* U, double* h2e, double* J, doubl
     memset(h2e_half, 0, nmo_t *(nmo_t+1)/2 * nmo_t * nmo_t * sizeof(double));
     double* temp1 = (double*) malloc((size_t) nmo_t *(nmo_t+1)/2 * nmo_t * n_occupied_t * sizeof(double));
     memset(temp1, 0, nmo_t *(nmo_t+1)/2 * nmo_t * n_occupied_t * sizeof(double));
-    double* temp2 = (double*) malloc((size_t) nmo_t *(nmo_t+1)/2 * nmo_t * n_occupied_t * sizeof(double));
-    memset(temp2, 0, nmo_t *(nmo_t+1)/2 * nmo_t * n_occupied_t * sizeof(double));
+    // temp2 removed: it was malloc'd + memset here but every use of it is
+    // commented out (the reference loops at ~66 and ~390 that checked temp1
+    // against a hand-written contraction), and free(temp2) below was commented
+    // out too -- so it was nmo*(nmo+1)/2 * nmo * n_occupied doubles of leak per
+    // call, 915 MB at c10h8 dims (nmo=180, n_occupied=39), x10 macroiterations
+    // = 9.2 GB of the 33.1 GB peak RSS, plus a 915 MB memset per call.
+    // The commented-out reference loops are kept as-is; they declare their own
+    // temp2 inside the comment, so reviving one means reviving its alloc.
     //for (size_t pq_up = 0; pq_up < nmo_t*(nmo_t+1)/2; pq_up++) {
     //    size_t stride = pq_up * 2;
     //    size_t p = index_map_pq[stride];
@@ -27,32 +33,86 @@ void full_transformation_macroiteration(double* U, double* h2e, double* J, doubl
     //}
 
 
-    #pragma omp parallel for
-    for (size_t pq_up = 0; pq_up < nmo_t*(nmo_t+1)/2; pq_up++) {
-	size_t stride = pq_up * 2;
-        size_t p = index_map_pq[stride];
-        size_t q = index_map_pq[stride+1];
-	//size_t pq = p * nmo_t + q;
-	//print("%4d%4d%4d\n", pq_up, p , q);
-        for (size_t r = 0; r < nmo_t; r++) {
-            for (size_t s = 0; s < nmo_t; s++) {
-		size_t rs = r * nmo_t + s;
-		size_t pr = p * nmo_t + r;
-		size_t qs = q * nmo_t + s;
-	        h2e_half[pq_up * nmo_t * nmo_t + rs] = h2e[pr * nmo_t * nmo_t + qs];
-	    }
-	}
+    /* PACKED h2e.  h2e is (npair, npair), npair = nmo(nmo+1)/2, with BOTH the
+       bra and the ket pair folded onto p >= q by the 8-fold symmetry --
+       2.12 GB instead of 8.40 at c10h8 dims.  Row `pq_up` is exactly the pair
+       index_map_pq[pq_up] names, because the Python packer uses that same
+       ordering (smaller index in the OUTER loop), so there is no bra-side
+       lookup here at all.
+       pidx[a*nmo + b] inverts it for the ket and for step 1's regrouping. */
+    size_t npair = nmo_t * (nmo_t + 1) / 2;
+    int* pidx = (int*) malloc(nmo_t * nmo_t * sizeof(int));
+    for (size_t i = 0; i < npair; i++) {
+        size_t p = (size_t) index_map_pq[2*i];
+        size_t q = (size_t) index_map_pq[2*i+1];
+        pidx[p*nmo_t + q] = (int) i;
+        pidx[q*nmo_t + p] = (int) i;
     }
-    #pragma omp parallel for
-    for (size_t pq_up = 0; pq_up < nmo_t*(nmo_t+1)/2; pq_up++) {
-        size_t stride = pq_up * 2;
-        size_t p = index_map_pq[stride];
-        size_t q = index_map_pq[stride+1];
-	size_t pq = p * nmo_t + q;
 
-        cblas_dgemm(CblasRowMajor, CblasNoTrans, CblasNoTrans, nmo_t, n_occupied_t, nmo_t, 1.0, h2e+pq*nmo_t*nmo_t,
-                  nmo_t, U, nmo_t, 0.0,
-                  temp1+pq_up*nmo_t*n_occupied_t, n_occupied_t);
+    /* Step 1, regrouped.  h2e_half[pq_up][r][s] = (p r | q s) with
+       (p,q) = index_map_pq[pq_up].  Reading that straight out of packed
+       storage would gather non-contiguously in s, so the loop is turned
+       inside out to run over the BRA pair (p,r) instead: unpack row PR once
+       into a thread-local nmo x nmo scratch (259 KB, L2-resident), then
+       memcpy contiguous nmo-runs out to both placements of the pair.
+       Reads drop from 4.22 GB to 2.12 GB; writes stay 4.22 GB but become
+       1440-byte scattered runs instead of one sequential sweep. */
+    #pragma omp parallel
+    {
+        double* scr = (double*) malloc(nmo_t * nmo_t * sizeof(double));
+        #pragma omp for
+        for (size_t PR = 0; PR < npair; PR++) {
+            size_t a = (size_t) index_map_pq[2*PR];      /* a >= b */
+            size_t b = (size_t) index_map_pq[2*PR+1];
+            const double* row = h2e + PR * npair;
+            /* scr[q][s] = (a b | q s); ket pairs in packed order: smaller outer */
+            for (size_t s2 = 0, k = 0; s2 < nmo_t; s2++) {
+                for (size_t r2 = s2; r2 < nmo_t; r2++, k++) {
+                    scr[r2*nmo_t + s2] = row[k];
+                    scr[s2*nmo_t + r2] = row[k];
+                }
+            }
+            /* (p,r) = (a,b): every pq_up with p = a, i.e. q <= a */
+            for (size_t q = 0; q <= a; q++) {
+                memcpy(h2e_half + (size_t) pidx[a*nmo_t + q] * nmo_t * nmo_t
+                                + b * nmo_t,
+                       scr + q * nmo_t, nmo_t * sizeof(double));
+            }
+            /* (p,r) = (b,a): every pq_up with p = b.  Skipped when a == b,
+               where it would be the same placement as above. */
+            if (a != b) {
+                for (size_t q = 0; q <= b; q++) {
+                    memcpy(h2e_half + (size_t) pidx[b*nmo_t + q] * nmo_t * nmo_t
+                                    + a * nmo_t,
+                           scr + q * nmo_t, nmo_t * sizeof(double));
+                }
+            }
+        }
+        free(scr);
+    }
+
+    /* Step 2.  Unpack the ket triangle of row pq_up into a thread-local
+       scratch and run the same dgemm.  Measured ~1.4x faster than the
+       contiguous full-row form (unpack_probe.c at real shapes): this step is
+       bandwidth-bound, the packed read is half the bytes, and the unpack
+       stays in L2. */
+    #pragma omp parallel
+    {
+        double* scr = (double*) malloc(nmo_t * nmo_t * sizeof(double));
+        #pragma omp for
+        for (size_t pq_up = 0; pq_up < npair; pq_up++) {
+            const double* row = h2e + pq_up * npair;
+            for (size_t s2 = 0, k = 0; s2 < nmo_t; s2++) {
+                for (size_t r2 = s2; r2 < nmo_t; r2++, k++) {
+                    scr[r2*nmo_t + s2] = row[k];
+                    scr[s2*nmo_t + r2] = row[k];
+                }
+            }
+            cblas_dgemm(CblasRowMajor, CblasNoTrans, CblasNoTrans, nmo_t, n_occupied_t, nmo_t, 1.0,
+                      scr, nmo_t, U, nmo_t, 0.0,
+                      temp1+pq_up*nmo_t*n_occupied_t, n_occupied_t);
+        }
+        free(scr);
     }
 
     //for (size_t pq_up = 0; pq_up < nmo_t*(nmo_t+1)/2; pq_up++) {
@@ -574,9 +634,9 @@ void full_transformation_macroiteration(double* U, double* h2e, double* J, doubl
    
 
     //fflush(stdout);
+    free(pidx);
     free(h2e_half);
     free(temp1);
-    //free(temp2);
     free(temp3);
     //free(temp4);
     free(temp5);

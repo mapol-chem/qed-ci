@@ -422,6 +422,88 @@ _QED_G_TILED = int(os.environ.get("QED_G_TILED", "1"))
 # real run's memory pressure, while merely reordering ACCESS pays less.  Classify
 # which kind of fix it is before trusting a standalone number.
 _QED_BI_FASTPATH = int(os.environ.get("QED_BI_FASTPATH", "1"))
+#
+#   QED_GRAD_BLOCKS : build_gradient's contraction off the G blocks (default 0)
+#
+# build_gradient:7288 is
+#     B[:, :no] = A[:, :no] + np.einsum("klrs,sl->rk", G[:,:,:,:], T[:, :no])
+# with NO optimize= -- so it is numpy's naive C einsum loop over the whole
+# 394 MB G, measured at 11 GB/s against this box's 43 GB/s memcpy floor.
+# c10h8: 249 calls, 8.92 s, 0.0358 s/call, the largest of the three G consumers
+# after the tiled copy itself.
+#
+# That contraction is ALREADY SOLVED three functions away.
+# microiteration_exact_energy:10024-10026 carries the identical statement as its
+# commented reference and evaluates it off the blocks:
+#     B_i = 2A_i + np.dot(T_i, G_ij) + np.dot(T_a, G_ti)
+#     B_a = 2A_a + np.dot(T_i, G_ti.T) + np.dot(T_a, G_tu)
+# (build_gradient wants 1.0*A, not 2.0*A -- that is the only difference.)  The
+# blocks are already built at :12281, three lines before the call site, so the
+# fast path computes nothing new; it only reads less and reads it through BLAS.
+#
+# G_ij and G_tu are symmetric to 1 ulp (QED_G_SYM_CHECK, :12333), so those two
+# products go through _symv_accumulate and touch one triangle each.  Traffic:
+#     einsum   394 MB at 11 GB/s      (naive loop, whole G including G_it)
+#     blocked  109 MB triangle (G_ij) + 2x75 MB (G_ti, G_ti.T) + 13 MB triangle
+#              (G_tu) = 272 MB, at the 55/36 GB/s dsymv/dgemv rates of :306
+#
+# NOT bit-exact in general: BLAS and einsum sum in different orders.  Same class
+# of change as QED_BI_FASTPATH's second site and QED_G_SYMV.  In practice
+# QED_GRAD_BLOCKS_CHECK has returned max|d| EXACTLY 0.0 at both h2o and real
+# c10h8 dims -- but that is one call per run, not a proof for every call, so the
+# claim here is "~1e-13 or better", not "bit-exact".  G itself is still built and
+# still dumped, so the cpp_casscf dump contract and the C++ port are untouched;
+# G_blocks arrives as an OPTIONAL argument, so every caller that does not pass it
+# keeps the einsum path.
+#
+# DEFAULT ON since the c10h8 A/B of 2026-07-30 (both legs back to back, baseline
+# re-measured in-session, all other knobs at their defaults):
+#     build gradient        9.46 -> 2.96 s   3.20x
+#     optimization took   236.13 -> 230.29   -2.5%
+#     build intermediates  15.59 / 15.92     transpose G   5.46 / 5.27
+#     hessian diagonal     12.27 / 12.41     full JK      43.49 / 42.94
+# i.e. every other section flat, which is what confines the effect to :7288.
+# 10 macros / 103 microiterations both legs; final energy 4.9e-12, which is the
+# run's known upstream nondeterminism (threaded-BLAS reduction order in the
+# CQED-RHF SCF), not this change.  Set QED_GRAD_BLOCKS=0 to fall back.
+_QED_GRAD_BLOCKS = int(os.environ.get("QED_GRAD_BLOCKS", "1"))
+
+
+# ---------------------------------------------------------------------------
+# Packed two-electron integrals.  self.twoeint is stored as (npair, npair) with
+# npair = nmo(nmo+1)/2, folding BOTH the bra and the ket pair onto p >= q.
+# 8.40 GB -> 2.12 GB at c10h8 dims.  Measured (unpack_probe.c, real shapes):
+# unpacking a row into a thread-local nmo x nmo scratch and running the same
+# dgemm is ~1.4x FASTER than the contiguous full-row version, because
+# orbital.c's first transformation step is bandwidth-bound and this halves the
+# DRAM read -- the unpack itself lands in L2 and costs nothing.
+#
+# The pair ordering is the one index_map_pq already uses (:3221-3224): the
+# SMALLER index runs in the outer loop,
+#     for q in range(nmo): for p in range(q, nmo): ...
+# so packed row `pq_up` is exactly the pair index_map_pq[pq_up] names.  Both
+# the Python unpackers and orbital.c's must enumerate ket pairs in this same
+# order; note this is NOT np.tril_indices' order, which is larger-index-outer.
+# ---------------------------------------------------------------------------
+def _pair_index_table(nmo):
+    """(nmo, nmo) int32 table: tbl[a, b] = packed index of the unordered pair."""
+    tbl = np.zeros((nmo, nmo), dtype=np.int32)
+    idx = 0
+    for q in range(nmo):
+        for p in range(q, nmo):
+            tbl[p, q] = idx
+            tbl[q, p] = idx
+            idx += 1
+    return tbl
+
+
+def _pair_lists(nmo):
+    """(pi, qi) with pi >= qi, the packed pair order; pair PQ is (pi[PQ], qi[PQ])."""
+    qi = np.concatenate([np.full(nmo - q, q, dtype=np.intp) for q in range(nmo)])
+    pi = np.concatenate([np.arange(q, nmo, dtype=np.intp) for q in range(nmo)])
+    return pi, qi
+
+
 import numba as nb
 from scipy.linalg import eigh, cho_factor, cho_solve, solve_triangular
 import ctypes as _ctypes
@@ -4437,18 +4519,52 @@ class PFHamiltonianGenerator:
             self.TDI_spin = t1 - t2
             self.antiSym2eInt = self.eri_so + self.TDI_spin
         # self.d_spatial = np.einsum("ij,kl->ijkl", _d_spin, _d_spin)
-        if self.ignore_dse_terms:
-            self.twoeint = self.twoeint1
-        else:
-            self.twoeint = self.twoeint1 + np.einsum(
-                "ij,kl->ijkl", self.d_cmo, self.d_cmo
-            )
+        # The DSE term used to be added out of place:
+        #     self.twoeint = self.twoeint1 + np.einsum("ij,kl->ijkl", d, d)
+        # which holds THREE full nmo^4 arrays at once -- twoeint1, the einsum
+        # temporary, and the sum.  At c10h8 dims that is 3 x 8.4 GB, and since
+        # build2DSO is called from inside buildArraysInOrbitalBasis (:5246), the
+        # AO-basis ERI local there is live too: 4 x 8.4 GB = 33.6 GB, against a
+        # measured maxrss of 33.1 GB.  That is the whole peak of the run.
+        #
+        # twoeint1 is dropped immediately below and nothing else references it,
+        # so its buffer can simply be taken over and updated in place.  Flattened
+        # to (nmo^2, nmo^2) the einsum is exactly outer(d_flat, d_flat) --
+        # element (i,j,k,l) sits at row i*nmo+j, column k*nmo+l with value
+        # d[i,j]*d[k,l] -- i.e. a rank-1 update, applied here in row chunks so
+        # the temporary stays at chunk_size x nmo^2 instead of nmo^4.
+        # BIT-IDENTICAL: same single multiply per element, same addition, so
+        # neither the products nor the rounding change.
+        # PACKED STORAGE.  self.twoeint is (npair, npair), not (nmo^2, nmo^2):
+        # both the bra and the ket pair are folded onto p >= q using the 8-fold
+        # permutational symmetry, which the DSE term preserves exactly (d_cmo is
+        # symmetric, so outer(d,d) carries all 8 folds -- measured 1.7e-16).
+        #     8.40 GB -> 2.12 GB at c10h8 dims (nmo=180, npair=16290)
+        # The pair ordering is index_map_pq's (:3221-3224) -- smaller index in
+        # the OUTER loop -- so packed row `pq_up` IS the pair index_map_pq names
+        # and orbital.c needs no bra-side lookup at all.
+        self.npair = self.nmo * (self.nmo + 1) // 2
+        self.pair_index = _pair_index_table(self.nmo)
+        _pi, _qi = _pair_lists(self.nmo)
+        _lin = (_pi * self.nmo + _qi).astype(np.intp)
+        _g2 = self.twoeint1.reshape(self.nmo * self.nmo, self.nmo * self.nmo)
+        _packed = np.empty((self.npair, self.npair))
+        _chunk = 256
+        for _i0 in range(0, self.npair, _chunk):
+            _i1 = min(_i0 + _chunk, self.npair)
+            _packed[_i0:_i1] = _g2[_lin[_i0:_i1][:, None], _lin[None, :]]
         self.twoeint1 = None
         del self.twoeint1
+        self.twoeint = _packed
         # self.contracted_twoeint = -0.5 * np.einsum("illj->ij", self.twoeint)
-        self.twoeint = np.reshape(
-            self.twoeint, (self.nmo * self.nmo, self.nmo * self.nmo)
-        )
+        if not self.ignore_dse_terms:
+            # The DSE term on the packed form is a rank-1 update by the PAIR
+            # vector d_pair[PQ] = d_cmo[p, q] -- 2.12 GB of work instead of the
+            # 8.40 GB the full-tensor version touched, and no nmo^4 temporary.
+            _d_pair = np.ascontiguousarray(self.d_cmo[_pi, _qi])
+            for _i0 in range(0, self.npair, _chunk):
+                _i1 = min(_i0 + _chunk, self.npair)
+                self.twoeint[_i0:_i1] += _d_pair[_i0:_i1, None] * _d_pair
     def build_gkl_from_df_optimized(self, B_array, d_cmo, H_spatial):
         """
         Build gkl intermediate efficiently using DF tensors
@@ -5204,7 +5320,13 @@ class PFHamiltonianGenerator:
             #self.build2DSO()
         else:
             self.density_fitting = False
-            I = np.asarray(mints.ao_eri())
+            # The AO-basis ERI tensor used to be built here as a bare local `I`
+            # (nmo^4, 8.4 GB at c10h8 dims) that no code in this file ever read.
+            # It stayed live for the rest of buildArraysInOrbitalBasis -- which
+            # calls build2DSO at :5317 -- so it was part of the run's peak.
+            # nuclear_grad.py builds its own AO/MO integrals from Ca_hf and does
+            # not use this one.  Restore as `self.twoeint_ao` if AO integrals are
+            # ever actually needed; a local cannot be reached from anywhere.
             self.twoeint1 = np.asarray(mints.mo_eri(self.Ca, self.Ca, self.Ca, self.Ca))
 
             #self.twoeint1 = np.asarray(mints.mo_eri(self.Ca, self.Ca, self.Ca, self.Ca))
@@ -5225,13 +5347,14 @@ class PFHamiltonianGenerator:
                         if j >= k:
                             continue
                         else:
-                            kj = k * self.nmo + j
-                            jl = j * self.nmo + l
-                            self.gkl[k][l] -= self.twoeint[kj][jl]
+                            # packed: twoeint[kj][jl] -> [pair(k,j), pair(j,l)]
+                            self.gkl[k][l] -= self.twoeint[
+                                self.pair_index[k, j], self.pair_index[j, l]
+                            ]
                     if k >= l:
-                        kk = k * self.nmo + k
-                        kl = k * self.nmo + l
-                        self.gkl[k][l] -= self.twoeint[kk][kl] / (1 + (k == l))
+                        self.gkl[k][l] -= self.twoeint[
+                            self.pair_index[k, k], self.pair_index[k, l]
+                        ] / (1 + (k == l))
             print("mem_twoeint", self.twoeint.size * self.twoeint.itemsize / 1024 / 1024)
         print("density_fitting",self.density_fitting)
         print(psutil.Process().memory_info().rss / (1024 * 1024))
@@ -6430,28 +6553,38 @@ class PFHamiltonianGenerator:
         # self.K = np.zeros((self.n_occupied, self.n_occupied, self.nmo, self.nmo))
         # self.J = self.twoeint.reshape((self.nmo, self.nmo, self.nmo, self.nmo))[:self.n_occupied,:self.n_occupied,:,:]
         # self.K = self.twoeint.reshape((self.nmo, self.nmo, self.nmo, self.nmo))[:,:self.n_occupied,:,:self.n_occupied]
-        self.J = copy.deepcopy(
-            self.twoeint.reshape((self.nmo, self.nmo, self.nmo, self.nmo))[
-                : self.n_occupied, : self.n_occupied, :, :
-            ]
-        )
+        # PACKED SOURCE.  self.twoeint is (npair, npair) now, so neither J nor K
+        # can be a reshape+slice of it any more; both are unpacked explicitly.
+        # Everything downstream (occupied_J at :2275, occupied_J3, the CI
+        # solves) is built from J/K rather than from twoeint, so these two
+        # arrays are the whole compatibility surface.
+        #     J[k,l,r,s] = (kl|rs) = twoeint[pair(k,l), pair(r,s)]
+        # tbl[r, s] maps the ket pair, so row[tbl] unpacks a whole (nmo, nmo)
+        # block in one gather.  J is symmetric under k<->l.
+        tbl = self.pair_index
+        no = self.n_occupied
+        self.J = np.empty((no, no, self.nmo, self.nmo))
+        for k in range(no):
+            for l in range(k, no):
+                blk = self.twoeint[tbl[k, l]][tbl]
+                self.J[k, l] = blk
+                self.J[l, k] = blk
         #self.J_temp = copy.deepcopy(
         #    self.twoeint.reshape((self.nmo, self.nmo, self.nmo, self.nmo))[
         #        : self.n_occupied, : self.n_occupied, :, :
         #    ]
         #)
-        self.K = copy.deepcopy(
-            self.twoeint.reshape((self.nmo, self.nmo, self.nmo, self.nmo))[
-                :, : self.n_occupied, :, : self.n_occupied
-            ]
-        )
-        #self.K_temp = copy.deepcopy(
-        #    self.twoeint.reshape((self.nmo, self.nmo, self.nmo, self.nmo))[
-        #        :, : self.n_occupied, :, : self.n_occupied
-        #    ]
-        #)
-        # print (np.shape(self.J),np.shape(self.K))
-        self.K = self.K.transpose(1, 3, 0, 2)
+        # The old code sliced (p,l,q,s) -> (pl|qs) and transposed (1,3,0,2), i.e.
+        #     K[k,l,r,s] = (rk|sl) = (kr|ls)
+        # so the BRA pair is (k,r) and the KET pair is (l,s).  Held (k,r) fixed
+        # that is one packed row, and tbl[:no, :] gathers the (l,s) block, so
+        # the loop runs over the n_occupied*nmo bra pairs rather than gathering
+        # element by element.
+        ket_occ = tbl[:no, :]
+        self.K = np.empty((no, no, self.nmo, self.nmo))
+        for k in range(no):
+            for r in range(self.nmo):
+                self.K[k, :, r, :] = self.twoeint[tbl[k, r]][ket_occ]
         #self.K_temp = self.K_temp.transpose(1, 3, 0, 2)
         # print (np.shape(self.K))
     def build_JK_from_df(self, B_mo, d_cmo, n_occupied, ignore_dse_terms=False):
@@ -7280,13 +7413,76 @@ class PFHamiltonianGenerator:
         R1 = np.dot(np.diag(sine_product_array), temp)
         self.U_delta += np.dot(W, R1)
 
-    def build_gradient(self, U, A, G, gradient_tilde, A_tilde, full_space):
+    def build_gradient(self, U, A, G, gradient_tilde, A_tilde, full_space,
+                       G_blocks=None):
         if full_space == True:
             B = np.zeros((self.nmo, self.nmo))
             T = U - np.eye(self.nmo)
-            B[:, : self.n_occupied] = A[:, : self.n_occupied] + np.einsum(
-                "klrs,sl->rk", G[:, :, :, :], T[:, : self.n_occupied]
-            )
+            if _QED_GRAD_BLOCKS and G_blocks is not None:
+                # QED_GRAD_BLOCKS: the same contraction off the blocks that are
+                # already built at :12281.  Index convention is the one
+                # build_sigma_reduced7 and microiteration_exact_energy:10009
+                # assume -- rows (s,l), columns (r,k), flattened r*n_block + k --
+                # so B_i / B_a below reshape straight back into B's columns.
+                # See the QED_GRAD_BLOCKS note at the top of the file.
+                G_ij, G_ti, G_tu = G_blocks
+                ni = self.n_in_a
+                na = self.n_act_orb
+                T_i = np.ascontiguousarray(T[:, :ni]).reshape(self.nmo * ni)
+                T_a = np.ascontiguousarray(
+                    T[:, ni : self.n_occupied]
+                ).reshape(self.nmo * na)
+                # A is copied, not accumulated into, so the caller's A is safe.
+                B_i = np.ascontiguousarray(A[:, :ni]).reshape(self.nmo * ni)
+                B_a = np.ascontiguousarray(
+                    A[:, ni : self.n_occupied]
+                ).reshape(self.nmo * na)
+                # symmetric blocks -> one triangle each; np.dot(T_i, G_ij) is
+                # G_ij @ T_i because G_ij == G_ij.T (QED_G_SYM_CHECK, :12333)
+                if _QED_G_SYMV:
+                    _symv_accumulate(G_ij, T_i, B_i)
+                    _symv_accumulate(G_tu, T_a, B_a)
+                else:
+                    B_i += np.dot(T_i, G_ij)
+                    B_a += np.dot(T_a, G_tu)
+                # G_it is G_ti.T, a free view -- never materialized
+                B_i += np.dot(T_a, G_ti)
+                B_a += np.dot(T_i, G_ti.T)
+                B[:, :ni] = B_i.reshape(self.nmo, ni)
+                B[:, ni : self.n_occupied] = B_a.reshape(self.nmo, na)
+                # QED_GRAD_BLOCKS_CHECK: one-shot proof, in situ and at the real
+                # dimensions, that the blocked contraction reproduces the einsum.
+                # This is NOT bit-exact (BLAS vs einsum summation order), so the
+                # test is a relative tolerance -- but it is a DIRECT array
+                # comparison, which is the only valid evidence here: the c10h8
+                # run is nondeterministic upstream of CASSCF (threaded-BLAS
+                # reduction order in the CQED-RHF SCF), so two end-to-end legs
+                # agreeing proves nothing about this statement.
+                if int(os.environ.get("QED_GRAD_BLOCKS_CHECK", "0")) and not getattr(
+                    self, "_grad_blocks_checked", False
+                ):
+                    self._grad_blocks_checked = True
+                    _ref = A[:, : self.n_occupied] + np.einsum(
+                        "klrs,sl->rk", G[:, :, :, :], T[:, : self.n_occupied]
+                    )
+                    _got = B[:, : self.n_occupied]
+                    _s = np.abs(_ref).max()
+                    _d = np.abs(_got - _ref).max()
+                    print(
+                        f"[GRAD_BLOCKS_CHECK] B{_got.shape} max|B|={_s:.6e} "
+                        f"max|d|={_d:.6e} rel={_d/max(_s,1e-300):.3e}",
+                        flush=True,
+                    )
+                    if _d > 1e-10 * max(_s, 1.0):
+                        raise RuntimeError(
+                            f"QED_GRAD_BLOCKS: B differs from the einsum path, "
+                            f"max|d| = {_d:.6e}"
+                        )
+                    del _ref
+            else:
+                B[:, : self.n_occupied] = A[:, : self.n_occupied] + np.einsum(
+                    "klrs,sl->rk", G[:, :, :, :], T[:, : self.n_occupied]
+                )
 
             A_tilde[:, : self.n_occupied] = np.einsum(
                 "rs,sk->rk", U.T, B[:, : self.n_occupied]
@@ -12381,7 +12577,9 @@ class PFHamiltonianGenerator:
             old_reduced_gradient = copy.deepcopy(reduced_gradient)
             #print("old gradient", old_reduced_gradient, flush = True)
             start = timer()
-            self.build_gradient(self.U2, A, G, gradient_tilde, A_tilde2, True)
+            self.build_gradient(
+                self.U2, A, G, gradient_tilde, A_tilde2, True, G_blocks=G_blocks
+            )
             end = timer()
             # self.build_gradient2(self.U2, A, G, hessian_tilde, gradient_tilde, A_tilde2, True)
 
@@ -13590,7 +13788,10 @@ class PFHamiltonianGenerator:
                         # print(np.shape(gradient_tilde), flush = True)
                         if qn_count == 0:
                             start = timer()
-                            self.build_gradient(self.U2, A, G, gradient_tilde, A_tilde2, True)
+                            self.build_gradient(
+                                self.U2, A, G, gradient_tilde, A_tilde2, True,
+                                G_blocks=G_blocks,
+                            )
                             end = timer()
                             # self.build_gradient2(self.U2, A, G, hessian_tilde, gradient_tilde, A_tilde2, True)
                             #G1 = G.transpose(3, 1, 2, 0).reshape(
