@@ -467,6 +467,13 @@ void full_transformation_macroiteration(double* U, double* h2e, double* J, doubl
     //    }
     //}
 
+    /* This pragma was missing; the J-side twin of this loop at ~:150 has it.
+       The body is n*(n+1)/2 independent dgemms, so the K branch's second
+       quarter transform ran serial while every other section ran threaded.
+       It was invisible while psi4 pinned the process to one thread; with
+       threads enabled it was 0.325 s of a 1.35 s call (24%) versus 0.037 s
+       with the pragma.  J and K are bit-identical either way. */
+    #pragma omp parallel for
     for (size_t pq_up = 0; pq_up < nmo_t*(nmo_t+1)/2; pq_up++) {
         //size_t stride = pq_up * 2;
         //size_t p = index_map_pq[stride];
