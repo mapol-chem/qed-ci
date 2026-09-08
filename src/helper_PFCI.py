@@ -28,6 +28,8 @@ import ctypes
 import numpy as np
 from ctypes import *
 import os
+import atexit      # QED_JK_H2E_DISK: remove the spilled tensor at exit
+import tempfile    # QED_JK_H2E_DISK
 import psutil
 import copy
 import weakref  # build_intermediates' L cache invalidates by weak ref to J/K
@@ -53,35 +55,269 @@ from collections import deque
 #
 #   QED_CI_UNCOUPLED_MAXITER : the Kreplin uncoupled CI cap        (default 5)
 #   QED_CI_COUPLED_FACTOR    : the 0.1 in 0.1*||g_orb||            (default 0.1)
+#   QED_CI_COUPLED_MAXITER   : iteration budget for the COUPLED CI (default 5;
+#                              set 10000 to recover the effectively-uncapped
+#                              behaviour this code had before 2026-08-25)
 #
 # The coupled threshold is tied to the orbital gradient, so it tightens as the
 # optimization converges; measured cost of that tightening is mean iterations
 # rising 23.9 -> 29.9 from the largest to the smallest gradient-norm quartile.
-# Kreplin/Werner's precondition is qualitative ("CI residual substantially
-# lower than the last orbital gradient"), so 0.1 is a choice, not a derived
-# value -- which is what makes it worth sweeping.
+#
+# WHERE 0.1 COMES FROM.  It is Kreplin et al.'s own constant: their QN-coupled
+# microiteration tightens the Davidson solve at step k to
+# |r_ci| < 0.1 * |g_orb^(k-1)| (the PREVIOUS microiteration's orbital gradient,
+# which is the alignment used below -- reduced_gradient is built before this
+# iteration's orbital step).  So the factor is prescribed, not a free choice;
+# an earlier comment here calling it "a choice, not a derived value" was wrong.
+#
+# WHY A BUDGET IS NEEDED ANYWAY.  Molpro does not chase that threshold.  In its
+# QN phase (the micro-table rows with NQN >= 1) NCI is 2 -- occasionally 3 --
+# on every row of both reference outputs, and it simply accepts whatever
+# residual 2 iterations produce:
+#   examples/c10h8_detail.out    job 2  51 QN rows  |r_ci|/|g_orb^(k-1)| median
+#                                       0.22, 33% of rows below 0.1
+#   examples/mghplus_detail_v2.out job 2  26 QN rows  median 2.42, min 0.21,
+#                                       NOT ONE row below 0.1
+# i.e. the 0.1 acts as an EARLY EXIT that fires only where a 2-3 iteration
+# budget can reach it (small single-root CI), and never binds on the larger
+# state-averaged case.  Before 2026-08-25 we had no budget at all
+# (constint[8] = 10000), so on MgH+ we chased 0.1 to a mean 8.09 Davidson
+# iterations per coupled solve against Molpro's 2, and coupled solves were 89.6%
+# of that run's CI time.  QED_CI_COUPLED_MAXITER supplies the missing budget;
+# threshold and budget race, first to fire wins, exactly as in Molpro.
+#
+# WHY THE DEFAULT IS 5 (shipped 2026-08-25; evidence in items 267-271).  On MgH+
+# CAS(8,12) it is -45.1% wall from the canonical guess (351.6 -> 193.0 s, 8 macros
+# vs 11) and -55.2% median over 14 RANDOM orbital guesses, with the mean macro
+# count EXACTLY unchanged (13.86 -> 13.86) and every seed landing on the same
+# stationary point (max dE 2.1e-9).  A c10h8 CAS(10,10) QN-ON cross-check shows no
+# regression (macros 4=4, microiterations 17=17, energy identical to 5.5e-12, wall
+# 1.002x) -- though the cap barely binds there (5.38 -> 4.78 iterations/solve), so
+# that leg proves no-harm, not benefit.  KNOWN COST, measured and accepted: on an
+# already-near-converged guess the CI is nearly solved and 5 iterations
+# under-resolve it, so the orbital step can need redoing -- 2 of 14 random seeds
+# spent extra macros (worst +7).  Wave 2 tested budgets 8 and 10 and neither fixed
+# that (the penalty is flat in the budget: base needs ~21-25 iterations on those
+# seeds), while both gave back win on the hard seeds.  So the cost is WASTED TIME
+# ON EASY CASES, never a wrong answer.  Set 10000 to restore the old behaviour.
 _QED_CI_UNCOUPLED_MAXITER = int(os.environ.get("QED_CI_UNCOUPLED_MAXITER", "5"))
 _QED_CI_COUPLED_FACTOR = float(os.environ.get("QED_CI_COUPLED_FACTOR", "0.1"))
+_QED_CI_COUPLED_MAXITER = int(os.environ.get("QED_CI_COUPLED_MAXITER", "5"))
+#
+#   QED_ORBITAL_SYMMETRY : constrain the orbital optimization to preserve the
+#                          AXIAL symmetry of a linear molecule (default 0 = off,
+#                          an exact no-op).
+#
+# WHY.  On MgH+ CAS(8,12) we converge 4.08e-04 Ha BELOW Molpro, and item 277
+# established the reason: our converged active space BREAKS the axial symmetry,
+# while Molpro's "extra symmetry" machinery labels every MO sigma/pi/delta and
+# projects out the rest, so Molpro cannot represent our solution.  Handing our
+# orbitals to Molpro with `noextra` reproduced our CI energy to 1.7e-10 and it
+# STAYED there.  This knob reproduces Molpro's constraint so the two codes can be
+# compared on the same footing.
+#
+# *** LEAVE IT OFF FOR CAVITY WORK. *** The PF coupling carries a DIRECTION
+# (`lambda_vector`); a mode polarised off the molecular axis genuinely breaks the
+# axial symmetry, so constraining the orbitals would exclude solutions the QED
+# problem really has.  Validation mode only, i.e. at lambda = 0.
+#
+# HOW.  Nothing in the microiteration, the internal optimization, the
+# trust-region solvers or the C backend changes.  It (a) projects the starting
+# orbitals to be symmetry pure and (b) adds ONE filter -- "only rotate two MOs of
+# the same symmetry species" -- everywhere the orbital-rotation list is
+# enumerated.  See orbital_symmetry.py.
+_QED_ORBITAL_SYMMETRY = int(os.environ.get("QED_ORBITAL_SYMMETRY", "0"))
+#
+#   QED_CI_INTERNAL_FACTOR : scale the internal-optimization CI threshold to the
+#                            current internal-internal orbital gradient
+#                            (default 0 = off => the fixed 1e-5 as before)
+#   QED_CI_INTERNAL_FLOOR / _CEIL : clamp on that scaled threshold
+#   QED_INTERNAL_MAXITER   : the internal-optimization iteration cap (default 20)
+#
+# WHY.  internal_optimization3 pins constdouble[4] = 1e-5 (:10476) while its exit
+# test (:10629) is
+#     if (gradient_norm < 1e-4 and self.constint[8] == 0) or microiteration == 20
+# and constint[8] is the C solver's CONVERGED flag -- zeroed only on the
+# converged exit, left nonzero on the maxiter exit.  So the loop may terminate
+# only if the CI reached a FIXED 1e-5 within QED_CI_UNCOUPLED_MAXITER (5)
+# Davidson iterations; if it does not, the loop cannot exit however small the
+# internal-internal orbital gradient becomes, and runs all 20 iterations.
+#
+# MEASURED IN MOLPRO (src/examples/c10h8.out, 10 "Starting internal optimizaton"
+# blocks; NOTE every row of those blocks has 10 fields -- the 8-field first row
+# hazard applies to the MICRO-ITERATION blocks, not these):
+#   * CI RES / ORB GRAD at the SAME step has median 0.46 over the well-behaved
+#     blocks (1,2,3,6: 0.29-0.57), rising to ~1.0 in blocks 4-5.  The same ratio
+#     taken against the PREVIOUS step's gradient is far more scattered
+#     (median 0.12, range 0.001-0.55), so same-step is the alignment in use.
+#   * ORB GRAD falls 26-83x per block of 4 steps -- a RELATIVE reduction, not a
+#     chase to an absolute floor.
+#   * Blocks run 4,4,4,4,4,4,4,2,1 steps: 4 is a MAX WITH AN EARLY EXIT.
+#     Early exits seen at ORB GRAD 3.0e-8 and 2.6e-7; no exit at 2.7e-6 or
+#     8.7e-6, bracketing an absolute floor near 1e-6.
+# So the CI is never solved tighter than the orbital step can use.  Against a
+# fixed 1e-5 we over-solve early (ORB GRAD ~1e-2 wants ~5e-3) and under-solve
+# late.  This is the same device already used at the coupled microiteration site
+# (:16000, _QED_CI_COUPLED_FACTOR * ||reduced_gradient||), with a constant near
+# 0.5 instead of 0.1.
+#
+# Scaling the threshold should also make the EXISTING exit test work rather than
+# needing to be relaxed: a target proportional to the current gradient stays
+# reachable inside the 5-iteration cap, so constint[8] comes back 0 and the loop
+# exits on the gradient instead of grinding to 20.
+#
+#   QED_DUMP_CI_VECTORS = <dir> : dump every converged CI vector (default "" = off)
+#
+# Measures whether a CI-VECTOR HISTORY makes a better guess than the single
+# previous vector the warm start uses now.  The question is geometric and is the
+# same one that killed the P-space idea (item 225: the warm vector was measured
+# 96.4% INSIDE a 378-CSF P-space, so adding that space re-spanned what we
+# already had).  Here the candidate subspace is instead the span of the last k
+# CONVERGED CI vectors -- directions the CI actually needed as the orbitals
+# moved, which is the failure mode: warm-start quality tracks the SIZE OF THE
+# ORBITAL STEP, not the macroiteration index.  Measured on c10h8, the guess
+# residual at Davidson iteration 1 runs 2.27e-2 (macro 0) -> 6.09e-8 (macro 9),
+# a factor of ~370,000, but is NOT monotone -- macros 5 and 6 spike back to
+# 8.1e-3 / 3.4e-3 and cost 13 and 14 CI iterations.
+# Each file is one converged solve: seq, context, macroiteration (-1 where the
+# site does not have it in scope), and the vectors themselves.
+_QED_DUMP_CI_VECTORS = os.environ.get("QED_DUMP_CI_VECTORS", "")
+_QED_CI_INTERNAL_FACTOR = float(os.environ.get("QED_CI_INTERNAL_FACTOR", "0"))
+_QED_CI_INTERNAL_FLOOR = float(os.environ.get("QED_CI_INTERNAL_FLOOR", "1e-8"))
+_QED_CI_INTERNAL_CEIL = float(os.environ.get("QED_CI_INTERNAL_CEIL", "1e-4"))
+_QED_INTERNAL_MAXITER = int(os.environ.get("QED_INTERNAL_MAXITER", "20"))
+#
+#   QED_FRESH_HDIAG_SORT : re-argsort H_diag3 each microiteration (default 0)
+#
+# self.H_diag3 IS rebuilt from the current orbitals every microiteration
+# (microiteration_optimization6, :15910-15940), but self.index_Hdiag -- its
+# argsort -- is assigned ONLY during setup (:3693 and :3900) and is never
+# refreshed afterwards.
+# The DETERMINANT SELECTION does not care: ci_solver.c:2329-2340 scans Hdiag2
+# (a fresh copy of the current H_diag3) for its minima and never touches
+# index_Hdiag.  The SPIN-COUPLING CLOSURE does:
+#     while(indim < H_dim &&
+#           Hdiag[index_Hdiag[indim]] - Hdiag[index_Hdiag[indim-1]] < 1e-10)
+# (ci_solver.c:2242) walks the CURRENT diagonal in the STALE sort order, so
+# after the orbitals rotate the two elements it differences are no longer
+# adjacent in sorted order and the degeneracy test is meaningless.  Per that
+# loop's own comment, a set cut mid-degenerate-group leaves S^2 non-block-
+# diagonal over the selected determinants and contaminates the spin-filtered
+# guess.
+# ONLY THE COLD PATH IS AFFECTED: casscf == true takes indim = nroots and never
+# reaches the closure loop, so no warm/production run touches index_Hdiag.  The
+# exposure is exactly the initial CASCI (where the setup argsort is still
+# current, hence correct) and QED_COLD_START_MICRO (where it is stale).
+# Default off so it is a measurable A/B rather than a silent behaviour change;
+# the cost is one argsort of H_dim per microiteration.
+_QED_FRESH_HDIAG_SORT = int(os.environ.get("QED_FRESH_HDIAG_SORT", "0"))
+_QED_SKIP_GKL = int(os.environ.get("QED_SKIP_GKL", "0"))          # see the note at :1183
+_QED_LIBTRANS_OO = int(os.environ.get("QED_LIBTRANS_OO", "0"))    # see the note at :1210
+# ---------------------------------------------------------------------------
+# QED_JK_H2E_DISK : spill the packed self.twoeint to a file and let the JK
+#                   kernel stream it back a row-block at a time  (default "" =
+#                   off, tensor stays resident -- an exact no-op)
+#
+# STEP 1(b) OF THE SLW99 RESTRUCTURE.  self.twoeint is the packed (npair,npair)
+# MO tensor -- nmo^4/4 doubles, and it is stored SQUARE though it is symmetric:
+# 2.0 GiB at nmo 180, 15.60 GiB at nmo 302, 53.9 GiB at nmo 412.  It is the
+# single largest allocation in the run and the reason nmo 302 needs a 31.5 GB
+# peak while Molpro and pyscf both stream out of core.
+#
+# Once QED_SKIP_GKL is on, the tensor's ONLY consumer is the per-macro J/K
+# build (the note at :1203 establishes that), and inside orbital.c the ONLY
+# consumer is the S2 quarter transform, which step 1(a) already blocked over
+# rows.  So the array need not be resident at all: write it once, stream it
+# per macro.  The C side is orbital.c's `qed_jk_set_h2e_file`; step 1(a)'s
+# QED_JK_BLOCK / QED_JK_BLOCK_MB choose the block, and validation/
+# h2e_file_invariance.py proves the streamed J and K are BITWISE identical.
+#
+# Set it to "1" for a file in $TMPDIR, or to a DIRECTORY to place the file
+# there (put it on a fast local disc, not NFS -- the whole tensor is re-read
+# once per macroiteration, which is the cost this route trades RSS for).
+# The file is removed at interpreter exit and on the next spill.
+#
+# NOT COMPATIBLE WITH QED_LIBTRANS_OO=2, which is a check mode that reads the
+# resident tensor on purpose; that combination is refused at spill time.
+_QED_JK_H2E_DISK = os.environ.get("QED_JK_H2E_DISK", "").strip()
+# Spilled files are unlinked at exit through a MODULE-level registry, not
+# through atexit.register(self._drop_h2e_file): a bound method would keep the
+# whole PFHamiltonianGenerator (and its J, K, CI vectors) alive for the life of
+# the process, which turns a scan script that builds one object per geometry
+# into a leak.
+_H2E_SPILL_FILES = set()
+
+
+# QED_JK_H2E_STREAM (default 1, but only consulted when QED_JK_H2E_DISK is
+# armed, which is itself default off).  1 = read the libtrans buffer a row-block
+# at a time straight into the spill file, so the packed tensor is never
+# materialised; 0 = the pre-2026-09-02 behaviour, build it whole and write it
+# out afterwards.  0 exists so the two can be A/B'd -- item 354B measured the
+# whole-matrix readback's transient at 30.86 GiB against a 15.6 GiB tensor.
+_QED_JK_H2E_STREAM = int(os.environ.get("QED_JK_H2E_STREAM", "1"))
+# Rows per streamed block are sized from a MiB budget, like QED_JK_BLOCK_MB on
+# the C side; both are independent of each other.
+_QED_JK_STREAM_MB = int(os.environ.get("QED_JK_STREAM_MB", "256"))
+# QED_LIBTRANS_MEM_MB: cap the memory grant handed to psi4's libtrans
+# (0 = the historical max(psi4 memory, 8*npair^2), i.e. an exact no-op).
+# See the note at the set_memory call site; with the streamed readback this
+# grant, not our tensor, is what sets the run's peak.
+_QED_LIBTRANS_MEM_MB = int(os.environ.get("QED_LIBTRANS_MEM_MB", "0"))
+
+
+def _jk_stream_armed(shim):
+    """True when the streamed readback should be used for this build."""
+    if not _QED_JK_H2E_DISK or _QED_JK_H2E_DISK == "0":
+        return False
+    if not _QED_JK_H2E_STREAM:
+        return False
+    for _f in ("qed_dpd_stream_open", "qed_dpd_stream_read",
+               "qed_dpd_stream_close"):
+        if not hasattr(shim, _f):
+            # Loud, not silent: the point of the route is the memory, and a
+            # quiet fall back to the whole-matrix reader would look like a
+            # merely-slow run while the transient it exists to remove is still
+            # there.
+            raise RuntimeError(
+                "QED_JK_H2E_DISK with QED_JK_H2E_STREAM=1 needs a "
+                "psi4_dpd_shim.so that exports %s -- rebuild it (the build "
+                "line is in psi4_dpd_shim.cpp's header), or set "
+                "QED_JK_H2E_STREAM=0 to use the whole-matrix readback" % _f)
+    return True
+
+
+def _h2e_spill_cleanup():
+    for _p in list(_H2E_SPILL_FILES):
+        try:
+            os.unlink(_p)
+        except OSError:
+            pass
+        _H2E_SPILL_FILES.discard(_p)
+
+
+atexit.register(_h2e_spill_cleanup)
 #
 #   QED_DISABLE_QN : never activate quasi-Newton / coupled CI  (default 0 = off)
 #
 # QN activation (microiteration_optimization6, the `step_norm < 0.05` trigger on
 # an accepted step) is what flips the micro CI solve from the Kreplin UNCOUPLED
 # cap (constint[8] = _QED_CI_UNCOUPLED_MAXITER, default 5) to COUPLED
-# (constint[8] = 10000, run to a 0.1*||g_orb||-scaled threshold). Setting this to
+# (constint[8] = _QED_CI_COUPLED_MAXITER, default 5 since 2026-08-25, run to a
+# 0.1*||g_orb||-scaled threshold -- whichever of budget or threshold fires
+# first). Setting this to
 # 1 keeps the whole run uncoupled, which is the apples-to-apples setting for
 # comparing against an UNCOUPLED-CI reference (e.g. the Molpro c10h8 benchmark in
 # examples/c10h8.out) and also matches the cpp_casscf port, whose QN/BFGS path is
 # deliberately not wired up. Gates the LIVE site only (microiteration_optimization6
-# ~12328); the byte-identical block in dead microiteration_optimization5 (~10639)
-# is untouched.
+# ~12328).  (microiteration_optimization5 carried a byte-identical block; that
+# routine was REMOVED 2026-09-04, so this is now the only copy.)
 _QED_DISABLE_QN = int(os.environ.get("QED_DISABLE_QN", "0"))
 #
 #   QED_USE_MINRES : solve Hx=-g with preconditioned MINRES  (default 1 = ON)
 #
 # Unlike the knobs above this one is NOT default-no-op: minres_solve replaces
 # linear_equation_solve/LinearRMSolver at all four "gradient is small, use
-# Newton step" / hard_case==2 call sites (internal microiteration_optimization5
+# Newton step" / hard_case==2 call sites (internal, microiteration_optimization6
 # ~10586,10634 and the live microiteration_optimization6 ~12263,12305).  See
 # minres_solve's docstring for why: LinearRMSolver solves the normal equations
 # S^T S a = -S^T g, squaring the condition number of a Hessian that is
@@ -156,13 +392,186 @@ _QED_GLTR_TOL_SCALE = float(os.environ.get("QED_GLTR_TOL_SCALE", "1.0"))
 # without scipy at all.
 _QED_NEWTON_MAXITER = int(os.environ.get("QED_NEWTON_MAXITER", "20"))
 #
+#   QED_NEWTON_FORCING : make minres_solve's exit tolerance RELATIVE to ||g||
+#                        (default 0 = OFF, byte-for-byte no-op)
+#
+# THE DEFECT THIS ADDRESSES.  minres_solve is called with conv_thresh=1e-6 and
+# tests it against ||Hx + g||, an ABSOLUTE quantity.  The residual at x = 0 is
+# exactly ||g||.  Measured on MgH+ CAS(8,12) lam=0 (64 solves at the live site):
+# ||g|| is min 1.46e-07, MEDIAN 2.14e-07, max 7.39e-04, so in 43 of 64 solves
+# the threshold is LARGER THAN THE RESIDUAL WE START WITH and the convergence
+# test demands nothing at all (relative accuracy demanded: median 4.7, i.e.
+# 470%).  Inexact-Newton theory wants the forcing term to SHRINK as ||g|| does
+# (Eisenstat & Walker 1996) to keep the outer iteration superlinear; ours grows.
+# What stops those solves today is not the accuracy rule but the conservative
+# bound_factor (~10x) and the max_iter cap -- i.e. an accident.
+# NOT an "x = 0 returned" bug: the only early exit is for an exactly-zero rhs.
+#   > 0  : conv_thresh = QED_NEWTON_FORCING * ||g||   (eta = 1e-2 is a
+#          reasonable first choice: 1% relative residual)
+#   < 0  : Eisenstat-Walker choice 1 constant form,
+#          conv_thresh = min(0.1, sqrt(||g||)) * ||g||
+#   = 0  : OFF.  conv_thresh is whatever the caller passed (1e-6).
+# NOTE the interaction with QED_NEWTON_MAXITER: a genuinely relative tolerance
+# needs more iterations, so a forcing run that leaves the cap at 20 measures the
+# cap, not the tolerance.  Raise both together; QED_NEWTON_MAXITER=100 alone is
+# a measured no-op on this case (33 -> 32), so it is a clean control.
+_QED_NEWTON_FORCING = float(os.environ.get("QED_NEWTON_FORCING", "0"))
+#
+#   QED_NEWTON_RANDOM_START : start minres_solve from a random x0 when ||g|| is
+#                             small                  (default 0 = OFF, no-op)
+#
+# DIAGNOSTIC, not a proposed default.  linear_equation_solve (the
+# QED_USE_MINRES=0 path) opens with: if ||g|| < 1e-3, draw a random unit vector
+# trial_0 and build the first search direction from H*trial_0 + g instead of
+# from g.  The author's stated intent was to BREAK STAGNATION; the small-||g||
+# interaction was not intended, and since ||g|| here is ~2e-07 the branch fires
+# on essentially every call.  This knob asks whether that random direction is
+# what makes the MINRES=0 path cheaper on MgH+ (12 vs 33 macroiterations).
+# DEVIATION, FLAGGED RATHER THAN HIDDEN: the two are not the same operation.
+# LinearRMSolver never puts trial_0 into its solution -- it only uses it to
+# generate the first trial direction, and returns the least-squares minimizer
+# over the subspace it then accumulates.  MINRES has no equivalent seam: the
+# only consistent way to start it off g is a genuine warm start x0, for which
+# r0 = b - H*x0.  So this sets x0 = QED_NEWTON_RANDOM_START * (random unit
+# vector), costing ONE extra mv2 to form r0.  A value of 1.0 matches
+# LinearRMSolver's unit magnitude, which is ~100x the typical solution norm
+# (~0.008) and therefore a deliberately POOR warm start -- that is the point of
+# measuring rather than assuming.  Consumes the global RNG, like the routine it
+# imitates and like solve_gltr_trust_region's noise draw.
+_QED_NEWTON_RANDOM_START = float(os.environ.get("QED_NEWTON_RANDOM_START", "0"))
+#
+#   QED_NEWTON_DUMP : directory to dump the Newton subproblems (H, g, diag) to
+#                     (default "" = OFF, no-op)
+#   QED_NEWTON_DUMP_MAX    : stop after this many dumps      (default 12)
+#   QED_NEWTON_DUMP_STRIDE : dump every Nth solve            (default 1)
+#
+# WHY.  The question "can the Newton problem always be converged by something
+# faster than scipy MINRES?" cannot be answered from macroiteration counts:
+# those are chaotic (the count moves 5x under bit-level FP noise) and they
+# confound the linear solver with the outer optimizer.  The clean measurement is
+# OFFLINE -- take the actual (H, g) pairs this branch sees and benchmark
+# candidate solvers on them in isolation, counting Hessian-vector products to a
+# RELATIVE residual target.  The reduced Hessian is only index_map_size square
+# (150 for MgH+ CAS(8,12)), so a dense dump is cheap and an EXACT
+# eigendecomposition is free -- which also settles whether these systems are
+# consistent at all (if g has a component in the near-null space of H, no
+# Krylov method converges and MINRES-QLP, not MINRES, is the right tool).
+# COST: index_map_size extra Hessian applications per dump, via the same
+# batched orbital_sigma3 path _exact_dense_trust_region_step uses.  Hence the
+# MAX cap: 12 dumps x 150 = 1800 mv2, a few percent of a run.
+#
+#   QED_NEWTON_SCIPY : solve the Newton system with scipy's UNPRECONDITIONED
+#                      MINRES at BOTH live call sites, never touching
+#                      minres_solve or linear_equation_solve
+#                      (value = rtol; default 0 = OFF, no-op)
+#
+# WHY THIS LEG EXISTS.  scipy MINRES is the REFERENCE the whole exercise is
+# measured against -- item 208(B), "can I always converge the Newton problem
+# with something FASTER THAN SCIPY MINRES?" -- and yet it has never been run as
+# the primary solver.  It appears today only as the fallback after one of the
+# other two fails, so its end-to-end behaviour is unmeasured.  (The `rstart` leg
+# of item 210 approximated it by accident, 38 of 38 solves falling back, and
+# came in at raw 20 against 33 and 12 -- but with a random x0 corrupting it, so
+# it does not count.)
+# WHAT IT ISOLATES.  With QED_NEWTON_FORCING the two Krylov solvers differ in
+# exactly TWO things: the stopping rule and the PRECONDITIONER.  Forcing fixes
+# the stopping rule.  So running scipy (unpreconditioned) at rtol=1e-6 against
+# minres_solve (|diag|-preconditioned) at the SAME relative tolerance isolates
+# the preconditioner itself -- two iterates that both satisfy ||Hx+g|| <= tol
+# still differ, and on a near-singular H they differ precisely in the near-null
+# components that this whole thread is about.
+# CONTRACT: same signature and (solution, converged) return as its two
+# siblings, so the call sites dispatch without any other change.  `conv_thresh`
+# is IGNORED -- scipy's rtol is relative to ||b||, which is the point.  maxiter
+# is left at scipy's default (5n), matching how the existing fallback calls it.
+# Gates the two LIVE sites in microiteration_optimization6 only; the
+# byte-identical pair in microiteration_optimization5 was REMOVED with it, the
+# same convention QED_DISABLE_QN uses.
+_QED_NEWTON_SCIPY = float(os.environ.get("QED_NEWTON_SCIPY", "0"))
+_QED_NEWTON_DUMP = os.environ.get("QED_NEWTON_DUMP", "")
+#   QED_LSTRS_HARD_DUMP : directory to dump the LSTRS subproblem at the moment
+#                         the beta-bisection ends with BOTH roots still
+#                         unnormalizable (default "" = off, exact no-op).
+#
+# WHY.  microiteration_optimization6 :16776 reaches a state the code does not
+# implement -- both roots hard -- and calls a bare exit().  The question that
+# decides how to fix it is whether the near-degenerate pair the Davidson keeps
+# returning is a REAL property of the bordered matrix or an artefact of the
+# iterative solver restarting from a frozen search space.  That is only
+# answerable against a dense eigendecomposition, and the reduced space here is
+# tiny (30 for LiH CAS(4,6)), so an exact one costs 30 Hessian applications.
+_QED_LSTRS_HARD_DUMP = os.environ.get("QED_LSTRS_HARD_DUMP", "")
+#
+#   QED_TRS_HARD_FALLBACK : take a real step when the LSTRS beta-bisection ends
+#                           with BOTH roots unnormalizable, instead of the bare
+#                           exit() that site used to call    (default 1 = ON)
+#
+# WHY THIS IS DEFAULT ON, unlike every other knob here.  The state it handles is
+# a GENUINE LSTRS hard case, verified by dense eigendecomposition of a dumped
+# subproblem (QED_LSTRS_HARD_DUMP): the orbital Hessian's two lowest eigenvalues
+# were degenerate to 5.7e-17 and the gradient was orthogonal to BOTH to machine
+# zero (|u_i^T g|/||g|| = 5.9e-15 and 1.5e-16).  The old code's response was
+# `exit()` -- SystemExit(None), i.e. the process dies MID-OPTIMISATION WITH
+# STATUS 0 and no traceback, which any runner scoring a return code reads as
+# success.  There is no configuration in which that is preferable, so the
+# fallback is on and the knob exists only to reproduce the old behaviour.
+#
+# NOT A BEHAVIOUR CHANGE FOR ANY HEALTHY RUN: it is reachable only where the old
+# code called exit(), so every run that completes today is untouched.
+#
+# WHAT IT DOES.  Dense More-Sorensen (_more_sorensen_dense, via
+# _exact_dense_trust_region_step) when the reduced space is small enough --
+# that solver has an EXPLICIT hard-case branch (pseudo-inverse solution plus a
+# multiple of a lowest eigenvector, sign chosen to minimise the model), which is
+# exactly the step the bisection cannot reach.  On the dumped subproblem it
+# gives model -2.7215e-04 against -2.6587e-04 for the interior pseudo-inverse
+# point alone.  Above the size cap it falls back to GLTR, which cannot fail but
+# has no hard-case branch, so the step is a descent step rather than the
+# optimum -- reported, not hidden.
+_QED_TRS_HARD_FALLBACK = int(os.environ.get("QED_TRS_HARD_FALLBACK", "1"))
+# Cost of the dense route is n = index_map_size Hessian-vector products, so the
+# cap is a wall-time guard, not a correctness one.
+_QED_TRS_FALLBACK_DENSE_MAX = int(
+    os.environ.get("QED_TRS_FALLBACK_DENSE_MAX", "4096"))
+#
+#   QED_LSTRS_HARD_PATIENCE : stop the beta-bisection after this many
+#                             CONSECUTIVE both-roots-hard iterations and take
+#                             the fallback above           (default 25)
+#
+# The bisection cannot escape the hard case by bisecting: on the dumped case the
+# Davidson returned BIT-IDENTICAL eigenvalues for the last ten iterations while
+# alpha kept halving, so the loop only ended when the bracket collapsed after 40
+# iterations.  A healthy subproblem leaves this state in a handful of iterations
+# (the same case with a 1e-14-different mean field escaped on iteration 18), so
+# 25 is slack.  0 disables the cap and restores the bracket-collapse-only exit.
+_QED_LSTRS_HARD_PATIENCE = int(os.environ.get("QED_LSTRS_HARD_PATIENCE", "25"))
+#
+#   QED_INTERNAL_EXACT_TRS : in internal_optimization3, solve the trust-region
+#                            subproblem by direct eigendecomposition instead of
+#                            the LSTRS beta-bisection        (default 0 = off)
+#
+# The internal site is the one place where this is free: `hessian_tilde_ai` is
+# ALREADY a dense (n_act_orb*n_in_a) matrix, and projection_step2 builds and
+# diagonalises the full bordered matrix on EVERY bisection step.  So the loop
+# pays many dense eigendecompositions to approach a solution that one call to
+# _more_sorensen_dense returns exactly, hard case included, with no
+# normalizability question and no iteration count.
+#
+# DEFAULT OFF because it changes the steps taken (energies then agree to the
+# convergence threshold, not to machine precision) -- not because it is
+# suspect.  It is strictly more robust than what it replaces.
+_QED_INTERNAL_EXACT_TRS = int(os.environ.get("QED_INTERNAL_EXACT_TRS", "0"))
+_QED_NEWTON_DUMP_MAX = int(os.environ.get("QED_NEWTON_DUMP_MAX", "12"))
+_QED_NEWTON_DUMP_STRIDE = int(os.environ.get("QED_NEWTON_DUMP_STRIDE", "1"))
+#
 #   QED_LSTRS_NORM_TOL : LSTRS boundary tolerance |(||s||-D)/D|   (default 1e-3)
 #
 # The LSTRS alpha-bisection keeps iterating until the step norm matches the
 # trust radius to this relative accuracy.  Gates the two LIVE sites --
 # internal_optimization3 (~7912, dense/bordered) and microiteration_
 # optimization6 (~12415, matrix-free Davidson) -- not the micro_opt5 or
-# ah_orbital_optimization twins, which do not fire in the measured runs.
+# ah_orbital_optimization twins (that routine was REMOVED 2026-09-04; it never
+# fired in the measured runs).
 # Worth sweeping because the trust radius it is being matched against is
 # itself only updated in coarse 0.7x / 1.2x / 0.5x jumps, so 0.1% accuracy
 # against a quantity known to ~30% is not obviously earning its iterations:
@@ -227,6 +636,353 @@ _QED_LSTRS_EPS_HC = float(os.environ.get("QED_LSTRS_EPS_HC", "1e-6"))
 # macroiteration's surface.  Whether it still predicts anything there is exactly
 # what has to be measured -- do not assume it does.
 _QED_TRUST_PERSIST = int(os.environ.get("QED_TRUST_PERSIST", "0"))
+#
+#   QED_TR_MAX / QED_TR_INIT : the trust-region CAP and the per-microiteration
+# STARTING radius.  Defaults 0.75 / 0.5 reproduce current behaviour exactly.
+#
+# WHY THESE EXIST.  On MgH+ CAS(8,12) the trust region is INERT -- it is not
+# adapting anything, it is a hard-coded step-length cap.  Measured on the
+# base arm of the adaptive_cas812 wave (base_s3/s4/s7 logs):
+#   - ZERO rejections in the entire run (grep -ic reject = 0 in all three);
+#   - the radius walks 0.5 -> 0.6 -> 0.72 -> 0.75 (the 1.2x growth of
+#     step_control) and then PINS at the 0.75 cap -- 80 of ~122 printed radii
+#     are exactly 0.75 in s3;
+#   - it is then RESET to 0.5 at the top of the next microiteration and
+#     re-climbs the identical ladder.
+# Combine that with the conditioning report's 13/15 subproblems terminating on
+# the BOUNDARY and the conclusion is forced: THE STEP LENGTH IS SET BY THE
+# CONSTANT 0.75, NOT BY THE MODEL.  ratio > 0.75 at every step, so the
+# algorithm requests a larger region at every step and the cap denies it.
+#
+# THE ABOVE DIAGNOSIS IS CONFIRMED.  What follows is a record of the efficacy
+# wave that tested it as a FIX, and FALSIFIED it.  Keep both halves: the
+# measurement is sound and worth not re-deriving; the inference from it was not.
+#
+# RESULT (trmax_cas812, 2026-08-11, MgH+ CAS(8,12), 14 seeds x
+# {base, QED_TR_MAX=1.0, QED_TR_MAX=3.0}, 42/42 converged, worst |dE| 5.7e-9;
+# the base arm reproduced the adaptive_cas812 base EXACTLY per seed):
+#         arm  | MAX  p90  | mean    sd   min | matvecs
+#         base |  21  19.0 | 14.86  4.28    8 |   -
+#         cap1 |  20  18.7 | 15.64  3.15    9 | +3.6% (p=0.73, 6/14 better)
+#         cap3 |  20  18.7 | 15.64  3.15    9 | identical to cap1
+# Macro-count p = 0.59.  The pre-registered rule was "wins only if MAX and p90
+# come down"; they moved by 1 and 0.3, which over n=14 is a RE-ROLL, not a win.
+# It is the same signature as the six earlier mechanisms: sd falls ONLY by
+# lifting the MINIMUM (8 -> 9) while the upper tail sits still and the mean
+# RISES.  No mechanism has ever moved the upper tail.
+#
+# THE MECHANISM DID FIRE -- that is what makes this informative rather than
+# inconclusive.  Raising the cap woke the trust region up exactly as intended:
+# rejections per run went 0.1 -> 0.8, and the radius ADAPTS instead of pinning
+# (cap3 climbs 0.864/1.037/1.244/1.493/1.792/2.150/2.580).  The outer loop did
+# not care.  So the arbitrary throttle was REAL, and was NOT what limits outer
+# progress.  Outer progress is limited by MODEL ERROR (QED_ADAPTIVE_TOL's real
+# finding), not by step quality (0/5, QED_EXACT_TR) and not by step LENGTH.
+#
+# THE COUNTER-ARGUMENT IS SETTLED: 0.75 is NOT load-bearing.  cap1 and cap3
+# differ in radius BOOKKEEPING but their energy trajectories are BIT-IDENTICAL
+# on every seed spot-checked -- above ~1.0 the steps go INTERIOR and the cap
+# stops binding, exactly as on CAS(6,6).  A wider cap sweep would measure
+# nothing.  CAVEAT FOR ANY FUTURE READER OF THE LOGS: the largest radius
+# REACHED is not evidence the knob changed the step -- a radius can grow
+# without the step ever using it, which is precisely what cap3 does.
+#
+# Both knobs stay at their default-no-op values (knob-off verified bit-exact,
+# CAS(6,6) seed 3 = macro 10 / mv 10889 / E -199.53179254052137).  The CAS(6,6)
+# smoke test had shown cap >= 1.0 giving macro 8 vs 10; it did NOT transfer.
+# CAS(8,12) is the discriminator -- never score a candidate on CAS(6,6) alone.
+_QED_TR_MAX = float(os.environ.get("QED_TR_MAX", "0.75"))
+_QED_TR_INIT = float(os.environ.get("QED_TR_INIT", "0.5"))
+#
+# QED_TRUE_ENERGY_RATIO: judge an orbital step by the TRUE energy E(U) instead
+# of by the second-order model E(T).  Default 0/OFF = byte-for-byte unchanged.
+#
+# THE DEFECT THIS ADDRESSES.  microiteration_optimization6 accepts a step on
+#     energy_change = zero_energy + microiteration_exact_energy(U3,A,G) - current_energy
+# (:16158) and then scores the trust region with
+#     ratio = energy_change / predicted_energy2                        (:16233)
+# Both sides of that ratio are the SAME quadratic model E(T) = 2A.T + T.G.T --
+# they differ only in higher-order terms of the U parameterisation -- so the
+# ratio is ~1.0002 at every step (item 320), step_control never shrinks, and no
+# step is ever rejected.  But E(T) is a QUADRATIC FORM: for indefinite G it is
+# unbounded below, so the microiteration rides it down without limit and the
+# CI at the resulting orbitals comes back HIGHER.  Measured on the developer's
+# ethylene conical-intersection case (aug-cc-pVDZ, CAS(4,7), lambda_x = 0.4,
+# `jobs/qed_ci/ethylene/cavity/aug_cc_pvdz/040/test/c2h4_040.py`), where the
+# model reaches -294.54 Eh while the true energy is -72.69:
+#     micro  1: model -77.176642   true -77.081193   gap  -0.0954  rho_true -1.559
+#     micro  4: model -77.281003   true -74.129989   gap  -3.1510  rho_true -8.777
+#     micro 20: model -91.315717   true -72.248581   gap -19.0671  rho_true  0.116
+#     micro 40: model -212.153479  true -63.382798   gap -148.77   rho_true  0.011
+# rho_true is NEGATIVE from the first microiteration -- a textbook trust region
+# would have rejected that step and shrunk Delta.  Molpro has the same E(T)
+# below E(U) gap at the same magnitude on Cr2 (-4.23 vs our -4.71), but it
+# computes and prints ENERGY(VAR) against ENERGY(PROJ) every macroiteration and
+# drives the gap monotonically to zero; ours re-opens.  So the model is not the
+# bug -- not measuring it is.
+#
+# WHAT IT COSTS, AND THE CHEAP ROUTE THAT DOES NOT WORK.  E(U) needs the ERIs
+# genuinely retransformed at the rotated orbitals -- one
+# c_full_transformation_macroiteration out of self.twoeint per evaluation.
+# Measured mean cost per call, against the run it is added to:
+#     c2h4   0.050 s   (176 candidate steps; the run wastes far more than that)
+#     Cr2    0.140 s   (271 steps = 38 s on 1695 s, +2%)
+#     c10h8  2.334 s   (45 steps = 105 s on 55 s, +189%)
+# c10h8 is the case where the knob should stay OFF: its model is accurate, so
+# there is nothing to catch.  The pathological cases are the cheap ones.
+#
+# THE CHEAP ROUTE IS A TRAP, AND IT COST THIS IMPLEMENTATION A REVISION.
+# microiteration_ci_integrals_transform (:12072) is 12-46x cheaper and already
+# runs once per accepted step, so it looks like a free E(U).  IT IS NOT A
+# TRANSFORMATION.  It updates the active integrals from self.J[act,act,:,:] and
+# self.fock_core with terms explicitly first and second order in T = U - I, so
+# an energy assembled from its output IS the second-order model, by another
+# route.  Measured on c2h4 when it was tried: `true energy change` agreed with
+# `model energy change` to 12 DIGITS at every step while the macroiteration
+# energy still rose 8.3 Eh.  That is two second-order expressions agreeing with
+# each other, not a PROJ-VAR gap.  If a future reader is tempted by the same
+# shortcut: the tell is a gap of ~1e-13 where the trajectory says it should be
+# Eh-sized.
+#
+# MODES
+#   0  off (default).  Byte-for-byte the original.
+#   1  MEASURE AND STEER.  Compute E(U) at the trial point, print the
+#      PROJ/VAR gap and rho_true, and hand rho_true to step_control instead of
+#      the model-over-model ratio.  The ACCEPTANCE test is left alone, so the
+#      trajectory changes only through the trust radius.
+#   2  ENFORCE.  As 1, and additionally accept a step only when the TRUE
+#      energy decreases (by more than QED_TRUE_ENERGY_TOL).  This is the
+#      textbook trust-region construction and is what makes the method
+#      globally convergent on the fixed-RDM surface regardless of how bad the
+#      model is: the step is bounded by Delta and Delta shrinks until the true
+#      energy falls.
+#
+# Because the CI re-solve at fixed orbitals is variational over the averaged
+# subspace (equal weights -- Ky Fan; item 285), mode 2 gives
+#     E_CI(new) <= E_U(new) <= E_CI(old)
+# i.e. the MACROiteration energy becomes monotone as well.  The c2h4
+# oscillation is exactly the failure of the first inequality, which nothing in
+# the shipping path currently enforces.
+_QED_TRUE_ENERGY_RATIO = int(os.environ.get("QED_TRUE_ENERGY_RATIO", "0"))
+# Acceptance tolerance on the TRUE energy change in mode 2.  0.0 means "must
+# strictly decrease".  A small positive value permits a step that is flat to
+# within numerical noise.
+_QED_TRUE_ENERGY_TOL = float(os.environ.get("QED_TRUE_ENERGY_TOL", "0.0"))
+# Mode 2 retry bound.  The shipping reject path (`Reject step, restart`) halves
+# the radius and loops with NO bound on consecutive rejections.  That is benign
+# under the model test, where acceptance is near-certain, but the TRUE-energy
+# test can legitimately reject every step -- at a stationary point of E(U) no
+# step lowers it -- and would then spin with Delta -> 0.  On hitting either
+# bound the microiteration gives up rather than looping: no step is applied, the
+# CI is re-solved, and the next microiteration builds a fresh model.
+_QED_TRUE_ENERGY_MAX_REJECT = int(os.environ.get("QED_TRUE_ENERGY_MAX_REJECT", "8"))
+_QED_TRUE_ENERGY_MIN_RADIUS = float(
+    os.environ.get("QED_TRUE_ENERGY_MIN_RADIUS", "1e-6")
+)
+#
+# QED_TRUE_ENERGY_REEXPAND: on an ACCEPTED step, MOVE THE MODEL'S EXPANSION
+# POINT to the new orbitals instead of accumulating T against a model expanded
+# once at macroiteration entry.  Requires QED_TRUE_ENERGY_RATIO >= 1 (it reuses
+# that mode's transform).  Default 0 = the shipping accumulate behaviour.
+#
+# WHY.  Inside microiteration_optimization6, self.J / self.K / self.H_spatial2 /
+# self.d_cmo are NEVER rebound (every such assignment in the function is
+# commented out), self.U2 accumulates for the whole macroiteration, and
+# U3 = U2 . U_delta is the TOTAL displacement from macro entry.  build_gradient
+# and build_hessian_diagonal re-EVALUATE the fixed A, G at that growing T; they
+# do not rebuild them.  So the quadratic stays expanded at the macro-entry
+# orbitals while the iterate walks away from it, and eventually no step from
+# that stale model descends at any radius -- which is exactly the give-up
+# cascade QED_TRUE_ENERGY_MAX_REJECT exists to escape (11 of them on c2h4).
+#
+# THIS IS THE DEVELOPER'S ah_orbital_optimization DESIGN.  That routine (REMOVED
+# 2026-09-04, see git history) set self.U2 = eye once and never wrote it again, so every
+# build_gradient(self.U2, ...) / mv2(self.U2, ...) is called at U = I, T = 0;
+# its accept branch fully retransforms J/K/h1/d_cmo and rebuilds A, G from the
+# NEW integrals, i.e. every accepted step is effectively a new macroiteration.
+# It cannot be revived directly: its subproblem solver
+# Davidson_augmented_hessian_solve3 has been deleted, and the surviving
+# Davidson_augmented_hessian_solve6 has a different parameterization
+# (G_blocks/alpha/alpha_range/trust_radius vs dense G1/beta), so substituting it
+# would confound the very comparison this knob exists to make.  This knob tests
+# the SAME design question inside the live path with the solver held identical.
+#
+# IT IS ALSO NEARLY FREE.  QED_TRUE_ENERGY_RATIO already does a full
+# c_full_transformation_macroiteration at every candidate step and then keeps
+# only the scalar energy.  On an accepted step this installs the J/K/h1/d_cmo it
+# already produced, folds the rotation into U_total, resets U2/U3 to the
+# identity and rebuilds A, G -- one build_intermediates (0.0098 s on c2h4) on
+# top of a transform that was already paid for.
+#
+# QN IS FORCED OFF when this is on: the quasi-Newton branch caches U_zero /
+# A_tilde_zero / G_blocks_zero / reduced_hessian_diagonal_zero in the OLD basis
+# at qn_count == 1, and re-expansion invalidates all of them.  Disentangling
+# that is a separate job; for now the knob refuses to combine with QN rather
+# than silently using stale history.
+_QED_TRUE_ENERGY_REEXPAND = int(os.environ.get("QED_TRUE_ENERGY_REEXPAND", "0"))
+if _QED_TRUE_ENERGY_REEXPAND and _QED_TRUE_ENERGY_RATIO < 2:
+    # It installs the transform QED_TRUE_ENERGY_RATIO produces, and only
+    # on a step accepted on the TRUE energy.  Without mode 2 there is no
+    # transform to install, so promote rather than fail at the call site.
+    print("QED_TRUE_ENERGY_REEXPAND=1 requires QED_TRUE_ENERGY_RATIO>=2;"
+          " promoting QED_TRUE_ENERGY_RATIO to 2", flush=True)
+    _QED_TRUE_ENERGY_RATIO = 2
+#
+# QED_TRUE_ENERGY_ADAPTIVE: engage the true-energy machinery (BOTH the
+# acceptance test and, if enabled, the re-expansion) ONLY while the trial
+# rotation has walked far enough from the model's expansion point that the
+# model can no longer be trusted.  Default 0 = the unconditional behaviour of
+# QED_TRUE_ENERGY_RATIO / _REEXPAND, so this knob is an exact no-op when off.
+#
+# WHY IT EXISTS -- ITEM 330.  Measured on c10h8 CAS(10,10), a HEALTHY system
+# whose shipping control reproduces Molpro to 1.1e-9:
+#     control     10 macros  152.0 s   E = -383.5044493793   (= Molpro)
+#     mode2        9 macros 1213.9 s   E = -383.4973645803   (+7.085 mEh)
+#     reexpand     6 macros  259.5 s   E = -383.4973645891   (+7.085 mEh)
+# Both knob legs CONVERGE, monotonically, to a DIFFERENT AND WORSE stationary
+# point.  It is NOT premature stopping: reexpand reaches a SMALLER gradient
+# norm (2.53e-6) than the control (4.45e-6) at the HIGHER energy.  And since
+# mode2 carries no re-expansion at all yet lands on the same wrong solution,
+# the cause is THE ACCEPTANCE TEST, not the re-expansion.
+#
+# THE MECHANISM (and the developer's reading of it).  Werner-Meyer-Knowles is
+# valued for a LARGE RADIUS OF CONVERGENCE: the model-based test will accept an
+# adventurous step in T, including one that raises the true energy, and that
+# wandering is HOW a better basin gets reached.  Enforcing strict monotone
+# descent in E(U) makes the optimiser greedy and parks it in the nearest basin.
+# So "monotone = good" is FALSE in general -- it is good exactly where the model
+# is untrustworthy (c2h4 at lambda 0.4, h4 at 24000 A, Cr2's +2.38 Eh macro 1)
+# and harmful where the model is sound (c10h8).
+#
+# THE TRIGGER.  Kreplin's algorithm (item 264A) rebuilds the exact Hessian when
+# k == 0, or |D^k - D^(k-1)| > eps_c = 0.025, or the energy rose -- i.e. Molpro
+# re-expands CONDITIONALLY, sitting between our never-re-expand shipping path
+# and _REEXPAND's always.  The quantity that actually makes OUR model stale is
+# the displacement of the trial rotation from the point the model was expanded
+# at, so the trigger here is ||U2_trial - I||_F > eps_c.  It costs one Frobenius
+# norm of an nmo x nmo matrix and, crucially, is computable WITHOUT the E(U)
+# transform -- so when it does not fire the expensive transform is never run and
+# the shipping path is followed exactly.
+#
+# *** THE DEFAULT 0.025 IS A PLACEHOLDER, NOT A CALIBRATED VALUE, AND MUST NOT
+# BE QUOTED AS KREPLIN'S. ***  The developer raised this and is right: 0.025 is
+# an EMPIRICAL constant Kreplin fitted for |D^k - D^(k-1)|, a DENSITY change.
+# The trigger here is a ROTATION norm -- a different quantity, different units,
+# different scale -- so the number carries no authority once moved across, and
+# an earlier draft of this comment that called it "Kreplin's own 0.025" was
+# wrong.  Two honest routes, in order:
+#   (1) MEASURE FIRST.  true_energy_should_engage prints ||U2_trial - I||_F on
+#       every call.  Run each system with QED_TRUE_ENERGY_EPS_C=0 -- which
+#       engages unconditionally and so reproduces the plain knob exactly -- and
+#       read the distribution.  If c10h8's displacements do NOT separate from
+#       c2h4 / h4 / Cr2's, NO single threshold can work and this trigger is the
+#       wrong quantity; that is a decisive, cheap refutation.
+#   (2) If they do separate, SWEEP eps_c across the gap and pick from the
+#       measurement, scoring c10h8's ENERGY as well as its cost (item 330E).
+# A third option if (1) fails: use Kreplin's ACTUAL quantity, the change in the
+# one-particle density, for which 0.025 IS calibrated -- computable without the
+# 4-index transform, so the cost argument survives.
+#
+# EXPECTED, AND THE GATE THIS MUST PASS.  On c10h8 the steps are small and the
+# model is accurate, so this should rarely fire and the run should collapse back
+# onto the control -- recovering BOTH the +70.7% cost AND the 7.085 mEh.  On
+# c2h4 / h4 / Cr2 the rotations are large and it should stay engaged.
+# *** ITS GATE MUST SCORE c10h8's ENERGY, NOT ONLY ITS COST (item 330E). ***
+# QED_TRUE_ENERGY_PROBE: the SECOND adaptive strategy, and the principled one.
+# Instead of guessing model quality from a geometric proxy, MEASURE it: on the
+# FIRST candidate step of each macroiteration always evaluate E(U), form the
+# relative model error
+#       rel = |true_change - model_change| / |model_change|
+# and engage the true-energy machinery for the REST of that macroiteration only
+# if rel > QED_TRUE_ENERGY_PROBE_TOL.  Cost is bounded at ONE extra transform
+# per macroiteration when it declines -- on c10h8 that is ~10 transforms (~23 s)
+# against the 68 (160.6 s) the unconditional knob pays (item 330A).
+#
+# WHY THIS RATHER THAN THE DISPLACEMENT TRIGGER.  The displacement trigger
+# (QED_TRUE_ENERGY_ADAPTIVE) keys off ||U2_trial - I||, a PROXY.  Measured, its
+# medians on the normalised scale are 6.18e-4 (h4) / 2.54e-4 (c2h4) / 6.47e-4
+# (c10h8) -- h4 and c10h8 are indistinguishable at the median, and only the
+# upper tail separates.  The probe keys off the quantity the whole thread is
+# about (the PROJ-VAR gap, items 322/325), so it needs no per-system tuning.
+# QED_TRUE_ENERGY_REACTIVE: the THIRD strategy, and the only one that survived
+# c10h8.  Do not PREDICT whether the model can be trusted -- wait until it
+# demonstrably fails, then switch the true-energy machinery on for the rest of
+# the run.  Default 0 = off.
+#
+# WHY THE PREDICTIVE STRATEGIES CANNOT WORK (item 331D).  Both
+# QED_TRUE_ENERGY_ADAPTIVE (displacement) and QED_TRUE_ENERGY_PROBE (measured
+# model error) leave c10h8 on a stationary point 7.085 mEh ABOVE the control.
+# The reason is not tuning: on c10h8 the model error at macro 0 is genuinely
+# large (rel = 0.158, and 0.996 at macro 2) and FOLLOWING IT ANYWAY is what
+# finds the better basin -- the control sits nearly flat for five macros and
+# then drops 0.0116 Eh at macro 7.  The beneficial exploration IS the model
+# being wrong, so model quality cannot decide whether to enforce descent.
+#
+# THE REACTIVE SIGNAL SEPARATES THE TEST SET PERFECTLY, WITH NO THRESHOLD.
+# Macro-energy RISES in each control: c10h8 0, Cr2 1, c2h4 216, h4 406.  So
+# "has a macroiteration energy gone UP" is exactly the discriminator, it is
+# dimensionless, and -- unlike every norm in this file -- it is INDEPENDENT OF
+# SYSTEM SIZE (item 331B).  It is also Kreplin's own third condition: item
+# 264A's rule is "exact Hessian if k == 0 OR |D^k - D^(k-1)| > eps_c OR THE
+# ENERGY ROSE".  The clause that works needs no constant at all.
+#
+# COST WHEN IT NEVER FIRES: exactly zero -- no E(U) transform is ever run, and
+# the run is the shipping path bit-for-bit.  Cost when it fires: the one
+# macroiteration that rose.  This version arms from the NEXT macroiteration
+# onward and does NOT roll back the macro that rose; on h4 the first rise is
+# already large (macro 2, -2.2665 -> -0.533), so if arming that late proves too
+# late, the refinement is to restore the previous macro's orbitals before
+# re-running it.  That rollback is deliberately NOT attempted here.
+_QED_TRUE_ENERGY_REACTIVE = int(os.environ.get("QED_TRUE_ENERGY_REACTIVE", "0"))
+# A rise must clear this to count, so numerical noise at convergence cannot arm
+# the knob.  1e-10 matches the macro convergence test at :5318.
+_QED_TRUE_ENERGY_REACTIVE_TOL = float(
+    os.environ.get("QED_TRUE_ENERGY_REACTIVE_TOL", "1e-10")
+)
+_QED_TRUE_ENERGY_PROBE = int(os.environ.get("QED_TRUE_ENERGY_PROBE", "0"))
+# Provisional: the model is "good" if the true and predicted energy changes
+# agree to 10%.  Item 320 measured the shipping ratio at 1.0002 on a healthy
+# system, so a sound model sits far below this; c2h4's rho_true was NEGATIVE
+# from the first microiteration (item 325 header).  NOT yet swept.
+_QED_TRUE_ENERGY_PROBE_TOL = float(
+    os.environ.get("QED_TRUE_ENERGY_PROBE_TOL", "0.1")
+)
+_QED_TRUE_ENERGY_ADAPTIVE = int(os.environ.get("QED_TRUE_ENERGY_ADAPTIVE", "0"))
+# Default 5e-3 on the NORMALISED scale -- chosen from the measured
+# distributions (h4 38.9%% / c2h4 30.8%% / c10h8 14.7%% engagement), NOT
+# inherited from Kreplin.  Still provisional until the c10h8 ENERGY test.
+_QED_TRUE_ENERGY_EPS_C = float(os.environ.get("QED_TRUE_ENERGY_EPS_C", "5e-3"))
+#
+# QED_DEGEN_CANON: pin the ARBITRARY GAUGE inside near-degenerate orbital
+# clusters.  Default 0/OFF, so every existing run is byte-for-byte unchanged.
+#
+# THE MEASUREMENT THIS EXISTS FOR (MgH+ CAS(8,12) cc-pVDZ, lambda 0, seed 1,
+# identical in every other respect):
+#     OMP_NUM_THREADS=1  ->  33, 33, 33 macroiterations, energies BIT-IDENTICAL
+#     OMP_NUM_THREADS=4  ->   6, 28, 26          (and 6, 32, 30 with MKL_CBWR)
+# The energy is robust throughout (-199.543974671 +- 3e-9); only the COUNT
+# moves, by 5.3x, with nothing physical varied.
+#
+# MECHANISM.  Eigenvectors WITHIN a degenerate subspace are arbitrary, so a
+# last-bit difference from threaded MKL rotates them freely.  Measured directly:
+# the same CQED-RHF calculation run at 1 and at 4 threads gives IDENTICAL
+# spaces (principal angle 0.0000 deg in the inactive, active AND virtual
+# blocks) but different mixing inside the degenerate pi pair.  The CASCI energy
+# is invariant to that mixing -- verified to 1e-12 on all three roots -- but
+# the OPTIMIZER'S TRAJECTORY IS NOT: the preconditioner M = |diag(H)| + 1e-12
+# is built in the orbital-PAIR parameter basis, so rotating within a block
+# changes diag(H) even though the energy does not change, which changes the
+# Krylov space and hence the path length.  The energy is invariant; the route
+# to it is not.
+#
+# RELATION TO THE EXISTING SIGN FIX.  The QED_RANDOM_ORBITAL_SEED block below
+# already pins column SIGNS, for the same underlying reason (it records
+# 9/12/11 macroiterations across identical repeats before it was added).  Two
+# gaps: it runs ONLY on the random-rotation path, never on the canonical-guess
+# path, and signs are the weaker case -- on MgH+ the two runs are not related
+# by any sign pattern (|C| itself differs), i.e. genuine degenerate mixing.
+_QED_DEGEN_CANON = int(os.environ.get("QED_DEGEN_CANON", "0"))
+_QED_DEGEN_TOL = float(os.environ.get("QED_DEGEN_TOL", "1e-6"))
 #
 # (RETIRED 2026-07-29: QED_SCHEDULE_NATURAL.)  It scheduled
 # N_microiterations / N_orbital_optimization_steps off the FIRST step computed
@@ -327,7 +1083,9 @@ _QED_JD_TOL = float(os.environ.get("QED_JD_TOL", "0.1"))
 # so the matvec cut reaches the wall clock instead of paying for a recompile.
 # The switch to MKL's dsymv_ that the symbol binding implies was verified
 # BIT-IDENTICAL to the previous scipy/cython_blas path (max|d| exactly 0.0).
-_QED_G_SYMV = int(os.environ.get("QED_G_SYMV", "1"))
+# _QED_G_SYMV's VALUE is set in orbital_sigma.py (imported below), because the
+# no-MKL fallback there has to be able to force it off.  Documented here, with
+# the other knobs, because that is where a reader looks for it.
 #
 #   QED_G_TILED : blocked build of the G_ij/G_ti/G_tu blocks   (default 0 = off)
 #
@@ -422,6 +1180,80 @@ _QED_G_TILED = int(os.environ.get("QED_G_TILED", "1"))
 # real run's memory pressure, while merely reordering ACCESS pays less.  Classify
 # which kind of fix it is before trusting a standalone number.
 _QED_BI_FASTPATH = int(os.environ.get("QED_BI_FASTPATH", "1"))
+
+#
+#   QED_PROFILE_MICRO : resolve the UNTIMED python glue inside the
+#                       microiteration (default 0 -- prints nothing, changes
+#                       nothing)
+#
+# Item 239(G): the timed children of `microiteration` sum to 90.41 s of 111.17 s
+# on the canonical c10h8 leg, so 20.76 s -- 10.5% of the whole macro loop, more
+# than `build intermediates` itself -- is unattributed.  These marks bracket the
+# regions the existing timers step over.  Emitted as "MICROPROF <label> took
+# <s>" so they cannot collide with the unlabelled `... took` prints the log
+# parsers already key on.  Rule 15: this exists because the cost has to be timed
+# at the real call site, not predicted from a synthetic memset.
+# NAME COLLISION, 2026-08-20: there is ALREADY a QED_PROFILE_MICRO at the
+# bottom of this file (:21855) that wraps the trust-region solver METHODS and
+# emits "MICRO_PROF <method> <s>".  These marks are a different thing (the
+# untimed glue INSIDE microiteration_optimization6), so they get their own
+# knob.  Setting both is fine and useful -- they are complementary.
+_QED_PROFILE_GLUE = int(os.environ.get("QED_PROFILE_GLUE", "0"))
+
+
+def _mp_start():
+    return timer() if _QED_PROFILE_GLUE else 0.0
+
+
+def _mp_end(label, t0):
+    if _QED_PROFILE_GLUE:
+        print("MICROPROF", label, "took", timer() - t0, flush=True)
+
+
+#
+#   QED_GRAD_CONV : add a GRADIENT criterion to the macroiteration stopping test
+#                   (DEFAULT 1e-6 since item 247; set 0.0 to restore the
+#                   pre-2026-08-20 energy-only behaviour exactly)
+#
+# Item 244.  The ONLY macro convergence test is :4857, |dE_avg| < 1e-10, energy
+# only.  On MgH+ CAS(8,12) that costs 25 of 27 macroiterations: the answer is
+# reached at macro 2 (3.8e-07 from the converged value) and macros 3-27 move the
+# energy by 3.8e-07 in total, while dE crawls asymptotically down onto the 1e-10
+# gate (1.43e-10 at macro 25).  Molpro stops the same calculation at 5 because
+# it tests GRAD(0) against 1e-4 -- but item 216 established that Molpro's
+# orbital gradient is a DIFFERENT QUANTITY from ours, so its threshold does not
+# transfer.  Calibrated on OURS, from mgh_roots_vs_molpro/mgh_lam0.log:
+#     tol 1e-4 -> stop after macro  3, energy error 1.6e-07
+#     tol 1e-5 -> stop after macro  6, energy error 3.4e-08
+#     tol 1e-6 -> stop after macro 11, energy error 3.0e-09
+#     tol 1e-7 -> stop after macro 26 -- our |g| PLATEAUS near 1e-7 and never
+#                 gets below 9.6e-08, so anything tighter never fires.
+# THE QUANTITY TESTED is the gradient at the START of the macro's orbital work
+# (the FIRST ||reduced_gradient|| of the macro, captured at the live print site
+# in microiteration_optimization6).  NOT the last: the last-of-macro gradient is
+# non-monotone -- 7.7e-07 at macro 2 rising back to 2.4e-06 at macro 7, the
+# rebound of item 215 -- and would declare convergence by luck.
+# IT IS OR-ed WITH THE ENERGY TEST, WHICH IS WHY IT ADDS NO NEW RISK: the code
+# already stops on the energy test alone, so a second sufficient condition can
+# only ever stop EARLIER, never later, and cannot admit a false convergence that
+# :4857 does not already admit.
+# SCORED ON BOTH SYSTEMS WE HAVE (items 246-247), which is why 1e-6 is the
+# default and 1e-5/1e-4 are not:
+#   MgH+ CAS(8,12)  1e-6 -> 27 macros become 11, 816.6 -> 572.7 s (-29.9%), for
+#                           2.99e-09 Ha.  (1e-5 would give 7 macros / -48.1% for
+#                           1.79e-08 Ha -- safe on both systems measured, but 6x
+#                           the error, so it is left opt-in.)
+#   c10h8 CAS(10,10) 1e-6 -> NO-OP, verified by running it: macro N 10 = 10,
+#                           energy to 4.0e-12, criterion fired 0 times.  Its
+#                           gradient DIPS to 4.4e-04 at macro 4 and rebounds to
+#                           6.8e-03, which is what rules 1e-4 out (item 245E
+#                           measured that dip at 1.06e-04 -- a 1.06x margin).
+#                           Smallest norm the whole run sees is 4.45e-06, at the
+#                           FINAL macro; the margin against the last macro that
+#                           still had work to do (9.5e-04) is 949x.
+_QED_GRAD_CONV = float(os.environ.get("QED_GRAD_CONV", "1e-6"))
+
+
 #
 #   QED_GRAD_BLOCKS : build_gradient's contraction off the G blocks (default 0)
 #
@@ -467,6 +1299,727 @@ _QED_BI_FASTPATH = int(os.environ.get("QED_BI_FASTPATH", "1"))
 # run's known upstream nondeterminism (threaded-BLAS reduction order in the
 # CQED-RHF SCF), not this change.  Set QED_GRAD_BLOCKS=0 to fall back.
 _QED_GRAD_BLOCKS = int(os.environ.get("QED_GRAD_BLOCKS", "1"))
+#
+#   NTHREAD : threads for psi4 AND for the C backend       (default unset = 1)
+#
+# THIS IS NOT A SOLVER KNOB -- it is the fix for a process-wide default that
+# silently serialised the entire C backend.  `import psi4` calls
+# psi4.set_num_threads(1) as part of its own initialisation, and psi4's
+# implementation of that sets the OMP and MKL thread counts for the WHOLE
+# process.  It therefore overrides an OMP_NUM_THREADS exported in the shell,
+# and because helper_PFCI imports psi4 at :18, ci_solver.c / orbital.c ran on
+# ONE thread in every driver that did not explicitly ask for more -- their omp
+# pragmas were live but empty.  Measured on c10h8 (24 threads vs the default):
+#     wall               593.0 -> 476.8 s
+#     optimization took  227.1 -> 163.0 s
+#     full JK             45.1 ->  10.2 s
+#     CI step             34.0 ->  14.8 s
+# i.e. this one line is worth more than every algorithmic knob above combined.
+#
+# DELIBERATELY OPT-IN AND DELIBERATELY NOT HARDCODED: small systems REGRESS.
+# h2o (6-31g, 2 states) goes 0.10 -> 0.27 s at 24 threads, because the C
+# backend's arrays are far too small to amortise the fork/join, and numpy's own
+# threaded BLAS competes for the same cores (`build hessian diagonal` is +44% at
+# 24 threads on c10h8 even though everything around it improves).  So the
+# correct N is a property of the SYSTEM, not of the machine, and there is no
+# default that is right for both -- leaving this unset preserves today's exact
+# behaviour for every existing driver.
+#
+# Set it in the driver script's environment (`NTHREAD=24 python c10h8.py`).
+# OMP_NUM_THREADS is honoured as a fallback so an already-exported value is not
+# silently discarded by psi4 -- which is the whole defect this knob exists for.
+_QED_NTHREAD = os.environ.get("NTHREAD") or os.environ.get("OMP_NUM_THREADS")
+if _QED_NTHREAD:
+    psi4.set_num_threads(int(_QED_NTHREAD))
+#
+# ITS COMPANION LIVES IN helper_cqed_rhf.py: QED_PSI4_MEM.  Same class of
+# defect -- psi4's 500 MiB default silently demotes a `scf_type pk` deck to
+# DiskJK, which re-reads the AO integrals from disk on every SCF iteration
+# (c10h8: psi4.energy("scf") 35.9 s -> 14.0 s at 8 GB).  Also opt-in.  Set both
+# together in the driver's environment:
+#     NTHREAD=24 QED_PSI4_MEM=8e9 python c10h8.py
+# helper_cqed_rhf is imported at :22, so its knob is applied before anything
+# here runs.
+#
+# ---------------------------------------------------------------------------
+# QED_SKIP_GKL : skip building self.gkl, which is DEAD CODE.        (default 0)
+#
+# self.gkl is the nmo x nmo modified one-electron integral of the OLD
+# full-Hamiltonian CASCI path.  Its ONLY consumer is build_sigma's
+# `elif ci_level == "cas"` branch, and build_sigma's ONLY live call site sits
+# inside `elif ci_level == "cis"` -- while build_sigma itself handles only
+# "fci" and "cas".  So the branch that reads self.gkl is unreachable from
+# every live path.  (The ACTIVE-space gkl2, built from active_fock_core and
+# active_twoeint, is the one the CAS algorithm actually uses; it is unrelated
+# and untouched.)
+#
+# PROVEN, NOT ASSUMED: filling self.gkl with NaN and running the full suite
+# gives 127 passed / 2 failed -- bit-identical to the known baseline, whose two
+# failures are the hardcoded-absolute-path ones documented in CLAUDE.md.
+#
+# WHY IT IS WORTH A KNOB.  Two reasons, and the second is the real one:
+#   1. it costs ~5 s at nmo 302 and ~13 s at nmo 412 (the build is a Python
+#      triple loop; measured 1.8e-7 s per nmo^3 iteration);
+#   2. it is the ONLY consumer of the full packed self.twoeint that is not a
+#      J/K transformation, so skipping it is a PREREQUISITE for QED_LIBTRANS_OO
+#      below -- with gkl gone, twoeint exists solely to produce J and K.
+# DEFAULT OFF (i.e. still built) because removing a quantity on the strength of
+# a reachability argument deserves an explicit opt-in first.
+# ---------------------------------------------------------------------------
+#   QED_LIBTRANS : build self.twoeint through psi4's libtrans   (DEFAULT 1
+#                  since item 247; set 0 for the mo_eri path)
+#
+# Replaces the mints.mo_eri(Ca,Ca,Ca,Ca) at :5362 -- the single largest item in
+# the c10h8 job -- with mints.integrals() + IntegralTransform + a readback
+# through psi4_dpd_shim.so.  Measured at c10h8 dims, 24 threads:
+#     mo_eri(Ca,Ca,Ca,Ca)                              134.75 s
+#     integrals 17.24 + presort 3.64 + transform 11.56 + readback 1.23
+#                                                    =  33.67 s   => -101 s
+# Correctness: the packed array agrees with mo_eri to 2.3e-12 at c10h8 dims and
+# 6.2e-15 at h2o/6-31g (validation/dpd_readback_check.py).
+#
+# WHY THIS IS THE ONLY ROUTE THAT WINS.  mo_eri's cost is almost entirely the
+# AO integrals, which it rebuilds internally on every call.  Measured
+# separately: mints.ao_eri() 125.65 s vs mints.integrals() 17.24 s for THE SAME
+# integrals -- the difference is purely materialising the dense nbf^4 array
+# (8.40 GB, 8x redundant, unscreened).  And NOTHING in psi4's AO path threads:
+# ao_eri is 125.32 s at 1 thread and 125.65 s at 24, integrals() 16.98/17.24,
+# presort 3.66/3.64.  So "read the AO integrals and transform them ourselves"
+# costs 125.65 + 19.09 = 144.7 s, i.e. WORSE than mo_eri; the only cheap AO
+# build psi4 has writes to disk, where numpy cannot reach it.
+#
+# NOT molpro's design, deliberately.  Molpro keeps AO integrals on disk and
+# re-transforms only the blocks it needs per macroiteration.  At 1 thread that
+# beat us; at 24 threads it does NOT -- our per-macro rotate is ~1.0 s against
+# libtrans's 7.55 s re-transform, so over 10 macros the molpro route is 96.2 s
+# against 42.0 s for "swap the one-time build and keep everything else".  This
+# knob therefore changes ONE line and no architecture.
+#
+# SECOND, UNPLANNED WIN: libtrans stores the buffer ALREADY PACKED as
+# (npair x npair) with 8-fold folding, which is exactly what build2DSO packs
+# self.twoeint into (:4578-4590).  So with this on, the dense nmo^4 array never
+# exists -- 8.40 GB and its einsum temporaries were the run's measured 33.1 GB
+# peak (see the comment at :4554).
+#
+# DEFAULT ON SINCE ITEM 247.  It was default-off because it needs
+# psi4_dpd_shim.so built next to helper_PFCI.py (see the build line in
+# psi4_dpd_shim.cpp) and that .so is ABI-coupled to the psi4 build it was
+# compiled against.  But default-off meant NO ORDINARY USER EVER GOT the -30.2%
+# of total wall (items 230/235, both of which end "make it the default"); every
+# benchmark that ever measured it set it explicitly.  The shim being missing is
+# a RECOVERABLE condition -- the code falls back to mo_eri and the run is
+# correct, only ~100 s slower -- so the right default is ON with a LOUD
+# fallback, which is what _libtrans_fallback() below now provides.
+# Set QED_LIBTRANS=0 to force the mo_eri path (for an A/B, or if the shim is
+# ABI-mismatched and the banner is unwanted).
+_QED_LIBTRANS = int(os.environ.get("QED_LIBTRANS", "1"))
+
+
+def _libtrans_fallback(reason):
+    """Announce a QED_LIBTRANS fallback on BOTH streams, then return None.
+
+    Item 247.  With the knob default-ON, a missing or ABI-mismatched shim no
+    longer reads as a deliberate opt-out -- it reads as a normal run that
+    happens to be ~100 s slower and to allocate 8.40 GB it did not need to.
+    The banner goes to stderr as well as stdout because stdout is where psi4's
+    own output lands, and a single line is lost in it.
+
+    The literal substring "falling back" is LOAD-BEARING: bench_c10h8_1core.sh
+    greps for it to VOID a timing leg (and so does dpd_readback_check.py).
+    Keep it in any message passed here.
+    """
+    banner = (
+        "\n" + "!" * 78 + "\n"
+        "!! QED_LIBTRANS is ON but UNAVAILABLE -- falling back to mints.mo_eri.\n"
+        f"!! Reason: {reason}\n"
+        "!! The run is CORRECT but will be ~100 s slower at c10h8 dims and will\n"
+        "!! allocate the dense nmo^4 array (8.40 GB) that libtrans avoids.\n"
+        "!! Fix: rebuild psi4_dpd_shim.so with the g++ line in psi4_dpd_shim.cpp\n"
+        "!! (it is ABI-coupled to psi4 -- rebuild it after changing psi4/conda\n"
+        "!! envs).  Set QED_LIBTRANS=0 to silence this and use mo_eri on purpose.\n"
+        + "!" * 78
+    )
+    print(banner, flush=True)
+    print(banner, file=sys.stderr, flush=True)
+    return None
+#
+#   QED_OTR_TR : solve the trust-region subproblem with otr_trust_region.py
+#                                                               (default 0)
+#
+# Replaces the ENTIRE solver dispatch inside microiteration_optimization6
+# (:13227 onward -- GLTR, the LSTRS/Davidson beta bisection, and the
+# gradient-small Newton branch) with one call to
+# otr_trust_region.solve_trust_region_subproblem, a faithful port of
+# OpenTrustRegion's level_shifted_davidson.  Nothing else changes: the trust
+# radius, the energy checks, the step acceptance and the microiteration
+# structure all stay exactly as they are, and with the knob off not one line of
+# the existing path is touched.
+#
+# WHY.  Our beta bisection sits OUTSIDE the Davidson solve, so every trial beta
+# re-enters a full Davidson and pays fresh Hessian-vector products.  Measured on
+# c10h8 at true single core (QED_SOLVER_STATS=1): 9 cold builds (302 matvecs) +
+# 36 warm restarts (414) = 716 of lstrs_davidson's 749 matvecs are spent
+# re-deriving a search space for a new beta, and newton_small_gradient spends a
+# further 728 solving Hx=-g matrix-free at the full 5789 dimension.  Totals:
+# ours 2430 Hessian-vector products against molpro's 741 for the same molecule.
+#
+# The ported design keeps ONE search space (V, HV) and runs the level-shift
+# search inside the projected (n_red+1) augmented Hessian, where changing the
+# shift costs one small eigh and no matvec at all; the Newton step becomes a
+# dense solve in that same reduced space.  This is the Nonlinear Arnoldi
+# acceleration of LSTRS (Lampe, Rojas, Sorensen, Voss, IMM-TR-2009-09), which
+# also states outright that the strategy the current code uses -- seeding the
+# next eigensolve with the previous eigenvector -- "usually does not
+# significantly speed convergence".  Our 36 warm restarts still costing 11.5
+# matvecs each is that sentence, measured.
+#
+# SCOPE.  *** NARROWED 2026-08-04: this now covers the TRUST-REGION subproblem
+# only -- gltr (770 matvecs) and lstrs_davidson (749) = 1519 of c10h8's 2430
+# Hessian-vector products.  newton_small_gradient (a further 728) KEEPS its
+# MINRES solve: it is a linear solve, not a trust-region subproblem.  Earlier
+# QED_OTR_TR measurements replaced that branch too and are NOT comparable. ***
+# The lstrs_internal site at :8698 (19 solves, 69 matvecs, in the
+# internal-optimization path) is NOT covered and still runs the original
+# solver.
+#
+# DEFAULT OFF: unvalidated on production systems.  Turning it on changes the
+# steps taken, so energies agree only to the convergence threshold, not to
+# machine precision, and the macroiteration/step counts will differ.
+_QED_OTR_TR = int(os.environ.get("QED_OTR_TR", "0"))
+# Sub-knobs, live only when QED_OTR_TR=1.  Defaults are OpenTrustRegion's own
+# (opentrustregion.f90:174-179); QED_OTR_SUBSOLVER="jacobi-davidson" switches on
+# the JD correction branch, which in this port uses scipy's MINRES rather than
+# OpenTrustRegion's (a documented deviation -- see otr_trust_region.py).
+_QED_OTR_MAXITER = int(os.environ.get("QED_OTR_MAXITER", "50"))
+_QED_OTR_RANDOM_VECS = int(os.environ.get("QED_OTR_RANDOM_VECS", "1"))
+_QED_OTR_SUBSOLVER = os.environ.get("QED_OTR_SUBSOLVER", "davidson")
+#   QED_OTR_RED_FACTOR : OpenTrustRegion's residual reduction factor, i.e. the
+# micro loop exits at ||g + Hx - mu x|| < max(factor*|g|, 1e-12).  Its own
+# default is 1e-3, which is what this knob preserves and therefore what every
+# earlier QED_OTR_TR measurement on c10h8 was taken at.  1e-3 was measured 400x
+# less accurate than LSTRS's quasi-optimal exit on real CASSCF data (and again
+# on a dumped hard case, where only 1e-5 recovered the exact optimum), so any
+# fair comparison against another subproblem solver should set this to 1e-5.
+_QED_OTR_RED_FACTOR = float(os.environ.get("QED_OTR_RED_FACTOR", "1e-3"))
+# Imported when EITHER OTR knob is on.  QED_OTR_TR_QN is read from the
+# environment directly here rather than by name because it is defined further
+# down, with the other quasi-Newton knobs; without this the QN sites raise
+# NameError: _OtrSettings when QED_OTR_TR_QN=1 and QED_OTR_TR=0.
+if _QED_OTR_TR or int(os.environ.get("QED_OTR_TR_QN", "0")):
+    from otr_trust_region import (
+        TrustRegionSettings as _OtrSettings,
+        solve_trust_region_subproblem as _otr_solve,
+    )
+
+#   QED_AH_KRYLOV : solve the trust-region subproblem with the Krylov-seeded
+#                   bordered augmented Hessian                    (default 0)
+#
+# A second leading branch in the same microiteration_optimization6 dispatch as
+# QED_OTR_TR, ported from casscf1's Davidson_augmented_hessian_solve3.  Same
+# family as OpenTrustRegion -- bordered pencil with the corner pinned at 0 and
+# the gradient border scaled by alpha, step recovered as y[1:]/y0/alpha, the
+# alpha search run INSIDE the projected problem at zero matvec cost, and the
+# space grown by a level-shifted diagonally preconditioned residual -- but it
+# keeps three things OpenTrustRegion does not:
+#   1. when the trust radius is unreachable in the current subspace it takes
+#      the largest well-defined step and EXPANDS (OTR returns a zero step and
+#      makes the caller shrink the trust radius);
+#   2. it scores every iterate by the model value q = g.x + x.Hx/2 and returns
+#      the best, because the boundary step is recovered as the limit y0 -> 0+
+#      and a subspace that goes on to contain the critical direction exactly
+#      LOSES it;
+#   3. no random trial vector, so it is deterministic.
+# Measured on H2O cc-pVTZ CAS(8,6) it matches OTR's Hessian-vector product
+# count exactly (419) and beats it on wall time; on the LiH 6-31G CAS(2,3) hard
+# case that hangs the original prototype it takes 718 against OTR's 778.
+# DEFAULT OFF, same caveat as QED_OTR_TR: turning it on changes the steps
+# taken, so energies agree to the convergence threshold, not to machine
+# precision.
+_QED_AH_KRYLOV = int(os.environ.get("QED_AH_KRYLOV", "0"))
+#   QED_AH_KRYLOV_QN : same solver at the two QUASI-NEWTON trust-region sites
+# (gltr_qn, on the frozen U_zero/A_tilde_zero operators, and gltr_qn_bfgs, on
+# the BFGS-updated operator via get_bfgs_mv).  Separate knob from
+# QED_AH_KRYLOV because these are a different subproblem: gltr_qn_bfgs solves
+# an APPROXIMATE Hessian exactly, which is why that site forces hard_case = 0.
+# They were the two largest remaining solver sites after QED_AH_KRYLOV covered
+# the main dispatch (83 + 173 of c10h8's remaining 557 matvecs).
+#   MEASURED, DEFAULT STAYS OFF: on MgH+ this LOSES on both active spaces --
+# CAS(6,6) +4.6% total matvecs (better on 4/14, p=0.16), CAS(8,12) +14.9%
+# (better on 0/14, p=0.0001) with QN-site matvecs themselves up 25.3%.  There is
+# no active space where it has been shown to win.
+_QED_AH_KRYLOV_QN = int(os.environ.get("QED_AH_KRYLOV_QN", "0"))
+#   QED_OTR_TR_QN : OTR at those same two quasi-Newton sites.  The gap this
+# fills: QED_OTR_TR only ever covered the MAIN dispatch, so the QN sites were a
+# strict two-way choice between GLTR (default) and AH-Krylov.  That is backwards
+# relative to the evidence -- at the main site OTR beats AH-Krylov by 40.6% in
+# matvecs (paired p=2.2e-10, 36/40 seeds) -- so the better solver was the one
+# that could not run there.  Separate knob from QED_OTR_TR for the same reason
+# QED_AH_KRYLOV_QN is separate: the qn-bfgs site solves an APPROXIMATE Hessian.
+#   MEASURED, AND THE RESULT SPLITS BY ACTIVE SPACE -- DEFAULT STAYS OFF.
+# The knob does what it was built to do: it cuts matvecs AT THE QN SITES on both
+# spaces (CAS(8,12) -34.4%).  Whether that survives to the total does not follow.
+#   CAS(6,6), 14 seeds: total matvecs -9.1%, better on 11/14, p=0.0049 (and
+# -13.0% vs QED_AH_KRYLOV_QN, better on 13/14).  A real win.
+#   CAS(8,12), 14 seeds: total matvecs +21.0%, better on only 2/14, p=0.0151,
+# and MACROITERATIONS BLOW UP 14.86 -> 123.21 (sd 4.28 -> 21.31, range 65-150).
+# All 14 converged -- this is not an iteration cap -- so the QN-site saving is
+# not merely handed back elsewhere, it is handed back with interest: cheaper QN
+# steps are worse steps, and the outer loop pays 8.3x for them.  Worst |dE| vs
+# base is 3.34e-8, ~3x the ~1e-8 bar used elsewhere; with 123 macroiterations
+# that is consistent with accumulated tolerance rather than a different
+# stationary point, but it was not verified to be.
+#   The CAS(8,12) hard case (item 149) is the discriminator, and it is the case
+# that matters: do NOT promote this knob on the CAS(6,6) number alone.
+_QED_OTR_TR_QN = int(os.environ.get("QED_OTR_TR_QN", "0"))
+#   QED_EXACT_TR : materialize the MAIN-SITE orbital Hessian densely (n =
+# index_map_size unit-vector products, batched) and solve the trust-region
+# subproblem EXACTLY by More-Sorensen -- eigendecomposition plus bisection on
+# the secular equation, with an explicit hard-case branch.  DEFAULT 0/OFF.
+#   WHY.  Every solver tried so far at this site -- GLTR (default), AH-Krylov,
+# OTR -- is a Krylov method seeded by g, and on MgH+ CAS(8,12) the Krylov space
+# built from g NEVER contains v_min: measured overlap of K_m(H, g) with v_min is
+# 0.000 at m=5, m=20 AND at m=60 of n=150, in 11 of the 15 dumped main-site
+# subproblems.  That is one structural blind spot, not four independent
+# failures, and it is why those three knobs all landed in the same place.
+# QED_AH_NEG_CURV (default 1) is the existing remedy and only half-covers it:
+# its seed e_argmin(h_diag) is a UNIT VECTOR, near-perfect where v_min is one
+# coordinate (participation ratio 1.0 -> overlap 0.99) and ORTHOGONAL where
+# v_min is delocalized (PR 4.5-8.7 -> overlap <= 0.021, 7 of 15, and those are
+# the high-kappa ones).  Seeding with random-start Lanczos instead was measured
+# and does NOT work -- Rayleigh-Ritz overlap stalls at 0.02-0.25 even at m=30,
+# the low spectrum is too clustered.  A dense exact solve sidesteps the whole
+# question: it never builds a Krylov space.
+#   SCOPE IS DELIBERATELY THE MAIN SITE ONLY.  Of the 187 subproblem solves in
+# one dumped CAS(8,12) run, only the 15 main-site ones are hard: they are 80%
+# indefinite, 87% boundary-active, median |ghat.vmin| 2.8e-6, and the shipped
+# GLTR step sits a median 16.2% (worst 49.6%) above the exact model optimum.
+# The 89 qn_gltr solves are 2% indefinite / 3% boundary with |ghat.vmin| 0.44
+# and GLTR already solves them to a 0.0% median gap; internal_lstrs (n=24) is
+# 0% indefinite.  Making those dense would only add cost.
+#   *** PRE-REGISTERED PREDICTION: THIS KNOB MAY WELL LOSE, AND THE EVIDENCE
+# ALREADY POINTS THAT WAY.  Model-optimality is ANTI-correlated with outer-loop
+# performance at this site: GLTR ships a 16.2%-suboptimal step and takes the
+# FEWEST macroiterations, while QED_OTR_TR_QN solved its subproblems better and
+# drove macroiterations 14.86 -> 123.21.  An exact solve is the logical endpoint
+# of "solve the subproblem harder", which is the family that has already failed
+# four times.  The reason to run it anyway is that it is the DECISIVE
+# discriminator: it separates "the hard case is what hurts" from "chasing the
+# model optimum is itself what hurts", and no cheaper experiment does that.
+# Score on CAS(8,12) FIRST, on macroiteration count and scatter, not on
+# subproblem quality. ***
+#   Steps change, so energies agree to the convergence threshold, NOT to machine
+# precision -- same caveat as QED_OTR_TR.
+_QED_EXACT_TR = int(os.environ.get("QED_EXACT_TR", "0"))
+#   QED_EXACT_TR_BATCH : how many unit vectors to push through orbital_sigma3
+# per call when materializing.  The matvec COUNT is n either way; this is a wall
+# time knob only, and QED_MV_BENCH shows per-call cost is nearly flat in the
+# batch size, so the dense build costs far less wall time than its count implies.
+_QED_EXACT_TR_BATCH = int(os.environ.get("QED_EXACT_TR_BATCH", "32"))
+#   QED_ADAPTIVE_TOL : tie the GLTR exit tolerance to the observed model
+# fidelity rho = (actual energy change)/(predicted energy change).
+#   WHAT tol ACTUALLY IS, because the name "tolerance" oversells it.  GLTR exits
+# when  be * |y[-1]| < tol  (:18424 interior, :18533 boundary), and by the
+# Lanczos identity that quantity IS the residual norm of the linear system being
+# solved in the subspace:  ||(H + lambda I) s + g||  -- exactly, not estimated
+# (verified numerically against the dumped Hessians: ratio 1.000000 at every
+# iteration).  lambda is 0 on the interior branch, the trust-region multiplier
+# on the boundary branch.
+#   THREE THINGS tol DOES NOT CONTROL, and they matter more than the one it
+# does: (i) the accuracy of lambda itself, which comes from a separate inner
+# bisection on the tridiagonal problem; (ii) the KRYLOV SUBSPACE RESTRICTION --
+# the gap between the best step in the subspace and the true full-space
+# trust-region solution, which is the DOMINANT error here (median 16.2% of model
+# value); (iii) anything about the hard case, where the Krylov space built from
+# g never contains v_min at all (measured overlap 0.000 even at m=60 of n=150),
+# so no value of tol recovers that direction.
+#   THE ONE INDIRECT EFFECT THAT DOES DRIVE THE RESULTS: because the test
+# decides when Lanczos STOPS, tol controls the SUBSPACE DIMENSION.  Tightening
+# it therefore does improve the step in the full-space sense -- by building a
+# bigger Krylov space -- up to the ceiling of what that space can span.  That is
+# the mechanism behind the floor sweep below, where a lower floor cut
+# macroiterations monotonically while raising matvecs per solve 87.7 -> 108.0.
+#   NOTE this knob has no effect under QED_EXACT_TR: _more_sorensen_dense is
+# exact and takes no tolerance.
+# DEFAULT 0/OFF.  0 = off (tol stays the hard-coded 1e-7 everywhere, path
+# unchanged); 1 = adapt at the MAIN site only; 2 = also adapt at the two QN
+# sites.  This is the DYNAMIC counterpart of QED_GLTR_TOL_SCALE, which applies a
+# single static multiplier; the two compose (solve_gltr_trust_region does
+# tol = tol * _QED_GLTR_TOL_SCALE internally).
+#   *** SCORED ON MgH+ CAS(8,12) AND IT LOSES.  THIS BLOCK IS NOW A RECORD OF A
+# NEGATIVE RESULT, NOT ADVOCACY.  DEFAULT STAYS 0/OFF. ***
+# 14 seeds x {base, 1, 2}, 42/42 converged, worst |dE| 1.2e-9 (same stationary
+# point, item 139 holds).  MACROITERATIONS: base 14.86 +-4.28 | =1 15.21 +-3.81
+# (p=0.46) | =2 15.57 +-4.86 (p=0.22) -- FLAT, no win in either direction.
+# MATVECS: +3.6% (1/14 better, p=0.0007) and +9.2% (2/14, p=0.0099) -- a small
+# but statistically solid LOSS.  Base arm reproduced the QED_EXACT_TR wave's
+# base BIT-EXACTLY on all 14 seeds, so the comparison is sound.
+#   WHY IT FAILED, AND IT IS THE INTERESTING PART: rho IS THE WRONG CONTROLLER
+# INPUT.  Across 4085 adaptation events rho sat at 0.63-1.13 (overwhelmingly
+# 0.8-1.0) on the system whose outer loop is the WORST behaved in the whole
+# study (sd 4.28, bistable subproblems, |Pg|/|g| ~1e-6).  The rule therefore
+# read "model is trustworthy" almost everywhere and TIGHTENED monotonically to
+# the 1e-11 floor: at =1 the loosening branch fired ONCE in 782 events (31% of
+# events pinned at the floor), so =1 is in practice just "tighten to the floor"
+# -- which won on CAS(6,6) and loses here.  At =2 it thrashes between both
+# bounds: 65% at the floor, 13% at the 1e-4 ceiling, 78% AT A BOUND, i.e. THE
+# BOUNDS ARE MAKING THE DECISION, NOT rho -- the exact failure signature that
+# was pre-registered for this wave.
+#   THE TRANSFERABLE LESSON: rho ~ 1 does not mean the model is good, it means
+# the step was small enough that model and reality agree locally.  It cannot see
+# the error that actually limits this problem -- the Krylov subspace restriction
+# (iii) above, median 16.2% of model value, which is invisible to rho because
+# both the model and the realized energy are evaluated at the SAME restricted
+# step.  ANY FUTURE CONTROLLER MUST KEY ON SOMETHING THAT SEES SUBSPACE
+# QUALITY (exit reason, Krylov dimension, boundary-vs-interior), NOT ON rho.
+#   The design reasoning below is retained because it remains correct about the
+# mechanism and about why "solve harder" fails; it was only wrong about rho
+# being a usable proxy for model quality.
+#   THE ORIGINAL ARGUMENT.  Five attempts to
+# make the outer loop faster by solving the subproblem BETTER have now failed
+# (act-virt shift; OTR/AH at the main site; OTR/AH at the QN sites; and the
+# dense exact solve, which on CAS(6,6) reached the SAME energy in 13
+# macroiterations instead of 10).  The reason is that outer progress is limited
+# by MODEL ERROR, not by subproblem error:
+#   - trust-region global convergence needs only a FRACTION of Cauchy decrease,
+#     which GLTR satisfies trivially, so exactness buys nothing there;
+#   - superlinear local convergence needs the step to approach the Newton step,
+#     which both GLTR and an exact solve reach once the region goes inactive;
+#   - in between, the quadratic model is only good to about +-20% here
+#     (rho p10-p90 = 0.79-1.04 on CAS(6,6)), while GLTR's step sits a median
+#     16.2% above the exact model optimum.  THE GAP BEING CLOSED IS SMALLER
+#     THAN THE MODEL'S OWN ERROR, so closing it cannot pay -- and measurably
+#     does not: the exact solver's steps have WORSE fidelity (median rho
+#     0.967 -> 0.915, fraction with rho < 0 rising 0.01 -> 0.05, and 3x more
+#     uphill microiteration trials).
+#   So the lever is not "solve harder", it is "solve exactly as hard as the
+# model deserves".  When rho sits near 1 the model is trustworthy and extra
+# subproblem accuracy converts into real energy decrease, so tighten.  When rho
+# is poor the model is not worth resolving; loosen and let step_control shrink
+# the radius instead -- that is the mechanism that actually fixes a bad model.
+#   Deliberately conservative: multiplicative moves with a hysteresis band, hard
+# bounds, and an immediate loosen on any rho < 0 (a step that moved the energy
+# the WRONG WAY is the strongest evidence the model is not resolvable).
+_QED_ADAPTIVE_TOL = int(os.environ.get("QED_ADAPTIVE_TOL", "0"))
+#   Reference/starting tolerance; 1e-7 reproduces the hard-coded value.
+_QED_ADAPTIVE_TOL_BASE = float(os.environ.get("QED_ADAPTIVE_TOL_BASE", "1e-7"))
+#   Hard bounds.  MIN stops it chasing accuracy the arithmetic cannot deliver;
+# MAX stops it loosening so far that the step stops being a descent direction.
+#   MIN WAS 1e-9 AND THAT WAS TOO HIGH -- it BOUND 65-78% of calls, i.e. the
+# bound was making the decision instead of rho.  Swept on CAS(6,6), 4 seeds
+# (3/5/7/11), macroiteration mean / matvec mean vs the fixed-1e-7 base:
+#     1e-9    12.50  -0.2%   (floor binding 34-78% of calls)
+#     1e-11   12.00  -2.6%   (binding 12-63%)
+#     1e-13   11.25  -3.4%   (binding  2-54%)
+#   base      12.75     -
+# **Macroiterations fall MONOTONICALLY in every seed as the floor drops**
+# (s3 10->9->9->9, s5 14->14->13->12, s7 13->13->13->12, s11 14->14->13->12),
+# which is the trend worth trusting; the matvec column is noisy at n=4 (s11
+# -9.4% vs s3 +7.0%) and is NOT statistically supported.  MECHANISM, measured on
+# s3's main site: the solve COUNT is 55 at every floor while matvecs per solve
+# rise 87.7 -> 98.0 -> 104.1 -> 108.0, so a lower floor buys better steps and
+# pays in per-solve cost; it wins exactly when the macroiteration saving covers
+# that.  SAFE AT ALL FLOORS TESTED: no solve at any floor terminated on the
+# iteration cap (every one exited Boundary / Interior (Newton) / hard_case).
+#   1e-11 chosen over the better-on-average 1e-13 because n=4 does not justify
+# the aggressive setting: 1e-13's worst seed is +7.0% vs 1e-11's +3.7%.
+#   THE LARGER WAVE DID NOT CONFIRM THE TREND: on CAS(8,12) (14 seeds, above)
+# the =1 arm spends 31% of its calls pinned AT this 1e-11 floor and still loses
+# +3.6% matvecs at flat macroiterations, so lowering the floor to 1e-13 is NOT
+# indicated -- the CAS(6,6) sweep does not generalize.  Do not re-run that sweep
+# expecting a different answer; the binding issue is the controller, not the
+# floor.
+_QED_ADAPTIVE_TOL_MIN = float(os.environ.get("QED_ADAPTIVE_TOL_MIN", "1e-11"))
+_QED_ADAPTIVE_TOL_MAX = float(os.environ.get("QED_ADAPTIVE_TOL_MAX", "1e-4"))
+#   How many recent rho values the median is taken over.  Short enough to react
+# within one macroiteration (the main site is dispatched ~21x per macro).
+_QED_ADAPTIVE_TOL_WINDOW = int(os.environ.get("QED_ADAPTIVE_TOL_WINDOW", "5"))
+#   Hysteresis band on |1 - median(rho)|: below TIGHT -> tighten, above LOOSE ->
+# loosen, in between -> hold.  TIGHT=0.05 and LOOSE=0.25 bracket the measured
+# rho spread (p10-p90 = 0.79-1.04, i.e. |1-rho| ~ 0.21 at the p10 edge).
+_QED_ADAPTIVE_TOL_TIGHT = float(os.environ.get("QED_ADAPTIVE_TOL_TIGHT", "0.05"))
+_QED_ADAPTIVE_TOL_LOOSE = float(os.environ.get("QED_ADAPTIVE_TOL_LOOSE", "0.25"))
+#   Multiplicative step per adaptation.
+_QED_ADAPTIVE_TOL_FACTOR = float(os.environ.get("QED_ADAPTIVE_TOL_FACTOR", "3.0"))
+#
+#   QED_SUBSPACE_TOL : tie the GLTR exit tolerance to the observed SUBPROBLEM
+#                      EXIT REASON                              (default 0 = off)
+#
+# WHY THIS EXISTS, AND WHY IT IS NOT QED_ADAPTIVE_TOL AGAIN.  QED_ADAPTIVE_TOL
+# keyed the same tolerance on rho and LOST on MgH+ CAS(8,12) (macroiterations
+# flat, matvecs +3.6% / +9.2%).  The post-mortem is the reason for this knob:
+# rho ~ 1 does NOT mean the model is good, it means the STEP WAS SHORT ENOUGH
+# that model and reality agree locally.  rho is structurally blind to the error
+# that actually limits this problem -- the KRYLOV SUBSPACE RESTRICTION -- because
+# the model value and the realized energy are evaluated at the SAME restricted
+# step.  Over 4085 adaptation events rho sat at 0.63-1.13 on the worst-behaved
+# outer loop in the study, so the rule read "trustworthy" nearly everywhere and
+# just walked to the floor.  ANY CONTROLLER ON THIS TOLERANCE MUST KEY ON
+# SOMETHING THAT SEES SUBSPACE/BOUNDARY STRUCTURE.  The GLTR exit reason is
+# exactly that, and it is already computed and returned -- it costs nothing.
+#
+# THE RULE, IN ONE LINE: LOOSEN WHERE THE TRUST-REGION BOUNDARY IS NOT BINDING.
+# On an "Interior (Newton)" exit GLTR stopped strictly inside the trust region,
+# so tol governs only how accurately the unconstrained Newton step is resolved
+# inside an already-chosen subspace -- not where the step is placed.  On a
+# "Boundary" exit tol interacts with the lambda/boundary placement, so the same
+# loosening is NOT free.  The controller therefore loosens while a site's recent
+# exits are interior-dominated and snaps back toward base as soon as boundary
+# exits reappear.
+#
+# THE OBSERVABLE IS STABLE UNDER THE ACTION, WHICH IS THE PROPERTY rho LACKED.
+# Measured on c10h8 across QED_GLTR_TOL_SCALE = 1/10/100/1000: the per-site exit
+# distribution is BIT-IDENTICAL in all four arms (gltr 1B/3I, gltr_qn 1B/10I,
+# gltr_qn_bfgs 8B/9I).  So the controller cannot chase its own tail -- it reads
+# the same signal after acting on it.  rho, by contrast, is a function of the
+# step the tolerance produced.
+#
+# WHAT IT DISCRIMINATES (this is the whole point, and it is measured, not
+# assumed).  Fraction of "Interior (Newton)" exits at the MAIN gltr site:
+#     c10h8 CAS(10,10)      3 interior /  1 boundary  = 0.75
+#     MgH+ CAS(8,12)     8-15 interior / 44-47 bndry  = 0.15-0.25  (5 base seeds)
+# i.e. it loosens on the system where loosening was measured to be free and
+# stays at base on the system where the boundary is doing the work.  Note the QN
+# sites on MgH+ are 100% interior with ZERO boundary exits in every seed
+# inspected -- an independent corroboration that the trust region is inert
+# there.
+#
+#   0 = off; _subproblem_tol returns the hard-coded 1e-7 and every call site is
+#       byte-for-byte unchanged.
+#   1 = adapt the MAIN gltr site only.  Conservative: on MgH+ this is close to a
+#       no-op because the main site is boundary-dominated.  On c10h8 it captures
+#       only the main site's 43 matvecs of the 295 the GLTR family spends.
+#   2 = adapt the main site AND both QN sites (gltr_qn, gltr_qn_bfgs).  This is
+#       the full mechanism: on c10h8 the QN sites are 252 of those 295 matvecs.
+# Mirrors QED_ADAPTIVE_TOL's 1/2 site split so the two are directly comparable.
+_QED_SUBSPACE_TOL = int(os.environ.get("QED_SUBSPACE_TOL", "0"))
+#   Tolerance the controller starts each site from; the 1e-7 the call sites
+# hard-code, so the first solve at every site is unchanged.
+_QED_SUBSPACE_TOL_BASE = float(os.environ.get("QED_SUBSPACE_TOL_BASE", "1e-7"))
+#   Bounds.  THE FLOOR DEFAULTS TO BASE, i.e. THE CONTROLLER CAN ONLY LOOSEN OR
+# RETURN TO BASE, NEVER TIGHTEN BELOW IT.  Deliberate: "tighten the subproblem"
+# is the closed mechanism family (0 for 5 on CAS(8,12), and QED_ADAPTIVE_TOL's
+# adap1 was in practice just "tighten to the floor" and lost).  There is no
+# evidence tightening below 1e-7 ever helps, so the default design cannot try.
+# Set _MIN below 1e-7 explicitly if you want to re-open that question.
+# The ceiling is 1e-4, which is the loosest setting measured on c10h8
+# (QED_GLTR_TOL_SCALE=1000 x 1e-7) -- past that is unmeasured territory: the
+# failure mode when the tolerance is too loose has NEVER been observed.
+_QED_SUBSPACE_TOL_MIN = float(os.environ.get("QED_SUBSPACE_TOL_MIN", "1e-7"))
+_QED_SUBSPACE_TOL_MAX = float(os.environ.get("QED_SUBSPACE_TOL_MAX", "1e-4"))
+#   How many of a site's most recent exits the fraction is taken over.  Short
+# because the sites are solve-poor on easy systems: c10h8 runs only 4 / 11 / 17
+# solves at gltr / gltr_qn / gltr_qn_bfgs for the WHOLE optimization, so a long
+# window would leave the run over before the controller ever moved.
+_QED_SUBSPACE_TOL_WINDOW = int(os.environ.get("QED_SUBSPACE_TOL_WINDOW", "4"))
+#   Hysteresis band on the interior fraction: at or above HI -> loosen, at or
+# below LO -> snap back toward base, in between -> hold.  HI=0.75 and LO=0.25
+# bracket the measured separation above (c10h8 0.75 vs MgH+ 0.15-0.25) -- they
+# are the edges of that gap, NOT tuned inside it.
+_QED_SUBSPACE_TOL_HI = float(os.environ.get("QED_SUBSPACE_TOL_HI", "0.75"))
+_QED_SUBSPACE_TOL_LO = float(os.environ.get("QED_SUBSPACE_TOL_LO", "0.25"))
+#   Multiplicative step per adaptation.  10, not QED_ADAPTIVE_TOL's 3: the
+# useful range here is the three decades 1e-7 -> 1e-4 and the sites see only
+# 4-17 solves, so a factor of 3 could not cross it before the run ended.  This
+# is a consequence of the solve counts above, not a free parameter.
+_QED_SUBSPACE_TOL_FACTOR = float(os.environ.get("QED_SUBSPACE_TOL_FACTOR", "10.0"))
+#   A single boundary exit in the last _RECENT solves blocks loosening outright,
+# whatever the windowed fraction says.  The interior/boundary distinction is a
+# property of the NEXT solve, which the fraction only predicts; this makes the
+# controller react to a boundary exit immediately instead of waiting for it to
+# dominate the window.  Set 0 to disable the veto and use the fraction alone.
+_QED_SUBSPACE_TOL_RECENT = int(os.environ.get("QED_SUBSPACE_TOL_RECENT", "2"))
+#
+#   QED_EXIT_CONTROL : tie the TRUST-RADIUS UPDATE to the observed subproblem
+#                      EXIT REASON                          (default 0 = off)
+#
+# SAME OBSERVABLE AS QED_SUBSPACE_TOL, DIFFERENT ACTION -- and the action is the
+# point.  QED_SUBSPACE_TOL loosens the exit TOLERANCE where the boundary is not
+# binding, which by its own logic has nothing to offer where the boundary IS
+# binding.  On MgH+ CAS(8,12) the main gltr site is 44-47 boundary vs 8-15
+# interior exits, i.e. the boundary is binding almost everywhere, and that is
+# exactly where the tail pathology lives (items 135-141: near-empty active
+# orbitals -> flat virt-act directions -> indefinite, near-hard-case
+# subproblems).  So the tolerance controller is structurally the wrong tool
+# there and this one takes the only action left.
+#
+# READ THIS BEFORE EXTENDING IT -- MOST OF THE ACTION SPACE IS ALREADY DEAD.
+# Three actions can be keyed on the exit reason.  Two are already falsified:
+#   * STEP ACCEPTANCE: there is nothing to key on.  MgH+ CAS(8,12) base runs
+#     have ZERO rejections (grep -ic reject == 0 in every base log inspected),
+#     so an acceptance rule could only manufacture rejections that do not exist.
+#   * KRYLOV DIMENSION: QED_EXACT_TR is the endpoint of that axis -- the full
+#     space, solved exactly -- and it LOST (item 179: 14 seeds, macroiterations
+#     dead flat, and the steps were PROVABLY better, KKT residual <= 7e-14 and
+#     model value <= GLTR's on 15/15 dumped subproblems).  "More subspace" is
+#     falsified directly, not by proxy.
+#   * TRUST RADIUS: falsified in the GROWTH direction only.  QED_TR_MAX raised
+#     the cap to 1.0/3.0, the radius genuinely woke up (rejections/run 0.1 ->
+#     0.8, radius climbing 0.86/1.04/1.24/1.49/1.79/2.15/2.58 instead of pinning
+#     at 0.75) and the outer loop DID NOT CARE.
+# What is left, and all this knob does, is the SHRINK direction -- untried.
+#
+# THE MECHANISM CLAIM, STATED SO IT CAN BE FALSIFIED.  A boundary exit means the
+# model's own minimizer lies OUTSIDE the region: the step was placed by the
+# constraint, not by the model.  When that happens persistently the step
+# direction is dominated by the flat/indefinite directions the quadratic model
+# cannot vouch for -- and rho CANNOT SEE IT, because rho is evaluated on the
+# same constrained step (item 182: rho sat at 0.63-1.13 over 4085 events on the
+# worst-behaved loop in the study, and on MgH+ ratio > 0.75 at essentially every
+# step with zero rejections).  So: SHRINK THE REGION UNTIL THE MODEL'S OWN
+# MINIMIZER IS INTERIOR, i.e. drive the loop toward exits where the step is the
+# model's genuine unconstrained minimizer rather than a point on a fence.
+# The rule self-terminates: once exits go interior the damping stops firing and
+# the ordinary 1.2x growth resumes.
+#
+# HONEST EXPECTATION.  This makes steps SHORTER, and item 184 already showed the
+# outer loop is indifferent to step LENGTH in the growth direction.  The reason
+# to run it anyway is that shrinking is not the same experiment as growing: the
+# claim is about step DIRECTION QUALITY (interior vs constrained), with length
+# only the lever available to change it.  If it fails, the "key the trust region
+# on subspace-quality observables" family is closed in both directions and the
+# honest conclusion is that the CAS(8,12) tail is a property of the badly-posed
+# active space (item 135), not of the orbital-optimization solver.
+#
+#   0 = off; step_control is byte-for-byte the original function.
+#   1 = DAMP on persistent boundary exits (the untried direction).
+#   2 = GATE GROWTH on the exit reason: never widen the region after an
+#       Interior exit, because an interior step tells you nothing about whether
+#       a larger Delta would still be trustworthy.  This is the exit-reason-
+#       native form of QED_STEP_CONTROL (a), which implements the same idea via
+#       the step-norm proxy ||s|| >= 0.8*Delta.  On c10h8 that proxy and this
+#       are near-equivalent (43 of 46 growth events were on Interior steps); on
+#       MgH+ they are NOT, because boundary steps have ||s|| == Delta and so
+#       always pass the proxy.  Mode 2 is therefore close to inert on MgH+ by
+#       construction -- it is here for c10h8 and as a control.
+#   3 = both.
+_QED_EXIT_CONTROL = int(os.environ.get("QED_EXIT_CONTROL", "0"))
+#   Multiplicative shrink per damping event.  0.7 deliberately reuses the factor
+# the existing ratio<=0.25 branch already uses, so the damping is not a new
+# magnitude, only a new TRIGGER.
+_QED_EXIT_CONTROL_DAMP = float(os.environ.get("QED_EXIT_CONTROL_DAMP", "0.7"))
+#   Floor under the damping.  Without it a persistently boundary-terminating
+# site would drive the radius to zero and stall the outer loop; 0.05 is an
+# order of magnitude below the smallest accepted radius measured on c10h8
+# (0.031-0.25), so it bounds the damage without being reachable in normal use.
+_QED_EXIT_CONTROL_MIN = float(os.environ.get("QED_EXIT_CONTROL_MIN", "0.05"))
+#   Window and threshold for "persistently boundary-terminating".  Same window
+# and same 0.25 as QED_SUBSPACE_TOL, and for the same reason: 0.25 is the low
+# edge of the MEASURED separation between the two systems (MgH+ main site
+# 0.15-0.25 interior, c10h8 main site 0.75), not a fitted value.
+_QED_EXIT_CONTROL_WINDOW = int(os.environ.get("QED_EXIT_CONTROL_WINDOW", "4"))
+_QED_EXIT_CONTROL_LO = float(os.environ.get("QED_EXIT_CONTROL_LO", "0.25"))
+#   QED_AH_RESID_TOL : RELATIVE exit tolerance on the optimality residual,
+# ||(H - theta)x + g|| / |g|.  NOT comparable to the 1e-7 that
+# solve_gltr_trust_region is called with: GLTR tests be*|y[-1]| < tol
+# ABSOLUTELY, never scaled by |g|.
+#   QED_AH_RESID_FLOOR : absolute floor under that relative test, matching
+# OpenTrustRegion's RESIDUAL_NORM_FLOOR.  It matters because |g| spans some
+# five orders of magnitude over an optimization, so a bare relative tolerance
+# eventually demands an absolute residual below what the arithmetic can
+# deliver, and the solve can then only exit on expansion collapse.
+#   QED_AH_NEWTON : take OpenTrustRegion's reduced-space Newton step (mu = 0)
+# when the projected Hessian is positive definite and that step is interior,
+# instead of bisecting for a level shift.
+# On H2O cc-pVTZ the floor alone is worth 555 -> 476 matvecs, the Newton
+# shortcut alone 555 -> 489, and the two together 555 -> 419.
+_AH_RESID_TOL = float(os.environ.get("QED_AH_RESID_TOL", "1e-5"))
+_AH_RESID_FLOOR = float(os.environ.get("QED_AH_RESID_FLOOR", "1e-12"))
+_AH_NEWTON = int(os.environ.get("QED_AH_NEWTON", "1"))
+_AH_NEWTON_THRESH = float(os.environ.get("QED_AH_NEWTON_THRESH", "-1e-5"))
+#   QED_AH_NEG_CURV : add e_argmin(h_diag) to the seed when that diagonal is
+# negative -- the negative-curvature trial vector OpenTrustRegion also uses
+# (otr_trust_region.py:276-282).  DEFAULT 1, and it is NOT optional in spirit:
+# without it the seed spans only the Krylov space of g, so when the gradient is
+# nearly orthogonal to the lowest eigenvector -- the HARD CASE -- the subspace
+# can never represent the tau*v_min part of the solution, and the solver
+# converges on its optimality residual to a step with theta > lambda_min, i.e.
+# a NON-GLOBAL stationary point, while reporting success.  Measured on 15
+# dumped MgH+ subproblems (n=150): without it, 2 of 15 land 45.0%% and 8.2%%
+# above the exact More-Sorensen model value; with it, 0 of 15 exceed 0.002%%
+# AND the total Hessian-vector count DROPS 581 -> 503, because the near-hard
+# cases stop grinding (80 -> 44 and 72 -> 41 matvecs).  Random trial vectors do
+# NOT substitute: 1 or even 3 of them leave both failures bit-unchanged, since
+# the residual test is met on the wrong branch before they can be amplified.
+_AH_NEG_CURV = int(os.environ.get("QED_AH_NEG_CURV", "1"))
+_AH_Y0_TOL = float(os.environ.get("QED_AH_Y0_TOL", "1e-8"))
+_AH_MAX_ITER = int(os.environ.get("QED_AH_MAX_ITER", "200"))
+_AH_MAX_DIM = int(os.environ.get("QED_AH_MAX_DIM", "400"))
+_AH_PRECOND_FLOOR = float(os.environ.get("QED_AH_PRECOND_FLOOR", "1e-12"))
+_AH_BRACKET_STEPS = int(os.environ.get("QED_AH_BRACKET_STEPS", "14"))
+_AH_BISECT_STEPS = int(os.environ.get("QED_AH_BISECT_STEPS", "60"))
+
+
+# ---------------------------------------------------------------------------
+# Occupation-scaled level shift on the ACT-VIRT rotation block.
+#
+#   QED_ACTVIRT_SHIFT       : 0/1, DEFAULT 0 (off).
+#   QED_ACTVIRT_SHIFT_EPS   : numerator eps, default 1e-3.
+#   QED_ACTVIRT_SHIFT_DELTA : occupation floor delta, default 1e-2.
+#
+# sigma_(t,a) = eps / (n_t + delta), added to the diagonal of every active(t) ->
+# virtual(a) rotation, where n_t is that active orbital's occupation
+# diag(D_tu_avg).  Zero on the act-inact and virt-inact blocks.
+#
+# WHY.  The orbital gradient for an act-virt rotation carries a factor of the
+# active occupation through the generalized Fock matrix, so as n_t -> 0 BOTH the
+# gradient and the corresponding Hessian block vanish together.  That direction
+# is flat but NOT exactly redundant, so index_map (:3468-3481) cannot excise it
+# the way it excises inact-inact / act-act / virt-virt.  Measured on MgH+
+# CAS(8,12): 99.8%% of the weight of the flattest orbital-Hessian eigenvectors
+# lands in the act-virt block and localizes on the active orbitals with
+# occupations 0.004/0.001/0.000, giving kappa up to 9.3e7, 12 of 15 subproblems
+# indefinite, 13 of 15 boundary-constrained, |Pg|/|g| on lambda_min ~ 1e-6, and
+# 4 of 15 subproblems BISTABLE under a 1e-8 perturbation.
+#
+# The shift lifts exactly those directions away from zero (n_t = 0 -> eps/delta
+# = 0.1 against a spectrum whose largest eigenvalue is ~100) while leaving
+# genuinely correlated orbitals essentially untouched (n_t = 1.3 -> 7.6e-4).
+#
+# *** IT CANNOT MOVE THE ANSWER. *** The shift is added to the HESSIAN only,
+# never to the gradient, so every stationary point of the energy is still a
+# stationary point.  It changes the STEP, i.e. the path and the iteration count,
+# not the converged solution.  test_actvirt_shift.py asserts exactly that.
+#
+# Applied in orbital_sigma3 (the single chokepoint every solver's Hessian-vector
+# product goes through -- GLTR, LSTRS, PCG, AH-Krylov and the QN sites all route
+# there) and in build_hessian_diagonal (so the preconditioner sees the SAME
+# operator the matvec applies).
+#
+# *** MEASURED RESULT: THE SHIFT FAILS ITS EFFICACY TEST.  KEEP IT OFF. ***
+# 14 seeds x {off, on} on the pathological case itself (MgH+ CAS(8,12), all 28
+# arms converged, none maxiter-capped):
+#
+#       leg   mean macroiterations    sd     range
+#       off          14.86           4.28     8-21
+#       on           30.43          20.58     7-64
+#
+# The pre-registered rule was "earns its keep only if the SCATTER drops" (a
+# single seed's count is nearly uninformative here).  sd went UP 4.8x, mean
+# +15.6, paired t = +2.85 (df 13, p ~ 0.014), 9 seeds worse against 5 better.
+# Correctness held exactly as argued above -- all 28 arms landed on the same
+# stationary point, worst |dE| 2.4e-8 -- so the shift is SOUND but HARMFUL.
+#
+# LEADING HYPOTHESIS for why, NOT separately confirmed: with the default eps and
+# delta an EMPTY active orbital gets sigma = 0.1, roughly 1e7 x the true local
+# curvature (~1e-8) in exactly the directions the trust-region solver was using
+# to escape.  Damping the negative curvature out of the flattest block replaces
+# a boundary-length escape step with an interior step of order g/0.1, and the
+# optimizer crawls.  Consistent with the blow-ups concentrating in the seeds
+# that were boundary-constrained (+46, +52, +34, +32, +25).  If that is right
+# the defect is directional, not a matter of tuning eps down, because a shift
+# small enough to spare the negative curvature is also too small to lift the
+# conditioning.  There is no cheap way to test a repair: CAS(8,12) costs hours
+# per run and the well-conditioned small spaces cannot show efficacy at all.
+#
+# NOT IMPLEMENTED, AND NOW DISCOURAGED: the mirror pathology on the ACT-INACT
+# block from nearly-DOUBLY-occupied active orbitals (n_t -> 2), which is what
+# makes MgH+ CAS(4,4) worse than CAS(6,6).  Would want sigma ~ eps / (2 - n_t +
+# delta) there.  Originally left out only to avoid confounding the two blocks in
+# one experiment; after the result above, a mirror of a construction that lost
+# 15 macroiterations on average is not worth building without a new argument.
+_QED_ACTVIRT_SHIFT = int(os.environ.get("QED_ACTVIRT_SHIFT", "0"))
+_QED_ACTVIRT_SHIFT_EPS = float(os.environ.get("QED_ACTVIRT_SHIFT_EPS", "1e-3"))
+_QED_ACTVIRT_SHIFT_DELTA = float(os.environ.get("QED_ACTVIRT_SHIFT_DELTA", "1e-2"))
 
 
 # ---------------------------------------------------------------------------
@@ -506,114 +2059,20 @@ def _pair_lists(nmo):
 
 import numba as nb
 from scipy.linalg import eigh, cho_factor, cho_solve, solve_triangular
-import ctypes as _ctypes
-import llvmlite.binding as _llvm
-from numba import types as _nbtypes
-
-# _symv_accumulate(A, x, y) computes y += A @ x for a symmetric, C-contiguous A.
-#
-# dsymv IS BOUND BY SYMBOL NAME, AND UNCONDITIONALLY.  Two bugs are designed out
-# here; both were real and both are described in the QED_G_SYMV note above.
-#
-# (1) THE CACHE PENALTY.  This used to bind dsymv through a ctypes address
-#     obtained from get_cython_function_address.  A nopython function holding a
-#     ctypes address is a "dynamic global": numba refuses to write it to the
-#     on-disk cache (it would bake an absolute address that ASLR invalidates in
-#     the next process) and the refusal PROPAGATES to build_sigma_reduced7/_8,
-#     which reference this helper -- a MEASURED 5.6 s of recompile per process,
-#     comparable to everything the knob saved on one c10h8 run.  A symbol-name
-#     binding puts no address in the IR, so cache=True survives; verified by the
-#     artifacts appearing on disk and a cold second process loading them.
-#
-# (2) THE SILENTLY-INERT KNOB.  Numba's cache key is a function's own source, NOT
-#     which helper the module bound, so gating the BINDING on the knob meant a
-#     knob-on process could load an artifact compiled against the dgemv stand-in
-#     and do nothing at all -- silently, since both variants compute the same
-#     numbers.  That is why the decorators used to carry cache=(_QED_G_SYMV==0).
-#     Binding dsymv ALWAYS removes the ambiguity at the root: there is now only
-#     one _symv_accumulate, so build_sigma_reduced7/_8 have one cached artifact
-#     that is correct for either setting, and QED_G_SYMV is a pure RUNTIME flag
-#     (the `use_symv` argument, tested at the call site).  Nothing is lost by
-#     binding when the knob is off: with use_symv == 0 the branch is never taken.
-#
-# WHICH LIBRARY.  scipy.linalg.cython_blas exports no ELF symbol for dsymv (it
-# publishes Cython capsules), so binding by name necessarily means binding a real
-# BLAS .so.  libmkl_rt is already resident in any process that imports psi4, is
-# what ci_solver.c/orbital.c link against, and exports `dsymv_` in the LP64
-# interface -- 32-bit int, which is exactly what the marshalling below already
-# assumed.  (It also exports the ILP64 `dsymv_64_`; do NOT bind that one without
-# widening the integers.)  Measured against the previous ctypes path at c10h8
-# dims: BIT-IDENTICAL output, max|d| exactly 0.0, and the same speed (2.02 vs
-# 1.90 ms, both ~55 GB/s on the triangle, against 4.98 ms for the full dgemv).
-def _find_dsymv_library():
-    """First libmkl_rt that loads; None if there is none."""
-    for _cand in (
-        os.path.join(sys.prefix, "lib", "libmkl_rt.so.2"),
-        os.path.join(sys.prefix, "lib", "libmkl_rt.so.1"),
-        os.path.join(sys.prefix, "lib", "libmkl_rt.so"),
-        "libmkl_rt.so.2",
-        "libmkl_rt.so",
-    ):
-        try:
-            _ctypes.CDLL(_cand)
-            return _cand
-        except OSError:
-            continue
-    return None
-
-
-_DSYMV_LIB = _find_dsymv_library()
-if _DSYMV_LIB is not None:
-    _llvm.load_library_permanently(_DSYMV_LIB)
-    #   void dsymv(char *uplo, int *n, double *alpha, double *a, int *lda,
-    #              double *x, int *incx, double *beta, double *y, int *incy)
-    # Fortran BLAS takes everything by reference, so every argument goes over as
-    # a void* and the scalars have to be handed over as one-element arrays.
-    _dsymv = _nbtypes.ExternalFunction(
-        "dsymv_", _nbtypes.void(*([_nbtypes.voidptr] * 10))
-    )
-
-    @nb.njit(fastmath=True, cache=True)
-    def _symv_accumulate(A, x, y):
-        """y += A @ x, reading one triangle of A only.
-
-        BLAS is column-major and A here is row-major, but a symmetric matrix is
-        its own transpose, so the same bytes serve both interpretations and no
-        copy is needed -- 'L' and 'U' merely swap which physical triangle gets
-        touched.  beta=1.0 accumulates into y in place, so nothing is allocated.
-        """
-        _n = np.empty(1, dtype=np.int32)
-        _n[0] = A.shape[0]
-        _inc = np.empty(1, dtype=np.int32)
-        _inc[0] = 1
-        _alpha = np.empty(1, dtype=np.float64)
-        _alpha[0] = 1.0
-        _beta = np.empty(1, dtype=np.float64)
-        _beta[0] = 1.0
-        _uplo = np.empty(1, dtype=np.uint8)
-        _uplo[0] = 76  # ord('L')
-        _dsymv(
-            _uplo.ctypes.data,
-            _n.ctypes.data,
-            _alpha.ctypes.data,
-            A.ctypes.data,
-            _n.ctypes.data,   # lda == n: A is a contiguous square block
-            x.ctypes.data,
-            _inc.ctypes.data,
-            _beta.ctypes.data,
-            y.ctypes.data,
-            _inc.ctypes.data,
-        )
-else:
-    # No MKL: fall back to dgemv and force the knob off, so a machine without it
-    # runs the documented default path rather than a symmetric product that is
-    # silently reading the whole matrix anyway.
-    _QED_G_SYMV = 0
-
-    @nb.njit(fastmath=True, cache=True)
-    def _symv_accumulate(A, x, y):
-        """Stand-in with identical results via dgemv, reading all of A."""
-        y += np.dot(x, A)
+# The dsymv symbol binding and _symv_accumulate MOVED to orbital_sigma.py on
+# 2026-09-04, together with the build_sigma_reduced7/_8 kernels that are their
+# only reason to exist -- those are `nopython` and must resolve the helper as a
+# compile-time global, which an import inside a function cannot provide.
+# Imported back here for build_gradient, the one caller outside that module.
+# _QED_G_SYMV is defined there too (the no-MKL fallback has to force it off);
+# its documentation stays in the knob block above.
+from orbital_sigma import (
+    _symv_accumulate,
+    _QED_G_SYMV,
+    orbital_sigma3 as _os_orbital_sigma3,
+    mv2 as _os_mv2,
+    build_orbital_hessian_guess as _os_build_orbital_hessian_guess,
+)
 
 
 # QED_G_TILED's kernel.  out[s, l, r, k] = G[k0 + k, l0 + l, r, s], i.e. exactly
@@ -951,6 +2410,344 @@ def _dump_cpp_casscf_validation_case(kind, **arrays):
                 f.write(" ".join(str(d) for d in arr.shape) + "\n")
 
 
+def _degenerate_clusters(eps, bounds, tol):
+    """Maximal runs of near-degenerate orbitals, never crossing a block edge.
+
+    `eps` are orbital energies in index order.  `bounds` are the inactive|active
+    and active|virtual boundaries: a cluster must NEVER span one, because mixing
+    across it would change the inactive/active/virtual SPACES and therefore the
+    energy.  Only rotations strictly inside a block are redundant, and only
+    those are safe to touch.
+
+    Single-linkage on consecutive gaps, so a chain of pairwise-close orbitals
+    forms one cluster.  Returns [(start, stop), ...] with stop - start >= 2;
+    singletons carry no gauge freedom and are omitted.
+    """
+    n = len(eps)
+    edges = set(int(b) for b in bounds)
+    clusters = []
+    start = 0
+    for i in range(1, n + 1):
+        if i == n or i in edges or abs(eps[i] - eps[i - 1]) > tol:
+            if i - start >= 2:
+                clusters.append((start, i))
+            start = i
+    return clusters
+
+
+def _canonicalize_degenerate(C, T_ao, eps, bounds, tol):
+    """Impose a deterministic gauge inside each near-degenerate orbital cluster.
+
+    See the QED_DEGEN_CANON block at the top of this file for the measurement
+    that motivates this.  In short: within a degenerate set the eigenvectors
+    LAPACK returns are arbitrary, threaded runs return different ones, the
+    energy does not care and the optimizer's trajectory does.
+
+    THE CONSTRUCTION IS GAUGE-INVARIANT BY CONSTRUCTION, which is the whole
+    point -- it does not merely pick *a* convention, it picks the SAME one from
+    any starting gauge.  If a cluster is spanned by C1 and equally by
+    C2 = C1 Q for any orthogonal Q, then the fixed operator T represented in
+    the two bases satisfies T2 = C2^T T C2 = Q^T T1 Q, so its eigenvectors obey
+    V2 = Q^T V1 and the canonicalized orbitals are
+
+        C2 V2 = C1 Q Q^T V1 = C1 V1,
+
+    identical whichever gauge came in.  The only requirement is that T's
+    eigenvalues be distinct WITHIN the cluster, which is why T must not share
+    the molecular symmetry that caused the degeneracy in the first place.
+    """
+    C = np.array(C, dtype=float, copy=True)
+    for (a, b) in _degenerate_clusters(eps, bounds, tol):
+        blk = C[:, a:b]
+        T = blk.T @ T_ao @ blk
+        T = 0.5 * (T + T.T)  # kill asymmetry from rounding before eigh
+        _w, V = np.linalg.eigh(T)
+        C[:, a:b] = blk @ V
+    return C
+
+
+def _pin_orbital_signs(C):
+    """Deterministic column-sign convention: largest-|coefficient| made positive.
+
+    np.round before argmax is essential, not cosmetic -- see the
+    QED_RANDOM_ORBITAL_SEED block for the measured tie-breaking failure it
+    prevents (symmetry-equivalent atoms give EXACTLY tied largest coefficients
+    that differ only by ~1e-15 of threading noise, so a raw argmax picks between
+    them arbitrarily and the sign rule itself stops being reproducible).
+    """
+    C = np.array(C, dtype=float, copy=True)
+    for j in range(C.shape[1]):
+        k = int(np.argmax(np.round(np.abs(C[:, j]), 10)))
+        if C[k, j] < 0.0:
+            C[:, j] *= -1.0
+    return C
+
+
+def _gauge_tiebreaker(nao):
+    """The fixed operator T used to resolve degenerate clusters.
+
+    Requirements: deterministic, symmetric, and NOT invariant under the spatial
+    symmetry that produced the degeneracy (otherwise it inherits the same
+    degeneracy and resolves nothing).  A diagonal weighting by AO index meets
+    all three: the permutation of AO functions that maps p_x onto p_y does not
+    leave diag(1..nao) invariant, so it generically splits a pi pair.
+
+    It is deliberately arbitrary -- ANY fixed choice removes the arbitrariness,
+    and the point is that it is the same choice on every run and every thread
+    count.  It is NOT physically meaningful and nothing downstream should read
+    it as an orbital energy.
+    """
+    return np.diag(np.arange(1.0, float(nao) + 1.0))
+
+
+# _more_sorensen_dense MOVED to lstrs_trust_region.py -- see that file's
+# module docstring for why the LSTRS solvers are being split out.  Imported
+# under its old private name so every call site (the QED_EXACT_TR path and
+# both hard-case fallbacks) reads exactly as before; the function itself is
+# byte-for-byte unchanged, which validation/lstrs_refactor_gate.sh checks.
+from lstrs_trust_region import (
+    more_sorensen_dense as _more_sorensen_dense,
+    solve_lstrs_microiteration,
+    solve_lstrs_internal,
+    exact_internal_trs,
+)
+
+# The trust-region subproblem solvers MOVED to trust_region_solvers.py on
+# 2026-09-04 -- GLTR, AH-Krylov, the OTR step, the three Newton solvers, the
+# Jacobi-Davidson correction, and the bordered eigensolve/matvec/preconditioner
+# they share.  Each survives below as a delegator so every call site and every
+# cpp_casscf citation still resolves.
+from trust_region_solvers import (
+    _ah_krylov_trust_region_step as _trs__ah_krylov_trust_region_step,
+    _otr_trust_region_step as _trs__otr_trust_region_step,
+    aug_matvec as _trs_aug_matvec,
+    build_hessian_diagonal as _trs_build_hessian_diagonal,
+    inner_solve_pcg as _trs_inner_solve_pcg,
+    linear_equation_solve as _trs_linear_equation_solve,
+    minres_solve as _trs_minres_solve,
+    projection_step2 as _trs_projection_step2,
+    scipy_minres_solve as _trs_scipy_minres_solve,
+    solve_gltr_trust_region as _trs_solve_gltr_trust_region,
+    solve_gltr_with_operator as _trs_solve_gltr_with_operator,
+)
+
+# Davidson_augmented_hessian_solve6's BODY MOVED to davidson_augmented_hessian.py
+# -- the inner augmented-Hessian Davidson that the LSTRS bisection above calls
+# once per beta.  The method survives on PFHamiltonianGenerator as a delegator,
+# so every call site and the cpp_casscf line citations still resolve.
+from davidson_augmented_hessian import davidson_augmented_hessian_solve
+
+
+def _adaptive_tol_from_rho(
+    rho_history,
+    current_tol,
+    base=None,
+    lo=None,
+    hi=None,
+    window=None,
+    tight=None,
+    loose=None,
+    factor=None,
+):
+    """Next subproblem exit tolerance, given the recent model-fidelity history.
+
+    rho = (actual energy change) / (predicted energy change); rho == 1 means the
+    quadratic model predicted the step's effect exactly.
+
+    The rule, in one line: SOLVE THE SUBPROBLEM EXACTLY AS HARD AS THE MODEL
+    DESERVES.  |1 - median(rho)| estimates the model's own error.  Below `tight`
+    the model is trustworthy, so extra subproblem accuracy converts into real
+    energy decrease -> tighten.  Above `loose` the model is not worth resolving
+    -> loosen, and leave the fixing to step_control shrinking the radius.  In
+    between, hold (hysteresis, so it cannot oscillate every iteration).
+
+    A single rho < 0 in the window -- a step that moved the energy the WRONG WAY
+    -- loosens immediately regardless of the median: that is the strongest
+    available evidence that resolving the model further is wasted work.
+
+    Pure function of its arguments so it can be tested without a CASSCF object.
+    Defaults come from the QED_ADAPTIVE_TOL_* knobs.
+    """
+    base = _QED_ADAPTIVE_TOL_BASE if base is None else base
+    lo = _QED_ADAPTIVE_TOL_MIN if lo is None else lo
+    hi = _QED_ADAPTIVE_TOL_MAX if hi is None else hi
+    window = _QED_ADAPTIVE_TOL_WINDOW if window is None else window
+    tight = _QED_ADAPTIVE_TOL_TIGHT if tight is None else tight
+    loose = _QED_ADAPTIVE_TOL_LOOSE if loose is None else loose
+    factor = _QED_ADAPTIVE_TOL_FACTOR if factor is None else factor
+
+    if current_tol is None:
+        current_tol = base
+    # Ignore non-finite rho: predicted_energy2 can underflow to ~0 near
+    # convergence, and inf/nan must not be read as "model is perfect".
+    w = [r for r in rho_history[-window:] if np.isfinite(r)]
+    if not w:
+        return float(min(max(current_tol, lo), hi))
+
+    if min(w) < 0.0:
+        return float(min(current_tol * factor, hi))
+
+    dev = abs(1.0 - float(np.median(w)))
+    # Compare with a relative slack: these are user-set thresholds, and a
+    # boundary case must not flip on floating-point dust (|1 - 0.95| evaluates
+    # to 0.050000000000000044, which would silently miss a `<= 0.05` test).
+    slack = 1.0 + 1e-9
+    if dev <= tight * slack:
+        return float(max(current_tol / factor, lo))
+    if dev * slack >= loose:
+        return float(min(current_tol * factor, hi))
+    return float(min(max(current_tol, lo), hi))
+
+
+# GLTR reports its termination as a string, e.g. "Interior (Newton) iter 3" or
+# "Boundary iter 7"; the other two returns are "success_zero_gradient" (no
+# solve happened) and "Failure" (ran out of Lanczos iterations).  Only the first
+# word matters to the controller, so classify once, here, rather than string-
+# matching at every use.
+def _gltr_exit_is_interior(status):
+    """True iff this GLTR status is an interior (unconstrained Newton) exit.
+
+    Anything that is not recognisably interior is treated as NOT interior --
+    "Failure" and "success_zero_gradient" included.  That is the conservative
+    direction: an unrecognised exit can only push the controller back toward
+    base, never loosen it.
+    """
+    return isinstance(status, str) and status.startswith("Interior")
+
+
+def _subspace_tol_from_exits(
+    exit_history,
+    current_tol,
+    base=None,
+    lo=None,
+    hi=None,
+    window=None,
+    interior_hi=None,
+    interior_lo=None,
+    factor=None,
+    recent=None,
+):
+    """Next GLTR exit tolerance for one site, given that site's recent exits.
+
+    `exit_history` is a list of GLTR status strings, oldest first, for THIS site
+    only (the three GLTR sites have very different exit mixes -- see the
+    QED_SUBSPACE_TOL knob block -- so pooling them would average away exactly
+    the signal the controller runs on).
+
+    The rule, in one line: LOOSEN WHERE THE TRUST-REGION BOUNDARY IS NOT
+    BINDING.  An "Interior (Newton)" exit means GLTR stopped strictly inside the
+    trust region, where tol buys only linear-solve accuracy on a step whose
+    PLACEMENT it does not control; a "Boundary" exit means tol interacts with
+    where on the boundary the step lands, and loosening is no longer free.
+
+    Two guards, both deliberately asymmetric toward safety:
+      * a boundary exit among the last `recent` solves BLOCKS loosening outright,
+        so the controller reacts to one immediately instead of waiting for it to
+        win the window;
+      * `lo` defaults to `base`, so the controller can only loosen or return to
+        base -- it can never walk below the hard-coded 1e-7 the call sites use.
+
+    Pure function of its arguments so it can be tested without a CASSCF object.
+    Defaults come from the QED_SUBSPACE_TOL_* knobs.
+    """
+    base = _QED_SUBSPACE_TOL_BASE if base is None else base
+    lo = _QED_SUBSPACE_TOL_MIN if lo is None else lo
+    hi = _QED_SUBSPACE_TOL_MAX if hi is None else hi
+    window = _QED_SUBSPACE_TOL_WINDOW if window is None else window
+    interior_hi = _QED_SUBSPACE_TOL_HI if interior_hi is None else interior_hi
+    interior_lo = _QED_SUBSPACE_TOL_LO if interior_lo is None else interior_lo
+    factor = _QED_SUBSPACE_TOL_FACTOR if factor is None else factor
+    recent = _QED_SUBSPACE_TOL_RECENT if recent is None else recent
+
+    if current_tol is None:
+        current_tol = base
+    clamp = lambda t: float(min(max(t, lo), hi))
+
+    w = list(exit_history[-window:]) if window > 0 else list(exit_history)
+    if not w:
+        # No solve has been observed at this site yet: run the first one at the
+        # tolerance the call site would have used anyway.
+        return clamp(current_tol)
+
+    interior = [_gltr_exit_is_interior(s) for s in w]
+    frac = sum(interior) / float(len(interior))
+
+    # Compare with a relative slack for the same reason _adaptive_tol_from_rho
+    # does: these are user-set thresholds and a boundary case must not flip on
+    # floating-point dust (3/4 is exact, but 0.75 read from an env var need not
+    # be, and interior fractions like 2/3 vs a 0.667 knob certainly are not).
+    slack = 1.0 + 1e-9
+
+    if frac <= interior_lo * slack:
+        # Boundary-dominated: this site's steps are being placed by the trust
+        # region, so pull back toward base.  Slack on the THRESHOLD so the test
+        # is permissive, matching the documented "at or below LO" semantics --
+        # see the note in _exit_boundary_dominated on why exactly 0.25 is a
+        # common value and must be included.
+        return clamp(current_tol / factor)
+
+    if frac * slack >= interior_hi:
+        if recent > 0 and not all(interior[-recent:]):
+            # Interior-dominated over the window, but a boundary exit landed
+            # very recently -- hold rather than loosen into it.
+            return clamp(current_tol)
+        return clamp(current_tol * factor)
+
+    return clamp(current_tol)
+
+
+def _exit_last_is_interior(exit_history):
+    """True iff the most recent solve at this site exited interior.
+
+    Mode 2's growth gate: an interior step says the model held over a step the
+    region never constrained, which is no evidence that a LARGER region would
+    still be trustworthy.  An empty history returns False, i.e. it does not gate
+    -- with nothing observed the original 1.2x growth stands.
+    """
+    return bool(exit_history) and _gltr_exit_is_interior(exit_history[-1])
+
+
+def _exit_boundary_dominated(exit_history, window=None, interior_lo=None):
+    """True iff this site's recent exits are persistently BOUNDARY-terminating.
+
+    Mode 1's damping trigger.  Persistently, not once: a single boundary exit is
+    ordinary trust-region behaviour and damping on it would fight the algorithm
+    rather than the pathology.  The threshold is the low edge of the measured
+    c10h8-vs-MgH+ separation (see the QED_EXIT_CONTROL knob block).
+
+    Pure function of its arguments so it can be tested without a CASSCF object.
+    """
+    window = _QED_EXIT_CONTROL_WINDOW if window is None else window
+    interior_lo = _QED_EXIT_CONTROL_LO if interior_lo is None else interior_lo
+    w = list(exit_history[-window:]) if window > 0 else list(exit_history)
+    if not w:
+        return False
+    frac = sum(_gltr_exit_is_interior(s) for s in w) / float(len(w))
+    # Relative slack for the same floating-point reason as the tolerance
+    # controller: a boundary case must not flip on dust.  The slack goes on the
+    # THRESHOLD, making the test permissive -- the documented semantics are "at
+    # or below LO", and with the default window of 4 the achievable fractions
+    # are 0, 0.25, 0.5, 0.75, 1.0, so exactly 0.25 is a COMMON value and an
+    # accidentally-exclusive test would leave this knob nearly inert on the one
+    # system it exists for.
+    return frac <= interior_lo * (1.0 + 1e-9)
+
+
+def _exit_control_radius(trust_radius, exit_history, damp=None, lo=None,
+                         window=None, interior_lo=None):
+    """Damped trust radius for a persistently boundary-terminating site.
+
+    Returns the radius unchanged when the site is not boundary-dominated, so the
+    caller can apply this unconditionally and let the predicate decide.
+    """
+    damp = _QED_EXIT_CONTROL_DAMP if damp is None else damp
+    lo = _QED_EXIT_CONTROL_MIN if lo is None else lo
+    if not _exit_boundary_dominated(exit_history, window=window,
+                                    interior_lo=interior_lo):
+        return float(trust_radius)
+    return float(max(trust_radius * damp, lo))
+
+
 script_dir = os.path.abspath(os.path.dirname(__file__))
 lib_path = os.path.join(script_dir, "cfunctions.so")
 
@@ -1099,6 +2896,18 @@ cfunctions.build_active_rdm.argtypes = [
     ctypes.c_int32,
     ctypes.c_double,
 ]
+cfunctions.build_active_rdm_sa.argtypes = [
+    np.ctypeslib.ndpointer(ctypes.c_double, ndim=2, flags="C_CONTIGUOUS"),
+    np.ctypeslib.ndpointer(ctypes.c_double, ndim=1, flags="C_CONTIGUOUS"),
+    np.ctypeslib.ndpointer(ctypes.c_double, ndim=1, flags="C_CONTIGUOUS"),
+    np.ctypeslib.ndpointer(ctypes.c_int32, ndim=1, flags="C_CONTIGUOUS"),
+    ctypes.c_int32,
+    ctypes.c_int32,
+    ctypes.c_int32,
+    ctypes.c_int32,
+    ctypes.c_int32,
+    ctypes.c_double,
+]
 cfunctions.build_active_rdm_z.argtypes = [
     np.ctypeslib.ndpointer(ctypes.c_double, ndim=2, flags="C_CONTIGUOUS"),
     np.ctypeslib.ndpointer(ctypes.c_double, ndim=2, flags="C_CONTIGUOUS"),
@@ -1218,6 +3027,14 @@ cfunctions.gram_schmidt_add.argtypes = [
     ctypes.c_int32,
 ]
 
+# QED_JK_H2E_DISK (step 1b): point the JK kernel's packed-h2e source at a file.
+# NULL restores the resident source.  Guarded by hasattr so an OLD cfunctions.so
+# -- one built before orbital.c grew this symbol -- still imports; the spill
+# refuses to arm in that case rather than silently falling back to resident.
+_HAS_JK_H2E_FILE = hasattr(cfunctions, "qed_jk_set_h2e_file")
+if _HAS_JK_H2E_FILE:
+    cfunctions.qed_jk_set_h2e_file.argtypes = [ctypes.c_char_p]
+    cfunctions.qed_jk_set_h2e_file.restype = None
 cfunctions.full_transformation_macroiteration.argtypes = [
     np.ctypeslib.ndpointer(ctypes.c_double, ndim=2, flags="C_CONTIGUOUS"),
     np.ctypeslib.ndpointer(ctypes.c_double, ndim=2, flags="C_CONTIGUOUS"),
@@ -1564,6 +3381,33 @@ def c_build_active_rdm(
     eigvec, D_tu, D_tuvw, table, N_ac, n_o_ac, num_photon, state_p1, state_p2, weight
 ):
     cfunctions.build_active_rdm(
+        eigvec,
+        D_tu,
+        D_tuvw,
+        table,
+        N_ac,
+        n_o_ac,
+        num_photon,
+        state_p1,
+        state_p2,
+        weight,
+    )
+
+def c_build_active_rdm_sa(
+    eigvec, D_tu, D_tuvw, table, N_ac, n_o_ac, num_photon, state_p1, state_p2, weight
+):
+    """CASSCF-only bra==ket specialisation of c_build_active_rdm.
+
+    ONLY for call sites where the bra and the ket are the same slice of the
+    same array.  nuclear_grad.py must keep using c_build_active_rdm /
+    c_build_active_rdm_z: it builds transition quantities where the two
+    differ -- and at nuclear_grad.py:1024-1045 they differ by ARRAY while the
+    state indices are equal (i, i), so the state indices alone do not identify
+    the case.  The C side defers to the general routine if the states differ,
+    but that check cannot see a second array, which is why the routing is done
+    here by call site rather than by a runtime test.
+    """
+    cfunctions.build_active_rdm_sa(
         eigvec,
         D_tu,
         D_tuvw,
@@ -2253,6 +4097,11 @@ class PFHamiltonianGenerator:
     """
     class for Full CI matrix elements
     """
+    # Set for real in buildArraysInOrbitalBasis.  Declared here so the DF and
+    # mo_eri paths, which never reach that assignment, still answer False.
+    _oo_skip_tensor = False
+    _oo_Ca_ref = None
+
 
     def __init__(self, molecule_string, psi4_options_dict, cavity_options):
         """
@@ -2266,6 +4115,25 @@ class PFHamiltonianGenerator:
         # self.C and self.Ca will be the QED-CIS natural orbitals
         # otherwise they will be the QED-RHF MOs
         psi4_wfn_o = self.generateOrbitalBasis(molecule_string, psi4_options_dict)
+
+        # QED_ORBITAL_SYMMETRY (default off => this block does nothing).  Project
+        # the starting orbitals onto pure axial-symmetry species BEFORE any
+        # integral is built from them, so everything downstream is consistent.
+        # The species labels are assigned once, here, and held fixed for the whole
+        # run -- the same choice Molpro makes when it reads starting orbitals.
+        self._sym_labels = None
+        if _QED_ORBITAL_SYMMETRY:
+            import orbital_symmetry as _orbsym
+
+            _bs = psi4_wfn_o.basisset()
+            _S = np.asarray(psi4.core.MintsHelper(_bs).ao_overlap())
+            _species = _orbsym.ao_species(_bs)
+            _orbsym.validate_axis(_S, _species)
+            _lab0, _pur0, _, _ = _orbsym.classify(self.C, _S, _species)
+            self.C = _orbsym.symmetrize(self.C, _S, _species, _lab0)
+            self._sym_labels, _, _, _ = _orbsym.classify(self.C, _S, _species)
+            self._sym_report = (_lab0, _pur0)
+            self.Ca = psi4.core.Matrix.from_array(self.C)
 
         # build arrays in orbital basis from last step
         self.buildArraysInOrbitalBasis(psi4_wfn_o, psi4_options_dict)
@@ -2321,6 +4189,8 @@ class PFHamiltonianGenerator:
                     )
                     self.J = np.ascontiguousarray(self.J)
                     self.K = np.ascontiguousarray(self.K)
+                elif _QED_LIBTRANS_OO == 1:
+                    self.build_JK_oo()
                 else:
                     self.build_JK()
                 self.occupied_J = copy.deepcopy(
@@ -2547,6 +4417,8 @@ class PFHamiltonianGenerator:
                     )
                     self.J = np.ascontiguousarray(self.J)
                     self.K = np.ascontiguousarray(self.K)
+                elif _QED_LIBTRANS_OO == 1:
+                    self.build_JK_oo()
                 else:
                     self.build_JK()
                 self.occupied_K = copy.deepcopy(
@@ -2773,7 +4645,29 @@ class PFHamiltonianGenerator:
             # call full diagonalization
             self.CIeigs, self.CIvecs = np.linalg.eigh(self.H_PF)
 
-        if self.full_diagonalization:
+        # CIS IS ALWAYS SOLVED BY FULL DIAGONALIZATION.  Its H_PF is built
+        # densely and stored unconditionally above (the `if self.ci_level ==
+        # "cis"` branch at :4681 calls generatePFHMatrix with no direct-CI
+        # alternative), so the matrix eigh needs is already resident and this
+        # costs one O(N^3) solve, not new storage.
+        #
+        # The direct branch below no longer has a CIS path.  It used to call
+        # the Python `Davidson`, which for CIS fell through to a DENSE
+        # `S = np.einsum("ip,pq->iq", Q, H)` against that same H_PF -- i.e. a
+        # subspace iteration converging to what eigh returns exactly.  The two
+        # were measured equal to 2.3e-13 on all 8 asserted roots of both suite
+        # decks BEFORE the branch was removed; rerun
+        # validation/cis_full_diagonalization_check.py to reproduce that.
+        # NOTE the shape change this implies for CIS callers: CIeigs goes from
+        # (davidson_roots,) to (H_dim,) and CIvecs from (H_dim, davidson_roots)
+        # to (H_dim, H_dim).  Both stay column-major in the eigenvector index,
+        # so CIeigs[i] / CIvecs[:, i] are unchanged for every i that existed.
+        #
+        # `or self.ci_level == "cis"` rather than forcing
+        # self.full_diagonalization True: the same idiom already guards :6546,
+        # :6978, :7806 and :8058, and this way the attribute keeps reporting
+        # what the user actually set.
+        if self.full_diagonalization or self.ci_level == "cis":
             # call full diagonalization
             self.CIeigs, self.CIvecs = np.linalg.eigh(self.H_PF)
 
@@ -3191,7 +5085,7 @@ class PFHamiltonianGenerator:
                                 eigenvecs2[:, m : (m + 1)].flatten(),
                             )
                         )
-                    c_build_active_rdm(
+                    c_build_active_rdm_sa(
                         eigenvecs,
                         self.D_tu,
                         self.D_tuvw,
@@ -3310,6 +5204,23 @@ class PFHamiltonianGenerator:
                         self.index_map[index_count][0] = s
                         self.index_map[index_count][1] = r
                         index_count += 1
+
+                # QED_ORBITAL_SYMMETRY: drop the rotations that would mix two
+                # different symmetry species.  This is the constraint itself; the
+                # matching filter appears at every other site that re-enumerates
+                # this same list (they do not read index_map, they rebuild it).
+                if _QED_ORBITAL_SYMMETRY and self._sym_labels is not None:
+                    import orbital_symmetry as _orbsym
+
+                    _n_full = self.index_map_size
+                    self.index_map = _orbsym.filtered_index_map(
+                        self._sym_labels, self.n_in_a, self.n_occupied, self.nmo
+                    )
+                    self.index_map_size = len(self.index_map)
+                    _orbsym.report(
+                        self._sym_labels, self._sym_report[0], self._sym_report[1],
+                        self.n_in_a, self.n_occupied, _n_full, self.index_map_size,
+                    )
 
                 self.index_map1 = self.index_map.astype("int32")
 
@@ -3539,6 +5450,9 @@ class PFHamiltonianGenerator:
                                 if _cold:
                                     self.constint[5] = _sv_indim
                                     self.constint[6] = _sv_maxdim
+                                self._dump_ci_vectors(
+                                    eigenvecs, "betweenmacro", macroiteration
+                                )
                                 old_avg_energy = new_avg_energy
                                 avg_energy = 0.0
                                 for i in range(self.davidson_roots):
@@ -3556,8 +5470,38 @@ class PFHamiltonianGenerator:
                                     "old CI energy", old_avg_energy,
                                     "new CI energy", new_avg_energy,
                                     flush = True)
+                            # QED_TRUE_ENERGY_REACTIVE: arm on the first real
+                            # macro-energy RISE.  macroiteration > 0 because
+                            # old_avg_energy is 0.0 before the first CI solve.
+                            if (_QED_TRUE_ENERGY_REACTIVE and macroiteration > 0
+                                    and not getattr(self, "_true_energy_armed", False)
+                                    and new_avg_energy >
+                                    old_avg_energy + _QED_TRUE_ENERGY_REACTIVE_TOL):
+                                self._true_energy_armed = True
+                                print("REACTIVE: macro energy ROSE by",
+                                      new_avg_energy - old_avg_energy,
+                                      "-- arming the true-energy test from here on",
+                                      flush=True)
                             if np.abs(new_avg_energy - old_avg_energy) < 1e-10:
                                 convergence = 1
+                            # QED_GRAD_CONV (item 244): OR-ed gradient criterion.
+                            # _macro_entry_gnorm is the gradient at the start of
+                            # the PREVIOUS macro's orbital work, so the test lags
+                            # by one macro -- deliberately conservative.
+                            _gn = getattr(self, "_macro_entry_gnorm", None)
+                            if _QED_GRAD_CONV > 0.0 and _gn is not None:
+                                print("macro gradient norm", _gn,
+                                      "threshold", _QED_GRAD_CONV, flush=True)
+                                if _gn < _QED_GRAD_CONV:
+                                    convergence = 1
+                                    print("CONVERGED ON GRADIENT CRITERION", flush=True)
+                            # Re-arm the capture AFTER the test: the value the test
+                            # reads must be the first gradient of the PREVIOUS
+                            # macro's orbital work (the one-macro lag this criterion
+                            # is calibrated for).  Resetting at the TOP of the loop
+                            # instead leaves _gn None at every test and the
+                            # criterion silently never fires -- measured, item 245.
+                            self._macro_entry_gnorm = None   # QED_GRAD_CONV
                             if macroiteration >= 1000:
                                 self.casscf_converged = False
                                 print(f"WARNING: SA-CASSCF did NOT converge after 30 iterations")
@@ -4005,16 +5949,7 @@ class PFHamiltonianGenerator:
                             if self.density_fitting == False: 
                                 start1 = timer()
                                 self.K = np.ascontiguousarray(self.K)
-                                c_full_transformation_macroiteration(
-                                    self.U_total,
-                                    self.twoeint,
-                                    self.J,
-                                    self.K,
-                                    self.index_map_pq,
-                                    self.index_map_kl,
-                                    self.nmo,
-                                    self.n_occupied,
-                                )
+                                self._macro_JK(self.U_total, self.J, self.K)
                                 # self.full_transformation_macroiteration(self.U_total, self.J, self.K)
                                 end1 = timer()
                                 print("full JK transformation took", end1 - start1, flush = True)
@@ -4125,20 +6060,12 @@ class PFHamiltonianGenerator:
 
                         print("optimization took", end - start)
 
-            elif self.ci_level == "cis":
-                dres = self.Davidson(
-                    self.H_PF,
-                    self.davidson_roots,
-                    self.davidson_threshold,
-                    indim,
-                    maxdim,
-                    self.davidson_maxiter,
-                    self.build_sigma,
-                    self.H_diag,
-                )
-                self.CIeigs = dres["DAVIDSON EIGENVALUES"]
-                self.CIvecs = dres["DAVIDSON EIGENVECTORS"]
-
+            # The `elif self.ci_level == "cis"` branch that stood here called
+            # the Python `Davidson` on self.H_PF.  It is UNREACHABLE as of
+            # 2026-09-04: CIS is routed to full diagonalization at :4754, so
+            # control never enters this else.  `Davidson` moved to
+            # legacy_python_ci.py with the rest of the retired pure-Python CI
+            # kernels -- see that module for the reachability evidence.
             t_dav_end = time.time()
             # print(f" Completed Davidson iterations in {t_dav_end - t_H_build} seconds", flush = True)
 
@@ -4313,6 +6240,18 @@ class PFHamiltonianGenerator:
                     self.target_spin = 1.0
                 if self.spin_adaptation == "quintet":
                     self.target_spin = 2.0
+                # "no" is the same unadapted path as omitting the key entirely
+                # (target_spin < 0 routes get_roots to the plain davidson).
+                # Without this branch, passing it explicitly left target_spin
+                # unset and died later with an AttributeError at its first use.
+                if self.spin_adaptation == "no":
+                    self.target_spin = -1.0
+                if not hasattr(self, "target_spin"):
+                    print(
+                        f"unrecognized spin_adaptation '{self.spin_adaptation}';"
+                        " expected one of: singlet, triplet, quintet, no"
+                    )
+                    exit()
             else:
                 self.spin_adaptation = "no"
                 self.target_spin = -1.0
@@ -4426,6 +6365,50 @@ class PFHamiltonianGenerator:
             self.C[:, :] = new_C[:, :]
             # update d_cmo
             self.d_cmo = np.dot(self.C.T, self.d_ao).dot(self.C)
+
+        # QED_DEGEN_CANON: pin the arbitrary gauge inside degenerate clusters
+        # before ANYTHING downstream sees the orbitals -- deliberately placed
+        # above the orbital2.out checkpoint so the file records what the run
+        # actually optimizes, and above the use_orbital_guess load below so a
+        # seeded guess is canonicalized on the same footing as a fresh one.
+        # PURELY ADDITIVE: with the knob off not one line here executes.
+        if _QED_DEGEN_CANON:
+            _fock_ao = getattr(self, "fock_alpha", None)
+            if _fock_ao is None:
+                print(
+                    "  degen_canon: no CQED-RHF Fock available, skipping",
+                    flush=True,
+                )
+            else:
+                # Block edges from the wfn, not from self.n_in_a -- that
+                # attribute is assigned in __init__ from self.ndocc, which is
+                # itself only set further down in THIS method, so it cannot be
+                # relied on here.  doccpi() is available and gives the same
+                # 2 / 12 / 9 split for MgH+ CAS(8,12).
+                _n_in = int(wfn.doccpi()[0]) - self.n_act_el // 2
+                _bounds = [_n_in, _n_in + self.n_act_orb]
+                _eps = np.einsum("pi,pq,qi->i", self.C, _fock_ao, self.C)
+                _C_new = _canonicalize_degenerate(
+                    self.C,
+                    _gauge_tiebreaker(self.C.shape[0]),
+                    _eps,
+                    _bounds,
+                    _QED_DEGEN_TOL,
+                )
+                _C_new = _pin_orbital_signs(_C_new)
+                if _QED_SOLVER_STATS:
+                    _cl = _degenerate_clusters(_eps, _bounds, _QED_DEGEN_TOL)
+                    print(
+                        f"  degen_canon: blocks {_n_in}/{self.n_act_orb}/"
+                        f"{self.C.shape[1] - _n_in - self.n_act_orb}, "
+                        f"clusters {_cl}, max|dC| "
+                        f"{float(np.abs(_C_new - self.C).max()):.3e}",
+                        flush=True,
+                    )
+                self.C = _C_new
+                # d_cmo is built from C, so it must be rebuilt here -- the
+                # random-rotation branch above does the same after it rotates.
+                self.d_cmo = np.dot(self.C.T, self.d_ao).dot(self.C)
 
         np.savetxt("orbital2.out", self.C)
         # print("Unitary matrix")
@@ -4547,6 +6530,423 @@ class PFHamiltonianGenerator:
             self.Hspin = _H_spin * (spin_ind.reshape(-1, 1) == spin_ind)
         #self.H_hf = copy.deepcopy(self.H_spatial2)
 
+    # =====================================================================
+    # QED_LIBTRANS_OO -- psi4's CONV strategy: keep NO nmo^4 MO tensor, and
+    # re-transform the two blocks J and K actually need at the CURRENT
+    # orbitals, once per macroiteration.
+    #
+    # WHY THIS IS EQUIVALENT.  build_JK documents the conventions:
+    #       J[k,l,r,s] = (kl|rs)     bra pair both occupied, ket pair general
+    #       K[k,l,r,s] = (kr|ls)     bra pair (k,r), ket pair (l,s)
+    # so J is a (oo|gg) block and K is a (og|og) block.  Neither can be
+    # obtained by ROTATING the other -- which is exactly why the stored
+    # reference tensor exists today, and exactly why dropping it forces a
+    # per-macro re-transform.  Validated against mints.mo_eri with sliced
+    # coefficient matrices to 1.4e-15 (J) and 5.2e-16 (K); the check is kept
+    # as validation/oo_transform_check.py.
+    #
+    # THE ONE NON-OBVIOUS PIECE: MOSpace.occ() means psi4's *docc*, not our
+    # n_occupied = inactive + active.  A CUSTOM MOSpace(label, aOrbs, aIndex)
+    # silently yields a ZERO-row pair space (the built-in spaces carry empty
+    # aOrbs/aIndex -- they are sentinels libtrans resolves internally), so the
+    # lever is wfn.force_occpi(), which redefines occ() to our count.  It is
+    # force_occpi, not force_doccpi; the latter does not exist.
+    #
+    # BASIS BOOKKEEPING, the thing most likely to go wrong here.  U_total is
+    # measured from the REFERENCE orbitals that self.twoeint was built in, and
+    # self.Ca / self.d_cmo are MUTATED during optimisation -- so neither may be
+    # read at call time.  _oo_setup snapshots both, and every transform uses
+    #       C(U) = Ca_ref @ U          d(U) = U^T d_ref U
+    # The DSE is added analytically rather than folded into a tensor:
+    #       J_dse[k,l,r,s] = d[k,l] d[r,s]     K_dse[k,l,r,s] = d[k,r] d[l,s]
+    # which is the same rank-1 pair update build2DSO applies, expressed in the
+    # unpacked blocks (and cheaper -- it never touches an nmo^4 array).
+    # =====================================================================
+    def _macro_JK(self, U_total, J, K):
+        """Per-macro J/K build: the one dispatch point for QED_LIBTRANS_OO.
+
+        0 (default) -- rotate the stored packed nmo^4 tensor, as before.
+        1           -- re-transform the (oo|gg) and (og|og) blocks at the
+                       current orbitals; the tensor is not read at all.
+        2           -- CHECK MODE: do BOTH and report max|difference|.  Slower
+                       than either, and it needs self.twoeint, so it is a
+                       validation mode rather than a production one.
+        """
+        if not _QED_LIBTRANS_OO:
+            # Under QED_JK_H2E_DISK self.twoeint is the (1,1) placeholder and
+            # the kernel streams the real rows from the spilled file; the call
+            # is otherwise unchanged, which is the point of routing the path
+            # through qed_jk_set_h2e_file rather than through this signature.
+            c_full_transformation_macroiteration(
+                U_total, self.twoeint, J, K,
+                self.index_map_pq, self.index_map_kl, self.nmo, self.n_occupied,
+            )
+            return
+        if _QED_LIBTRANS_OO >= 2:
+            J_ref = np.empty_like(J)
+            K_ref = np.ascontiguousarray(np.empty_like(K))
+            c_full_transformation_macroiteration(
+                U_total, self.twoeint, J_ref, K_ref,
+                self.index_map_pq, self.index_map_kl, self.nmo, self.n_occupied,
+            )
+            self._oo_transform_JK(U_total, J, K)
+            print(
+                "QED_LIBTRANS_OO check: max|dJ| %.3e  max|dK| %.3e  "
+                "(scale %.3e)"
+                % (np.max(np.abs(J - J_ref)), np.max(np.abs(K - K_ref)),
+                   max(np.max(np.abs(J_ref)), np.max(np.abs(K_ref)))),
+                flush=True,
+            )
+            return
+        self._oo_transform_JK(U_total, J, K)
+
+    def _oo_setup(self):
+        """One-time libtrans/shim setup for the QED_LIBTRANS_OO route.
+
+        Everything orbital-INDEPENDENT happens once: the AO integrals, the
+        SO presort, the DPD ids and buffer labels, and the packed-pair
+        unpacking maps.  Only set_orbitals + transform_tei recur per macro,
+        which is what makes the per-macro cost a transform rather than a
+        transform plus a presort.
+        """
+        if getattr(self, "_oo_ready", False):
+            return True
+        shim_path = os.path.join(
+            os.path.dirname(os.path.abspath(__file__)), "psi4_dpd_shim.so"
+        )
+        if not os.path.exists(shim_path):
+            return _libtrans_fallback(f"{shim_path} not built (QED_LIBTRANS_OO)")
+        ctypes.CDLL(psi4.core.__file__, mode=ctypes.RTLD_GLOBAL)
+        shim = ctypes.CDLL(shim_path)
+        if not hasattr(shim, "qed_dpd_read_buf4_rect"):
+            return _libtrans_fallback(
+                "psi4_dpd_shim.so predates qed_dpd_read_buf4_rect; rebuild it"
+            )
+        shim.qed_dpd_read_buf4_rect.restype = ctypes.c_int
+        shim.qed_dpd_read_buf4_rect.argtypes = [
+            ctypes.c_int, ctypes.c_int, ctypes.c_int, ctypes.c_char_p,
+            np.ctypeslib.ndpointer(dtype=np.float64, flags="C_CONTIGUOUS"),
+            ctypes.c_long, ctypes.c_long, ctypes.c_void_p, ctypes.c_void_p,
+        ]
+
+        no, nmo = self.n_occupied, self.nmo
+        # needed before the IntegralTransform exists, to size its memory
+        self._oo_nJr_pre, self._oo_nJc_pre = no * (no + 1) // 2, nmo * (nmo + 1) // 2
+        self._oo_nKr_pre = no * nmo
+        wfn = self.wfn
+        wfn.force_occpi(psi4.core.Dimension([no]), psi4.core.Dimension([0]))
+
+        IT = psi4.core.IntegralTransform
+        alln = psi4.core.MOSpace.all()
+        occ = psi4.core.MOSpace.occ()
+        mints = psi4.core.MintsHelper(wfn.basisset())
+        _t0 = time.time()
+        mints.integrals()  # AO -> disk, or presort dies with PSIO_ERROR 21
+        it = IT(
+            wfn, [occ, alln],
+            IT.TransformationType.Restricted, IT.OutputType.DPDOnly,
+            IT.MOOrdering.PitzerOrder, getattr(IT.FrozenOrbitals, "None"),
+            False,
+        )
+        it.set_keep_dpd_so_ints(True)
+        # SIZE THE TRANSFORM AGAINST THE BUFFERS IT MUST PRODUCE, not against
+        # psi4's default.  The drivers here never call psi4.set_memory(), so
+        # psi4.core.get_memory() is 500 MiB -- _build_twoeint_libtrans already
+        # overrides it for exactly this reason ("sizing an 8.4 GB transform
+        # against 500 MiB just forces needless multipassing", :6726).  At
+        # nmo 302 the K buffer alone is 1.11 GB, and a 500 MiB budget took the
+        # aug-cc-pVDZ leg down right after setup with no Python traceback.
+        # Ask for both buffers plus the same again as working room; that is
+        # still an order of magnitude under the tensor this route replaces.
+        _need = 8 * (self._oo_nJr_pre * self._oo_nJc_pre
+                     + self._oo_nKr_pre * self._oo_nKr_pre) * 2
+        it.set_memory(max(int(psi4.core.get_memory()), _need))
+        it.initialize()
+        _t1 = time.time()
+        it.presort_so_tei()
+        it.set_tei_already_presorted(True)  # orbital-independent: sort ONCE
+        _t2 = time.time()
+
+        def _packmap(n):
+            # DPD stores [p>=q]+ with the LARGER index in the outer loop.
+            t = np.zeros((n, n), dtype=np.int64)
+            k = 0
+            for p in range(n):
+                for q in range(p + 1):
+                    t[p, q] = t[q, p] = k
+                    k += 1
+            return t
+
+        self._oo_shim = shim
+        self._oo_it = it
+        self._oo_occ, self._oo_all = occ, alln
+        self._oo_pqJ = it.DPD_ID(occ, occ, IT.SpinType.Alpha, True)
+        self._oo_rsJ = it.DPD_ID(alln, alln, IT.SpinType.Alpha, True)
+        self._oo_pqK = it.DPD_ID(occ, alln, IT.SpinType.Alpha, False)
+        self._oo_nJr, self._oo_nJc = no * (no + 1) // 2, nmo * (nmo + 1) // 2
+        self._oo_nKr = no * nmo
+        self._oo_omap, self._oo_amap = _packmap(no), _packmap(nmo)
+        self._oo_Jbuf = np.empty(self._oo_nJr * self._oo_nJc)
+        self._oo_Kbuf = np.empty(self._oo_nKr * self._oo_nKr)
+        # The reference basis was snapshotted in buildArraysInOrbitalBasis, at
+        # the point twoeint became final.  Falling back to self.Ca here would
+        # be wrong whenever setup happens after the first rotation.
+        if getattr(self, "_oo_Ca_ref", None) is None:
+            raise RuntimeError(
+                "QED_LIBTRANS_OO: no reference-basis snapshot -- _oo_setup ran "
+                "before buildArraysInOrbitalBasis"
+            )
+        self._oo_ready = True
+        # This setup is the counterpart of the `ERI Build` phase the route
+        # deletes, and it lands OUTSIDE both that timer and `optimization took`
+        # (the first call comes from build_JK_oo, before the macro loop starts).
+        # Print it or the A/B accounting silently loses ~30 s.
+        print(
+            "QED_LIBTRANS_OO: ready (J %d x %d, K %d x %d, %.2f GB of buffer "
+            "against %.2f GB for the packed nmo^4 tensor); "
+            "setup: ao_integrals %.2f s, presort %.2f s, libtrans budget %.2f GB"
+            % (self._oo_nJr, self._oo_nJc, self._oo_nKr, self._oo_nKr,
+               (self._oo_Jbuf.nbytes + self._oo_Kbuf.nbytes) / 1024 ** 3,
+               (nmo * (nmo + 1) // 2) ** 2 * 8 / 1024 ** 3,
+               _t1 - _t0, _t2 - _t1, _need / 1024 ** 3),
+            flush=True,
+        )
+        return True
+
+    def _oo_transform_JK(self, U_total, J, K):
+        """Fill J and K in the basis Ca_ref @ U_total.  Drop-in replacement for
+        c_full_transformation_macroiteration(U_total, self.twoeint, J, K, ...).
+        """
+        if not self._oo_setup():
+            raise RuntimeError("QED_LIBTRANS_OO requested but unavailable")
+        no, nmo = self.n_occupied, self.nmo
+        U = np.asarray(U_total)
+        it, shim = self._oo_it, self._oo_shim
+        # TIMED SEPARATELY ON PURPOSE.  The J side is (oo|gg) -- 780 x 45753,
+        # PACKED on both axes -- while the K side is (og|og), 11778 x 11778,
+        # unpacked on both, i.e. 3.9x the elements.  Reporting one combined
+        # number hides which of the two the cost actually lives in, and that
+        # decides whether a reformulation should attack K's layout or the
+        # shared first half-transformation.
+        _t0 = time.time()
+        it.set_orbitals(psi4.core.Matrix.from_array(self._oo_Ca_ref @ U))
+        _t1 = time.time()
+        it.transform_tei(self._oo_occ, self._oo_occ, self._oo_all, self._oo_all)
+        _t2 = time.time()
+        it.transform_tei(self._oo_occ, self._oo_all, self._oo_occ, self._oo_all)
+        _t3 = time.time()
+        shim.qed_dpd_set_default(it.get_dpd_id())
+
+        rc = shim.qed_dpd_read_buf4_rect(
+            61, self._oo_pqJ, self._oo_rsJ, b"MO Ints (OO|AA)",
+            self._oo_Jbuf, self._oo_nJr, self._oo_nJc, None, None)
+        if rc != 0:
+            raise RuntimeError(f"QED_LIBTRANS_OO: J buffer read failed rc={rc}")
+        rc = shim.qed_dpd_read_buf4_rect(
+            61, self._oo_pqK, self._oo_pqK, b"MO Ints (OA|OA)",
+            self._oo_Kbuf, self._oo_nKr, self._oo_nKr, None, None)
+        if rc != 0:
+            raise RuntimeError(f"QED_LIBTRANS_OO: K buffer read failed rc={rc}")
+
+        _t4 = time.time()
+        print("QED_LIBTRANS_OO: set_orbitals %.2f s | J transform %.2f s | "
+              "K transform %.2f s | readback %.2f s"
+              % (_t1 - _t0, _t2 - _t1, _t3 - _t2, _t4 - _t3), flush=True)
+        Jb = self._oo_Jbuf.reshape(self._oo_nJr, self._oo_nJc)
+        Kb = self._oo_Kbuf.reshape(no, nmo, no, nmo)
+        J[:] = Jb[self._oo_omap][:, :, self._oo_amap]
+        K[:] = Kb.transpose(0, 2, 1, 3)
+        if not self.ignore_dse_terms:
+            d = U.T @ self._oo_d_ref @ U
+            J += np.einsum("kl,rs->klrs", d[:no, :no], d, optimize=True)
+            K += np.einsum("kr,ls->klrs", d[:no, :], d[:no, :], optimize=True)
+
+    def _build_twoeint_libtrans(self, p4_wfn, mints):
+        """Build the packed MO two-electron integrals through psi4's libtrans.
+
+        Returns the (npair, npair) packed array in helper_PFCI's OWN pair order,
+        or None if the route is unavailable -- in which case the caller falls
+        back to mo_eri.  See the QED_LIBTRANS note at the top of this file for
+        the measurements and for why this beats every alternative.
+
+        Four things here are load-bearing and each of them fails SILENTLY (zeros
+        or a segfault, not an exception) if got wrong; see psi4_dpd_shim.cpp.
+        """
+        try:
+            shim_path = os.path.join(
+                os.path.dirname(os.path.abspath(__file__)), "psi4_dpd_shim.so"
+            )
+            if not os.path.exists(shim_path):
+                return _libtrans_fallback(f"{shim_path} not built")
+
+            # (1) psi4 is one monolithic core.cpython-*.so that Python dlopens
+            # RTLD_LOCAL, so its symbols are invisible to psi4_dpd_shim.so.
+            # Re-dlopening it with RTLD_GLOBAL promotes them, and it works even
+            # though psi4 was already imported normally at :18 -- which is what
+            # lets this be a library-side change with no driver script touched.
+            ctypes.CDLL(psi4.core.__file__, mode=ctypes.RTLD_GLOBAL)
+            shim = ctypes.CDLL(shim_path)
+            shim.qed_dpd_read_buf4.restype = ctypes.c_int
+            shim.qed_dpd_read_buf4.argtypes = [
+                ctypes.c_int,
+                ctypes.c_int,
+                ctypes.c_int,
+                ctypes.c_char_p,
+                np.ctypeslib.ndpointer(dtype=np.float64, flags="C_CONTIGUOUS"),
+                ctypes.c_long,
+                np.ctypeslib.ndpointer(dtype=np.int32, flags="C_CONTIGUOUS"),
+            ]
+
+            npair = self.nmo * (self.nmo + 1) // 2
+
+            t0 = time.time()
+            mints.integrals()  # AO -> disk.  MUST precede presort or it dies
+            t1 = time.time()  # with PSIO_ERROR 21 (file 33 not opened).
+
+            IT = psi4.core.IntegralTransform
+            alln = psi4.core.MOSpace.all()
+            it = IT(
+                p4_wfn,
+                [alln],
+                IT.TransformationType.Restricted,
+                IT.OutputType.DPDOnly,
+                # PitzerOrder, not QTOrder: we need the columns to stay in
+                # self.Ca's order, not be re-sorted into docc/socc/virt blocks.
+                IT.MOOrdering.PitzerOrder,
+                getattr(IT.FrozenOrbitals, "None"),  # "None" is a keyword
+                False,  # initialize=False, else the ctor initialises too early
+            )
+            # libtrans would otherwise transform with the WAVEFUNCTION's Ca,
+            # but the integrals this class needs are in the CQED-RHF basis
+            # (self.Ca), which is not what SCF left behind.  set_orbitals is
+            # used rather than mutating p4_wfn.Ca() in place, because Ca()
+            # hands back the wavefunction's own SharedMatrix and overwriting it
+            # would silently change the basis for every later user of p4_wfn.
+            it.set_orbitals(psi4.core.Matrix.from_array(np.asarray(self.Ca)))
+            it.set_keep_dpd_so_ints(True)
+            # libtrans otherwise inherits psi4's memory setting, which is 500
+            # MiB unless the driver called psi4.set_memory() -- and none of the
+            # drivers here do.  Sizing an 8.4 GB transform against 500 MiB just
+            # forces needless multipassing.  We are about to hold the packed
+            # npair^2 array in numpy anyway, so granting libtrans the same
+            # budget is proportionate and self-scaling; take psi4's setting if
+            # the driver did raise it above that.
+            # QED_LIBTRANS_MEM_MB (item 356C).  The default below hands libtrans
+            # 8*npair^2 bytes -- 15.6 GiB at nmo 302 -- and the reason written
+            # here was "we are about to hold the packed npair^2 array in numpy
+            # anyway, so granting libtrans the same budget is proportionate".
+            # WITH QED_JK_H2E_DISK + STREAMING THAT PREMISE IS GONE: the array
+            # is never held, and measurement showed this grant is then the
+            # RUN'S PEAK -- a 15.8 GiB plateau spanning transform_tei, larger
+            # than everything the optimization itself needs (8-14 GiB).
+            # Setting this caps the grant instead; the cost is transform
+            # multipassing, so it is a real trade and is left explicit.
+            if _QED_LIBTRANS_MEM_MB > 0:
+                it.set_memory(int(_QED_LIBTRANS_MEM_MB) * 1048576)
+            else:
+                it.set_memory(max(int(psi4.core.get_memory()),
+                                  8 * npair * npair))
+            it.initialize()
+            it.presort_so_tei()
+            it.set_tei_already_presorted(True)  # sort once, not per transform
+            t2 = time.time()
+            it.transform_tei(alln, alln, alln, alln)
+            t3 = time.time()
+
+            # (2) IntegralTransform allocates its OWN DPD instance; global_dpd_
+            # follows whichever is current, and buf4_init against the wrong one
+            # segfaults.
+            shim.qed_dpd_set_default(it.get_dpd_id())
+            # (3) the buffer is PACKED as [A>=A]+, not unpacked [A,A].  Asking
+            # for the unpacked pair type yields rc=0 and an all-zero array.
+            pq = it.DPD_ID(alln, alln, IT.SpinType.Alpha, True)
+
+            # (4) DPD's [p>=q]+ runs the LARGER index outer (for p: for q<=p);
+            # index_map_pq (:3221-3224) runs the SMALLER one outer.  Build the
+            # gather that takes DPD order to ours and let the shim apply it on
+            # both axes, which avoids a second 2.12 GB pass in numpy.
+            _pi, _qi = _pair_lists(self.nmo)
+            dpd_pos = np.empty((self.nmo, self.nmo), dtype=np.int32)
+            _k = 0
+            for _p in range(self.nmo):
+                for _q in range(_p + 1):
+                    dpd_pos[_p, _q] = _k
+                    _k += 1
+            perm = np.ascontiguousarray(dpd_pos[_pi, _qi], dtype=np.int32)
+
+            PSIF_LIBTRANS_DPD = 61  # NOT 115
+            if _jk_stream_armed(shim):
+                # STREAMED READBACK (item 354E).  qed_dpd_read_buf4 calls
+                # buf4_mat_irrep_rd, which materialises psi4's ENTIRE irrep
+                # matrix and then copies it into `packed` -- two full tensors
+                # alive at once, measured at nmo 302 as a 30.86 GiB transient
+                # against a 15.6 GiB tensor, and that transient is what sets
+                # the run's memory requirement (item 354B).  Here the buffer is
+                # read a row-block at a time and written straight to the spill
+                # file, so neither copy ever exists.
+                #
+                # The DSE fold is deliberately NOT done here: the caller's
+                # existing chunked rank-1 loop runs afterwards and works
+                # unchanged on the writable memmap this returns, 256 rows at a
+                # time.  Reusing that loop keeps one implementation of the fold.
+                packed_mm = self._stream_twoeint_to_file(
+                    shim, PSIF_LIBTRANS_DPD, pq, npair, perm)
+                t4 = time.time()
+                print(
+                    f" QED_LIBTRANS: integrals {t1-t0:.2f} s, presort "
+                    f"{t2-t1:.2f} s, transform {t3-t2:.2f} s, readback "
+                    f"{t4-t3:.2f} s (STREAMED), total {t4-t0:.2f} s",
+                    flush=True,
+                )
+                return packed_mm
+            packed = np.empty(npair * npair, dtype=np.float64)
+            rc = shim.qed_dpd_read_buf4(
+                PSIF_LIBTRANS_DPD, pq, pq, b"MO Ints (AA|AA)", packed,
+                npair, perm,
+            )
+            t4 = time.time()
+
+            # CLEAN UP THE SCRATCH UNITS, OR THE NEXT psi4 JOB IN THIS PROCESS
+            # DIES.  mints.integrals() does not only write the AO two-electron
+            # integrals: it writes PSIF_SO_TEI (33), the ONE-electron integrals
+            # to PSIF_OEI (35), and presort_so_tei writes PSIF_SO_PRESORT (41).
+            # psi4's own SCF uses those same units, and the entry layout is
+            # sized for THIS molecule's basis -- so a later, larger job writing
+            # into the leftovers fails with
+            #     PSIO_ERROR: 18 (Incorrect block end address)
+            #     Attempt to write into next entry: 35, SO-basis Potential
+            #     Energy Ints
+            # in Matrix::save during form_H.  That is how test_h2o_qed_rhf and
+            # test_mgf_qed_rhf came to fail with this knob on even though
+            # neither constructs a PFHamiltonianGenerator at all -- they run
+            # cqed_rhf() after some earlier test had used this path.  35 is the
+            # one that actually bites; 33/41/61 are cleaned for the same reason.
+            # Targeted deletes rather than psi4.core.clean(), which would also
+            # remove files the live wavefunction still owns.  Opening a unit
+            # that does not exist and closing it with keep=0 is a harmless
+            # no-op, so this needs no existence check.
+            del it
+            _io = psi4.core.IO.shared_object()
+            for _unit in (33, 34, 35, 41, 61):
+                try:
+                    if not _io.open_check(_unit):
+                        _io.open(_unit, 1)  # PSIO_OPEN_OLD
+                    _io.close(_unit, 0)  # keep=0 -> delete
+                except Exception:  # noqa: BLE001
+                    pass
+
+            if rc != 0:
+                return _libtrans_fallback(f"readback failed (rc={rc})")
+            print(
+                f" QED_LIBTRANS: integrals {t1-t0:.2f} s, presort {t2-t1:.2f} "
+                f"s, transform {t3-t2:.2f} s, readback {t4-t3:.2f} s, total "
+                f"{t4-t0:.2f} s",
+                flush=True,
+            )
+            return packed.reshape(npair, npair)
+        except Exception as exc:  # noqa: BLE001 -- never fail the whole run
+            return _libtrans_fallback(f"{exc!r}")
+
     def build2DSO(self):
         """Will build the 2-electron arrays in the spin orbital basis
         that contribute to the A+Delta blocks
@@ -4593,17 +6993,27 @@ class PFHamiltonianGenerator:
         # and orbital.c needs no bra-side lookup at all.
         self.npair = self.nmo * (self.nmo + 1) // 2
         self.pair_index = _pair_index_table(self.nmo)
+        # _pi/_qi and _chunk are needed by the DSE rank-1 update below on BOTH
+        # paths, so they cannot live inside the fold branch.
         _pi, _qi = _pair_lists(self.nmo)
-        _lin = (_pi * self.nmo + _qi).astype(np.intp)
-        _g2 = self.twoeint1.reshape(self.nmo * self.nmo, self.nmo * self.nmo)
-        _packed = np.empty((self.npair, self.npair))
         _chunk = 256
-        for _i0 in range(0, self.npair, _chunk):
-            _i1 = min(_i0 + _chunk, self.npair)
-            _packed[_i0:_i1] = _g2[_lin[_i0:_i1][:, None], _lin[None, :]]
-        self.twoeint1 = None
-        del self.twoeint1
-        self.twoeint = _packed
+        if getattr(self, "_twoeint_packed", None) is not None:
+            # QED_LIBTRANS already produced the packed array in exactly this
+            # layout and pair order, so there is nothing to fold: the dense
+            # nmo^4 twoeint1 was never built at all.
+            self.twoeint = self._twoeint_packed
+            self._twoeint_packed = None
+            self.twoeint1 = None
+        else:
+            _lin = (_pi * self.nmo + _qi).astype(np.intp)
+            _g2 = self.twoeint1.reshape(self.nmo * self.nmo, self.nmo * self.nmo)
+            _packed = np.empty((self.npair, self.npair))
+            for _i0 in range(0, self.npair, _chunk):
+                _i1 = min(_i0 + _chunk, self.npair)
+                _packed[_i0:_i1] = _g2[_lin[_i0:_i1][:, None], _lin[None, :]]
+            self.twoeint1 = None
+            del self.twoeint1
+            self.twoeint = _packed
         # self.contracted_twoeint = -0.5 * np.einsum("illj->ij", self.twoeint)
         if not self.ignore_dse_terms:
             # The DSE term on the packed form is a rank-1 update by the PAIR
@@ -4613,6 +7023,180 @@ class PFHamiltonianGenerator:
             for _i0 in range(0, self.npair, _chunk):
                 _i1 = min(_i0 + _chunk, self.npair)
                 self.twoeint[_i0:_i1] += _d_pair[_i0:_i1, None] * _d_pair
+        # self.twoeint is FINAL here (packed, DSE folded).  This is the only
+        # point where spilling it is safe -- see _spill_twoeint_to_disc.
+        self._spill_twoeint_to_disc()
+
+    def _stream_twoeint_to_file(self, shim, filenum, pq, npair, perm):
+        """Read the libtrans buf4 block-wise into the spill file (item 354E).
+
+        Returns a WRITABLE memmap of the file, so the caller's existing chunked
+        DSE rank-1 loop runs on it unchanged.  _spill_twoeint_to_disc then sees
+        the tensor is already on disc and only has to arm the C reader.
+
+        WHY THE ROWS ARE SCATTERED.  `perm[i]` is the DPD row holding OUR row i;
+        DPD can only deliver a CONTIGUOUS row range, so a block of DPD rows is a
+        scattered set of ours.  Reading in DPD order and placing by the inverse
+        permutation keeps the READ sequential (one pass over the buffer) at the
+        cost of scattered writes, which the page cache absorbs.  The other way
+        round would be npair random reads.
+        """
+        shim.qed_dpd_stream_open.restype = ctypes.c_int
+        shim.qed_dpd_stream_open.argtypes = [
+            ctypes.c_int, ctypes.c_int, ctypes.c_int, ctypes.c_char_p,
+            ctypes.c_long, ctypes.c_long, ctypes.c_long]
+        shim.qed_dpd_stream_read.restype = ctypes.c_int
+        shim.qed_dpd_stream_read.argtypes = [
+            np.ctypeslib.ndpointer(dtype=np.float64, flags="C_CONTIGUOUS"),
+            ctypes.c_long, ctypes.c_long,
+            np.ctypeslib.ndpointer(dtype=np.int32, flags="C_CONTIGUOUS")]
+        shim.qed_dpd_stream_close.restype = ctypes.c_int
+
+        self._drop_h2e_file()
+        _dir = None if _QED_JK_H2E_DISK == "1" else _QED_JK_H2E_DISK
+        _fd, _path = tempfile.mkstemp(prefix="qedci_h2e_", suffix=".bin", dir=_dir)
+        _nbytes = npair * npair * 8
+        os.ftruncate(_fd, _nbytes)
+
+        _rows = max(1, (_QED_JK_STREAM_MB * 1048576) // (npair * 8))
+        _rows = min(_rows, npair)
+        _buf = np.empty((_rows, npair), dtype=np.float64)
+        _inv = np.empty(npair, dtype=np.intp)
+        _inv[np.asarray(perm, dtype=np.intp)] = np.arange(npair)
+
+        _t0 = time.time()
+        rc = shim.qed_dpd_stream_open(filenum, pq, pq, b"MO Ints (AA|AA)",
+                                      npair, npair, _rows)
+        if rc != 0:
+            os.close(_fd)
+            os.unlink(_path)
+            raise RuntimeError("qed_dpd_stream_open failed rc=%d" % rc)
+        try:
+            for _r0 in range(0, npair, _rows):
+                _n = min(_rows, npair - _r0)
+                rc = shim.qed_dpd_stream_read(_buf, _r0, _n, perm)
+                if rc != 0:
+                    raise RuntimeError("qed_dpd_stream_read failed rc=%d" % rc)
+                _dest = _inv[_r0:_r0 + _n]
+                for _k in range(_n):
+                    os.pwrite(_fd, _buf[_k].tobytes(),
+                              int(_dest[_k]) * npair * 8)
+        finally:
+            shim.qed_dpd_stream_close()
+            os.close(_fd)
+
+        self._h2e_path = _path
+        _H2E_SPILL_FILES.add(_path)
+        print("QED_JK_H2E_DISK: streamed %.2f GiB of packed twoeint into %s in "
+              "%.2f s (%d rows/block); the tensor was never resident"
+              % (_nbytes / 1073741824.0, _path, time.time() - _t0, _rows),
+              flush=True)
+        return np.memmap(_path, dtype=np.float64, mode="r+",
+                         shape=(npair, npair))
+
+    def _spill_twoeint_to_disc(self):
+        """QED_JK_H2E_DISK (SLW99 step 1b): write the packed tensor out, drop it.
+
+        Called once, at the point self.twoeint becomes final.  Afterwards
+        self.twoeint is a (1,1) placeholder that exists only to satisfy the
+        ndim=2 ctypes argtype of full_transformation_macroiteration, which no
+        longer dereferences it: orbital.c's S2 reads its row-blocks from the
+        file instead (`qed_jk_set_h2e_file`, proven bitwise in
+        validation/h2e_file_invariance.py).
+
+        Every precondition is checked LOUDLY rather than silently degrading --
+        a silent fallback here would look like a merely-slow run while the
+        memory saving it exists for never happened.
+        """
+        if not _QED_JK_H2E_DISK or _QED_JK_H2E_DISK == "0":
+            return
+        if not _HAS_JK_H2E_FILE:
+            raise RuntimeError(
+                "QED_JK_H2E_DISK: this cfunctions.so has no qed_jk_set_h2e_file "
+                "-- rebuild it from the current orbital.c (see CLAUDE.md)")
+        if _QED_LIBTRANS_OO >= 2:
+            raise RuntimeError(
+                "QED_JK_H2E_DISK is incompatible with QED_LIBTRANS_OO=2: that "
+                "check mode rotates the RESIDENT tensor on purpose")
+        if _CPP_CASSCF_VALIDATION_DIR:
+            raise RuntimeError(
+                "QED_JK_H2E_DISK is incompatible with the cpp_casscf validation "
+                "dumps: the dump hooks record self.twoeint, which would be the "
+                "placeholder rather than the tensor")
+        if not _QED_SKIP_GKL:
+            raise RuntimeError(
+                "QED_JK_H2E_DISK needs QED_SKIP_GKL=1: self.gkl is the one "
+                "consumer of the packed tensor that is not the J/K build "
+                "(see the note at the top of this file)")
+        _already = getattr(self, "_h2e_path", None)
+        if _already and isinstance(self.twoeint, np.memmap):
+            # The streamed readback already wrote this file and handed back a
+            # WRITABLE memmap, which the caller's DSE rank-1 loop has just
+            # updated in place.  There is nothing to write: flush the dirty
+            # pages, arm the C reader, and downgrade the mapping to read-only
+            # so nothing downstream can modify the tensor by accident.
+            _shape = self.twoeint.shape
+            self.twoeint.flush()
+            self.twoeint = None
+            cfunctions.qed_jk_set_h2e_file(_already.encode())
+            self.twoeint = np.memmap(_already, dtype=np.float64, mode="r",
+                                     shape=_shape)
+            print("QED_JK_H2E_DISK: tensor already on disc (streamed readback);"
+                  " armed the C reader on %s" % _already, flush=True)
+            return
+        self._drop_h2e_file()
+        _dir = None if _QED_JK_H2E_DISK == "1" else _QED_JK_H2E_DISK
+        _fd, _path = tempfile.mkstemp(prefix="qedci_h2e_", suffix=".bin", dir=_dir)
+        os.close(_fd)
+        _t0 = time.time()
+        _arr = self.twoeint
+        if _arr.flags["C_CONTIGUOUS"]:
+            _arr.tofile(_path)
+        else:                      # never seen; write in chunks rather than
+            with open(_path, "wb") as _fh:      # materialise a second copy
+                for _i0 in range(0, _arr.shape[0], 256):
+                    _fh.write(np.ascontiguousarray(_arr[_i0:_i0 + 256]).tobytes())
+        _gib = _arr.nbytes / 1073741824.0
+        _shape = _arr.shape
+        # Release the anonymous allocation and re-expose the SAME numbers as a
+        # read-only memmap.  Two consumers need two different things:
+        #   * build_JK (:9072) reads whole ROWS of the packed tensor in python
+        #     to form the initial reference-basis J and K.  It is untouched by
+        #     the C route, so it needs a real array-like -- the memmap serves
+        #     its row gathers out of page cache, which is evictable, instead of
+        #     out of a resident anonymous 15.60 GiB.
+        #   * the per-macro C kernel takes its rows through the FILE source
+        #     with a bounded pread buffer, and never dereferences the pointer
+        #     it is handed.  Passing the memmap is therefore free -- and it
+        #     also means a mis-armed file source degrades to "mapped and
+        #     correct", never to a wrong answer.
+        self.twoeint = None
+        self.twoeint = np.memmap(_path, dtype=np.float64, mode="r", shape=_shape)
+        cfunctions.qed_jk_set_h2e_file(_path.encode())
+        self._h2e_path = _path
+        _H2E_SPILL_FILES.add(_path)
+        print("QED_JK_H2E_DISK: spilled %.2f GiB of packed twoeint to %s in "
+              "%.2f s; it is now a read-only memmap and the C kernel streams "
+              "it" % (_gib, _path, time.time() - _t0), flush=True)
+
+    def _drop_h2e_file(self):
+        """Remove the spilled tensor and unpoint the kernel.  Idempotent."""
+        _path = getattr(self, "_h2e_path", None)
+        if not _path:
+            return
+        self._h2e_path = None
+        if _HAS_JK_H2E_FILE:
+            cfunctions.qed_jk_set_h2e_file(None)
+        # Drop the mapping before unlinking so the space is actually returned
+        # rather than held by an open mapping until interpreter exit.
+        if isinstance(getattr(self, "twoeint", None), np.memmap):
+            self.twoeint = None
+        _H2E_SPILL_FILES.discard(_path)
+        try:
+            os.unlink(_path)
+        except OSError:
+            pass
+
     def build_gkl_from_df_optimized(self, B_array, d_cmo, H_spatial):
         """
         Build gkl intermediate efficiently using DF tensors
@@ -5359,7 +7943,10 @@ class PFHamiltonianGenerator:
                 d_cmo_effective = np.zeros_like(self.d_cmo)
             else:
                 d_cmo_effective = self.d_cmo 
-            self.gkl = self.build_gkl_from_df_optimized(self.B_mo, d_cmo_effective, self.H_spatial)
+            if _QED_SKIP_GKL:
+                self.gkl = np.zeros((self.nmo, self.nmo))
+            else:
+                self.gkl = self.build_gkl_from_df_optimized(self.B_mo, d_cmo_effective, self.H_spatial)
             #for k in range(self.nmo):
             #    for l in range(self.nmo):
             #        print(self.gkl[k,l], self.gkl_new[k,l])
@@ -5375,20 +7962,49 @@ class PFHamiltonianGenerator:
             # nuclear_grad.py builds its own AO/MO integrals from Ca_hf and does
             # not use this one.  Restore as `self.twoeint_ao` if AO integrals are
             # ever actually needed; a local cannot be reached from anywhere.
-            self.twoeint1 = np.asarray(mints.mo_eri(self.Ca, self.Ca, self.Ca, self.Ca))
+            # QED_LIBTRANS builds the PACKED array directly (build2DSO picks it
+            # up from self._twoeint_packed and skips the fold), so on that path
+            # the dense nmo^4 twoeint1 is never allocated at all.  Any failure
+            # returns None and falls through to mo_eri below.
+            self._twoeint_packed = None
+            # QED_LIBTRANS_OO == 1 is the whole point of the route: the packed
+            # nmo^4 tensor is never built, because J and K are re-transformed
+            # from the AO integrals each macro instead.  Mode 2 is the
+            # cross-check and DOES need the tensor, so it falls through.
+            self._oo_skip_tensor = _QED_LIBTRANS_OO == 1
+            if self._oo_skip_tensor and (
+                self.full_diagonalization or self.test_mode or self.ci_level != "cas"
+            ):
+                raise RuntimeError(
+                    "QED_LIBTRANS_OO=1 replaces self.twoeint by a per-macro J/K "
+                    "transform, which covers the CAS orbital-optimisation path "
+                    "only.  full_diagonalization / test_mode / ci_level != 'cas' "
+                    "read the tensor directly (build2DSO's d_spatial/d_spin "
+                    "branch, build_sigma, Davidson).  Use QED_LIBTRANS_OO=2 to "
+                    "cross-check, or leave the knob off."
+                )
+            if self._oo_skip_tensor:
+                self.twoeint = None
+            elif _QED_LIBTRANS:
+                self._twoeint_packed = self._build_twoeint_libtrans(p4_wfn, mints)
+            if not self._oo_skip_tensor and self._twoeint_packed is None:
+                self.twoeint1 = np.asarray(
+                    mints.mo_eri(self.Ca, self.Ca, self.Ca, self.Ca)
+                )
 
             #self.twoeint1 = np.asarray(mints.mo_eri(self.Ca, self.Ca, self.Ca, self.Ca))
             t_eri_end = time.time()
             print(f" Completed ERI Build in {t_eri_end - t_1H_end} seconds ")
 
             # form the 2H in spin orbital basis
-            self.build2DSO()
+            if not self._oo_skip_tensor:
+                self.build2DSO()
             t_2d_end = time.time()
             print(f" Completed 2D build in {t_2d_end - t_eri_end} seconds")
 
             print(psutil.Process().memory_info().rss / (1024 * 1024))
             self.gkl = np.zeros((self.nmo, self.nmo))
-            for k in range(self.nmo):
+            for k in range(0 if (_QED_SKIP_GKL or self._oo_skip_tensor) else self.nmo):
                 for l in range(self.nmo):
                     self.gkl[k][l] = self.H_spatial[k][l]
                     for j in range(self.nmo):
@@ -5403,9 +8019,17 @@ class PFHamiltonianGenerator:
                         self.gkl[k][l] -= self.twoeint[
                             self.pair_index[k, k], self.pair_index[k, l]
                         ] / (1 + (k == l))
-            print("mem_twoeint", self.twoeint.size * self.twoeint.itemsize / 1024 / 1024)
+            if self.twoeint is not None:
+                print("mem_twoeint", self.twoeint.size * self.twoeint.itemsize / 1024 / 1024)
         print("density_fitting",self.density_fitting)
         print(psutil.Process().memory_info().rss / (1024 * 1024))
+        # REFERENCE-BASIS SNAPSHOT for QED_LIBTRANS_OO.  Taken here because this
+        # is the point at which self.twoeint is final, and because self.Ca
+        # (:4117) and self.d_cmo (:7249) are BOTH reassigned later during
+        # orbital optimisation -- reading them at macro time would silently
+        # transform in the wrong basis.  Two nmo^2 arrays; negligible.
+        self._oo_Ca_ref = np.array(self.Ca, copy=True)
+        self._oo_d_ref = np.array(self.d_cmo, copy=True)
         print("mem_gkl", self.gkl.size * self.gkl.itemsize / 1024 / 1024)
         print("mem_d_cmo", self.d_cmo.size * self.d_cmo.itemsize / 1024 / 1024)
 
@@ -5510,718 +8134,15 @@ class PFHamiltonianGenerator:
         # spatial orbital 1RDM
         self.D1_spatial = _D_aa + _D_bb
 
-    def graph(self, N, n_o):
-        """
-        lexical ordering graph with unoccupied arc set to be zero, return vertex weight
-        """
-        rows, cols = ((N + 1) * (n_o - N + 1), 3)
-        rows1, cols1 = (N + 1, n_o + 1)
-        graph = [[0 for i in range(cols)] for j in range(rows)]
-        graph_big = [[0 for i in range(cols1)] for j in range(rows1)]
-        graph_big[N][n_o] = 1
-        # weight of vertex
-        for e in range(N, -1, -1):
-            for o in range(n_o - 1, -1, -1):
-                # print(e,o)
-                if e == N and o >= e:
-                    graph_big[e][o] = graph_big[e][o + 1]
-                elif e <= N and o < e:
-                    graph_big[e][o] = 0
-                else:
-                    graph_big[e][o] = graph_big[e + 1][o + 1] + graph_big[e][o + 1]
-
-        count = 0
-        for e in range(0, N + 1):
-            for o in range(0, n_o + 1):
-                # print(e,o,graph_big[e][o])
-                if graph_big[e][o] != 0:
-                    graph[count][0] = e
-                    graph[count][1] = o
-                    graph[count][2] = graph_big[e][o]
-                    count += 1
-
-        return graph, graph_big
-
-    def arc_weight(self, graph, graph_big, N, n_o):
-        """
-        return diagonal (occupied) arc weight for lexical ordering graph above
-        Y=arc weight
-        """
-        Y = []
-        for row in range(0, len(graph)):
-            # print(graph[i])
-            e = graph[row][0]
-            o = graph[row][1]
-            B = []
-            if e == N:
-                continue
-            i = o - e
-            c = 0
-            if i == 0:
-                c = 0
-                B.extend([e, o, c])
-                # print(B)
-            else:
-                for j in range(1, i + 1):
-                    c += graph_big[e + 1][o + 2 - j]
-                B.extend([e, o, c])
-                # print(B)
-            Y.append(B)
-
-        return Y
-
-    def string_to_binary(self, string, n_o):
-        b = [int(d) for d in str(bin(string))[2:]]
-        if len(b) < n_o:
-            c = [0] * (n_o - len(b))
-            d = c + b
-        else:
-            d = b
-        d.reverse()
-        return d
-
-    def string_to_index(self, string, N, n_o, Y):
-        """
-        return index using arc weight for a string(integer represents binary string)
-        """
-        count = 0
-        index = 0  # counting from 0 so that determinant index can be counted from 0
-        b = [int(d) for d in str(bin(string))[2:]]
-        if len(b) < n_o:
-            c = [0] * (n_o - len(b))
-            d = c + b
-        else:
-            d = b
-        d.reverse()
-        for i in range(n_o):
-            if d[i] == 1:
-                e = count
-                o = i
-                for j in range(0, len(Y)):
-                    if Y[j][0] == e and Y[j][1] == o:
-                        index += Y[j][2]
-                count += 1
-        return index
-
-    def binary_to_index(self, binary_string, N, n_o, Y):
-        count = 0
-        index = 0  # count from 0
-        string = 0
-        for i in range(0, len(binary_string)):
-            if binary_string[i] == 1:
-                e = count
-                o = i
-                string += pow(2, i)
-                for j in range(0, len(Y)):
-                    if Y[j][0] == e and Y[j][1] == o:
-                        index += Y[j][2]
-                count += 1
-        # print(string)
-        return index, string
-
-    def index_to_string(self, index, N, n_o, Y, return_binary=False):
-        """
-        return string for an index using graph
-        """
-        I = 0  # count from 0 in stead of 1 so that determinant index can be counted from 0
-        e = N
-        o = n_o
-        count = 0
-        record = []
-        while I <= index and e <= o:
-            # print(count,e,o,I,record)
-            if e == o and I < index:
-                count2 = 0
-                for i in range(len(record) - 1, -1, -1):
-                    if record[i] == 0:
-                        count2 += 1
-                        record.pop(i)
-                    else:
-                        record[i] = 0
-                        break
-                o = o + count2
-                e = e + 1
-                for j in range(0, len(Y)):
-                    if Y[j][0] == e - 1 and Y[j][1] == o:
-                        b = Y[j][2]
-                I = I - b
-                # print(record,o,e,b,I)
-
-            else:
-                if e > 0:
-                    for j in range(0, len(Y)):
-                        if Y[j][0] == e - 1 and Y[j][1] == o - 1:
-                            a = Y[j][2]
-                            if a <= index - I:
-                                e = e - 1
-                                o = o - 1
-                                I = I + a
-                                record.append(1)
-                            else:
-                                o = o - 1
-                                record.append(0)
-                else:
-                    o = o - 1
-                    record.append(0)
-            count += 1
-            if count == 15000000 or (e == 0 and o == 0 and I == index):
-                break
-        string = 0
-        for i in range(len(record)):
-            if record[i] == 1:
-                string += pow(2, len(record) - i - 1)
-        # print(string)
-        # print(record)
-
-        if return_binary == True:
-            return record, string
-        else:
-            return string
-
-    def phase_single_excitation(self, p, q, string):
-        """getting the phase(-1 or 1) for E_pq\ket{I_a} where I_a is an alpha or beta string
-        p=particle,q=hole
-        """
-        if p > q:
-            mask = (1 << p) - (1 << (q + 1))
-        else:
-            mask = (1 << q) - (1 << (p + 1))
-        if bin(mask & string).count("1") % 2:
-            return -1
-        else:
-            return 1
-
-    def single_replacement_list2(self, num_strings, N, n_o, n_in_a, Y):
-        """getting the sign, string address and pq for sign(pq)E_pq\ket{I_a}
-        N = number of active alpha electrons
-        n_o = number of active alpha orbitals
-        n_in_a = number of inactive alpha orbitals
-        p=particle, q=hole
-        """
-        rows, cols = (num_strings * (N * (n_o - N) + N + n_in_a), 4)
-        self.num_links = N * (n_o - N) + N + n_in_a
-        table = [[0 for i in range(cols)] for j in range(rows)]
-        count = 0
-        for index in range(0, num_strings):
-            string = self.index_to_string(index, N, n_o, Y)
-            # d = self.string_to_binary(string,n_o)
-            # print('single replacement list for binary string',d,'string',string,'index',index)
-            occ = []
-            vir = []
-            # print(occ,vir)
-            for i in range(n_o):
-                if string & (1 << i):
-                    occ.append(i)
-                else:
-                    vir.append(i)
-            if n_in_a > 0:
-                for i in range(n_in_a):
-                    table[count][0] = index
-                    table[count][1] = 1
-                    table[count][2] = i
-                    table[count][3] = i
-                    count += 1
-
-            for i in range(N):
-                table[count][0] = index
-                table[count][1] = 1
-                table[count][2] = occ[i] + n_in_a
-                table[count][3] = occ[i] + n_in_a
-                count += 1
-            for i in range(N):
-                for a in range(n_o - N):
-                    string1 = (string ^ (1 << occ[i])) | (1 << vir[a])
-                    # c=string_to_binary(string1,n_o)
-                    table[count][0] = self.string_to_index(string1, N, n_o, Y)
-                    table[count][1] = self.phase_single_excitation(
-                        vir[a], occ[i], string
-                    )
-                    table[count][2] = vir[a] + n_in_a
-                    table[count][3] = occ[i] + n_in_a
-                    count += 1
-        return table
-
-    def one_e_contraction(
-        self, h1e, c_vectors, c1_vectors, num_strings, num_links, scale
-    ):
-        for indexa in range(0, num_strings):
-            stride = indexa * num_links
-            # print('indexa',indexa,'stride',stride)
-            for excitation in range(num_links):
-                index1 = self.table[stride + excitation][0]
-                sign = self.table[stride + excitation][1]
-                a = self.table[stride + excitation][2]
-                i = self.table[stride + excitation][3]
-                # print(index1,sign,a,i)
-                tmp = sign * h1e[a, i]
-                for indexb in range(0, num_strings):
-                    # composite index of determinant
-                    index_I = indexa * num_strings + indexb
-                    index_J = index1 * num_strings + indexb
-                    c1_vectors[index_I] += scale * tmp * c_vectors[index_J]
-        for indexb in range(0, num_strings):
-            stride = indexb * num_links
-            for excitation in range(num_links):
-                index1 = self.table[stride + excitation][0]
-                sign = self.table[stride + excitation][1]
-                a = self.table[stride + excitation][2]
-                i = self.table[stride + excitation][3]
-                tmp = sign * h1e[a, i]
-                for indexa in range(0, num_strings):
-                    index_I = indexa * num_strings + indexb
-                    index_J = indexa * num_strings + index1
-                    c1_vectors[index_I] += scale * tmp * c_vectors[index_J]
-        # c1_vectors = scale * c1_vectors
-
-    def two_e_contraction(self, h2e, c_vectors, c1_vectors, num_strings, num_links):
-        # build intermediate D^K_kl = \gamma^KJ_kl * c_J
-        D = np.zeros((self.num_det, self.nmo * self.nmo))
-        for indexa in range(0, num_strings):
-            stride = indexa * num_links
-            for excitation in range(num_links):
-                index1 = self.table[stride + excitation][0]
-                sign = self.table[stride + excitation][1]
-                a = self.table[stride + excitation][2]
-                i = self.table[stride + excitation][3]
-                for indexb in range(0, num_strings):
-                    # composite index of determinant
-                    index_I = indexa * num_strings + indexb
-                    index_J = index1 * num_strings + indexb
-                    ai = a * self.nmo + i
-                    D[index_I][ai] = sign * c_vectors[index_J]
-        for indexb in range(0, num_strings):
-            stride = indexb * num_links
-            for excitation in range(num_links):
-                index1 = self.table[stride + excitation][0]
-                sign = self.table[stride + excitation][1]
-                a = self.table[stride + excitation][2]
-                i = self.table[stride + excitation][3]
-                for indexa in range(0, num_strings):
-                    index_I = indexa * num_strings + indexb
-                    index_J = indexa * num_strings + index1
-                    ai = a * self.nmo + i
-                    D[index_I][ai] += sign * c_vectors[index_J]
-
-        # build intermediate E^K_ij = D^K_kl * (ij|kl)
-        E = np.einsum("pr,kr->kp", h2e, D)
-
-        # build \sigma_I = 0.5 * \gamma^IK_ij * E^K_ij
-        for indexa in range(0, num_strings):
-            stride = indexa * num_links
-            for excitation in range(num_links):
-                index1 = self.table[stride + excitation][0]
-                sign = self.table[stride + excitation][1]
-                a = self.table[stride + excitation][2]
-                i = self.table[stride + excitation][3]
-                for indexb in range(0, num_strings):
-                    # composite index of determinant
-                    index_I = indexa * num_strings + indexb
-                    index_J = index1 * num_strings + indexb
-                    ai = a * self.nmo + i
-                    c1_vectors[index_I] += 0.5 * sign * E[index_J][ai]
-        for indexb in range(0, num_strings):
-            stride = indexb * num_links
-            for excitation in range(num_links):
-                index1 = self.table[stride + excitation][0]
-                sign = self.table[stride + excitation][1]
-                a = self.table[stride + excitation][2]
-                i = self.table[stride + excitation][3]
-                for indexa in range(0, num_strings):
-                    index_I = indexa * num_strings + indexb
-                    index_J = indexa * num_strings + index1
-                    ai = a * self.nmo + i
-                    c1_vectors[index_I] += 0.5 * sign * E[index_J][ai]
-
-    def constant_terms_contraction(self, c_vectors, c1_vectors, A):
-        for i in range(len(c_vectors)):
-            c1_vectors[i] += A * c_vectors[i]
-
-    def build_sigma(self, c_vectors, s_vectors, H_dim):
-        """
-        build sigma for FCI and CASCI. The function use Knowles-Handy algorithm for fci, and Olsen algorithm for casci
-        """
-
-        if self.ci_level == "fci":
-            print("using Knowles-Handy algorithm")
-            np1 = self.N_p + 1
-            for n in range(c_vectors.shape[1]):
-                for m in range(self.N_p + 1):
-                    start = m * H_dim // np1
-                    end = (m + 1) * H_dim // np1
-                    self.one_e_contraction(
-                        self.oneeint,
-                        c_vectors[start:end, n],
-                        s_vectors[start:end, n],
-                        self.num_alpha,
-                        self.num_links,
-                        1,
-                    )
-                    self.two_e_contraction(
-                        self.twoeint,
-                        c_vectors[start:end, n],
-                        s_vectors[start:end, n],
-                        self.num_alpha,
-                        self.num_links,
-                    )
-                    someconstant = m * self.omega + self.Enuc + self.d_c
-                    self.constant_terms_contraction(
-                        c_vectors[start:end, n], s_vectors[start:end, n], someconstant
-                    )
-                    start0 = (m - 1) * H_dim // np1
-                    end0 = m * H_dim // np1
-                    start2 = (m + 1) * H_dim // np1
-                    end2 = (m + 2) * H_dim // np1
-                    if 0 < m < self.N_p:
-                        someconstant = -np.sqrt(m * self.omega / 2)
-                        self.one_e_contraction(
-                            self.d_cmo,
-                            c_vectors[start0:end0, n],
-                            s_vectors[start:end, n],
-                            self.num_alpha,
-                            self.num_links,
-                            someconstant,
-                        )
-                        self.constant_terms_contraction(
-                            c_vectors[start0:end0, n],
-                            s_vectors[start:end, n],
-                            -self.d_exp * someconstant,
-                        )
-                        someconstant = -np.sqrt((m + 1) * self.omega / 2)
-                        self.one_e_contraction(
-                            self.d_cmo,
-                            c_vectors[start2:end2, n],
-                            s_vectors[start:end, n],
-                            self.num_alpha,
-                            self.num_links,
-                            someconstant,
-                        )
-                        self.constant_terms_contraction(
-                            c_vectors[start2:end2, n],
-                            s_vectors[start:end, n],
-                            -self.d_exp * someconstant,
-                        )
-                    elif m == self.N_p:
-                        someconstant = -np.sqrt(m * self.omega / 2)
-                        self.one_e_contraction(
-                            self.d_cmo,
-                            c_vectors[start0:end0, n],
-                            s_vectors[start:end, n],
-                            self.num_alpha,
-                            self.num_links,
-                            someconstant,
-                        )
-                        self.constant_terms_contraction(
-                            c_vectors[start0:end0, n],
-                            s_vectors[start:end, n],
-                            -self.d_exp * someconstant,
-                        )
-                    else:
-                        someconstant = -np.sqrt((m + 1) * self.omega / 2)
-                        self.one_e_contraction(
-                            self.d_cmo,
-                            c_vectors[start2:end2, n],
-                            s_vectors[start:end, n],
-                            self.num_alpha,
-                            self.num_links,
-                            someconstant,
-                        )
-                        self.constant_terms_contraction(
-                            c_vectors[start2:end2, n],
-                            s_vectors[start:end, n],
-                            -self.d_exp * someconstant,
-                        )
-        elif self.ci_level == "cas":
-            print("using Olsen algorithm")
-            np1 = self.N_p + 1
-            for n in range(c_vectors.shape[1]):
-                for m in range(self.N_p + 1):
-                    start = m * H_dim // np1
-                    end = (m + 1) * H_dim // np1
-                    self.sigma12(
-                        self.gkl,
-                        self.twoeint,
-                        c_vectors[start:end, n],
-                        s_vectors[start:end, n],
-                        self.num_alpha,
-                        self.num_links,
-                    )
-                    self.sigma3(
-                        self.twoeint,
-                        c_vectors[start:end, n],
-                        s_vectors[start:end, n],
-                        self.num_alpha,
-                        self.num_links,
-                    )
-                    someconstant = m * self.omega + self.Enuc + self.d_c
-                    if self.break_degeneracy == True:
-                        # print('only ground state')
-                        someconstant = m * (self.omega + 1) + self.Enuc + self.d_c
-
-                    self.constant_terms_contraction(
-                        c_vectors[start:end, n], s_vectors[start:end, n], someconstant
-                    )
-                    start0 = (m - 1) * H_dim // np1
-                    end0 = m * H_dim // np1
-                    start2 = (m + 1) * H_dim // np1
-                    end2 = (m + 2) * H_dim // np1
-                    if 0 < m < self.N_p:
-                        someconstant = -np.sqrt(m * self.omega / 2)
-                        self.sigma_dipole(
-                            self.d_cmo,
-                            c_vectors[start0:end0, n],
-                            s_vectors[start:end, n],
-                            self.num_alpha,
-                            self.num_links,
-                            someconstant,
-                        )
-                        self.constant_terms_contraction(
-                            c_vectors[start0:end0, n],
-                            s_vectors[start:end, n],
-                            -self.d_exp * someconstant,
-                        )
-                        someconstant = -np.sqrt((m + 1) * self.omega / 2)
-                        self.sigma_dipole(
-                            self.d_cmo,
-                            c_vectors[start2:end2, n],
-                            s_vectors[start:end, n],
-                            self.num_alpha,
-                            self.num_links,
-                            someconstant,
-                        )
-                        self.constant_terms_contraction(
-                            c_vectors[start2:end2, n],
-                            s_vectors[start:end, n],
-                            -self.d_exp * someconstant,
-                        )
-                    elif m == self.N_p:
-                        someconstant = -np.sqrt(m * self.omega / 2)
-                        self.sigma_dipole(
-                            self.d_cmo,
-                            c_vectors[start0:end0, n],
-                            s_vectors[start:end, n],
-                            self.num_alpha,
-                            self.num_links,
-                            someconstant,
-                        )
-                        self.constant_terms_contraction(
-                            c_vectors[start0:end0, n],
-                            s_vectors[start:end, n],
-                            -self.d_exp * someconstant,
-                        )
-                    else:
-                        someconstant = -np.sqrt((m + 1) * self.omega / 2)
-                        self.sigma_dipole(
-                            self.d_cmo,
-                            c_vectors[start2:end2, n],
-                            s_vectors[start:end, n],
-                            self.num_alpha,
-                            self.num_links,
-                            someconstant,
-                        )
-                        self.constant_terms_contraction(
-                            c_vectors[start2:end2, n],
-                            s_vectors[start:end, n],
-                            -self.d_exp * someconstant,
-                        )
-
-    def sigma3(self, h2e, c_vectors, c1_vectors, num_strings, num_links):
-        for k in range(self.nmo):
-            for l in range(self.nmo):
-                kl = k * self.nmo + l
-                # print('l','r','sgn')
-                L = []
-                R = []
-                sgn = []
-                dim = 0
-                for N in range(len(self.table)):
-                    if self.table[N][2] == k and self.table[N][3] == l:
-                        index = N // num_links
-                        L.append(self.table[N][0])
-                        R.append(index)
-                        sgn.append(self.table[N][1])
-                        dim += 1
-                # print(L,R,sgn,dim)
-                cp = np.zeros((dim, num_strings))
-                for I in range(dim):
-                    for index_jb in range(0, num_strings):
-                        index_ljb = L[I] * num_strings + index_jb
-                        cp[I][index_jb] = c_vectors[index_ljb] * sgn[I]
-                for index_ib in range(0, num_strings):
-                    F = np.zeros((num_strings))
-                    stride = index_ib * num_links
-                    for excitation in range(num_links):
-                        index_jb = self.table[stride + excitation][0]
-                        sign = self.table[stride + excitation][1]
-                        i = self.table[stride + excitation][2]
-                        j = self.table[stride + excitation][3]
-                        ij = i * self.nmo + j
-                        F[index_jb] += sign * h2e[ij][kl]
-                    v = np.zeros((dim))
-                    v = np.einsum("pq,q->p", cp, F)
-                    for I in range(dim):
-                        index_I = R[I] * num_strings + index_ib
-                        c1_vectors[index_I] += v[I]
-
-    def sigma12(self, h1e, h2e, c_vectors, c1_vectors, num_strings, num_links):
-        for index_ib in range(0, num_strings):
-            F = np.zeros((num_strings))
-            stride1 = index_ib * num_links
-            # print('index_ib',index_ib,'stride',stride1)
-            for excitation1 in range(num_links):
-                index_kb = self.table[stride1 + excitation1][0]
-                sign1 = self.table[stride1 + excitation1][1]
-                k = self.table[stride1 + excitation1][2]
-                l = self.table[stride1 + excitation1][3]
-                # print(index_kb,sign1,k,l)
-                kl = k * self.nmo + l
-                F[index_kb] += sign1 * h1e[k, l]
-                stride2 = index_kb * num_links
-                for excitation2 in range(num_links):
-                    index_jb = self.table[stride2 + excitation2][0]
-                    sign2 = self.table[stride2 + excitation2][1]
-                    i = self.table[stride2 + excitation2][2]
-                    j = self.table[stride2 + excitation2][3]
-                    ij = i * self.nmo + j
-                    if ij >= kl:
-                        F[index_jb] += (sign1 * sign2 * h2e[ij][kl]) / (1 + (ij == kl))
-            for index_jb in range(0, num_strings):
-                for index_ia in range(0, num_strings):
-                    # composite index of determinant
-                    index_I = index_ia * num_strings + index_ib
-                    index_J = index_ia * num_strings + index_jb
-                    c1_vectors[index_I] += F[index_jb] * c_vectors[index_J]
-        for index_ia in range(0, num_strings):
-            F = np.zeros((num_strings))
-            stride1 = index_ia * num_links
-            for excitation1 in range(num_links):
-                index_ka = self.table[stride1 + excitation1][0]
-                sign1 = self.table[stride1 + excitation1][1]
-                k = self.table[stride1 + excitation1][2]
-                l = self.table[stride1 + excitation1][3]
-                kl = k * self.nmo + l
-                F[index_ka] += sign1 * h1e[k, l]
-                stride2 = index_ka * num_links
-                for excitation2 in range(num_links):
-                    index_ja = self.table[stride2 + excitation2][0]
-                    sign2 = self.table[stride2 + excitation2][1]
-                    i = self.table[stride2 + excitation2][2]
-                    j = self.table[stride2 + excitation2][3]
-                    ij = i * self.nmo + j
-                    if ij >= kl:
-                        F[index_ja] += (sign1 * sign2 * h2e[ij][kl]) / (1 + (ij == kl))
-            for index_ja in range(0, num_strings):
-                for index_ib in range(0, num_strings):
-                    # composite index of determinant
-                    index_I = index_ia * num_strings + index_ib
-                    index_J = index_ja * num_strings + index_ib
-                    c1_vectors[index_I] += F[index_ja] * c_vectors[index_J]
-
-    def sigma_dipole(
-        self, h1e, c_vectors, c1_vectors, num_strings, num_links, someconstant
-    ):
-        for index_ib in range(0, num_strings):
-            F = np.zeros((num_strings))
-            stride1 = index_ib * num_links
-            # print('index_ib',index_ib,'stride',stride1)
-            for excitation1 in range(num_links):
-                index_kb = self.table[stride1 + excitation1][0]
-                sign1 = self.table[stride1 + excitation1][1]
-                k = self.table[stride1 + excitation1][2]
-                l = self.table[stride1 + excitation1][3]
-                # print(index_kb,sign1,k,l)
-                kl = k * self.nmo + l
-                F[index_kb] += sign1 * h1e[k, l]
-            for index_jb in range(0, num_strings):
-                for index_ia in range(0, num_strings):
-                    # composite index of determinant
-                    index_I = index_ia * num_strings + index_ib
-                    index_J = index_ia * num_strings + index_jb
-                    c1_vectors[index_I] += (
-                        someconstant * F[index_jb] * c_vectors[index_J]
-                    )
-        for index_ia in range(0, num_strings):
-            F = np.zeros((num_strings))
-            stride1 = index_ia * num_links
-            for excitation1 in range(num_links):
-                index_ka = self.table[stride1 + excitation1][0]
-                sign1 = self.table[stride1 + excitation1][1]
-                k = self.table[stride1 + excitation1][2]
-                l = self.table[stride1 + excitation1][3]
-                kl = k * self.nmo + l
-                F[index_ka] += sign1 * h1e[k, l]
-            for index_ja in range(0, num_strings):
-                for index_ib in range(0, num_strings):
-                    # composite index of determinant
-                    index_I = index_ia * num_strings + index_ib
-                    index_J = index_ja * num_strings + index_ib
-                    c1_vectors[index_I] += (
-                        someconstant * F[index_ja] * c_vectors[index_J]
-                    )
-
-    def build_H_diag(self, H_dim, h1e, h2e, num_strings, n_act_a, n_act_orb, n_in_a):
-        d = np.zeros((H_dim))
-        np1 = self.N_p + 1
-        for m in range(self.N_p + 1):
-            start = m * H_dim // np1
-            end = (m + 1) * H_dim // np1
-
-            for I in range(self.num_det):
-                index_a = I // num_strings
-                index_b = I % num_strings
-                string_a = self.index_to_string(
-                    index_a, n_act_a, n_act_orb, self.Y, return_binary=False
-                )
-                string_b = self.index_to_string(
-                    index_b, n_act_a, n_act_orb, self.Y, return_binary=False
-                )
-                inactive_list = list(x for x in range(n_in_a))
-                double_occupation = Determinant.obtBits2ObtIndexList(
-                    string_a & string_b
-                )
-                double_occupation = [x + n_in_a for x in double_occupation]
-                double_occupation[0:0] = inactive_list
-                dim_d = len(double_occupation)
-                e = string_a ^ string_b
-                ea = e & string_a
-                eb = e & string_b
-                single_occupation_a = Determinant.obtBits2ObtIndexList(ea)
-                single_occupation_a = [x + n_in_a for x in single_occupation_a]
-                single_occupation_b = Determinant.obtBits2ObtIndexList(eb)
-                single_occupation_b = [x + n_in_a for x in single_occupation_b]
-                dim_sa = len(single_occupation_a)
-                dim_sb = len(single_occupation_b)
-                # print(double_occupation,single_occupation_a,single_occupation_b)
-                occupation_list_spin = np.zeros((dim_sa + dim_sb + dim_d, 3), dtype=int)
-                for i in range(dim_d):
-                    occupation_list_spin[i][0] = double_occupation[i]
-                    occupation_list_spin[i][1] = 1
-                    occupation_list_spin[i][2] = 1
-                for i in range(dim_sa):
-                    occupation_list_spin[i + dim_d][0] = single_occupation_a[i]
-                    occupation_list_spin[i + dim_d][1] = 1
-                for i in range(dim_sb):
-                    occupation_list_spin[i + dim_d + dim_sa][0] = single_occupation_b[i]
-                    occupation_list_spin[i + dim_d + dim_sa][2] = 1
-                c = 0
-                for a in range(dim_d + dim_sa + dim_sb):
-                    i = occupation_list_spin[a][0]
-                    n_ia = occupation_list_spin[a][1]
-                    n_ib = occupation_list_spin[a][2]
-                    n_i = n_ia + n_ib
-                    ii = i * self.nmo + i
-                    c += n_i * h1e[i, i]
-                    for b in range(dim_d + dim_sa + dim_sb):
-                        j = occupation_list_spin[b][0]
-                        n_ja = occupation_list_spin[b][1]
-                        n_jb = occupation_list_spin[b][2]
-                        n_j = n_ja + n_jb
-                        jj = j * self.nmo + j
-                        c += 0.5 * n_i * n_j * h2e[ii][jj]
-                        ij = i * self.nmo + j
-                        c -= 0.5 * (n_ia * n_ja + n_ib * n_jb) * h2e[ij][ij]
-                d[I + start] = c + m * self.omega + self.Enuc + self.d_c
-        # print('d',d)
-        return d
+    # ---------------------------------------------------------------
+    # The pure-Python CI kernels that stood here MOVED to
+    # legacy_python_ci.py on 2026-09-04, having been proved unreachable
+    # (static call graph + a call counter over the full suite AND both
+    # SA-QED-CASSCF drivers -- zero calls everywhere).  ci_solver.c has
+    # an equivalent or better implementation of each; that module maps
+    # them one to one.  check_total_spin stays below: it is LIVE and is
+    # already six lines of glue around c_sigma_s_square.
+    # ---------------------------------------------------------------
 
     def check_total_spin(self, v):
         norm = np.sqrt(np.dot(v, v.T))
@@ -6244,356 +8165,25 @@ class PFHamiltonianGenerator:
         total_spin = np.dot(v1, newS.T)
         return total_spin
 
-    def Davidson(
-        self, H, nroots, threshold, indim, maxdim, maxiter, build_sigma, H_diag
-    ):
-        if self.ci_level == "cis":
-            H_diag = np.diag(H)
-        H_dim = len(H_diag)
-        print(H_dim, indim)
-        L = indim
-        # When L exceeds Lmax we will collapse the guess space so our sub-space
-        # diagonalization problem does not grow too large
-        Lmax = maxdim
-        if self.ci_level == "cas" or self.ci_level == "fci":
-            rows = self.num_alpha * (
-                self.n_act_a * (self.n_act_orb - self.n_act_a)
-                + self.n_act_a
-                + self.n_in_a
-            )
-            num_links = rows // self.num_alpha
+    # ---------------------------------------------------------------
+    # The pure-Python CI kernels that stood here MOVED to
+    # legacy_python_ci.py on 2026-09-04, having been proved unreachable
+    # (static call graph + a call counter over the full suite AND both
+    # SA-QED-CASSCF drivers -- zero calls everywhere).  ci_solver.c has
+    # an equivalent or better implementation of each; that module maps
+    # them one to one.  check_total_spin stays below: it is LIVE and is
+    # already six lines of glue around c_sigma_s_square.
+    # ---------------------------------------------------------------
 
-        # An array to hold the excitation energies
-        theta = [0.0] * L
-
-        # an array to hold the excitation rank count and cumulative weight
-        self.determinant_count_by_excitation_rank = np.zeros(self.n_act_el)
-        self.determinant_cumulative_weight_by_excitation_rank = np.zeros(self.n_act_el)
-
-        # generate initial guess
-        Q_idx = H_diag.argsort()[:indim]
-        # print(Q_idx)
-        if self.davidson_guess == "unit guess":
-            Q = np.zeros((indim, H_dim))
-            print("use unit guess")
-            BIGNUM = 10**100
-            H_diag2 = np.copy(H_diag)
-            for i in range(indim):
-                minimum = H_diag2[0]
-                min_pos = 0
-                for j in range(H_dim):
-                    if H_diag2[j] < minimum:
-                        minimum = H_diag2[j]
-                        min_pos = j
-                Q[i][min_pos] = 1.0
-                H_diag2[min_pos] = BIGNUM
-        else:
-            print("use random guess")
-            Q = np.random.rand(indim, H_dim)
-        # print(Q)
-        print("qshape", np.shape(Q))
-        print("initial_mem_q", Q.size * Q.itemsize / 1024 / 1024)
-
-        num_iter = maxiter
-        for a in range(0, num_iter):
-            print("\n")
-            print("mem_q1", Q.size * Q.itemsize / 1024 / 1024)
-            # orthonormalization of basis vectors by QR
-            t_qr_begin = time.time()
-            Q, R = np.linalg.qr(Q.T)
-            t_qr_end = time.time()
-            print("QR took", t_qr_end - t_qr_begin, "seconds")
-            Q = np.ascontiguousarray(Q.T)
-            R = None
-            del R
-            L = Q.shape[0]  # dynamic dimension of subspace
-            print(np.shape(Q))
-            print("iteration", a + 1, "subspace dimension", L)
-            theta_old = theta[:nroots]
-            # singma build
-            S = np.zeros_like(Q)
-            if self.ci_level == "fci" or self.ci_level == "cas":
-                # S = np.einsum("pq,qi->pi", H, Q)
-                t_sigma_begin = time.time()
-                # build_sigma(Q,S,H_dim)
-                if self.ignore_dse_terms:
-                    self.d_c = 0.0
-                print(psutil.Process().memory_info().rss / (1024 * 1024))
-
-                c_sigma(
-                    self.gkl2,
-                    self.twoeint,
-                    self.d_cmo,
-                    Q,
-                    S,
-                    self.table,
-                    self.table_creation,
-                    self.table_annihilation,
-                    self.n_act_a,
-                    self.n_act_orb,
-                    self.n_in_a,
-                    self.nmo,
-                    L,
-                    self.N_p,
-                    self.Enuc,
-                    self.d_c,
-                    self.omega,
-                    self.d_exp,
-                    self.E_core,
-                    self.break_degeneracy,
-                )
-
-                print(psutil.Process().memory_info().rss / (1024 * 1024))
-
-                t_sigma_end = time.time()
-                print("build sigma took", t_sigma_end - t_sigma_begin, "seconds")
-            else:
-                S = np.einsum("ip,pq->iq", Q, H)
-            # Build the subspace Hamiltonian
-            G = np.dot(Q, S.T)
-            # Diagonalize it, and sort the eigenvector/eigenvalue pairs
-            theta, alpha = np.linalg.eigh(G)
-            # print(theta)
-            idx = theta.argsort()[:nroots]
-            theta = theta[idx]
-            alpha = alpha[:, idx]
-            # This vector will hold the new guess vectors to add to our space
-            # add_Q = []
-            w = np.zeros((nroots, H_dim))
-            residual_norm = np.zeros((nroots))
-            unconverged_idx = []
-            convergence_check = np.zeros((nroots), dtype=str)
-            conv = 0
-            for j in range(nroots):
-                # Compute a residual vector "w" for each root we seek
-                w[j, :] = np.dot(alpha[:, j].T, S) - theta[j] * np.dot(alpha[:, j].T, Q)
-                residual_norm[j] = np.sqrt(np.dot(w[j, :], w[j, :].T))
-                if residual_norm[j] < threshold:
-                    conv += 1
-                    convergence_check[j] = "Yes"
-                else:
-                    unconverged_idx.append(j)
-                    convergence_check[j] = "No"
-            print(unconverged_idx)
-
-            print("root", "residual norm", "Eigenvalue", "Convergence")
-            for j in range(nroots):
-                print(
-                    j + 1, residual_norm[j], theta[j], convergence_check[j], flush=True
-                )
-
-            if conv == nroots:
-                print("converged!")
-                break
-
-            if conv < nroots and a + 1 == num_iter:
-                print("maxiter reached, try to increase maxiter or subspace size")
-                break
-
-            t_precondition_begin = time.time()
-            # preconditioned_w = np.zeros((len(unconverged_idx),H_dim))
-            if len(unconverged_idx) > 0:
-                preconditioned_w = np.zeros((len(unconverged_idx), H_dim))
-                preconditioned_w = theta[unconverged_idx].reshape(
-                    len(unconverged_idx), 1
-                ) - H_diag.reshape(1, H_dim)
-                # print(np.shape(preconditioned_w))
-                preconditioned_w = np.divide(
-                    w[unconverged_idx],
-                    preconditioned_w,
-                    out=np.zeros_like(w[unconverged_idx]),
-                    where=preconditioned_w != 0,
-                )
-
-            t_precondition_end = time.time()
-            print(
-                "build precondition took",
-                t_precondition_end - t_precondition_begin,
-                "seconds",
-            )
-            if Lmax - L < len(unconverged_idx):
-                t_collapsing_begin = time.time()
-                # unconverged_w = np.zeros((len(unconverged_idx), H_dim))
-                Q = np.dot(alpha.T, Q)
-
-                # for i in range(len(unconverged_idx)):
-                #    unconverged_w[i, :] = w[unconverged_idx[i], :]
-
-                # Q=np.append(Q,unconverged_w)
-                # print(Q)
-                # print(unconverged_w)
-                Q = np.concatenate((Q, preconditioned_w), axis=0)
-                print(Q.shape)
-                # Q=np.column_stack(Qtup)
-
-                # These vectors will give the same eigenvalues at the next
-                # iteration so to avoid a false convergence we reset the theta
-                # vector to theta_old
-                theta = theta_old
-                t_collapsing_end = time.time()
-                print("restart took", t_collapsing_end - t_collapsing_begin, "seconds")
-            else:
-                t_expanding_begin = time.time()
-                # if not we add the preconditioned residuals to the guess
-                # space, and continue. Note that the set will be orthogonalized
-                # at the start of the next iteration
-                Q = tuple(Q[i, :] for i in range(L)) + tuple(preconditioned_w)
-                Q = np.row_stack(Q)
-                t_expanding_end = time.time()
-                print("expand took", t_expanding_end - t_expanding_begin, "seconds")
-                # print(Q)
-        newQ = np.dot(alpha.T, Q)
-        Q = np.zeros((H_dim, nroots))
-        Q = newQ.T
-        singletcount = 0
-        print(Q.shape)
-        for i in range(Q.shape[1]):
-            print("STATE", i, "energy =", theta[i])
-        if self.ci_level == "cis":
-            for i in range(Q.shape[1]):
-                # print("state",i, "energy =",theta[i])
-                print(
-                    "        amplitude",
-                    "      position",
-                    "         most important determinants",
-                    "             number of photon",
-                )
-                index = np.argsort(np.abs(Q[:, i]))
-                c0 = index[Q.shape[0] - 1] % (H_dim // 2)
-                d0 = (index[Q.shape[0] - 1] - c0) // (H_dim // 2)
-                a0, b0 = self.detmap[c0]
-                alphalist = Determinant.obtBits2ObtIndexList(a0)
-                betalist = Determinant.obtBits2ObtIndexList(b0)
-
-                singlet = 1
-                for j in range(min(H_dim, 10)):
-                    c = index[Q.shape[0] - j - 1] % (H_dim // 2)
-                    d = (index[Q.shape[0] - j - 1] - c) // (H_dim // 2)
-                    a, b = self.detmap[c]
-                    if (
-                        a == b0
-                        and b == a0
-                        and np.abs(
-                            Q[index[Q.shape[0] - j - 1]][i]
-                            - (-1) * Q[index[Q.shape[0] - 1]][i]
-                        )
-                        < 1e-4
-                    ):
-                        singlet = singlet * 0
-                    else:
-                        singlet = singlet * 1
-                    alphalist = Determinant.obtBits2ObtIndexList(a)
-                    betalist = Determinant.obtBits2ObtIndexList(b)
-
-                    print(
-                        "%20.12lf" % (Q[index[Q.shape[0] - j - 1]][i]),
-                        "%9.3d" % (index[Q.shape[0] - j - 1]),
-                        "      alpha",
-                        alphalist,
-                        "   beta",
-                        betalist,
-                        "%4.1d" % (d),
-                        "photon",
-                    )
-                # print("state",i, "energy =",theta[i], singlet)
-                if singlet == 1:
-                    print("state", i, "energy =", theta[i], "  singlet", singletcount)
-                    singletcount += 1
-                else:
-                    print(
-                        "state",
-                        i,
-                        "energy =",
-                        theta[i],
-                        "  triplet",
-                        "%2.1d" % (d0),
-                        "photon",
-                    )
-        else:
-            print(
-                "\nACTIVE PART OF DETERMINANTS THAT HAVE THE MOST IMPORTANT CONTRIBUTIONS"
-            )
-            Y = np.zeros(
-                self.n_act_a * (self.n_act_orb - self.n_act_a + 1) * 3, dtype=np.int32
-            )
-            c_graph(self.n_act_a, self.n_act_orb, Y)
-            np1 = self.N_p + 1
-            singlet_count = 0
-            triplet_count = 0
-            for i in range(Q.shape[1]):
-                total_spin = self.check_total_spin(newQ[i : (i + 1), :])
-                print("state", i, "energy =", theta[i], "<S^2>=", total_spin, end="")
-                if np.abs(total_spin) < 1e-5:
-                    singlet_count += 1
-                    print("\tsinglet", singlet_count)
-                elif np.abs(total_spin - 2.0) < 1e-5:
-                    triplet_count += 1
-                    print("\ttriplet", triplet_count)
-                elif np.abs(total_spin - 6.0) < 1e-5:
-                    print("\tquintet")
-                # print("state",i, "energy =",theta[i])
-                print(
-                    "        amplitude",
-                    "      position",
-                    "         most important determinants",
-                    "             number of photon",
-                )
-                index = np.argsort(np.abs(Q[:, i]))
-                # print(index)
-                Idet0 = (
-                    index[Q.shape[0] - 1] % self.num_det
-                )  # determinant index of most significant contribution
-                photon_p0 = (
-                    index[Q.shape[0] - 1] - Idet0
-                ) // self.num_det  # photon number block of determinant
-                Ib0 = Idet0 % self.num_alpha
-                Ia0 = Idet0 // self.num_alpha
-                a0 = c_index_to_string(Ia0, self.n_act_a, self.n_act_orb, Y)
-                b0 = c_index_to_string(Ib0, self.n_act_a, self.n_act_orb, Y)
-
-                
-                alphalist = Determinant.obtBits2ObtIndexList(a0)
-                betalist = Determinant.obtBits2ObtIndexList(b0)
-
-                # store alphalist and betalist for the reference to a numpy array
-                a_ref = np.array(alphalist)
-                b_ref = np.array(betalist)
-
-                #for j in range(min(H_dim, 10)):
-                for j in range(H_dim):
-                    Idet = index[Q.shape[0] - j - 1] % self.num_det
-                    photon_p = (index[Q.shape[0] - j - 1] - Idet) // self.num_det
-                    Ib = Idet % self.num_alpha
-                    Ia = Idet // self.num_alpha
-                    a = c_index_to_string(Ia, self.n_act_a, self.n_act_orb, Y)
-                    b = c_index_to_string(Ib, self.n_act_a, self.n_act_orb, Y)
-
-                    alphalist = Determinant.obtBits2ObtIndexList(a)
-                    betalist = Determinant.obtBits2ObtIndexList(b)
-
-                    inactive_list = list(x for x in range(self.n_in_a))
-                    alphalist2 = [x + self.n_in_a for x in alphalist]
-                    # alphalist2[0:0] = inactive_list
-                    betalist2 = [x + self.n_in_a for x in betalist]
-                    # betalist2[0:0] = inactive_list
-
-                    print(
-                        "%20.12lf" % (Q[index[Q.shape[0] - j - 1]][i]),
-                        "%9.3d" % (index[Q.shape[0] - j - 1]),
-                        "      alpha",
-                        alphalist2,
-                        "   beta",
-                        betalist2,
-                        "%4.1d" % (photon_p),
-                        "photon",
-                    )
-
-        davidson_dict = {
-            "DAVIDSON EIGENVALUES": theta,
-            "DAVIDSON EIGENVECTORS": Q,
-        }
-
-        return davidson_dict
+    def build_JK_oo(self):
+        """Initial J,K for QED_LIBTRANS_OO -- the same restricted transform at
+        U = I.  build_JK cannot be used here: it reads self.twoeint, which on
+        this path was never built.
+        """
+        no, nmo = self.n_occupied, self.nmo
+        self.J = np.empty((no, no, nmo, nmo))
+        self.K = np.empty((no, no, nmo, nmo))
+        self._oo_transform_JK(np.eye(nmo), self.J, self.K)
 
     def build_JK(self):
         # naive build of J_klrs and K_klrs from the full integrals
@@ -8205,6 +9795,28 @@ class PFHamiltonianGenerator:
         energy += np.einsum("a,ab,b->", Rai, hessian_ai, Rai)
         return energy
 
+    def _dump_ci_vectors(self, eigenvecs, ctx, macroiteration=-1):
+        """QED_DUMP_CI_VECTORS -- see the knob comment at the top of this file.
+
+        One .npz per converged CI solve, named by a monotone sequence number so
+        the solves stay in execution order (the micro site does not have
+        `macroiteration` in scope; the between-macro site does, so macro
+        boundaries are recoverable from the interleaving).  No-op when the knob
+        is unset, and it writes AFTER the solve, so it cannot perturb one.
+        """
+        if not _QED_DUMP_CI_VECTORS:
+            return
+        seq = getattr(self, "_ci_dump_seq", 0)
+        self._ci_dump_seq = seq + 1
+        os.makedirs(_QED_DUMP_CI_VECTORS, exist_ok=True)
+        np.savez(
+            os.path.join(_QED_DUMP_CI_VECTORS, f"ci_{seq:05d}_{ctx}.npz"),
+            vecs=np.ascontiguousarray(eigenvecs),
+            seq=seq,
+            ctx=ctx,
+            macroiteration=macroiteration,
+        )
+
     def internal_optimization3(self, E0, eigenvecs):
         print("avg_energy", E0)
         current_residual = 1.0
@@ -8298,7 +9910,7 @@ class PFHamiltonianGenerator:
         self.U1 = np.eye(self.nmo)
         #current_energy = E0
         current_energy = sum_energy
-        trust_radius = 0.5
+        trust_radius = _QED_TR_INIT  # QED_TR_INIT; default 0.5 = original literal
         trust_radius_hard_case = trust_radius
         rot_dim = self.n_occupied
         microiteration = 0
@@ -8461,470 +10073,16 @@ class PFHamiltonianGenerator:
                     print("adjusted step norm", np.linalg.norm(adjusted_step))
                     step = adjusted_step
                 else:
-                    mu9 = np.zeros(dim00)
-                    beta0 = 0
-                    both_roots_normalization = 0
-                    v1 = 0
-                    v2 = 0
-                    u1 = np.zeros(self.n_act_orb * self.n_in_a)
-                    u2 = np.zeros(self.n_act_orb * self.n_in_a)
-                    x1 = np.zeros(self.n_act_orb * self.n_in_a)
-                    x2 = np.zeros(self.n_act_orb * self.n_in_a)
-                    phi1 = 0
-                    phi2 = 0
-
-                    lambda1 = 0
-                    lambda2 = 0
-                    lambda_c = 0
-                    idx = hessian_diagonal.argsort()
-                    delta_u = hessian_diagonal[idx[0]]
-                    delta_l = 0
-                    alpha_u = delta_u + np.linalg.norm(gradient_tilde_ai) * trust_radius
-                    alpha_l = 0
-                    count10 = 0
-                    # beta = min(0, alpha_u)
-                    beta = alpha_u
-                    # aug_hessian_eigenvecs = np.zeros((dim00,2))
-                    # aug_hessian_eigenvals = np.zeros(2)
-                    print("trust radius", trust_radius)
-                    _stats_span = _stats_begin("lstrs_internal")
-                    while True:
-                        print("****************************")
-                        print("lstrs iteration", count10, "beta", beta)
-                        beta0 = beta
-                        mu9[:] = self.projection_step2(
-                            gradient_tilde_ai, hessian_tilde_ai, w9, beta, dim00
-                        )
-                        # print("two roots", mu9[0], mu9[1], mu9[2])
-                        if count10 == 0:
-                            delta_l = mu9[0]
-                            alpha_l = (
-                                delta_l
-                                - np.linalg.norm(gradient_tilde_ai) / trust_radius
-                            )
-                        # else:
-                        #    guess_vector = Q
-                        #    Q = self.Davidson_augmented_hessian_solve3(self.U2, A_tilde2, G, G1, self.reduced_hessian_diagonal,
-                        #            reduced_gradient, beta, aug_hessian_eigenvecs, aug_hessian_eigenvals, guess_vector, restart = True)
-                        # print(aug_hessian_eigenvals)
-                        # print(aug_hessian_eigenvecs)
-                        # mu9[0] = aug_hessian_eigenvals[0]
-                        # mu9[1] = aug_hessian_eigenvals[1]
-                        # w9[:,0] = aug_hessian_eigenvecs[:,0]
-                        # w9[:,1] = aug_hessian_eigenvecs[:,1]
-                        print("ALPHA range", alpha_l, alpha_u)
-                        # idx = mu9.argsort()[:dim00]
-                        # print(idx)
-                        # w9[:,0] = w9[:,0]/np.linalg.norm(w9[:,0])
-                        # w9[:,1] = w9[:,1]/np.linalg.norm(w9[:,1])
-                        v1 = w9[0, 0] / np.linalg.norm(w9[:, 0])
-                        v2 = w9[0, 1] / np.linalg.norm(w9[:, 1])
-                        u1[:] = w9[1:, 0] / np.linalg.norm(w9[:, 0])
-                        u2[:] = w9[1:, 1] / np.linalg.norm(w9[:, 1])
-                        aa1 = np.linalg.norm(gradient_tilde_ai) * np.abs(v1)
-                        bb1 = np.sqrt(1 - v1 * v1)
-                        aa2 = np.linalg.norm(gradient_tilde_ai) * np.abs(v2)
-                        bb2 = np.sqrt(1 - v2 * v2)
-                        print("aa1, bb1", aa1, bb1, "aa2, bb2", aa2, bb2)
-                        if mu9[0] > -1e-8 and np.linalg.norm(
-                            u1
-                        ) < trust_radius * np.abs(v1):
-                            hard_case = 2
-                            print("use newton step")
-                            break
-                        delta_u2 = mu9[0] - v1 * np.dot(gradient_tilde_ai, u1) / (
-                            1 - v1 * v1
-                        )
-                        delta_u = min(delta_u, delta_u2)
-                        print("delta_u2", delta_u2)
-
-                        epsilon_v = 1e-4
-                        print(aa1 <= epsilon_v * bb1)
-                        print(aa2 <= epsilon_v * bb2)
-                        alpha = beta
-                        while (
-                            (aa1 <= epsilon_v * bb1)
-                            and (aa2 <= epsilon_v * bb2)
-                            and np.abs(alpha_u - alpha_l)
-                            > 1e-8 * max(np.abs(alpha_u), np.abs(alpha_l))
-                        ):
-                            alpha_u = alpha
-                            alpha = (alpha_l + alpha_u) / 2
-                            w9[:, :] = 0.0
-                            mu9[:] = self.projection_step2(
-                                gradient_tilde_ai, hessian_tilde_ai, w9, alpha, dim00
-                            )
-
-                            v1 = w9[0, 0] / np.linalg.norm(w9[:, 0])
-                            v2 = w9[0, 1] / np.linalg.norm(w9[:, 1])
-                            u1[:] = w9[1:, 0] / np.linalg.norm(w9[:, 0])
-                            u2[:] = w9[1:, 1] / np.linalg.norm(w9[:, 1])
-                            aa1 = np.linalg.norm(gradient_tilde_ai) * np.abs(v1)
-                            bb1 = np.sqrt(1 - v1 * v1)
-                            aa2 = np.linalg.norm(gradient_tilde_ai) * np.abs(v2)
-                            bb2 = np.sqrt(1 - v2 * v2)
-                            print(
-                                alpha,
-                                aa1 <= epsilon_v * bb1,
-                                aa2 <= epsilon_v * bb2,
-                                mu9[0],
-                                mu9[1],
-                                bb1,
-                                bb2,
-                            )
-                            delta_u2 = mu9[0] - v1 * np.dot(gradient_tilde_ai, u1) / (
-                                1 - v1 * v1
-                            )
-                            delta_u = min(delta_u, delta_u2)
-                            print("new delta_u", delta_u, delta_u2)
-
-                        if (aa1 <= epsilon_v * bb1) and (aa2 <= epsilon_v * bb2):
-                            exit()
-                        elif (aa1 > epsilon_v * bb1) and (aa2 > epsilon_v * bb2):
-                            both_roots_normalization = 1
-                        else:
-                            both_roots_normalization = 0
-                        beta = alpha
-                        # update delta_u
-                        # temptemp = np.dot(reduced_hessian, u1)
-                        # temptemp2 = np.dot(u1, temptemp)
-
-                        # delta_u2 = mu9[0] - v1 * np.dot(reduced_gradient, u1)/np.dot(u1,u1)
-                        # delta_u = min(delta_u, temptemp2/np.dot(u1,u1))
-                        # print("new delta_u", delta_u)
-                        ####scale9 = w9[0][0]
-                        ####print("scale",scale9)
-                        ####if np.abs(scale9) < 1e-15:
-                        ####    break
-                        # assign (k-1) and k-iteration values
-                        lambda1 = lambda2
-                        x1 = x2
-                        phi1 = phi2
-                        print("two roots", mu9[0], mu9[1])
-                        if aa1 > epsilon_v * bb1:
-                            step10 = u1 / v1
-                            second_component[:] = u2
-                            lambda2 = mu9[0]
-                            print("norm from first root", np.linalg.norm(step10))
-                            # if aa2 > epsilon_v * bb2:
-                            #    second_component[:] = u2/v2
-                            #    print("second root norm", np.linalg.norm(second_component))
-                            if np.linalg.norm(step10) < trust_radius:
-                                alpha_l = beta
-                            if np.linalg.norm(step10) > trust_radius:
-                                alpha_u = beta
-                        else:
-                            step10 = u2 / v2
-                            second_component[:] = u1
-                            lambda2 = mu9[1]
-                            print("norm from second root", np.linalg.norm(step10))
-                            alpha_u = beta
-                        print("NEW ALPHA range", alpha_l, alpha_u)
-                        step10_norm = np.linalg.norm(step10)
-                        x2 = step10
-                        if mu9[0] > -1e-8 and np.linalg.norm(
-                            u1
-                        ) < trust_radius * np.abs(v1):
-                            hard_case = 2
-                            print("use newton step")
-                            break
-                        phi2 = -np.dot(gradient_tilde_ai, x2)
-                        # print(step10)
-                        # print(x1)
-                        # print(x2)
-                        # if count10 == 0 and step10_norm < trust_radius: break
-                        # print("check eigenvalues and step norm from diagonalizing the bordering matrix")
-                        # print(mu9, flush=True)
-                        print(
-                            "step10 norm", step10_norm, "current beta", beta, flush=True
-                        )
-                        x1_norm = np.linalg.norm(x1)
-                        x2_norm = np.linalg.norm(x2)
-                        phi2_p = np.dot(x2, x2)
-                        phi1_p = np.dot(x1, x1)
-                        print(
-                            "phi1",
-                            phi1,
-                            "phi1_p",
-                            phi1_p,
-                            "phi2",
-                            phi2,
-                            "phi2_p",
-                            phi2_p,
-                        )
-                        if (
-                            np.abs((step10_norm - trust_radius) / trust_radius) <= _QED_LSTRS_NORM_TOL
-                            and mu9[0] <= 0
-                        ):
-                            step = step10
-                            hard_case = 0
-                            break
-                        print("check orthogonality of the first two roots")
-                        vv1 = w9[0, 0]
-                        vv2 = w9[0, 1]
-                        uu1 = w9[1:, 0]
-                        uu2 = w9[1:, 1]
-                        # check if the quasi-optimal condition is satisfied
-                        print(
-                            "quasi-optimal condition",
-                            (1 + trust_radius * trust_radius) * (vv1 * vv1 + vv2 * vv2),
-                            flush=True,
-                        )
-                        qs = (1 + trust_radius * trust_radius) * (vv1 * vv1 + vv2 * vv2)
-                        print(np.dot(w9[:, :2].T, w9[:, :2]))
-
-                        # construct quasi-optimal step
-                        epsilon_hc = _QED_LSTRS_EPS_HC  # QED_LSTRS_EPS_HC, default 1e-6
-                        eta = epsilon_hc / (1 - epsilon_hc)
-                        tau1 = 1
-                        tau2 = 1
-                        if qs > 1.0:
-                            tau1 = (
-                                (vv1 - vv2 * np.sqrt(qs - 1))
-                                / (vv1 * vv1 + vv2 * vv2)
-                                / np.sqrt(1 + trust_radius * trust_radius)
-                            )
-                            tau2 = (
-                                (vv2 + vv1 * np.sqrt(qs - 1))
-                                / (vv1 * vv1 + vv2 * vv2)
-                                / np.sqrt(1 + trust_radius * trust_radius)
-                            )
-                        elif np.abs(qs - 1.0) < 2e-308:
-                            tau1 = vv1 / np.sqrt(vv1 * vv1 + vv2 * vv2)
-                            tau2 = vv2 / np.sqrt(vv1 * vv1 + vv2 * vv2)
-                        x_tilde = (tau1 * uu1 + tau2 * uu2) / (tau1 * vv1 + tau2 * vv2)
-
-                        lambda_tilde = tau1 * tau1 * lambda1 + tau2 * tau2 * lambda2
-                        psi_tilde = 0.5 * self.internal_optimization_predicted_energy(
-                            gradient_tilde_ai, hessian_tilde_ai, x_tilde
-                        )
-                        if qs > 1.0 or np.abs(qs - 1.0) < 2e-308:
-                            print(
-                                "x_tilde norm1",
-                                np.linalg.norm(x_tilde),
-                                (mu9[1] - mu9[0])
-                                * tau2
-                                * tau2
-                                * (1 + trust_radius * trust_radius),
-                                -2.0 * eta * psi_tilde,
-                            )
-                            if (mu9[1] - mu9[0]) * tau2 * tau2 * (
-                                1 + trust_radius * trust_radius
-                            ) < -2.0 * eta * psi_tilde:
-                                print("find quasi-optimal solution1", flush=True)
-                                hard_case = 3
-                                break
-                            else:
-                                if qs > 1.0:
-                                    tau1 = (
-                                        (vv1 + vv2 * np.sqrt(qs - 1))
-                                        / (vv1 * vv1 + vv2 * vv2)
-                                        / np.sqrt(1 + trust_radius * trust_radius)
-                                    )
-                                    tau2 = (
-                                        (vv2 - vv1 * np.sqrt(qs - 1))
-                                        / (vv1 * vv1 + vv2 * vv2)
-                                        / np.sqrt(1 + trust_radius * trust_radius)
-                                    )
-                                    x_tilde = (tau1 * uu1 + tau2 * uu2) / (
-                                        tau1 * vv1 + tau2 * vv2
-                                    )
-                                    lambda_tilde = (
-                                        tau1 * tau1 * lambda1 + tau2 * tau2 * lambda2
-                                    )
-                                    psi_tilde = (
-                                        0.5
-                                        * self.internal_optimization_predicted_energy(
-                                            gradient_tilde_ai, hessian_tilde_ai, x_tilde
-                                        )
-                                    )
-                                    print(
-                                        "x_tilde norm2",
-                                        np.linalg.norm(x_tilde),
-                                        (mu9[1] - mu9[0])
-                                        * tau2
-                                        * tau2
-                                        * (1 + trust_radius * trust_radius),
-                                        -2.0 * eta * psi_tilde,
-                                        flush=True,
-                                    )
-                                    if (mu9[1] - mu9[0]) * tau2 * tau2 * (
-                                        1 + trust_radius * trust_radius
-                                    ) < -2.0 * eta * psi_tilde:
-                                        print(
-                                            "find quasi-optimal solution2", flush=True
-                                        )
-                                        hard_case = 3
-                                        break
-                        if np.abs(alpha_u - alpha_l) <= 1e-8 * max(
-                            np.abs(alpha_u), np.abs(alpha_l)
-                        ):
-                            print("interval too small")
-                            if x2_norm < trust_radius and both_roots_normalization == 0:
-                                hard_case = 1
-                            if both_roots_normalization == 1:
-                                hard_case = 4
-                            break
-
-                        if count10 == 0:
-                            beta = beta + (beta - lambda2) / x2_norm * (
-                                trust_radius - x2_norm
-                            ) / trust_radius * (trust_radius + 1.0 / x2_norm)
-                        else:
-                            print("denominator", x2_norm - x1_norm)
-                            denom = trust_radius * (x2_norm - x1_norm)
-
-                            if np.abs(denom) > 2e-308:
-                                lambda_c = (
-                                    lambda1 * x1_norm * (x2_norm - trust_radius)
-                                    + lambda2 * x2_norm * (trust_radius - x1_norm)
-                                ) / denom
-                            else:
-                                lambda_c = delta_u
-                            if lambda_c > delta_u:
-                                print("need to safeguard delta_u", lambda_c, delta_u)
-                                lambda_c = delta_u
-                            # lambda_c = (lambda1 * x1_norm * (x2_norm - trust_radius) + lambda2 * x2_norm * (trust_radius - x1_norm))/trust_radius/(x2_norm - x1_norm)
-                            # print(lambda_c)
-                            if np.abs(lambda2 - lambda1) <= 2e-308:
-                                print("interpolate alpha by bisection")
-                                beta = (alpha_l + alpha_u) / 2
-                            else:
-                                omega_k = (lambda2 - lambda_c) / (lambda2 - lambda1)
-                                num = (
-                                    x1_norm
-                                    * x2_norm
-                                    * (x2_norm - x1_norm)
-                                    * (lambda1 - lambda_c)
-                                    * (lambda2 - lambda_c)
-                                )
-
-                                denom = (
-                                    omega_k * x2_norm + (1 - omega_k) * x1_norm
-                                ) * (lambda2 - lambda1)
-                                print(x1_norm, x2_norm)
-                                print(lambda1, lambda2, lambda_c)
-                                print(num, denom)
-                                if np.abs(denom) <= 2e-308:
-                                    print("interpolate alpha by bisection2")
-                                    beta = (alpha_l + alpha_u) / 2
-                                else:
-                                    beta = (
-                                        lambda_c
-                                        + omega_k * phi1
-                                        + (1 - omega_k) * phi2
-                                        + num / denom
-                                    )
-
-                        # if count10 == 0 or (np.abs(x2_norm - x1_norm) <= 1e-15):
-                        #    if (np.abs(x2_norm - x1_norm) <= 1e-15):
-                        #        print("too small denominator")
-                        #    beta = beta + (beta - lambda2)/x2_norm * (trust_radius - x2_norm)/trust_radius * (trust_radius + 1.0/x2_norm)
-                        # else:
-                        #    print("denominator", x2_norm-x1_norm)
-                        #    if (np.abs(x2_norm - x1_norm) > 1e-15):
-                        #        lambda_c = (lambda1 * x1_norm * (x2_norm - trust_radius) + lambda2 * x2_norm * (trust_radius - x1_norm))/trust_radius/(x2_norm - x1_norm)
-                        #    else:
-                        #        lambda_c = delta_u
-                        #    if lambda_c > delta_u:
-                        #        print("need to safeguard delta_u", lambda_c, delta_u)
-                        #        lambda_c = delta_u
-                        #    #lambda_c = (lambda1 * x1_norm * (x2_norm - trust_radius) + lambda2 * x2_norm * (trust_radius - x1_norm))/trust_radius/(x2_norm - x1_norm)
-                        #    #print(lambda_c)
-                        #    omega_k = (lambda2 - lambda_c)/(lambda2 - lambda1)
-                        #    ratio1 = x1_norm * x2_norm * (x2_norm - x1_norm)/(omega_k * x2_norm + (1-omega_k) * x1_norm)
-                        #    ratio2 = (lambda1 - lambda_c) * (lambda2 - lambda_c) / (lambda2 - lambda1)
-                        #    beta = lambda_c + omega_k *phi1 + (1-omega_k) * phi2 + ratio1 * ratio2
-                        print("beta after interpolation", beta)
-                        # safeguard alpha
-                        if beta < alpha_l or beta > alpha_u:
-                            print("need to safeguard alpha")
-                            if count10 == 0:
-                                beta = delta_u + phi2 + phi2_p * (delta_u - lambda2)
-                            elif x2_norm < x1_norm:
-                                print("use phi2")
-                                beta = delta_u + phi2 + phi2_p * (delta_u - lambda2)
-                            else:
-                                print("use phi1")
-                                beta = delta_u + phi1 + phi1_p * (delta_u - lambda1)
-                            if beta < alpha_l or beta > alpha_u:
-                                print("using bisection")
-                                beta = (alpha_l + alpha_u) / 2
-                        count10 += 1
-                        # if np.abs(beta -beta0) <= 1e-12:
-                        #    print("possible convergence")
-                        #    print(beta, beta0)
-                        #    print(x2_norm)
-
-                        #    if x2_norm < trust_radius:
-                        #        print("11111111")
-                        #        hard_case = 1
-                        #    elif x2_norm > trust_radius and both_roots_normalization == 1:
-                        #        print("22222222")
-                        #        hard_case = 1
-
-                        #    break
-                        if count10 == 50:
-                            break
-                    print("check hard case", hard_case)
-                    _stats_end(
-                        _stats_span, iters=count10, status="hard_case=%d" % hard_case
-                    )
-                    if hard_case == 1:
-                        first_component[:] = x2[:]
-                        if x2_norm > trust_radius:
-                            print("some logic is wrong")
-                            exit()
-                            # temp_vector = np.zeros(self.index_map_size)
-                            # temp_vector[:] = second_component[:]
-                            # second_component[:] = first_component[:]
-                            # first_component[:] = temp_vector[:]
-                        # print(first_component)
-                        # print(second_component)
-                        print("norm of current root", np.linalg.norm(first_component))
-                        xy_square = np.dot(first_component, second_component) * np.dot(
-                            first_component, second_component
-                        )
-                        x_square = np.dot(first_component, first_component)
-                        y_square = np.dot(second_component, second_component)
-                        delta = 4 * xy_square - 4 * y_square * (
-                            x_square - trust_radius * trust_radius
-                        )
-                        # print(delta)
-                        t1 = (
-                            -2 * np.dot(first_component, second_component)
-                            - np.sqrt(delta)
-                        ) / (2 * y_square)
-                        t2 = (
-                            -2 * np.dot(first_component, second_component)
-                            + np.sqrt(delta)
-                        ) / (2 * y_square)
-                        print(
-                            "x^2, xy, y^2, t",
-                            x_square,
-                            np.dot(first_component, second_component),
-                            y_square,
-                            t1,
-                        )
-                        adjusted_step = first_component + min(np.abs(t1), np.abs(t2)) * second_component
-                        print("adjusted step norm", np.linalg.norm(adjusted_step))
-                        step = adjusted_step
-
-                    if hard_case == 2:
-                        Q = np.zeros((1, self.n_act_orb * self.n_in_a))
-                        x, exitCode = minres(
-                            hessian_tilde_ai, -gradient_tilde_ai, rtol=1e-5
-                        )
-                        print("exitcode", exitCode)
-                        step = x
-
-                    if hard_case == 3:
-                        step = x_tilde
-                    if hard_case == 4:
-                        if x2_norm > trust_radius:
-                            step = x2 / x2_norm * trust_radius
-                        if x2_norm < trust_radius:
-                            step = x2
+                    # QED_INTERNAL_EXACT_TRS: the dense Hessian is already in hand here,
+                    # so the subproblem can be solved exactly instead of bisected.
+                    if _QED_INTERNAL_EXACT_TRS:
+                        step, hard_case = exact_internal_trs(
+                            hessian_tilde_ai, gradient_tilde_ai, trust_radius)
+                    else:
+                        step, hard_case = solve_lstrs_internal(
+                            self, dim00, gradient_tilde_ai, hessian_tilde_ai,
+                            hessian_diagonal, trust_radius, w9, first_component,
+                            second_component, hard_case, beta, step)
 
             elif np.linalg.norm(gradient_tilde_ai) <= 1e-4 and np.linalg.norm(gradient_tilde_ai) > 1e-8:
                 print("gradient is small, use Newton step")
@@ -9022,7 +10180,24 @@ class PFHamiltonianGenerator:
                 #    self.constdouble[1] = self.d_c
                 # self.constdouble[2] = self.omega
                 self.constdouble[3] = self.d_exp - d_diag
+                # QED_CI_INTERNAL_FACTOR -- see the knob comment at the top of
+                # this file.  gradient_tilde_ai holds the CURRENT internal-
+                # internal orbital gradient here: it is built before the loop
+                # (:9800-9825) and rebuilt at the end of every iteration
+                # (:10596-10611), so at this point it is the gradient the CI
+                # solve about to run is being asked to keep up with.
+                # Default 0 => the fixed 1e-5 this site has always used.
                 self.constdouble[4] = 1e-5
+                if _QED_CI_INTERNAL_FACTOR > 0.0:
+                    _scaled = _QED_CI_INTERNAL_FACTOR * np.linalg.norm(gradient_tilde_ai)
+                    self.constdouble[4] = min(
+                        max(_scaled, _QED_CI_INTERNAL_FLOOR), _QED_CI_INTERNAL_CEIL
+                    )
+                    print(
+                        f"[ci-internal] ||g_ii|| {np.linalg.norm(gradient_tilde_ai):.6e} "
+                        f"-> CI threshold {self.constdouble[4]:.6e}",
+                        flush=True,
+                    )
                 self.constdouble[5] = self.E_core
                 # Same uncoupled cap knob as microiteration_optimization6's
                 # (default 5) -- internal_optimization3 is the other live site
@@ -9175,10 +10350,14 @@ class PFHamiltonianGenerator:
                 print("Reject step, restart")
             gradient_norm = np.linalg.norm(gradient_tilde_ai)
             print(gradient_norm, current_residual)
+            # QED_INTERNAL_MAXITER: the hard cap, default 20 = the value this
+            # site has always used.  Molpro's equivalent cap is 4 with an early
+            # exit (blocks run 4,4,4,4,4,4,4,2,1) -- see the knob comment at the
+            # top of this file.
             if (
                 #gradient_norm < 1e-4 and current_residual < 1e-5
                 gradient_norm < 1e-4 and self.constint[8] == 0
-            ) or microiteration == 20:
+            ) or microiteration == _QED_INTERNAL_MAXITER:
                 print("internal rotation converged!")
                 # print("qims", np.allclose(self.J, self.J_temp, rtol=1e-14,atol=1e-14))
                 # print("ynss", np.allclose(self.K, self.K_temp, rtol=1e-14,atol=1e-14))
@@ -9352,6 +10531,27 @@ class PFHamiltonianGenerator:
         )
 
     def step_control(self, ratio, trust_radius, step_norm=None):
+        # QED_EXIT_CONTROL: consume the pending GLTR exit (None if this step did
+        # not come from a GLTR solve, in which case nothing below fires).  The
+        # token is taken unconditionally so it can never go stale, but it is
+        # only READ when the knob is on -- with the knob off this function is
+        # byte-for-byte the original.
+        _exit_hist = self._take_gltr_exit() if _QED_EXIT_CONTROL else None
+        if _QED_EXIT_CONTROL in (1, 3) and _exit_hist is not None:
+            # Mode 1: persistently boundary-terminating => the step is being
+            # placed by the constraint rather than by the model.  Shrink until
+            # the model's own minimizer is interior.  Deliberately checked
+            # BEFORE the ratio branches: rho is blind to this (item 182), so on
+            # MgH+ ratio > 0.75 at essentially every step and a rule gated on
+            # the ratio would never fire.
+            _damped = _exit_control_radius(trust_radius, _exit_hist)
+            if _damped != trust_radius:
+                if _QED_SOLVER_STATS:
+                    print(
+                        "  exit_control: boundary-dominated, radius"
+                        f" {trust_radius:.4f} -> {_damped:.4f}"
+                    )
+                return _damped
         if ratio >= 0 and ratio <= 0.25:
             trust_radius = 0.7 * trust_radius
         if ratio > 0.75:
@@ -9360,9 +10560,18 @@ class PFHamiltonianGenerator:
             # whether a larger Delta would still be trustworthy.
             if _QED_STEP_CONTROL and step_norm is not None and step_norm < 0.8 * trust_radius:
                 return trust_radius
+            # QED_EXIT_CONTROL mode 2: the same idea keyed on the exit reason
+            # itself rather than on the step-norm proxy above.
+            if _QED_EXIT_CONTROL in (2, 3) and _exit_hist is not None:
+                if _exit_last_is_interior(_exit_hist):
+                    return trust_radius
             trust_radius = 1.2 * trust_radius
-            if trust_radius > 0.75:
-                trust_radius = 0.75
+            # QED_TR_MAX: the cap.  This is the single chokepoint -- all four
+            # step_control call sites (~9868, ~12821, ~15114, ~16559) route
+            # through here, so the cap needs exactly this one edit.  Default
+            # 0.75 is the original literal.
+            if trust_radius > _QED_TR_MAX:
+                trust_radius = _QED_TR_MAX
         return trust_radius
 
     def build_state_average_rdms(self, eigenvecs):
@@ -9373,7 +10582,7 @@ class PFHamiltonianGenerator:
         )
         np1 = self.N_p + 1
         for i in range(self.davidson_roots):
-            c_build_active_rdm(
+            c_build_active_rdm_sa(
                 eigenvecs,
                 self.D_tu_avg,
                 self.D_tuvw_avg,
@@ -9424,205 +10633,12 @@ class PFHamiltonianGenerator:
                     # self.D_tu_avg[tu] = dum2/2.0
                     # self.D_tu_avg[ut] = dum2/2.0
 
-    def build_sigma_reduced(self, U, A, G, step):
-        self.reduced_hessian2 = np.zeros((self.index_map_size, self.index_map_size))
-        # build the component of tranformed hessian from gradient
-        B = np.zeros((self.nmo, self.nmo))
-        self.T = U - np.eye(self.nmo)
-        B[:, : self.n_occupied] = A[:, : self.n_occupied] + np.einsum(
-            "klrs,sl->rk", G[:, :, :, :], self.T[:, : self.n_occupied]
-        )
-        # B2 = np.zeros((self.nmo, self.nmo))
-        # for r in range(self.nmo):
-        #    for k in range(self.n_occupied):
-        #        B2[r][k] = A[r][k]
-        #        for s in range(self.nmo):
-        #            for l in range(self.n_occupied):
-        #                B2[r][k] += G[k][l][r][s] * self.T[s][l]
-        # print("sdgs", np.allclose(B2,B, rtol=1e-14,atol=1e-14))
-
-        A_tilde = np.zeros((self.nmo, self.nmo))
-        # A_tilde[:,:self.n_occupied] = np.einsum("rs,sk->rk",U.T, B[:,:self.n_occupied])
-        # A2_tilde = np.zeros((self.nmo, self.nmo))
-        A_tilde = np.einsum("rs,sk->rk", U.T, B)
-        # A2_tilde = np.zeros((self.nmo, self.nmo))
-        # for r in range(self.nmo):
-        #    for k in range(self.n_occupied):
-        #        for s in range(self.nmo):
-        #            A2_tilde[r][k] += U[s][r] * B[s][k]
-        # print("bxvc", np.allclose(A2_tilde,A_tilde, rtol=1e-14,atol=1e-14))
-
-        A3_tilde = A_tilde + A_tilde.T
-
-        hessian_tilde = np.zeros((self.n_occupied, self.n_occupied, self.nmo, self.nmo))
-
-        hessian_tilde -= 0.5 * np.einsum(
-            "kl,rs->klrs", np.eye(self.n_occupied), A3_tilde
-        )
-        hessian_tilde -= 0.5 * np.einsum(
-            "rs,kl->klrs",
-            np.eye(self.nmo),
-            A3_tilde[: self.n_occupied, : self.n_occupied],
-        )
-        hessian_tilde[:, :, : self.n_occupied, :] += 0.5 * np.einsum(
-            "rl,ks->klrs", np.eye(self.n_occupied), A3_tilde[: self.n_occupied, :]
-        )
-        hessian_tilde[:, :, :, : self.n_occupied] += 0.5 * np.einsum(
-            "ks,rl->klrs", np.eye(self.n_occupied), A3_tilde[:, : self.n_occupied]
-        )
-
-        self.R_total = np.zeros((self.nmo, self.n_occupied))
-        self.sigma_total = np.zeros((self.nmo, self.n_occupied))
-        for i in range(self.index_map_size):
-            s = self.index_map[i][0]
-            l = self.index_map[i][1]
-            self.R_total[s][l] = step[i]
-        temp1 = np.zeros((self.nmo, self.n_occupied))
-        temp2 = np.zeros((self.nmo, self.n_occupied))
-        temp1 = np.einsum("qs,sl->ql", U, self.R_total)
-        temp2 = np.einsum("klpq,ql->pk", G, temp1)
-        self.sigma_total = np.einsum("pk,pr->rk", temp2, U)
-        self.sigma_total[: self.n_occupied, :] -= np.einsum(
-            "pr,pk->rk", temp2, U[:, : self.n_occupied]
-        )
-
-        temp1 = np.einsum(
-            "ql,sl->qs", U[:, : self.n_occupied], self.R_total[: self.n_occupied, :]
-        )
-        temp2 = np.einsum("kspq,qs->pk", G, temp1)
-        self.sigma_total -= np.einsum("pk,pr->rk", temp2, U)
-        self.sigma_total[: self.n_occupied, :] += np.einsum(
-            "pr,pk->rk", temp2, U[:, : self.n_occupied]
-        )
-        self.sigma_total += np.einsum("klrs,sl->rk", hessian_tilde, self.R_total)
-
-    def build_sigma_reduced2(
-        self, U, A_tilde, G, R_reduced, sigma_reduced, num_states, pointer
-    ):
-        R_total = np.zeros((num_states, self.nmo, self.n_occupied))
-        print("weqeqw", num_states)
-        # print(self.index_map)
-        for i in range(num_states):
-            for j in range(self.index_map_size):
-                r = self.index_map[j][0]
-                k = self.index_map[j][1]
-                R_total[i][r][k] = R_reduced[i][j + pointer]
-        # print("R total")
-        # for i in range(num_states):
-        #    for r in range(self.nmo):
-        #        for k in range(self.n_occupied):
-        #            print("%20.12lf" %(R_total[i,r,k]))
-        # print("\n")
-
-        ###B = np.zeros((self.nmo, self.nmo))
-        ###T = U - np.eye(self.nmo)
-        ###B[:,:self.n_occupied] = A[:,:self.n_occupied] + np.einsum("klrs,sl->rk", G[:,:,:,:], T[:,:self.n_occupied])
-        ####B2 = np.zeros((self.nmo, self.nmo))
-        ####for r in range(self.nmo):
-        ####    for k in range(self.n_occupied):
-        ####        B2[r][k] = A[r][k]
-        ####        for s in range(self.nmo):
-        ####            for l in range(self.n_occupied):
-        ####                B2[r][k] += G[k][l][r][s] * self.T[s][l]
-        ####print("sdgs", np.allclose(B2,B, rtol=1e-14,atol=1e-14))
-        ###
-        ###A_tilde = np.zeros((self.nmo, self.nmo))
-        ####A_tilde[:,:self.n_occupied] = np.einsum("rs,sk->rk",U.T, B[:,:self.n_occupied])
-        ####A2_tilde = np.zeros((self.nmo, self.nmo))
-        ###A_tilde = np.einsum("rs,sk->rk",U.T, B)
-        # A2_tilde = np.zeros((self.nmo, self.nmo))
-        # for r in range(self.nmo):
-        #    for k in range(self.n_occupied):
-        #        for s in range(self.nmo):
-        #            A2_tilde[r][k] += U[s][r] * B[s][k]
-        # print("bxvc", np.allclose(A2_tilde,A_tilde, rtol=1e-14,atol=1e-14))
-
-        A3_tilde = A_tilde + A_tilde.T
-
-        hessian_tilde = np.zeros((self.n_occupied, self.n_occupied, self.nmo, self.nmo))
-
-        hessian_tilde -= 0.5 * np.einsum(
-            "kl,rs->klrs", np.eye(self.n_occupied), A3_tilde
-        )
-        hessian_tilde -= 0.5 * np.einsum(
-            "rs,kl->klrs",
-            np.eye(self.nmo),
-            A3_tilde[: self.n_occupied, : self.n_occupied],
-        )
-        hessian_tilde[:, :, : self.n_occupied, :] += 0.5 * np.einsum(
-            "rl,ks->klrs", np.eye(self.n_occupied), A3_tilde[: self.n_occupied, :]
-        )
-        hessian_tilde[:, :, :, : self.n_occupied] += 0.5 * np.einsum(
-            "ks,rl->klrs", np.eye(self.n_occupied), A3_tilde[:, : self.n_occupied]
-        )
-
-        sigma_total = np.zeros((num_states, self.nmo, self.n_occupied))
-
-        temp1 = np.zeros((num_states, self.nmo, self.n_occupied))
-        temp2 = np.zeros((num_states, self.nmo, self.n_occupied))
-        temp1 = np.einsum("qs,isl->iql", U, R_total)
-        temp2 = np.einsum("klpq,iql->ipk", G, temp1)
-        sigma_total = np.einsum("ipk,pr->irk", temp2, U)
-        sigma_total[:, : self.n_occupied, :] -= np.einsum(
-            "ipr,pk->irk", temp2, U[:, : self.n_occupied]
-        )
-
-        temp1 = np.einsum(
-            "ql,isl->iqs", U[:, : self.n_occupied], R_total[:, : self.n_occupied, :]
-        )
-        temp2 = np.einsum("kspq,iqs->ipk", G, temp1)
-        sigma_total -= np.einsum("ipk,pr->irk", temp2, U)
-        sigma_total[:, : self.n_occupied, :] += np.einsum(
-            "ipr,pk->irk", temp2, U[:, : self.n_occupied]
-        )
-        sigma_total += np.einsum("klrs,isl->irk", hessian_tilde, R_total)
-
-        for i in range(num_states):
-            for j in range(self.index_map_size):
-                r = self.index_map[j][0]
-                k = self.index_map[j][1]
-                sigma_reduced[i][j + pointer] = sigma_total[i][r][k]
-
-    def build_sigma_reduced3(
-        self, U, hessian_tilde, G, R_reduced, sigma_reduced, num_states, pointer
-    ):
-        R_total = np.zeros((num_states, self.nmo, self.n_occupied))
-        print("weqeqw", num_states)
-        for i in range(num_states):
-            for j in range(self.index_map_size):
-                r = self.index_map[j][0]
-                k = self.index_map[j][1]
-                R_total[i][r][k] = R_reduced[i][j + pointer]
-
-        sigma_total = np.zeros((num_states, self.nmo, self.n_occupied))
-
-        temp1 = np.zeros((num_states, self.nmo, self.n_occupied))
-        temp2 = np.zeros((num_states, self.nmo, self.n_occupied))
-        temp1 = np.einsum("qs,isl->iql", U, R_total, optimize="optimal")
-        temp1 -= np.einsum(
-            "ql,isl->iqs",
-            U[:, : self.n_occupied],
-            R_total[:, : self.n_occupied, :],
-            optimize="optimal",
-        )
-        temp2 = np.einsum("klpq,iql->ipk", G, temp1, optimize="optimal")
-        sigma_total = np.einsum("ipk,pr->irk", temp2, U, optimize="optimal")
-        sigma_total[:, : self.n_occupied, :] -= np.einsum(
-            "ipr,pk->irk", temp2, U[:, : self.n_occupied], optimize="optimal"
-        )
-
-        # temp1 = np.einsum("ql,isl->iqs", U[:,:self.n_occupied], R_total[:,:self.n_occupied,:])
-        # temp2 = np.einsum("kspq,iqs->ipk", G, temp1, optimize = "optimal")
-        # sigma_total -= np.einsum("ipk,pr->irk", temp2, U)
-        # sigma_total[:,:self.n_occupied,:] += np.einsum("ipr,pk->irk", temp2, U[:,:self.n_occupied])
-        sigma_total += np.einsum(
-            "klrs,isl->irk", hessian_tilde, R_total, optimize="optimal"
-        )
-        for i in range(num_states):
-            for j in range(self.index_map_size):
-                r = self.index_map[j][0]
-                k = self.index_map[j][1]
-                sigma_reduced[i][j + pointer] = sigma_total[i][r][k]
+    # ---------------------------------------------------------------
+    # build_sigma_reduced / _2 / _3 / _4 and orbital_sigma -- earlier
+    # generations of the orbital Hessian-vector product -- MOVED to
+    # legacy_python_ci.py on 2026-09-04.  build_sigma_reduced7 (jitted,
+    # block-G) reached through orbital_sigma3 is the live one.
+    # ---------------------------------------------------------------
     def tiled_G_blocks(self, G):
         """QED_G_TILED: the (G_ij, G_ti, G_tu) blocks, built by a tiled copy.
 
@@ -9656,454 +10672,69 @@ class PFHamiltonianGenerator:
             out.append(buf.reshape(nmo * nl, nmo * nk))
         return tuple(out)
 
-    def orbital_sigma3(
-        self, U, A_tilde, G_blocks, R_reduced, sigma_reduced, num_states, pointer
-    ):
-        _mv_t0 = timer() if _QED_SOLVER_STATS else None
-        nmo = self.nmo
-        index_map = self.index_map
-        index_map_size = self.index_map_size
-        n_occupied = self.n_occupied
-        n_inactive = self.n_in_a
-        n_active = self.n_act_orb
-        G_ij, G_ti, G_tu = G_blocks
-        G_ij = np.ascontiguousarray(G_ij)
-        G_ti = np.ascontiguousarray(G_ti)
-        G_tu = np.ascontiguousarray(G_tu)
-        # build_sigma_reduced7 is jitted with an explicit float64[:,::1] signature,
-        # so R_reduced must be C-contiguous.  The un-jitted build_sigma_reduced4
-        # this path replaced accepted any layout; microiteration_predicted_energy2
-        # can hand us a strided step.  (sigma_reduced is an output -- do NOT copy.)
-        R_reduced = np.ascontiguousarray(R_reduced)
+    def _actvirt_shift_vector(self):
+        """Occupation-scaled level shift, one entry per reduced rotation.
 
-        _ret = self.build_sigma_reduced7(
-            U,
-            A_tilde,
-            index_map,
-            G_ij,
-            G_ti,
-            G_tu,
-            R_reduced,
-            sigma_reduced,
-            num_states,
-            pointer,
-            nmo,
-            index_map_size,
-            n_occupied,
-            n_inactive,
-            n_active,
-            _QED_G_SYMV,
-        )
-        if _QED_SOLVER_STATS:
-            # builds num_states Hessian-vector products in one call; the timed
-            # region includes the ascontiguousarray prep above, which is part of
-            # what a caller pays to get one matvec.
-            _solver_stats.matvec(num_states, timer() - _mv_t0)
-        return _ret
+        Returns None when QED_ACTVIRT_SHIFT is off or the active RDM is not
+        built yet (the very first sigma builds run before any CI solve), so
+        every caller can treat None as "no shift" and skip the work entirely.
 
-
-    def orbital_sigma(
-        self, U, A_tilde, G, R_reduced, sigma_reduced, num_states, pointer
-    ):
-        """Dense-G1 sigma build.  SUPERSEDED by orbital_sigma3/build_sigma_reduced7,
-        which take the (G_ij, G_ti, G_tu) blocks instead.  No live caller remains:
-        the full (nmo*n_occupied) square G1 this needs is no longer materialized
-        anywhere in microiteration_optimization6.  Kept for reference only --
-        build_sigma_reduced4 below is otherwise identical to build_sigma_reduced7.
+        sigma_(t,a) = eps / (n_t + delta) on act-virt, 0 elsewhere.  See the
+        knob block at the top of this file for the justification and for the
+        measurement that motivated it.
         """
-        nmo = self.nmo
-        index_map = self.index_map
-        index_map_size = self.index_map_size
-        n_occupied = self.n_occupied
-        return self.build_sigma_reduced4(
+        if not _QED_ACTVIRT_SHIFT:
+            return None
+        D_tu = getattr(self, "D_tu_avg", None)
+        if D_tu is None:
+            return None
+
+        # index_map is fixed after __init__, so the block mask and the
+        # active-orbital index of each parameter are built once and cached.
+        # index_map[:, 0] is the LARGER MO index, [:, 1] the smaller
+        # (:3468-3481), so act-virt is "smaller is active, larger is virtual".
+        if getattr(self, "_actvirt_shift_mask", None) is None:
+            s = self.index_map[:, 0]
+            r = self.index_map[:, 1]
+            self._actvirt_shift_mask = (
+                (r >= self.n_in_a) & (r < self.n_occupied) & (s >= self.n_occupied)
+            )
+            self._actvirt_shift_act = r[self._actvirt_shift_mask] - self.n_in_a
+
+        occ = np.diag(np.asarray(D_tu).reshape(self.n_act_orb, self.n_act_orb))
+        shift = np.zeros(self.index_map_size)
+        shift[self._actvirt_shift_mask] = _QED_ACTVIRT_SHIFT_EPS / (
+            occ[self._actvirt_shift_act] + _QED_ACTVIRT_SHIFT_DELTA
+        )
+        return shift
+
+    def orbital_sigma3(self, U, A_tilde, G_blocks, R_reduced, sigma_reduced, num_states, pointer):
+        """The one chokepoint every solver's Hessian-vector product goes through.  MOVED to orbital_sigma.py (2026-09-04).
+
+        Kept as a method because the name is this class's interface: the
+        solver modules call it as ctx.orbital_sigma3(...).  See
+        orbital_sigma.py for the kernel and for why that module is a leaf.
+        """
+        return _os_orbital_sigma3(
+            self,
             U,
             A_tilde,
-            index_map,
-            G,
+            G_blocks,
             R_reduced,
             sigma_reduced,
             num_states,
             pointer,
-            nmo,
-            index_map_size,
-            n_occupied,
         )
 
-    @staticmethod
-    # @nb.njit("""void(float64[:,::1], float64[:,::1], int64[:,::1], float64[:,::1], float64[:,:,:,::1], float64[:,::1], float64[:,::1],
-    #        int64, int64, int64, int64, int64)""", fastmath = True, parallel = True)
-    # def build_sigma_reduced6(U, A_tilde, index_map, G1, G, R_reduced, sigma_reduced, num_states, pointer, nmo, index_map_size, n_occupied):
-    #####@nb.jit(
-    #####    """void(float64[:,::1], float64[:,::1], int64[:,::1], float64[:,::1], float64[:,::1], float64[:,::1],
-    #####        int64, int64, int64, int64, int64)""",
-    #####    nopython=True,
-    #####    cache=True,
-    #####    fastmath=True,
-    #####    parallel=False,
-    #####)
-    def build_sigma_reduced4(
-        U,
-        A_tilde,
-        index_map,
-        G,
-        R_reduced,
-        sigma_reduced,
-        num_states,
-        pointer,
-        nmo,
-        index_map_size,
-        n_occupied,
-    ):
 
-        assert U.shape == (nmo, nmo)
-        assert G.shape == (nmo * n_occupied, nmo * n_occupied)
-        assert A_tilde.shape == (nmo, nmo)
-        R_total = np.zeros((num_states, nmo, n_occupied))
-        print("num_states", num_states)
-        #for j in nb.prange(index_map_size):
-        for j in range(index_map_size):
-            r = index_map[j][0]
-            k = index_map[j][1]
-            for i in range(num_states):
-                R_total[i][r][k] = R_reduced[i][j + pointer]
-
-        sigma_total = np.zeros((num_states, nmo, n_occupied))
-        temp1 = np.zeros((num_states, nmo, n_occupied))
-        temp2 = np.zeros((num_states, nmo, n_occupied))
-
-        R1 = R_total.transpose(1, 0, 2)
-        R1 = np.ascontiguousarray(R1)
-        R1 = np.reshape(R1, (nmo, num_states * n_occupied))
-        temp2 = np.dot(U, R1)
-        temp1 = temp2.reshape(nmo, num_states, n_occupied).transpose(1, 0, 2)
-        R1 = np.ascontiguousarray(R_total[:, :n_occupied, :].transpose(2, 0, 1))
-        # R_total1 = np.ascontiguousarray(R_total1)
-        R1 = np.reshape(R1, (n_occupied, num_states * n_occupied))
-        U1 = np.ascontiguousarray(U[:, :n_occupied])
-        temp2 = np.dot(U1, R1)
-        temp1 -= temp2.reshape(nmo, num_states, n_occupied).transpose(1, 0, 2)
-
-        ##sigma_total1 = np.zeros((num_states, nmo, n_occupied))
-        ##temp11 = np.einsum("qs,isl->iql", U, R_total)
-        # for q in nb.prange(nmo):
-        #    for i in range(num_states):
-        #        for l in range(n_occupied):
-        #            #a = 0.0
-        #            a = np.float64(0)
-        #            for s in range(nmo):
-        #                a += U[q,s] * R_total[i,s,l]
-        #                #temp1[i,q,l] += U[q,s] * R_total[i,s,l]
-        #            temp1[i,q,l] = a
-        #
-
-        # for q in nb.prange(nmo):
-        #    for i in range(num_states):
-        #        for s in range(n_occupied):
-        #            a = np.float64(0)
-        #            for l in range(n_occupied):
-        #                a -= U[q,l] * R_total[i,s,l]
-        #                #temp1[i,q,s] -= U[q,l] * R_total[i,s,l]
-        #            temp1[i,q,s] += a
-        R1 = np.ascontiguousarray(temp1)
-        R1 = np.reshape(R1, (num_states, nmo * n_occupied))
-        
-        # R2 = np.zeros((num_states, nmo * n_occupied))
-        ##for i in nb.prange(num_states):
-        ##    for r in range(nmo):
-        ##        for k in range(n_occupied):
-        ##            a = R1[i][r*n_occupied+k] - temp1[i,r,k]
-        ##            if np.abs(a) > 1e-14: print("LARGE error")
-        #G_tensor = G.reshape(nmo, n_occupied, nmo, n_occupied)
-
-        temp1 = np.dot(R1, G)
-        # temp2 = temp1.reshape(num_states, nmo, n_occupied)
-        # for r in nb.prange(nmo):
-        #    for i in range(num_states):
-        #        for k in range(n_occupied):
-        #            a = np.float64(0)
-        #            for p in range(nmo):
-        #                a += U[p,r] * temp2[i,p,k]
-        #                #sigma_total[i,r,k] += U[p,r] * temp2[i,p,k]
-        #            temp1[i,r,k] = a
-        #            sigma_total[i,r,k] = a
-        #
-
-        # for r in nb.prange(n_occupied):
-        #    for i in range(num_states):
-        #        for k in range(n_occupied):
-        #            sigma_total[i,r,k] -= temp1[i,k,r]
-
-        #######for i in nb.prange(num_states):
-        #######    R3 = np.dot(R1[i,:], G)
-        #######    R2[i,:] = R3
-
-        temp2 = temp1.reshape(num_states, nmo, n_occupied)
-        #temp2 = oe.contract("irk,rksl->isl", R1, G_tensor, optimize = "optimal") 
-        temp2 = temp2.transpose(0, 2, 1)
-        temp2 = np.ascontiguousarray(temp2)
-        temp2 = np.reshape(temp2, (num_states * n_occupied, nmo))
-        temp1 = np.dot(temp2, U)
-        temp2 = temp1.reshape(num_states, n_occupied, nmo)
-        sigma_total[:, :, :] = temp2.transpose(0, 2, 1)[:, :, :]
-        sigma_total[:, :n_occupied, :] -= temp2[:, :, :n_occupied]
-
-        A3_tilde = A_tilde + A_tilde.T
-        # temp1 = np.zeros((num_states, nmo, n_occupied))
-        # temp2 = np.zeros((num_states, nmo, n_occupied))
-
-        ##hessian_tilde -= 0.5 * np.einsum("kl,rs->klrs", np.eye(self.n_occupied), A3_tilde)
-        ##hessian_tilde[:,:,:self.n_occupied,:] += 0.5 * np.einsum("rl,ks->klrs", np.eye(self.n_occupied), A3_tilde[:self.n_occupied,:])
-        # for i in nb.prange(num_states):
-        #    for r in range(nmo):
-        #        for k in range(n_occupied):
-        #            a = np.float64(0)
-        #            for s in range(nmo):
-        #                a += A3_tilde[r,s] * R_total[i,s,k]
-        #            temp1[i,r,k] = a
-        #            sigma_total[i,r,k] -= 0.5 * a
-        #
-        # for i in nb.prange(num_states):
-        #    for r in range(n_occupied):
-        #        for k in range(n_occupied):
-        #            sigma_total[i,r,k] += 0.5 * temp1[i,k,r]
-        #
-        ##hessian_tilde -= 0.5 * np.einsum("rs,kl->klrs", np.eye(self.nmo), A3_tilde[:self.n_occupied,:self.n_occupied])
-        # for i in nb.prange(num_states):
-        #    for r in range(nmo):
-        #        for k in range(n_occupied):
-        #            a = np.float64(0)
-        #            for l in range(n_occupied):
-        #                a += A3_tilde[k,l] * R_total[i,r,l]
-        #            sigma_total[i,r,k] -= 0.5 * a
-
-        ##hessian_tilde[:,:,:,:self.n_occupied] += 0.5 * np.einsum("ks,rl->klrs", np.eye(self.n_occupied), A3_tilde[:,:self.n_occupied])
-        # for i in nb.prange(num_states):
-        #    for r in range(nmo):
-        #        for k in range(n_occupied):
-        #            a = np.float64(0)
-        #            for l in range(n_occupied):
-        #                a += A3_tilde[r,l] * R_total[i,k,l]
-        #            sigma_total[i,r,k] += 0.5 * a
-        R1 = R_total.transpose(1, 0, 2)
-        R1 = np.ascontiguousarray(R1)
-        R1 = np.reshape(R1, (nmo, num_states * n_occupied))
-        temp2 = np.dot(A3_tilde, R1)
-        temp1 = temp2.reshape(nmo, num_states, n_occupied).transpose(1, 0, 2)
-        sigma_total[:, :, :] -= 0.5 * temp1[:, :, :]
-        sigma_total[:, :n_occupied, :] += (
-            0.5 * temp1.transpose(0, 2, 1)[:, :, :n_occupied]
-        )
-        A3 = A3_tilde[:n_occupied, :n_occupied].T
-        A3 = np.ascontiguousarray(A3)
-        R1 = np.ascontiguousarray(R_total)
-        R1 = np.reshape(R1, (num_states * nmo, n_occupied))
-        temp2 = np.dot(R1, A3)
-        sigma_total[:, :, :] -= (
-            0.5 * temp2.reshape(num_states, nmo, n_occupied)[:, :, :]
-        )
-        A3 = A3_tilde[:, :n_occupied].T
-        A3 = np.ascontiguousarray(A3)
-        R1 = np.ascontiguousarray(R_total[:, :n_occupied, :])
-        R1 = np.reshape(R1, (num_states * n_occupied, n_occupied))
-        temp2 = np.dot(R1, A3)
-        temp1 = temp2.reshape(num_states, n_occupied, nmo)
-        sigma_total[:, :, :] += 0.5 * temp1.transpose(0, 2, 1)[:, :, :]
-
-        for j in range(index_map_size):
-            r = index_map[j][0]
-            k = index_map[j][1]
-            for i in range(num_states):
-                sigma_reduced[i][j + pointer] = sigma_total[i][r][k]
-    @staticmethod
-    @nb.jit(
-        """void(float64[:,::1], float64[:,::1], int64[:,::1], float64[:,::1], float64[:,::1], float64[:,::1], float64[:,::1], float64[:,::1],
-            int64, int64, int64, int64, int64, int64, int64, int64)""",
-        nopython=True,
-        # cache=True unconditionally.  This used to be cache=(_QED_G_SYMV == 0),
-        # because numba's cache key is the function's own source and does NOT see
-        # which _symv_accumulate the module bound -- so a knob-on process could
-        # load an artifact compiled against the dgemv stand-in and the knob would
-        # do nothing, silently, both variants computing the same numbers.  That
-        # is fixed at the root: dsymv is now bound by SYMBOL NAME and
-        # UNCONDITIONALLY, so there is exactly one _symv_accumulate and one
-        # correct artifact, and QED_G_SYMV only selects a branch at run time via
-        # the use_symv argument.  See the _symv_accumulate note.
-        cache=True,
-        fastmath=True,
-        parallel=False,
-    )
-    def build_sigma_reduced7(
-        U,
-        A_tilde,
-        index_map,
-        G_ij,
-        G_ti,
-        G_tu,
-        R_reduced,
-        sigma_reduced,
-        num_states,
-        pointer,
-        nmo,
-        index_map_size,
-        n_occupied,
-        n_inactive,
-        n_active,
-        use_symv,
-    ):
-
-        assert U.shape == (nmo, nmo)
-        assert A_tilde.shape == (nmo, nmo)
-        R_total = np.zeros((num_states, nmo, n_occupied))
-        # A debug `print("num_states", num_states)` used to sit here.  In a
-        # nopython function that is one GIL acquisition + one write per
-        # Hessian-vector product: measured at 0.27 ms of an 8.18 ms call, i.e.
-        # 0.6 s over the 2083 single-vector matvecs of a c10h8 run, and ~2000
-        # lines of a 21 MB log.  (The same print remains in the retired
-        # build_sigma_reduced4 above, which has no live caller.)
-        #for j in nb.prange(index_map_size):
-        for j in range(index_map_size):
-            r = index_map[j][0]
-            k = index_map[j][1]
-            for i in range(num_states):
-                R_total[i][r][k] = R_reduced[i][j + pointer]
-
-        sigma_total = np.zeros((num_states, nmo, n_occupied))
-        temp1 = np.zeros((num_states, nmo, n_occupied))
-        temp2 = np.zeros((num_states, nmo, n_occupied))
-
-        R1 = R_total.transpose(1, 0, 2)
-        R1 = np.ascontiguousarray(R1)
-        R1 = np.reshape(R1, (nmo, num_states * n_occupied))
-        temp2 = np.dot(U, R1)
-        temp1 = temp2.reshape(nmo, num_states, n_occupied).transpose(1, 0, 2)
-        R1 = np.ascontiguousarray(R_total[:, :n_occupied, :].transpose(2, 0, 1))
-        # R_total1 = np.ascontiguousarray(R_total1)
-        R1 = np.reshape(R1, (n_occupied, num_states * n_occupied))
-        U1 = np.ascontiguousarray(U[:, :n_occupied])
-        temp2 = np.dot(U1, R1)
-        temp1 -= temp2.reshape(nmo, num_states, n_occupied).transpose(1, 0, 2)
-
-
-
-        # 1. Create views of the (num_states, nmo, n_occupied) tensor 'temp1'.
-        # Slicing on the last dimension is contiguous in memory and very fast (no copy).
-        R_i_tensor = temp1[:, :, :n_inactive]
-        R_a_tensor = temp1[:, :, n_inactive:]
-        
-        # 2. Reshape these tensors into 2D matrices for np.dot.
-        # This is also a fast, copy-free "view" operation.
-        # We assume the G-blocks are flattened with index (r,k) -> r * n_block_occ + k
-        
-        R1_i = R_i_tensor.copy().reshape(num_states, nmo * n_inactive)
-        R1_a = R_a_tensor.copy().reshape(num_states, nmo * n_active)
-
-
-        # 3. Perform the cache-friendly blocked matrix multiplication.
-        # We use the G_ij, G_ti, G_tu blocks you passed in.
-        # We use the symmetry G_it = G_ti.T
-
-        # Calculate the inactive block of sigma: (num_states, nmo * n_inactive)
-        # QED_G_SYMV arrives as the runtime argument use_symv rather than being
-        # read from the module global, so both settings compile from identical
-        # source and nothing here depends on numba's branch pruning.  What keeps
-        # the on-disk cache honest is that dsymv is bound unconditionally and by
-        # symbol name -- see the note there.  G_ij is symmetric, so dsymv reads one 109 MB
-        # triangle where dgemv reads the whole 218 MB square: measured 2.40x on
-        # this term at c10h8 dims.  See the module-level QED_G_SYMV note for why
-        # this is gated on num_states == 1.
-        if use_symv == 1 and num_states == 1:
-            sigma_i = np.dot(R1_a, G_ti)
-            _symv_accumulate(G_ij, R1_i[0], sigma_i[0])
-        else:
-            sigma_i = np.dot(R1_i, G_ij) + np.dot(R1_a, G_ti)
-
-        # Calculate the active block of sigma: (num_states, nmo * n_active)
-        sigma_a = np.dot(R1_i, G_ti.T) + np.dot(R1_a, G_tu)
-
-        # 4. Assemble the result back into the 3D tensor 'temp2'.
-        # We allocate the output tensor 'temp2' (which you did in the original code).
-        temp2 = np.zeros((num_states, nmo, n_occupied)) # You already have this
-        temp2[:, :, :n_inactive] = sigma_i.reshape(num_states, nmo, n_inactive)
-        temp2[:, :, n_inactive:] = sigma_a.reshape(num_states, nmo, n_active)  
-
-
-
-        #temp2 = oe.contract("irk,rksl->isl", R1, G_tensor, optimize = "optimal") 
-        temp2 = temp2.transpose(0, 2, 1)
-        temp2 = np.ascontiguousarray(temp2)
-        temp2 = np.reshape(temp2, (num_states * n_occupied, nmo))
-        temp1 = np.dot(temp2, U)
-        temp2 = temp1.reshape(num_states, n_occupied, nmo)
-        sigma_total[:, :, :] = temp2.transpose(0, 2, 1)[:, :, :]
-        sigma_total[:, :n_occupied, :] -= temp2[:, :, :n_occupied]
-
-        A3_tilde = A_tilde + A_tilde.T
-        # temp1 = np.zeros((num_states, nmo, n_occupied))
-        # temp2 = np.zeros((num_states, nmo, n_occupied))
-
-        ##hessian_tilde -= 0.5 * np.einsum("kl,rs->klrs", np.eye(self.n_occupied), A3_tilde)
-        ##hessian_tilde[:,:,:self.n_occupied,:] += 0.5 * np.einsum("rl,ks->klrs", np.eye(self.n_occupied), A3_tilde[:self.n_occupied,:])
-        # for i in nb.prange(num_states):
-        #    for r in range(nmo):
-        #        for k in range(n_occupied):
-        #            a = np.float64(0)
-        #            for s in range(nmo):
-        #                a += A3_tilde[r,s] * R_total[i,s,k]
-        #            temp1[i,r,k] = a
-        #            sigma_total[i,r,k] -= 0.5 * a
-        #
-        # for i in nb.prange(num_states):
-        #    for r in range(n_occupied):
-        #        for k in range(n_occupied):
-        #            sigma_total[i,r,k] += 0.5 * temp1[i,k,r]
-        #
-        ##hessian_tilde -= 0.5 * np.einsum("rs,kl->klrs", np.eye(self.nmo), A3_tilde[:self.n_occupied,:self.n_occupied])
-        # for i in nb.prange(num_states):
-        #    for r in range(nmo):
-        #        for k in range(n_occupied):
-        #            a = np.float64(0)
-        #            for l in range(n_occupied):
-        #                a += A3_tilde[k,l] * R_total[i,r,l]
-        #            sigma_total[i,r,k] -= 0.5 * a
-
-        ##hessian_tilde[:,:,:,:self.n_occupied] += 0.5 * np.einsum("ks,rl->klrs", np.eye(self.n_occupied), A3_tilde[:,:self.n_occupied])
-        # for i in nb.prange(num_states):
-        #    for r in range(nmo):
-        #        for k in range(n_occupied):
-        #            a = np.float64(0)
-        #            for l in range(n_occupied):
-        #                a += A3_tilde[r,l] * R_total[i,k,l]
-        #            sigma_total[i,r,k] += 0.5 * a
-        R1 = R_total.transpose(1, 0, 2)
-        R1 = np.ascontiguousarray(R1)
-        R1 = np.reshape(R1, (nmo, num_states * n_occupied))
-        temp2 = np.dot(A3_tilde, R1)
-        temp1 = temp2.reshape(nmo, num_states, n_occupied).transpose(1, 0, 2)
-        sigma_total[:, :, :] -= 0.5 * temp1[:, :, :]
-        sigma_total[:, :n_occupied, :] += (
-            0.5 * temp1.transpose(0, 2, 1)[:, :, :n_occupied]
-        )
-        A3 = A3_tilde[:n_occupied, :n_occupied].T
-        A3 = np.ascontiguousarray(A3)
-        R1 = np.ascontiguousarray(R_total)
-        R1 = np.reshape(R1, (num_states * nmo, n_occupied))
-        temp2 = np.dot(R1, A3)
-        sigma_total[:, :, :] -= (
-            0.5 * temp2.reshape(num_states, nmo, n_occupied)[:, :, :]
-        )
-        A3 = A3_tilde[:, :n_occupied].T
-        A3 = np.ascontiguousarray(A3)
-        R1 = np.ascontiguousarray(R_total[:, :n_occupied, :])
-        R1 = np.reshape(R1, (num_states * n_occupied, n_occupied))
-        temp2 = np.dot(R1, A3)
-        temp1 = temp2.reshape(num_states, n_occupied, nmo)
-        sigma_total[:, :, :] += 0.5 * temp1.transpose(0, 2, 1)[:, :, :]
-
-        for j in range(index_map_size):
-            r = index_map[j][0]
-            k = index_map[j][1]
-            for i in range(num_states):
-                sigma_reduced[i][j + pointer] = sigma_total[i][r][k]
+    # ---------------------------------------------------------------
+    # build_sigma_reduced / _2 / _3 / _4 and orbital_sigma -- earlier
+    # generations of the orbital Hessian-vector product -- MOVED to
+    # legacy_python_ci.py on 2026-09-04.  build_sigma_reduced7 (jitted,
+    # block-G) reached through orbital_sigma3 is the live one.
+    # ---------------------------------------------------------------
+    # build_sigma_reduced7 MOVED to orbital_sigma.py (2026-09-04) -- module-private
+    # there: its only caller is in that module.
 
 
     def microiteration_ci_integrals_transform(
@@ -10239,6 +10870,187 @@ class PFHamiltonianGenerator:
 
        
 
+    def true_energy_mode(self):
+        """Effective QED_TRUE_ENERGY_RATIO at this moment.
+
+        Without QED_TRUE_ENERGY_REACTIVE this is just the knob.  With it, the
+        machinery stays OFF -- so the model keeps the large radius of
+        convergence that finds the better basin (item 331D) -- until a
+        macroiteration energy actually rises, after which it is armed for the
+        rest of the run.
+        """
+        if not _QED_TRUE_ENERGY_REACTIVE:
+            return _QED_TRUE_ENERGY_RATIO
+        return 2 if getattr(self, "_true_energy_armed", False) else 0
+
+    def true_energy_should_engage(self, U2_trial):
+        """Should the true-energy machinery run at this trial rotation?
+
+        QED_TRUE_ENERGY_ADAPTIVE only.  Returns True unconditionally when the
+        knob is off, so the adaptive path is an exact no-op by default and the
+        callers stay one-branch.
+
+        The test is ||U2_trial - I||_F > QED_TRUE_ENERGY_EPS_C: how far the
+        trial rotation has walked from the point the model was expanded at.
+        Deliberately computable WITHOUT the E(U) transform -- that is the whole
+        cost saving, and it is why the trigger is the rotation rather than
+        Kreplin's |D^k - D^(k-1)| (which would need the rotated density).
+        See the knob note at the top of this file for item 330's measurement.
+        """
+        if not _QED_TRUE_ENERGY_ADAPTIVE:
+            return True
+        # NORMALISED BY sqrt(index_map_size).  ||U - I||_F sums over every
+        # rotation parameter, so for a typical per-parameter rotation theta it
+        # grows like theta*sqrt(N) -- an EXTENSIVE quantity.  N differs 28-fold
+        # across the test set (h4 208, c2h4 939, c10h8 5789), so the RAW norm is
+        # not comparable between systems and a single threshold on it is
+        # meaningless.  Measured medians: raw 0.0089 / 0.0078 / 0.0492 (c10h8
+        # looks 6.3x "worse" purely because sqrt(5789/208) = 5.3); normalised
+        # 6.18e-4 / 2.54e-4 / 6.47e-4.  The developer raised the system-size
+        # point; an earlier draft here concluded from the RAW numbers that the
+        # trigger was anti-correlated with need, and that conclusion is
+        # WITHDRAWN -- it was measuring dimension, not conditioning.
+        disp = np.linalg.norm(
+            U2_trial - np.eye(U2_trial.shape[0])
+        ) / np.sqrt(max(self.index_map_size, 1))
+        engaged = disp > _QED_TRUE_ENERGY_EPS_C
+        # Printed on EVERY adaptive call so the threshold can be CHOSEN from the
+        # measured distribution instead of assumed.  Run with
+        # QED_TRUE_ENERGY_EPS_C=0 to get the full distribution at behaviour
+        # identical to the unconditional knob (disp > 0 is always true).
+        print(
+            "adaptive trigger ||U2_trial-I||_F/sqrt(N)", disp,
+            "N", self.index_map_size,
+            "eps_c", _QED_TRUE_ENERGY_EPS_C,
+            "engaged", engaged,
+            flush=True,
+        )
+        return engaged
+
+    def true_energy_at_trial(self, U2_trial, eigenvecs):
+        """EXACT energy E(U) at trial orbitals U2_trial, at FIXED RDMs.
+
+        QED_TRUE_ENERGY_RATIO only -- nothing calls this when the knob is off.
+
+        This is Molpro's ENERGY(VAR), and it is what
+        microiteration_exact_energy's E(T) = 2A.T + T.G.T (ENERGY(PROJ)) is an
+        approximation to.
+
+        *** WHY THIS DOES THE FULL TRANSFORMATION, WHICH IS THE EXPENSIVE ONE. ***
+        The obvious cheap route -- reuse microiteration_ci_integrals_transform,
+        which already runs once per accepted orbital step and is 12-46x cheaper
+        -- DOES NOT WORK, and the reason is worth recording because it is not
+        visible from that routine's name.  It builds the updated active
+        integrals from self.J[act,act,:,:] and self.fock_core with terms
+        explicitly first and second order in T = U - I (`E_core += 4.0 *
+        einsum(...T)`, `active_twoeint = -self.active_twoeint + temp7 +
+        temp7.T + O(T^2)`).  It is a SECOND-ORDER INTEGRAL UPDATE, not a
+        transformation.  An energy assembled from its output therefore
+        reproduces E(T) rather than checking it: measured on the c2h4 case,
+        `true energy change` matched `model energy change` to 12 digits at
+        every step while the macroiteration energy still rose 8.3 Eh.  That is
+        a consistency check on two second-order expressions, not a PROJ-VAR gap.
+
+        The exact energy needs the ERIs genuinely retransformed at the rotated
+        orbitals, i.e. c_full_transformation_macroiteration out of self.twoeint,
+        exactly as ah_orbital_optimization did at its accept site (that routine
+        was removed 2026-09-04; see git history) and
+        as energy_function does for the BFGS path.  Measured cost per call:
+        0.050 s (c2h4), 0.140 s (Cr2), 2.334 s (c10h8).
+
+        BASIS BOOKKEEPING.  self.twoeint / self.H1 / self.d_cmo1 are in the
+        ORIGINAL MO basis and are never rebound; self.U_total maps that basis to
+        the current macroiteration's orbitals (:4953, :4972, :5629); self.U2 is
+        the rotation accumulated inside this call to microiteration_
+        optimization6.  So the total rotation to a trial point is
+        self.U_total @ U2_trial -- the same product the macro loop forms after
+        this routine returns.
+        """
+        U_tot_trial = np.einsum("pq,qs->ps", self.U_total, U2_trial)
+
+        # (n_occupied, n_occupied, nmo, nmo) each -- 9 MB at c2h4 dims, 394 MB
+        # at c10h8's.  Cached on self so a per-step call does not re-malloc
+        # them; freed with the object.
+        if getattr(self, "_true_energy_J", None) is None:
+            self._true_energy_J = np.zeros(
+                (self.n_occupied, self.n_occupied, self.nmo, self.nmo)
+            )
+            self._true_energy_K = np.ascontiguousarray(
+                np.zeros((self.n_occupied, self.n_occupied, self.nmo, self.nmo))
+            )
+        J_t = self._true_energy_J
+        K_t = self._true_energy_K
+        J_t[:, :, :, :] = 0.0
+        K_t[:, :, :, :] = 0.0
+        self._macro_JK(U_tot_trial, J_t, K_t)
+
+        temp8 = np.einsum("pq,qs->ps", self.H1, U_tot_trial)
+        h1_t = np.einsum("ps,pr->rs", temp8, U_tot_trial)
+        temp8 = np.einsum("pq,qs->ps", self.d_cmo1, U_tot_trial)
+        d_cmo_t = np.einsum("ps,pr->rs", temp8, U_tot_trial)
+
+        # QED_TRUE_ENERGY_REEXPAND keeps these so an ACCEPTED step can install
+        # the transform instead of discarding it (J_t/K_t are already the cached
+        # buffers; only these three are new, and they are nmo^2 each).
+        if _QED_TRUE_ENERGY_REEXPAND:
+            self._true_energy_h1 = h1_t
+            self._true_energy_d = d_cmo_t
+            self._true_energy_Utot = U_tot_trial
+
+        return self.rdm_exact_energy(J_t, K_t, h1_t, d_cmo_t, eigenvecs)
+
+    def rebuild_G_blocks(self, G):
+        """The G_blocks tuple, rebuilt exactly as the microiteration top builds it.
+
+        QED_TRUE_ENERGY_REEXPAND only.  Factored out because re-expansion has to
+        redo it after build_intermediates writes a new G; the flattening
+        convention is the one build_sigma_reduced7 / microiteration_exact_energy
+        assume (rows (s,l), columns (r,k), flattened r*n_block + k).
+        """
+        if _QED_G_TILED:
+            return self.tiled_G_blocks(G)
+        G_t = G.transpose(3, 1, 2, 0)
+        return (
+            G_t[:, : self.n_in_a, :, : self.n_in_a].reshape(
+                self.nmo * self.n_in_a, self.nmo * self.n_in_a
+            ),
+            G_t[:, self.n_in_a :, :, : self.n_in_a].reshape(
+                self.nmo * self.n_act_orb, self.nmo * self.n_in_a
+            ),
+            G_t[:, self.n_in_a :, :, self.n_in_a :].reshape(
+                self.nmo * self.n_act_orb, self.nmo * self.n_act_orb
+            ),
+        )
+
+    def reexpand_at_new_orbitals(self, A, G, eigenvecs):
+        """Move the model's expansion point to the current trial orbitals.
+
+        QED_TRUE_ENERGY_REEXPAND only.  Installs the J/K/h1/d_cmo that
+        true_energy_at_trial has just produced, folds the rotation into
+        U_total, resets U2/U3 to the identity, and rebuilds A and G from the NEW
+        integrals -- so the next build_gradient(self.U2, ...) is evaluated at
+        T = 0 and returns the gradient AT the new point, exactly as
+        ah_orbital_optimization did, before it was removed 2026-09-04 (see the
+        knob note at the top of this file).
+
+        The caller's post-return bookkeeping stays correct: the macro loop folds
+        self.U2 into self.U_total and rotates H_spatial2/d_cmo by it, and with
+        U2 = I both are no-ops on an already-correct U_total.
+
+        Returns the rebuilt G_blocks.
+        """
+        self.J[:, :, :, :] = self._true_energy_J
+        self.K[:, :, :, :] = self._true_energy_K
+        self.H_spatial2[:, :] = self._true_energy_h1
+        self.d_cmo[:, :] = self._true_energy_d
+        self.U_total = self._true_energy_Utot.copy()
+        self.U2 = np.eye(self.nmo)
+        self.U3 = np.eye(self.nmo)
+        A[:, :] = 0.0
+        G[:, :, :, :] = 0.0
+        self.build_intermediates(eigenvecs, A, G, True)
+        return self.rebuild_G_blocks(G)
+
     def microiteration_exact_energy(self, U, A, G_blocks):
         # print("test U")
         # print(U)
@@ -10355,16 +11167,7 @@ class PFHamiltonianGenerator:
         K_temp = np.zeros((self.n_occupied, self.n_occupied, self.nmo, self.nmo))
 
         K_temp = np.ascontiguousarray(K_temp)
-        c_full_transformation_macroiteration(
-            U_temp,
-            self.twoeint,
-            J_temp,
-            K_temp,
-            self.index_map_pq,
-            self.index_map_kl,
-            self.nmo,
-            self.n_occupied,
-        )
+        self._macro_JK(U_temp, J_temp, K_temp)
         # self.full_transformation_macroiteration(self.U_total, self.J, self.K)
 
         temp8 = np.zeros((self.nmo, self.nmo))
@@ -10408,16 +11211,7 @@ class PFHamiltonianGenerator:
         K_temp = np.zeros((self.n_occupied, self.n_occupied, self.nmo, self.nmo))
 
         K_temp = np.ascontiguousarray(K_temp)
-        c_full_transformation_macroiteration(
-            U_temp,
-            self.twoeint,
-            J_temp,
-            K_temp,
-            self.index_map_pq,
-            self.index_map_kl,
-            self.nmo,
-            self.n_occupied,
-        )
+        self._macro_JK(U_temp, J_temp, K_temp)
         # self.full_transformation_macroiteration(self.U_total, self.J, self.K)
 
         temp8 = np.zeros((self.nmo, self.nmo))
@@ -10534,6 +11328,13 @@ class PFHamiltonianGenerator:
                     and self.n_in_a <= r < self.n_occupied
                 ):
                     continue
+                # QED_ORBITAL_SYMMETRY: skip rotations that mix symmetry species.
+                if (
+                    _QED_ORBITAL_SYMMETRY
+                    and self._sym_labels is not None
+                    and self._sym_labels[r] != self._sym_labels[k]
+                ):
+                    continue
                 reduced_gradient[index_count1] = gradient_tilde[r][k]
                 # print(r,k,index_count1)
                 # index_count2 = 0
@@ -10602,16 +11403,7 @@ class PFHamiltonianGenerator:
             K_temp = np.ascontiguousarray(K_temp)
 
             # transform 2ei, J, and K with displaced unitary matrix
-            c_full_transformation_macroiteration(
-                U_temp,
-                self.twoeint,
-                J_temp,
-                K_temp,
-                self.index_map_pq,
-                self.index_map_kl,
-                self.nmo,
-                self.n_occupied,
-            )
+            self._macro_JK(U_temp, J_temp, K_temp)
 
             # initialize temporary arrays and perform transformations on 1e arrays
             temp8 = np.zeros((self.nmo, self.nmo))
@@ -10655,16 +11447,7 @@ class PFHamiltonianGenerator:
             K_temp = np.ascontiguousarray(K_temp)
 
             # transform with displaced
-            c_full_transformation_macroiteration(
-                U_temp,
-                self.twoeint,
-                J_temp,
-                K_temp,
-                self.index_map_pq,
-                self.index_map_kl,
-                self.nmo,
-                self.n_occupied,
-            )
+            self._macro_JK(U_temp, J_temp, K_temp)
             # self.full_transformation_macroiteration(self.U_total, self.J, self.K)
 
             temp8 = np.zeros((self.nmo, self.nmo))
@@ -10709,16 +11492,7 @@ class PFHamiltonianGenerator:
         K_temp = np.zeros((self.n_occupied, self.n_occupied, self.nmo, self.nmo))
 
         K_temp = np.ascontiguousarray(K_temp)
-        c_full_transformation_macroiteration(
-            U_temp,
-            self.twoeint,
-            J_temp,
-            K_temp,
-            self.index_map_pq,
-            self.index_map_kl,
-            self.nmo,
-            self.n_occupied,
-        )
+        self._macro_JK(U_temp, J_temp, K_temp)
         # self.full_transformation_macroiteration(self.U_total, self.J, self.K)
 
         temp8 = np.zeros((self.nmo, self.nmo))
@@ -10893,6 +11667,13 @@ class PFHamiltonianGenerator:
                     and self.n_in_a <= r < self.n_occupied
                 ):
                     continue
+                # QED_ORBITAL_SYMMETRY: skip rotations that mix symmetry species.
+                if (
+                    _QED_ORBITAL_SYMMETRY
+                    and self._sym_labels is not None
+                    and self._sym_labels[r] != self._sym_labels[k]
+                ):
+                    continue
                 reduced_gradient[index_count1] = gradient_tilde[r][k]
                 # print(r,k,index_count1)
                 # index_count2 = 0
@@ -10933,1345 +11714,14 @@ class PFHamiltonianGenerator:
         energy += np.dot(sigma_reduced, step)
         return energy
 
-    def microiteration_optimization5(
-        self, U, eigenvecs, c_get_roots, convergence_threshold
-    ):
-        # print("E_core", self.E_core)
-        self.U2 = copy.deepcopy(U)
-        trust_radius = 0.4
-        rot_dim = self.nmo
-        np1 = self.N_p + 1
-        H_dim = self.num_alpha * self.num_alpha * np1
-        A = np.zeros((rot_dim, rot_dim))
-        G = np.zeros((self.n_occupied, self.n_occupied, rot_dim, rot_dim))
-        # A2 = np.zeros((rot_dim, rot_dim))
-        # G2 = np.zeros((self.n_occupied, self.n_occupied, rot_dim, rot_dim))
-        # print(eigenvecs)
-        self.reduced_hessian_diagonal = np.zeros(self.index_map_size)
-
-        active_twoeint = np.zeros(
-            (self.n_act_orb, self.n_act_orb, self.n_act_orb, self.n_act_orb)
-        )
-        active_fock_core = np.zeros((self.n_act_orb, self.n_act_orb))
-        d_cmo = np.zeros((self.nmo, self.nmo))
-
-        gradient_tilde = np.zeros((rot_dim, self.n_occupied))
-        hessian_tilde = np.zeros((self.n_occupied, self.n_occupied, rot_dim, rot_dim))
-        gradient_tilde2 = np.zeros((rot_dim, self.n_occupied))
-        A_tilde2 = np.zeros((rot_dim, rot_dim))
-
-        davidson_step = np.zeros((1, self.index_map_size))
-        guess_vector = np.zeros((1, self.index_map_size + 1))
-        # convergence_threshold = 1e-4
-        convergence = 0
-        current_residual = 1
-        # while(True):
-        current_energy = 0.0
-        old_energy = 0.0
-        N_orbital_optimization_steps = 1
-        N_microiterations = 20
-        microiteration = 0
-        qn_optimization = False
-        qn_count = 0
-        while microiteration < N_microiterations:
-            print("\n")
-            print("\n")
-            print("MICROITERATION", microiteration + 1, flush=True)
-
-            # while(microiteration < 2):
-            trust_radius = 0.4
-            A[:, :] = 0.0
-            G[:, :, :, :] = 0.0
-            start = timer()
-            self.build_intermediates(eigenvecs, A, G, True)
-            #G_blocks = self.build_intermediates_with_blocks(eigenvecs, A, G, True)
-            end = timer()
-            print("build intermediates took", end - start)
-            # A2[:,:] = 0.0
-            # G2[:,:,:,:] = 0.0
-            # self.build_intermediates2(eigenvecs, A2, G2, True)
-            print("LETS CHECK ENERGY AT THE BEGINING OF EACH MICROITERATION")
-            #print(old_energy, current_energy)
-            #print("initial convergence threshold", convergence_threshold)
-            #if (
-            #    np.abs(current_energy - old_energy)
-            #    < max(0.01 * convergence_threshold, 1e-10)
-            #) and microiteration >= 2:
-            #    # if (np.abs(current_energy - old_energy) < 1e-15) and microiteration >=2:
-            #    print("microiteration converged (small energy change)")
-            #    # self.U_total = np.einsum("pq,qs->ps", self.U_total, self.U2)
-            #    break
-
-            start = timer()
-            start1 = timer()
-            zero_energy = self.E_core
-            zero_energy += np.dot(self.active_fock_core.flatten(), self.D_tu_avg)
-            zero_energy += 0.5 * np.dot(self.active_twoeint.flatten(), self.D_tuvw_avg)
-            zero_energy += -np.sqrt(self.omega / 2) * np.dot(
-                self.d_cmo[
-                    self.n_in_a : self.n_occupied, self.n_in_a : self.n_occupied
-                ].flatten(),
-                self.Dpe_tu_avg,
-            )
-            end1 = timer()
-            print("check zero energy took", end1 - start1)
-            start1 = timer()
-            zero_energy += self.calculate_ci_dependent_energy(eigenvecs, self.d_cmo)
-            end1 = timer()
-            print("check ci dependent energy took", end1 - start1)
-            zero_energy += self.Enuc
-            zero_energy += self.d_c
-            print("zero energy", zero_energy, flush=True)
-            start1 = timer()
-            #G1 = G.transpose(3, 1, 2, 0).reshape(
-            #    self.nmo * self.n_occupied, self.nmo * self.n_occupied
-            #)
-            # G_t is a free view (transpose only); the three reshapes below are
-            # the copies that actually cost.  The full (nmo*n_occupied) square
-            # G1 used to be materialized here too -- a second, larger copy --
-            # but every consumer now takes the blocks, so it is gone.
-            G_t = G.transpose(3, 1, 2, 0)
-            G_ij = G_t[:, :self.n_in_a, :, :self.n_in_a].reshape(
-                self.nmo * self.n_in_a, self.nmo * self.n_in_a    
-            )
-            G_ti = G_t[:, self.n_in_a:, :, :self.n_in_a].reshape(
-                self.nmo * self.n_act_orb, self.nmo * self.n_in_a    
-            )
-            G_tu = G_t[:, self.n_in_a:, :, self.n_in_a:].reshape(
-                self.nmo * self.n_act_orb, self.nmo * self.n_act_orb 
-            )
-            G_blocks = (G_ij, G_ti, G_tu)
-
-            end1 = timer()
-            print("transpose matrix G took", end1 - start1)
-            start1 = timer()
-            initial_energy_change = self.microiteration_exact_energy(self.U2, A, G_blocks)
-            end1 = timer()
-            print("calculate initial exact energy took", end1 - start1)
-            current_energy = zero_energy + initial_energy_change
-            print(
-                "current energy from zero energy + second order energy change",
-                zero_energy + initial_energy_change,
-                flush=True,
-            )
-            print(old_energy, current_energy)
-            print("initial convergence threshold", convergence_threshold)
-            if (
-                np.abs(current_energy - old_energy)
-                < max(0.01 * convergence_threshold, 1e-10)
-            ) and microiteration >= 2:
-                # if (np.abs(current_energy - old_energy) < 1e-15) and microiteration >=2:
-                print("microiteration converged (small energy change)")
-                # self.U_total = np.einsum("pq,qs->ps", self.U_total, self.U2)
-                break
-
-
-            old_energy = current_energy
-            end = timer()
-            print("check initial energy took", end - start)
-
-            #self.build_gradient_and_hessian(self.U2, A, G, gradient_tilde, hessian_tilde, True)
-            # print(np.shape(gradient_tilde), flush = True)
-
-            start = timer()
-            self.build_gradient(self.U2, A, G, gradient_tilde, A_tilde2, True)
-            end = timer()
-            # self.build_gradient2(self.U2, A, G, hessian_tilde, gradient_tilde, A_tilde2, True)
-
-            print("build gradient took", end - start)
-            #hessian_tilde3 = hessian_tilde.transpose(2,0,3,1)
-            #hessian_tilde3 = hessian_tilde3.reshape((self.n_occupied*self.nmo, self.n_occupied*self.nmo))
-
-            #hessian_diagonal3 = np.diagonal(hessian_tilde3).reshape((self.nmo, self.n_occupied))
-            reduced_hessian_diagonal = np.zeros(self.index_map_size)
-            start = timer()
-            self.build_hessian_diagonal(self.U2, G, A_tilde2)
-            end = timer()
-            print("build hessian diagonal took", end - start)
-            #reduced_hessian = np.zeros((self.index_map_size, self.index_map_size))
-            reduced_gradient = np.zeros(self.index_map_size)
-            index_count1 = 0
-            for k in range(self.n_occupied):
-                for r in range(k + 1, self.nmo):
-                    if k < self.n_in_a and r < self.n_in_a:
-                        continue
-                    if (
-                        self.n_in_a <= k < self.n_occupied
-                        and self.n_in_a <= r < self.n_occupied
-                    ):
-                        continue
-                    reduced_gradient[index_count1] = gradient_tilde[r][k]
-                    #print(r,k,index_count1)
-                    #index_count2 = 0
-                    #for l in range(self.n_occupied):
-                    #   for s in range(l+1,self.nmo):
-                    #       if (l < self.n_in_a and s < self.n_in_a): continue
-                    #       if (self.n_in_a <= l < self.n_occupied and self.n_in_a <= s < self.n_occupied): continue
-                    #       #if (k >= self.n_occupied and r >= self.n_occupied): continue
-                    #       reduced_hessian[index_count1][index_count2] = hessian_tilde3[r*self.n_occupied+k][s*self.n_occupied+l]
-                    #       #print(r,k,s,l,index_count1,index_count2)
-                    #       index_count2 += 1
-                    index_count1 += 1
-            #mu1, w1 = np.linalg.eigh(reduced_hessian)
-            #print("eigenvalue of the reduced hessian", mu1)
-            #print(mu1[0]>0)
-            #print("dot product of gradient and first eigenvector of hessian", np.dot(reduced_gradient, w1[:,0]))
-            #print("dot product of gradient and second eigenvector of hessian", np.dot(reduced_gradient, w1[:,1]))
-            #H_lambda = reduced_hessian - mu1[0] * np.eye(self.index_map_size)
-            #step_limit = -np.einsum("pq,q->p", np.linalg.pinv(H_lambda), reduced_gradient)
-            #print("norm of critical step", np.linalg.norm(step_limit))
-            #print("alpha critical", mu1[0] - np.dot(reduced_gradient, step_limit))
-            #print("gradient norm", np.linalg.norm(reduced_gradient))
-            #if mu1[0] > 0:
-            #    step_limit = -np.einsum("pq,q->p", np.linalg.pinv(reduced_hessian), reduced_gradient)
-            #    print("norm of newton solution", np.linalg.norm(step_limit))
-            ##if microiteration ==0:
-            ##    convergence_threshold = min(0.01 * gradient_norm, np.power(gradient_norm,2))
-            # if gradient_norm < 1e-6:
-            #    print("Microiteration converged (small gradient norm)")
-            #    break
-
-            gradient_norm = np.linalg.norm(reduced_gradient)
-            print("current gradient_norm and residual", gradient_norm, current_residual)
-            print("current convergence_threshold", convergence_threshold)
-            total_norm = np.sqrt(
-                np.power(gradient_norm, 2) + np.power(current_residual, 2)
-            )
-            if total_norm < convergence_threshold:
-                print("total norm", total_norm, flush=True)
-                # self.U_total = np.einsum("pq,qs->ps", self.U_total, self.U2)
-                # temp8 = np.zeros((self.nmo, self.nmo))
-                # temp8 = np.einsum("pq,qs->ps", self.H_spatial2, self.U2)
-                # self.H_spatial2[:,:] = np.einsum("ps,pr->rs", temp8, self.U2)
-                # self.d_cmo[:,:] = d_cmo[:,:]
-                # print(eigenvecs)
-                # print("u2i",self.U2)
-                print("microiteration converged! (small total norm)", flush=True)
-                break
-            
-            # Analyze problem structure
-            n_negative = np.sum(self.reduced_hessian_diagonal < 0)
-            
-            print(f"  Negative curvature directions: {n_negative}/{self.index_map_size}")
-
-
-            orbital_optimization_step = 0
-            restart = False
-            count = 0
-            hard_case = 0
-            reduce_step = 0
-            first_component = np.zeros(self.index_map_size)
-            second_component = np.zeros(self.index_map_size)
-            critical_step_norm = 0
-            reduce_predicted_energy = 0
-            while orbital_optimization_step < N_orbital_optimization_steps:
-                self.U3 = copy.deepcopy(self.U2)
-                print("\n", current_energy)
-                print(
-                    "Microiteration",
-                    microiteration + 1,
-                    "orbital optimization step",
-                    orbital_optimization_step + 1,
-                    flush=True,
-                )
-                gradient_norm = np.linalg.norm(reduced_gradient)
-                print("gradient norm", gradient_norm, flush=True)
-                print("convergence_threshold", convergence_threshold, flush=True)
-
-                # if (gradient_norm < max(0.1 * convergence_threshold, 1e-8)):
-                # if (gradient_norm < max(0.1 * convergence_threshold, 1e-6) and microiteration > 0):
-                # if (gradient_norm < 1e-5 and microiteration > 0):
-                if gradient_norm < 0.1 * convergence_threshold and microiteration > 0:
-                    convergence = 1
-                    # print("Microiteration converged (small gradient norm)")
-                    break
-                if gradient_norm < 1e-7:
-                    convergence = 1
-                    break
-                print("calling pcg for trust region") 
-                step_p, oo = self.solve_pcg_trust_region(self.U2, A_tilde2, G_blocks, reduced_gradient, self.reduced_hessian_diagonal, trust_radius, tol=1e-8, max_iter=1000)
-                print(oo)
-                # new augmented hessian
-                beta = 0
-                dim00 = self.index_map_size + 1
-                augmented_hessian9 = np.zeros((dim00, dim00))
-                w9 = np.zeros((dim00, dim00))
-                step = np.zeros(self.index_map_size)
-                step10_norm = 0.0
-                # print("w",w)
-                # count10 = 0
-                # while np.abs((step10_norm - trust_radius)/trust_radius) > 1e-3:
-                #    print("iteration", count10, "beta", beta)
-                #    augmented_hessian9[:,:] = 0.0
-                #    augmented_hessian9[0,0] = beta
-                #    augmented_hessian9[0,1:] = reduced_gradient
-                #    augmented_hessian9[1:,0] = reduced_gradient.T
-                #    augmented_hessian9[1:,1:] = reduced_hessian
-
-                #    mu9, w9 = np.linalg.eigh(augmented_hessian9)
-                #    print("eig",mu9)
-                #    idx = mu9.argsort()[:dim00]
-                #    scale9 = w9[0][0]
-                #    print("scale",scale9)
-                #    if np.abs(scale9) < 1e-15:
-                #        break
-                #    step10 = w9[1:,0]/scale9
-                #    step10_norm = np.linalg.norm(step10)
-                #    if count10 == 0 and step10_norm < trust_radius: break
-                #    print("check eigenvalues and step norm from diagonalizing the bordering matrix")
-                #    print(mu9, flush=True)
-                #    print("step10 norm", step10_norm, flush=True)
-                #    beta = beta + (beta - mu9[0])/step10_norm * (trust_radius - step10_norm)/trust_radius * (trust_radius + 1.0/step10_norm)
-                #    count10 +=1
-                #    if count10 == 20: break
-                ##w[:,0] = w[:,0]/scale
-                ##print(w)
-                # step9 = w9[1:,0]
-                if np.linalg.norm(reduced_gradient) > 1e-3:
-                    if n_negative == 0:
-                         step_p, shift_lambda, status = self.solve_gltr_trust_region(
-                               self.U2,
-                               A_tilde2,
-                               G_blocks,
-                               reduced_gradient,
-                               self.reduced_hessian_diagonal,
-                               trust_radius,
-                               max_iter=1000,
-                               tol=1e-7
-                         )
-                         step = step_p
-                    else:
-                         if (
-                             hard_case == 1
-                             and reduce_step == 1
-                             and np.linalg.norm(first_component) < trust_radius
-                             and reduce_predicted_energy == 1
-                         ):
-                             print("hard case and current step is smaller than trust radius")
-                             print(np.linalg.norm(first_component))
-                             xy_square = np.dot(first_component, second_component) * np.dot(
-                                 first_component, second_component
-                             )
-                             x_square = np.dot(first_component, first_component)
-                             y_square = np.dot(second_component, second_component)
-                             delta = 4 * xy_square - 4 * y_square * (
-                                 x_square - trust_radius * trust_radius
-                             )
-                             # print(delta)
-                             t1 = (
-                                 -2 * np.dot(first_component, second_component)
-                                 - np.sqrt(delta)
-                             ) / (2 * y_square)
-                             t2 = (
-                                 -2 * np.dot(first_component, second_component)
-                                 + np.sqrt(delta)
-                             ) / (2 * y_square)
-                             print(
-                                 "x^2, xy, y^2, t",
-                                 x_square,
-                                 np.dot(first_component, second_component),
-                                 y_square,
-                                 t1,
-                             )
-                             adjusted_step = first_component + min(np.abs(t1), np.abs(t2)) * second_component
-                             print("adjusted step norm", np.linalg.norm(adjusted_step))
-                             step = adjusted_step
-                         else:
-                             mu9 = np.zeros(dim00)
-                             beta0 = 0
-                             both_roots_normalization = 0
-                             v1 = 0
-                             v2 = 0
-                             u1 = np.zeros(self.index_map_size)
-                             u2 = np.zeros(self.index_map_size)
-                             x1 = np.zeros(self.index_map_size)
-                             x2 = np.zeros(self.index_map_size)
-                             phi1 = 0
-                             phi2 = 0
-
-                             lambda1 = 0
-                             lambda2 = 0
-                             lambda_c = 0
-                             idx = self.reduced_hessian_diagonal.argsort()
-                             delta_u = self.reduced_hessian_diagonal[idx[0]]
-                             delta_l = 0
-                             alpha_u = (
-                                 delta_u + np.linalg.norm(reduced_gradient) * trust_radius
-                             )
-                             alpha_l = 0
-                             count10 = 0
-                             # beta = min(0, alpha_u)
-                             beta = alpha_u
-                             aug_hessian_eigenvecs = np.zeros((dim00, 2))
-                             aug_hessian_eigenvals = np.zeros(2)
-                             print("trust radius", trust_radius)
-                             self.collapse_subspace_check = False
-                             while True:
-                                 print("****************************")
-                                 print("lstrs iteration", count10, "beta", beta)
-                                 beta0 = beta
-                                 # mu9[:] = self.projection_step2(reduced_gradient, reduced_hessian, w9, beta, dim00)
-                                 # print("two roots", mu9[0], mu9[1], mu9[2])
-                                 if count10 == 0:
-                                     alpha_range = np.abs(alpha_u - alpha_l)
-                                     Q = self.Davidson_augmented_hessian_solve6(
-                                         self.U2,
-                                         A_tilde2,
-                                         G,
-                                         G_blocks,
-                                         self.reduced_hessian_diagonal,
-                                         reduced_gradient,
-                                         beta,
-                                         alpha_range,
-                                         trust_radius,
-                                         aug_hessian_eigenvecs,
-                                         aug_hessian_eigenvals,
-                                         guess_vector,
-                                         restart=False
-                                     )
-                                     delta_l = aug_hessian_eigenvals[0]
-                                     alpha_l = (
-                                         delta_l
-                                         - np.linalg.norm(reduced_gradient) / trust_radius
-                                     )
-                                 else:
-                                     alpha_range = np.abs(alpha_u - alpha_l)
-                                     guess_vector = Q
-                                     Q = self.Davidson_augmented_hessian_solve6(
-                                         self.U2,
-                                         A_tilde2,
-                                         G,
-                                         G_blocks,
-                                         self.reduced_hessian_diagonal,
-                                         reduced_gradient,
-                                         beta,
-                                         alpha_range,
-                                         trust_radius,
-                                         aug_hessian_eigenvecs,
-                                         aug_hessian_eigenvals,
-                                         guess_vector,
-                                         restart=True
-                                     )
-                                 # print(aug_hessian_eigenvals)
-                                 # print(aug_hessian_eigenvecs)
-                                 mu9[0] = aug_hessian_eigenvals[0]
-                                 mu9[1] = aug_hessian_eigenvals[1]
-                                 w9[:, 0] = aug_hessian_eigenvecs[:, 0]
-                                 w9[:, 1] = aug_hessian_eigenvecs[:, 1]
-                                 print("ALPHA range", alpha_l, alpha_u)
-                                 # idx = mu9.argsort()[:dim00]
-                                 # print(idx)
-                                 # w9[:,0] = w9[:,0]/np.linalg.norm(w9[:,0])
-                                 # w9[:,1] = w9[:,1]/np.linalg.norm(w9[:,1])
-                                 v1 = w9[0, 0] / np.linalg.norm(w9[:, 0])
-                                 v2 = w9[0, 1] / np.linalg.norm(w9[:, 1])
-                                 u1[:] = w9[1:, 0] / np.linalg.norm(w9[:, 0])
-                                 u2[:] = w9[1:, 1] / np.linalg.norm(w9[:, 1])
-                                 aa1 = np.linalg.norm(reduced_gradient) * np.abs(v1)
-                                 bb1 = np.sqrt(1 - v1 * v1)
-                                 aa2 = np.linalg.norm(reduced_gradient) * np.abs(v2)
-                                 bb2 = np.sqrt(1 - v2 * v2)
-                                 print("aa1, bb1", aa1, bb1, "aa2, bb2", aa2, bb2)
-                                 if mu9[0] > -1e-8 and np.linalg.norm(
-                                     u1
-                                 ) < trust_radius * np.abs(v1):
-                                     hard_case = 2
-                                     print("use newton step")
-                                     break
-                                 delta_u2 = mu9[0] - v1 * np.dot(reduced_gradient, u1) / (
-                                     1 - v1 * v1
-                                 )
-                                 delta_u = min(delta_u, delta_u2)
-                                 print("delta_u2", delta_u2)
-
-                                 epsilon_v = 1e-4
-                                 print(aa1 <= epsilon_v * bb1)
-                                 print(aa2 <= epsilon_v * bb2)
-                                 alpha = beta
-                                 while (
-                                     (aa1 <= epsilon_v * bb1)
-                                     and (aa2 <= epsilon_v * bb2)
-                                     and np.abs(alpha_u - alpha_l)
-                                     > 1e-8 * max(np.abs(alpha_u), np.abs(alpha_l))
-                                 ):
-                                     alpha_u = alpha
-                                     alpha = (alpha_l + alpha_u) / 2
-                                     w9[:, :] = 0.0
-                                     # mu9[:] = self.projection_step2(reduced_gradient, reduced_hessian, w9, alpha, dim00)
-                                     # print("two roots", mu9[0], mu9[1], mu9[2])
-
-                                     alpha_range = np.abs(alpha_u - alpha_l)
-                                     Q = self.Davidson_augmented_hessian_solve6(
-                                         self.U2,
-                                         A_tilde2,
-                                         G,
-                                         G_blocks,
-                                         self.reduced_hessian_diagonal,
-                                         reduced_gradient,
-                                         alpha,
-                                         alpha_range,
-                                         trust_radius,
-                                         aug_hessian_eigenvecs,
-                                         aug_hessian_eigenvals,
-                                         Q,
-                                         restart=True
-                                     )
-                                     mu9[0] = aug_hessian_eigenvals[0]
-                                     mu9[1] = aug_hessian_eigenvals[1]
-                                     w9[:, 0] = aug_hessian_eigenvecs[:, 0]
-                                     w9[:, 1] = aug_hessian_eigenvecs[:, 1]
-                                     v1 = w9[0, 0] / np.linalg.norm(w9[:, 0])
-                                     v2 = w9[0, 1] / np.linalg.norm(w9[:, 1])
-                                     u1[:] = w9[1:, 0] / np.linalg.norm(w9[:, 0])
-                                     u2[:] = w9[1:, 1] / np.linalg.norm(w9[:, 1])
-                                     aa1 = np.linalg.norm(reduced_gradient) * np.abs(v1)
-                                     bb1 = np.sqrt(1 - v1 * v1)
-                                     aa2 = np.linalg.norm(reduced_gradient) * np.abs(v2)
-                                     bb2 = np.sqrt(1 - v2 * v2)
-                                     print(
-                                         alpha,
-                                         aa1 <= epsilon_v * bb1,
-                                         aa2 <= epsilon_v * bb2,
-                                         mu9[0],
-                                         mu9[1],
-                                         bb1,
-                                         bb2,
-                                     )
-                                     delta_u2 = mu9[0] - v1 * np.dot(
-                                         reduced_gradient, u1
-                                     ) / (1 - v1 * v1)
-                                     delta_u = min(delta_u, delta_u2)
-                                     print("new delta_u", delta_u, delta_u2)
-
-                                 if (aa1 <= epsilon_v * bb1) and (aa2 <= epsilon_v * bb2):
-                                     exit()
-                                 elif (aa1 > epsilon_v * bb1) and (aa2 > epsilon_v * bb2):
-                                     both_roots_normalization = 1
-                                 else:
-                                     both_roots_normalization = 0
-                                 beta = alpha
-                                 # update delta_u
-                                 # temptemp = np.dot(reduced_hessian, u1)
-                                 # temptemp2 = np.dot(u1, temptemp)
-
-                                 # delta_u2 = mu9[0] - v1 * np.dot(reduced_gradient, u1)/np.dot(u1,u1)
-                                 # delta_u = min(delta_u, temptemp2/np.dot(u1,u1))
-                                 # print("new delta_u", delta_u)
-                                 ####scale9 = w9[0][0]
-                                 ####print("scale",scale9)
-                                 ####if np.abs(scale9) < 1e-15:
-                                 ####    break
-                                 # assign (k-1) and k-iteration values
-                                 lambda1 = lambda2
-                                 x1 = x2
-                                 phi1 = phi2
-                                 print("two roots", mu9[0], mu9[1])
-                                 if aa1 > epsilon_v * bb1:
-                                     step10 = u1 / v1
-                                     second_component[:] = u2
-                                     lambda2 = mu9[0]
-                                     print("norm from first root", np.linalg.norm(step10))
-                                     # if aa2 > epsilon_v * bb2:
-                                     #    second_component[:] = u2/v2
-                                     #    print("second root norm", np.linalg.norm(second_component))
-                                     if np.linalg.norm(step10) < trust_radius:
-                                         alpha_l = beta
-                                     if np.linalg.norm(step10) > trust_radius:
-                                         alpha_u = beta
-                                 else:
-                                     step10 = u2 / v2
-                                     second_component[:] = u1
-                                     lambda2 = mu9[1]
-                                     print("norm from second root", np.linalg.norm(step10))
-                                     alpha_u = beta
-                                 print("NEW ALPHA range", alpha_l, alpha_u)
-                                 step10_norm = np.linalg.norm(step10)
-                                 x2 = step10
-                                 if mu9[0] > -1e-8 and np.linalg.norm(
-                                     u1
-                                 ) < trust_radius * np.abs(v1):
-                                     hard_case = 2
-                                     print("use newton step")
-                                     break
-                                 phi2 = -np.dot(reduced_gradient, x2)
-                                 # print(step10)
-                                 # print(x1)
-                                 # print(x2)
-                                 # if count10 == 0 and step10_norm < trust_radius: break
-                                 # print("check eigenvalues and step norm from diagonalizing the bordering matrix")
-                                 # print(mu9, flush=True)
-                                 print(
-                                     "step10 norm",
-                                     step10_norm,
-                                     "current beta",
-                                     beta,
-                                     flush=True,
-                                 )
-                                 x1_norm = np.linalg.norm(x1)
-                                 x2_norm = np.linalg.norm(x2)
-                                 phi2_p = np.dot(x2, x2)
-                                 phi1_p = np.dot(x1, x1)
-                                 print(
-                                     "phi1",
-                                     phi1,
-                                     "phi1_p",
-                                     phi1_p,
-                                     "phi2",
-                                     phi2,
-                                     "phi2_p",
-                                     phi2_p,
-                                 )
-                                 if (
-                                     np.abs((step10_norm - trust_radius) / trust_radius)
-                                     <= 1e-3
-                                     and mu9[0] <= 0
-                                 ):
-                                     step = step10
-                                     hard_case = 0
-                                     break
-                                 print("check orthogonality of the first two roots")
-                                 vv1 = w9[0, 0]
-                                 vv2 = w9[0, 1]
-                                 uu1 = w9[1:, 0]
-                                 uu2 = w9[1:, 1]
-                                 # check if the quasi-optimal condition is satisfied
-                                 print(
-                                     "quasi-optimal condition",
-                                     (1 + trust_radius * trust_radius)
-                                     * (vv1 * vv1 + vv2 * vv2),
-                                     flush=True,
-                                 )
-                                 qs = (1 + trust_radius * trust_radius) * (
-                                     vv1 * vv1 + vv2 * vv2
-                                 )
-                                 print(np.dot(w9[:, :2].T, w9[:, :2]))
-
-                                 # construct quasi-optimal step
-                                 epsilon_hc = 1e-6 
-                                 eta = epsilon_hc / (1 - epsilon_hc)
-                                 tau1 = 1
-                                 tau2 = 1
-                                 if qs > 1.0:
-                                     tau1 = (
-                                         (vv1 - vv2 * np.sqrt(qs - 1))
-                                         / (vv1 * vv1 + vv2 * vv2)
-                                         / np.sqrt(1 + trust_radius * trust_radius)
-                                     )
-                                     tau2 = (
-                                         (vv2 + vv1 * np.sqrt(qs - 1))
-                                         / (vv1 * vv1 + vv2 * vv2)
-                                         / np.sqrt(1 + trust_radius * trust_radius)
-                                     )
-                                 elif np.abs(qs - 1.0) < 2e-308:
-                                     tau1 = vv1 / np.sqrt(vv1 * vv1 + vv2 * vv2)
-                                     tau2 = vv2 / np.sqrt(vv1 * vv1 + vv2 * vv2)
-                                 x_tilde = (tau1 * uu1 + tau2 * uu2) / (
-                                     tau1 * vv1 + tau2 * vv2
-                                 )
-
-                                 lambda_tilde = tau1 * tau1 * lambda1 + tau2 * tau2 * lambda2
-                                 psi_tilde = 0.5 * self.microiteration_predicted_energy2(
-                                     self.U2, reduced_gradient, A_tilde2, G_blocks, x_tilde
-                                 )
-                                 if qs > 1.0 or np.abs(qs - 1.0) < 2e-308:
-                                     print(
-                                         "x_tilde norm1",
-                                         np.linalg.norm(x_tilde),
-                                         (mu9[1] - mu9[0])
-                                         * tau2
-                                         * tau2
-                                         * (1 + trust_radius * trust_radius),
-                                         -2.0 * eta * psi_tilde,
-                                     )
-                                     if (mu9[1] - mu9[0]) * tau2 * tau2 * (
-                                         1 + trust_radius * trust_radius
-                                     ) < -2.0 * eta * psi_tilde:
-                                         print("find quasi-optimal solution1", flush=True)
-                                         hard_case = 3
-                                         break
-                                     else:
-                                         if qs > 1.0:
-                                             tau1 = (
-                                                 (vv1 + vv2 * np.sqrt(qs - 1))
-                                                 / (vv1 * vv1 + vv2 * vv2)
-                                                 / np.sqrt(1 + trust_radius * trust_radius)
-                                             )
-                                             tau2 = (
-                                                 (vv2 - vv1 * np.sqrt(qs - 1))
-                                                 / (vv1 * vv1 + vv2 * vv2)
-                                                 / np.sqrt(1 + trust_radius * trust_radius)
-                                             )
-                                             x_tilde = (tau1 * uu1 + tau2 * uu2) / (
-                                                 tau1 * vv1 + tau2 * vv2
-                                             )
-                                             lambda_tilde = (
-                                                 tau1 * tau1 * lambda1
-                                                 + tau2 * tau2 * lambda2
-                                             )
-                                             psi_tilde = (
-                                                 0.5
-                                                 * self.microiteration_predicted_energy2(
-                                                     self.U2,
-                                                     reduced_gradient,
-                                                     A_tilde2,
-                                                     G_blocks,
-                                                     x_tilde,
-                                                 )
-                                             )
-                                             print(
-                                                 "x_tilde norm2",
-                                                 np.linalg.norm(x_tilde),
-                                                 (mu9[1] - mu9[0])
-                                                 * tau2
-                                                 * tau2
-                                                 * (1 + trust_radius * trust_radius),
-                                                 -2.0 * eta * psi_tilde,
-                                                 flush=True,
-                                             )
-                                             if (mu9[1] - mu9[0]) * tau2 * tau2 * (
-                                                 1 + trust_radius * trust_radius
-                                             ) < -2.0 * eta * psi_tilde:
-                                                 print(
-                                                     "find quasi-optimal solution2",
-                                                     flush=True,
-                                                 )
-                                                 hard_case = 3
-                                                 break
-                                 if np.abs(alpha_u - alpha_l) <= 1e-8 * max(
-                                     np.abs(alpha_u), np.abs(alpha_l)
-                                 ):
-                                     print("interval too small")
-                                     if (
-                                         x2_norm < trust_radius
-                                         and both_roots_normalization == 0
-                                     ):
-                                         hard_case = 1
-                                     if both_roots_normalization == 1:
-                                         hard_case = 4
-                                     break
-
-                                 if count10 == 0:
-                                     beta = beta + (beta - lambda2) / x2_norm * (
-                                         trust_radius - x2_norm
-                                     ) / trust_radius * (trust_radius + 1.0 / x2_norm)
-                                 else:
-                                     print("denominator", x2_norm - x1_norm)
-                                     denom = trust_radius * (x2_norm - x1_norm)
-
-                                     if np.abs(denom) > 2e-308:
-                                         lambda_c = (
-                                             lambda1 * x1_norm * (x2_norm - trust_radius)
-                                             + lambda2 * x2_norm * (trust_radius - x1_norm)
-                                         ) / denom
-                                     else:
-                                         lambda_c = delta_u
-                                     if lambda_c > delta_u:
-                                         print(
-                                             "need to safeguard delta_u", lambda_c, delta_u
-                                         )
-                                         lambda_c = delta_u
-                                     # lambda_c = (lambda1 * x1_norm * (x2_norm - trust_radius) + lambda2 * x2_norm * (trust_radius - x1_norm))/trust_radius/(x2_norm - x1_norm)
-                                     # print(lambda_c)
-                                     if np.abs(lambda2 - lambda1) <= 2e-308:
-                                         print("interpolate alpha by bisection")
-                                         beta = (alpha_l + alpha_u) / 2
-                                     else:
-                                         omega_k = (lambda2 - lambda_c) / (lambda2 - lambda1)
-                                         num = (
-                                             x1_norm
-                                             * x2_norm
-                                             * (x2_norm - x1_norm)
-                                             * (lambda1 - lambda_c)
-                                             * (lambda2 - lambda_c)
-                                         )
-
-                                         denom = (
-                                             omega_k * x2_norm + (1 - omega_k) * x1_norm
-                                         ) * (lambda2 - lambda1)
-                                         print(x1_norm, x2_norm)
-                                         print(lambda1, lambda2, lambda_c)
-                                         print(num, denom)
-                                         if np.abs(denom) <= 2e-308:
-                                             print("interpolate alpha by bisection2")
-                                             beta = (alpha_l + alpha_u) / 2
-                                         else:
-                                             beta = (
-                                                 lambda_c
-                                                 + omega_k * phi1
-                                                 + (1 - omega_k) * phi2
-                                                 + num / denom
-                                             )
-
-                                 # if count10 == 0 or (np.abs(x2_norm - x1_norm) <= 1e-15):
-                                 #    if (np.abs(x2_norm - x1_norm) <= 1e-15):
-                                 #        print("too small denominator")
-                                 #    beta = beta + (beta - lambda2)/x2_norm * (trust_radius - x2_norm)/trust_radius * (trust_radius + 1.0/x2_norm)
-                                 # else:
-                                 #    print("denominator", x2_norm-x1_norm)
-                                 #    if (np.abs(x2_norm - x1_norm) > 1e-15):
-                                 #        lambda_c = (lambda1 * x1_norm * (x2_norm - trust_radius) + lambda2 * x2_norm * (trust_radius - x1_norm))/trust_radius/(x2_norm - x1_norm)
-                                 #    else:
-                                 #        lambda_c = delta_u
-                                 #    if lambda_c > delta_u:
-                                 #        print("need to safeguard delta_u", lambda_c, delta_u)
-                                 #        lambda_c = delta_u
-                                 #    #lambda_c = (lambda1 * x1_norm * (x2_norm - trust_radius) + lambda2 * x2_norm * (trust_radius - x1_norm))/trust_radius/(x2_norm - x1_norm)
-                                 #    #print(lambda_c)
-                                 #    omega_k = (lambda2 - lambda_c)/(lambda2 - lambda1)
-                                 #    ratio1 = x1_norm * x2_norm * (x2_norm - x1_norm)/(omega_k * x2_norm + (1-omega_k) * x1_norm)
-                                 #    ratio2 = (lambda1 - lambda_c) * (lambda2 - lambda_c) / (lambda2 - lambda1)
-                                 #    beta = lambda_c + omega_k *phi1 + (1-omega_k) * phi2 + ratio1 * ratio2
-                                 print("beta after interpolation", beta)
-                                 # safeguard alpha
-                                 if beta < alpha_l or beta > alpha_u:
-                                     print("need to safeguard alpha")
-                                     if count10 == 0:
-                                         beta = delta_u + phi2 + phi2_p * (delta_u - lambda2)
-                                     elif x2_norm < x1_norm:
-                                         print("use phi2")
-                                         beta = delta_u + phi2 + phi2_p * (delta_u - lambda2)
-                                     else:
-                                         print("use phi1")
-                                         beta = delta_u + phi1 + phi1_p * (delta_u - lambda1)
-                                     if beta < alpha_l or beta > alpha_u:
-                                         print("using bisection")
-                                         beta = (alpha_l + alpha_u) / 2
-                                 count10 += 1
-                                 # if np.abs(beta -beta0) <= 1e-12:
-                                 #    print("possible convergence")
-                                 #    print(beta, beta0)
-                                 #    print(x2_norm)
-
-                                 #    if x2_norm < trust_radius:
-                                 #        print("11111111")
-                                 #        hard_case = 1
-                                 #    elif x2_norm > trust_radius and both_roots_normalization == 1:
-                                 #        print("22222222")
-                                 #        hard_case = 1
-
-                                 #    break
-                                 if count10 == 50:
-                                     break
-                             print("check hard case", hard_case)
-                             if hard_case == 1:
-                                 first_component[:] = x2[:]
-                                 if x2_norm > trust_radius:
-                                     print("some logic is wrong")
-                                     exit()
-                                     # temp_vector = np.zeros(self.index_map_size)
-                                     # temp_vector[:] = second_component[:]
-                                     # second_component[:] = first_component[:]
-                                     # first_component[:] = temp_vector[:]
-                                 # print(first_component)
-                                 # print(second_component)
-                                 print(
-                                     "norm of current root", np.linalg.norm(first_component)
-                                 )
-                                 xy_square = np.dot(
-                                     first_component, second_component
-                                 ) * np.dot(first_component, second_component)
-                                 x_square = np.dot(first_component, first_component)
-                                 y_square = np.dot(second_component, second_component)
-                                 delta = 4 * xy_square - 4 * y_square * (
-                                     x_square - trust_radius * trust_radius
-                                 )
-                                 # print(delta)
-                                 t1 = (
-                                     -2 * np.dot(first_component, second_component)
-                                     - np.sqrt(delta)
-                                 ) / (2 * y_square)
-                                 t2 = (
-                                     -2 * np.dot(first_component, second_component)
-                                     + np.sqrt(delta)
-                                 ) / (2 * y_square)
-                                 print(
-                                     "x^2, xy, y^2, t",
-                                     x_square,
-                                     np.dot(first_component, second_component),
-                                     y_square,
-                                     t1,
-                                 )
-                                 adjusted_step = (
-                                     first_component + min(np.abs(t1), np.abs(t2)) * second_component
-                                 )
-                                 print("adjusted step norm", np.linalg.norm(adjusted_step))
-                                 step = adjusted_step
-
-                             if hard_case == 2:
-                                 #Q = np.zeros((1, self.index_map_size))
-                                 #H1_op = LinearOperator(
-                                 #    (self.index_map_size, self.index_map_size),
-                                 #    matvec=lambda Q: self.mv2(
-                                 #        self.U2, A_tilde2, G1, Q, 1, 0, 0
-                                 #    ),
-                                 #)
-                                 #x, exitCode = minres(H1_op, -reduced_gradient, rtol=1e-6)
-                                 #print("exitcode", exitCode)
-                                 #step = x
-                                 denom = self.reduced_hessian_diagonal
-                                 max_iter = 20  
-                                 _solve_newton = self.minres_solve if _QED_USE_MINRES else self.linear_equation_solve
-                                 solution, converged = _solve_newton(self.U2, A_tilde2, G_blocks, reduced_gradient, denom, max_iter, conv_thresh=1e-6)
-                                 if not converged:
-                                     print("\n--- Falling back to MINRES solver ---")
-                                     iteration_count = [0]
-                                     def callback(xk):
-                                         """Callback function called at each iteration"""
-                                         iteration_count[0] += 1
-                                         absolute_residual = np.linalg.norm(H1_op.matvec(xk) + reduced_gradient)
-                                         relative_residual = absolute_residual / np.linalg.norm(reduced_gradient)
-                                         print(f"MINRES Iter: {iteration_count[0]:3d}   "
-                                         f"Abs Residual: {absolute_residual:.4e}   "
-                                         f"Rel Residual: {relative_residual:.4e}")
-                                     H1_op = LinearOperator(
-                                         (self.index_map_size, self.index_map_size),
-                                         matvec=lambda Q: self.mv2(self.U2, A_tilde2, G_blocks, Q, 1, 0, 0),
-                                     )
-                                     solution, exitCode = minres(H1_op, -reduced_gradient, rtol=1e-6, callback=callback)
-                                     print(f"MINRES exit code: {exitCode}")
-                                     
-                                     if exitCode == 0:
-                                         print("MINRES converged successfully")
-                                     else:
-                                         print(f"MINRES warning: exit code {exitCode}")
-                                 #print("step norm2", np.linalg.norm(solution))
-                                 hard_case = 2
-                                 step = solution
-
-
-                             if hard_case == 3:
-                                 step = x_tilde
-                             if hard_case == 4:
-                                 if x2_norm > trust_radius:
-                                     step = x2 / x2_norm * trust_radius
-                                 if x2_norm < trust_radius:
-                                     step = x2
-                             
-
-                else:
-                    print("gradient is small, use Newton step")
-                    #Q = np.zeros((1, self.index_map_size))
-                    #H1_op = LinearOperator(
-                    #    (self.index_map_size, self.index_map_size),
-                    #    matvec=lambda Q: self.mv2(self.U2, A_tilde2, G1, Q, 1, 0, 0),
-                    #)
-                    #x, exitCode = minres(H1_op, -reduced_gradient, rtol=1e-6)
-                    #print("exitcode", exitCode)
-                    denom = self.reduced_hessian_diagonal
-                    max_iter = 20  
-                    _solve_newton = self.minres_solve if _QED_USE_MINRES else self.linear_equation_solve
-                    solution,converged = _solve_newton(self.U2, A_tilde2, G_blocks, reduced_gradient, denom, max_iter, conv_thresh=1e-6)
-                    if not converged:
-                        print("\n--- Falling back to MINRES solver ---")
-                        iteration_count = [0]
-                        def callback(xk):
-                            """Callback function called at each iteration"""
-                            iteration_count[0] += 1
-                            absolute_residual = np.linalg.norm(H1_op.matvec(xk) + reduced_gradient)
-                            residual = np.linalg.norm(H1_op.matvec(xk) + reduced_gradient)
-                            relative_residual = absolute_residual / np.linalg.norm(reduced_gradient)
-                            print(f"MINRES Iter: {iteration_count[0]:3d}   "
-                            f"Abs Residual: {absolute_residual:.4e}   "
-                            f"Rel Residual: {relative_residual:.4e}")
-   
-                        H1_op = LinearOperator(
-                            (self.index_map_size, self.index_map_size),
-                            matvec=lambda Q: self.mv2(self.U2, A_tilde2, G_blocks, Q, 1, 0, 0),
-                        )
-                        solution, exitCode = minres(H1_op, -reduced_gradient, rtol=1e-6, callback=callback)
-                        print(f"MINRES exit code: {exitCode}")
-                        
-                        if exitCode == 0:
-                            print("MINRES converged successfully")
-                        else:
-                            print(f"MINRES warning: exit code {exitCode}")
-                    #print("step norm2", np.linalg.norm(solution))
-                    hard_case = 2
-                    step = solution
-                    #print(step)
-                    #print(solution)
-                # w[:,0] = w[:,0]/scale
-
-                step_norm = np.linalg.norm(step)
-
-                print("step norm", step_norm)
-
-                start = timer()
-                Rai = np.zeros((self.n_act_orb, self.n_in_a))
-                Rvi = np.zeros((self.n_virtual, self.n_in_a))
-                Rva = np.zeros((self.n_virtual, self.n_act_orb))
-                for i in range(self.index_map_size):
-                    s = self.index_map[i][0]
-                    l = self.index_map[i][1]
-                    if s >= self.n_in_a and s < self.n_occupied and l < self.n_in_a:
-                        Rai[s - self.n_in_a][l] = step[i]
-                    elif s >= self.n_occupied and l < self.n_in_a:
-                        Rvi[s - self.n_occupied][l] = step[i]
-                    else:
-                        Rva[s - self.n_occupied][l - self.n_in_a] = step[i]
-
-                self.build_unitary_matrix(Rai, Rvi, Rva)
-                # print("jnti",self.E_core)
-
-                self.U3 = np.einsum("pq,qs->ps", self.U3, self.U_delta)
-                second_order_energy_change = self.microiteration_exact_energy(
-                    self.U3, A, G_blocks
-                )
-                # exact_energy2 = self.microiteration_exact_energy(self.U3, A2, G2)
-                # print("exact energy2", exact_energy2, flush = True)
-                energy_change = (
-                    zero_energy + second_order_energy_change - current_energy
-                )
-                print(
-                    "old energy",
-                    current_energy,
-                    "energy change",
-                    energy_change,
-                    "second order energy change",
-                    second_order_energy_change,
-                    flush=True,
-                )
-                print("new energy", current_energy + energy_change, flush=True)
-
-                # predicted_energy1 = self.microiteration_predicted_energy(reduced_gradient, reduced_hessian, step)
-                predicted_energy2 = self.microiteration_predicted_energy2(
-                    self.U2, reduced_gradient, A_tilde2, G_blocks, step
-                )
-                if predicted_energy2 < 0:
-                    reduce_predicted_energy = 1
-                else:
-                    reduce_predicted_energy = 0
-
-                print("microiteration predicted energy", predicted_energy2, flush=True)
-                end = timer()
-                print("build unitary matrix and recheck energy took", end - start)
-
-                if microiteration == 0 and orbital_optimization_step == 0:
-                    convergence_threshold = min(
-                        0.01 * gradient_norm, np.power(gradient_norm, 2)
-                    )
-                if energy_change < 0.0 or hard_case == 2:
-                    print("step norm", np.linalg.norm(step))
-                    if step_norm < 0.05: 
-                        print("activate qn optimization")
-                        qn_optimization = True
-                        qn_count +=1
-                        N_microiterations = 20  
-                        N_orbital_optimization_steps= 1
-                        print("number of microiteration left",N_microiterations, "number of orbital optimization", N_orbital_optimization_steps, "qn_count", qn_count)
-                    self.U_zero = self.U2 
-                    #else:
-                    #    qn_optimization = False
-                    # restart = False
-                    # predicted_energy1 = self.microiteration_predicted_energy(reduced_gradient, reduced_hessian, step)
-                    # predicted_energy2 = self.microiteration_predicted_energy2(self.U2, reduced_gradient, A_tilde2, G, step)
-                    # print("microinteration predicted energy", predicted_energy1, predicted_energy2, flush = True)
-                    self.U2 = np.einsum("pq,qs->ps", self.U2, self.U_delta)
-                    if microiteration == 0 and orbital_optimization_step == 0:
-                        # convergence_threshold = min(0.01 * gradient_norm, np.power(gradient_norm,2))
-                        # convergence_threshold = 0.01 * gradient_norm
-                        if step_norm > 0.1:
-                            N_microiterations = 5
-                            N_orbital_optimization_steps = 4
-                        elif step_norm <= 0.1 and step_norm > 0.05:
-                            N_microiterations = 7
-                            N_orbital_optimization_steps = 3
-                        print("number of microiteration", N_microiterations, flush=True)
-                        print(
-                            "number of optimization steps",
-                            N_orbital_optimization_steps,
-                            flush=True,
-                        )
-                    orbital_optimization_step += 1
-                    ratio = energy_change / predicted_energy2
-                    print("compare model with actual energy change", ratio)
-                    trust_radius = self.step_control(ratio, trust_radius)
-
-                    #self.build_gradient_and_hessian(self.U2, A, G, gradient_tilde, hessian_tilde, True)
-                    # print(np.shape(gradient_tilde), flush = True)
-
-                    start = timer()
-                    self.build_gradient(self.U2, A, G, gradient_tilde, A_tilde2, True)
-                    end = timer()
-                    # self.build_gradient2(self.U2, A, G, hessian_tilde, gradient_tilde, A_tilde2, True)
-                    #G1 = G.transpose(3, 1, 2, 0).reshape(
-                    #    self.nmo * self.n_occupied, self.nmo * self.n_occupied
-                    #)
-                    print("build gradient took", end - start)
-
-                    #hessian_tilde3 = hessian_tilde.transpose(2,0,3,1)
-                    #hessian_tilde3 = hessian_tilde3.reshape((self.n_occupied*self.nmo, self.n_occupied*self.nmo))
-
-                    # hessian_diagonal3 = np.diagonal(hessian_tilde3).reshape((self.nmo, self.n_occupied))
-                    # reduced_hessian_diagonal = np.zeros(self.index_map_size)
-                    # index_count1 = 0
-                    # for k in range(self.n_occupied):
-                    #    for r in range(k+1,self.nmo):
-                    #        if (k < self.n_in_a and r < self.n_in_a): continue
-                    #        if (self.n_in_a <= k < self.n_occupied and self.n_in_a <= r < self.n_occupied): continue
-                    #        reduced_hessian_diagonal[index_count1] = hessian_diagonal3[r][k]
-                    #        index_count1 += 1
-                    start = timer()
-                    self.build_hessian_diagonal(self.U2, G, A_tilde2)
-                    end = timer()
-                    print("build hessian diagonal took", end - start)
-                    # print("diagonal elements of the reduced hessian")
-                    # for i in range(self.index_map_size):
-                    #    aa = self.reduced_hessian_diagonal[i] - reduced_hessian_diagonal[i]
-                    #    if np.abs(aa) > 1e-12: print("ERROR TOO LARGE")
-                    # reduced_hessian = np.zeros((self.index_map_size, self.index_map_size))
-                    reduced_gradient = np.zeros(self.index_map_size)
-                    index_count1 = 0
-                    np.set_printoptions(precision=14)
-                    for k in range(self.n_occupied):
-                        for r in range(k + 1, self.nmo):
-                            if k < self.n_in_a and r < self.n_in_a:
-                                continue
-                            if (
-                                self.n_in_a <= k < self.n_occupied
-                                and self.n_in_a <= r < self.n_occupied
-                            ):
-                                continue
-                            reduced_gradient[index_count1] = gradient_tilde[r][k]
-                            ###print(r,k,index_count1)
-                            ##index_count2 = 0
-                            ##for l in range(self.n_occupied):
-                            ##   for s in range(l+1,self.nmo):
-                            ##       if (l < self.n_in_a and s < self.n_in_a): continue
-                            ##       if (self.n_in_a <= l < self.n_occupied and self.n_in_a <= s < self.n_occupied): continue
-                            ##       #if (k >= self.n_occupied and r >= self.n_occupied): continue
-                            ##       reduced_hessian[index_count1][index_count2] = hessian_tilde3[r*self.n_occupied+k][s*self.n_occupied+l]
-                            ##       #print(r,k,s,l,index_count1,index_count2)
-                            ##       index_count2 += 1
-                            index_count1 += 1
-                    # print("reduced_gradient",reduced_gradient, flush = True)
-
-                    #mu1, w1 = np.linalg.eigh(reduced_hessian)
-                    #print("eigenvalue of the reduced hessian", mu1)
-                    # print("dot product of gradient and first eigenvector of hessian", np.dot(reduced_gradient, w1[:,0]))
-                    # print("dot product of gradient and second eigenvector of hessian", np.dot(reduced_gradient, w1[:,1]))
-                    # H_lambda = reduced_hessian - mu1[0] * np.eye(self.index_map_size)
-                    # step_limit = -np.einsum("pq,q->p", np.linalg.pinv(H_lambda), reduced_gradient)
-                    # print("norm of critical step", np.linalg.norm(step_limit))
-                    # print("alpha critical", mu1[0] - np.dot(reduced_gradient, step_limit))
-                    # print("gradient norm", np.linalg.norm(reduced_gradient))
-
-                    active_twoeint[:, :, :, :] = 0.0
-                    active_fock_core[:, :] = 0.0
-                    d_cmo[:, :] = 0.0
-                    start1 = timer()
-                    self.microiteration_ci_integrals_transform(
-                        self.U2, eigenvecs, d_cmo, active_fock_core, active_twoeint
-                    )
-                    end1 = timer()
-                    print("second order integral transformation took", end1 - start1)
-                    count += 1
-                    # active_one_e_energy = np.dot(active_fock_core.flatten(), self.D_tu_avg)
-                    # active_two_e_energy = 0.5 * np.dot(active_twoeint.flatten(), self.D_tuvw_avg)
-                    # active_one_pe_energy = -np.sqrt(self.omega/2) * np.dot(d_cmo[self.n_in_a:self.n_occupied,self.n_in_a:self.n_occupied].flatten(), self.Dpe_tu_avg)
-                    # ci_dependent_energy = self.calculate_ci_dependent_energy(eigenvecs, d_cmo)
-                    # sum_energy = (active_one_e_energy + active_two_e_energy + active_one_pe_energy + self.E_core2 +
-                    #        self.Enuc + self.d_c + ci_dependent_energy)
-                    # print("sum_energy    active_one    active_two E_core active_pe_energy ci_dependent_energy E_nuc")
-                    # print("gfhgy",
-                    #    "{:20.12f}".format(sum_energy),
-                    #    "{:20.12f}".format(active_one_e_energy),
-                    #    "{:20.12f}".format(active_two_e_energy),
-                    #    "{:20.12f}".format(self.E_core2),
-                    #    "{:20.12f}".format(active_one_pe_energy),
-                    #    "{:20.12f}".format(ci_dependent_energy),
-                    #    "{:20.12f}".format(self.Enuc),
-                    #    flush = True
-                    # )
-                    current_energy = zero_energy + second_order_energy_change
-                    hard_case = 0
-
-                else:
-                    # restart = False
-                    # guess_vector = trial_vector
-                    reduce_step = 1
-                    trust_radius = 0.5 * trust_radius
-                    print("Reject step, restart", flush=True)
-                    print("new trust radius", trust_radius, flush=True)
-            # if convergence == 1:
-            #    #active_twoeint[:,:,:,:] = self.active_twoeint[:,:,:,:]
-            #    #active_fock_core[:,:] = self.active_fock_core[:,:]
-            #    #d_cmo[:,:] = self.d_cmo[:,:]
-
-            #    #self.U_total = np.einsum("pq,qs->ps", self.U_total, self.U2)
-            #    #temp8 = np.zeros((self.nmo, self.nmo))
-            #    #temp8 = np.einsum("pq,qs->ps", self.H_spatial2, self.U2)
-            #    #self.H_spatial2[:,:] = np.einsum("ps,pr->rs", temp8, self.U2)
-            #    #temp8 = np.einsum("pq,qs->ps", self.d_cmo, self.U2)
-            #    #self.d_cmo[:,:] = np.einsum("ps,pr->rs", temp8, self.U2)
-            #    break
-
-            if convergence == 1 and count == 0:
-                active_twoeint[:, :, :, :] = self.active_twoeint[:, :, :, :]
-                active_fock_core[:, :] = self.active_fock_core[:, :]
-                d_cmo[:, :] = self.d_cmo[:, :]
-
-                # self.U_total = np.einsum("pq,qs->ps", self.U_total, self.U2)
-                # temp8 = np.zeros((self.nmo, self.nmo))
-                # temp8 = np.einsum("pq,qs->ps", self.H_spatial2, self.U2)
-                # self.H_spatial2[:,:] = np.einsum("ps,pr->rs", temp8, self.U2)
-                # temp8 = np.einsum("pq,qs->ps", self.d_cmo, self.U2)
-                # self.d_cmo[:,:] = np.einsum("ps,pr->rs", temp8, self.U2)
-                # break
-
-            start = timer()
-            occupied_J = np.zeros(
-                (self.n_occupied, self.n_occupied, self.n_occupied, self.n_occupied)
-            )
-            occupied_J[
-                self.n_in_a : self.n_occupied,
-                self.n_in_a : self.n_occupied,
-                self.n_in_a : self.n_occupied,
-                self.n_in_a : self.n_occupied,
-            ] = copy.deepcopy(active_twoeint)
-            self.H_diag3 = np.zeros(H_dim)
-            occupied_fock_core = np.zeros((self.n_occupied, self.n_occupied))
-            occupied_fock_core[
-                self.n_in_a : self.n_occupied, self.n_in_a : self.n_occupied
-            ] = copy.deepcopy(active_fock_core)
-            occupied_d_cmo = np.zeros((self.n_occupied, self.n_occupied))
-            occupied_d_cmo = copy.deepcopy(d_cmo[: self.n_occupied, : self.n_occupied])
-            gkl2 = copy.deepcopy(active_fock_core)
-            gkl2 -= 0.5 * np.einsum("kjjl->kl", active_twoeint)
-            # print("recheck energy", flush = True)
-            # active_one_e_energy = np.dot(occupied_fock_core[self.n_in_a: self.n_occupied,self.n_in_a: self.n_occupied].flatten(), self.D_tu_avg)
-            # active_two_e_energy = 0.5 * np.dot(occupied_J[self.n_in_a: self.n_occupied,self.n_in_a: self.n_occupied,self.n_in_a: self.n_occupied,self.n_in_a: self.n_occupied].flatten(), self.D_tuvw_avg)
-            # active_one_pe_energy = -np.sqrt(self.omega/2) * np.dot(occupied_d_cmo[self.n_in_a:self.n_occupied,self.n_in_a:self.n_occupied].flatten(), self.Dpe_tu_avg)
-            # ci_dependent_energy = self.calculate_ci_dependent_energy(eigenvecs, d_cmo)
-            # sum_energy = (active_one_e_energy + active_two_e_energy + active_one_pe_energy + self.E_core2 +
-            #        self.Enuc + self.d_c + ci_dependent_energy)
-            # print("sum_energy    active_one    active_two E_core active_pe_energy ci_dependent_energy E_nuc")
-            # print("gfhgy",
-            #    "{:20.12f}".format(sum_energy),
-            #    "{:20.12f}".format(active_one_e_energy),
-            #    "{:20.12f}".format(active_two_e_energy),
-            #    "{:20.12f}".format(self.E_core2),
-            #    "{:20.12f}".format(active_one_pe_energy),
-            #    "{:20.12f}".format(ci_dependent_energy),
-            #    "{:20.12f}".format(self.Enuc),
-            #    flush = True
-            # )
-            occupied_J = occupied_J.reshape(
-                self.n_occupied * self.n_occupied, self.n_occupied * self.n_occupied
-            )
-
-            c_H_diag_cas_spin(
-                occupied_fock_core,
-                occupied_J,
-                self.H_diag3,
-                self.N_p,
-                self.num_alpha,
-                self.nmo,
-                self.n_act_a,
-                self.n_act_orb,
-                self.n_in_a,
-                self.E_core2,
-                self.omega,
-                self.Enuc,
-                self.d_c,
-                self.Y,
-                self.target_spin,
-            )
-            print("qn status", qn_optimization, "qn count", qn_count, flush = True)
-            print("gradient norm", np.linalg.norm(reduced_gradient), flush = True)
-            d_diag = 2.0 * np.einsum("ii->", d_cmo[: self.n_in_a, : self.n_in_a])
-            self.constdouble[3] = self.d_exp - d_diag
-            self.constdouble[4] = 1e-9
-            self.constdouble[5] = self.E_core2
-            self.constint[8] = 5
-            if qn_count > 0: 
-                self.constdouble[4] = 0.1 * np.linalg.norm(reduced_gradient)
-                self.constint[8] = 10000
-            print("number of CI iteration", self.constint[8])
-            eigenvals = np.zeros((self.davidson_roots))
-            # eigenvecs = np.zeros((self.davidson_roots, H_dim))
-            # eigenvecs[:,:] = 0.0
-            # print("heyhey5", eigenvecs)
-            c_get_roots(
-                gkl2,
-                occupied_J,
-                occupied_d_cmo,
-                self.H_diag3,
-                self.S_diag,
-                self.S_diag_projection,
-                eigenvals,
-                eigenvecs,
-                self.table,
-                self.table_creation,
-                self.table_annihilation,
-                self.b_array,
-                self.constint,
-                self.constdouble,
-                self.index_Hdiag,
-                True,
-                self.target_spin,
-            )
-            end = timer()
-            print("CI step took", end - start)
-
-            # print("current residual", self.constdouble[4])
-            current_residual = self.constdouble[4]
-            avg_energy = 0.0
-            for i in range(self.davidson_roots):
-                avg_energy += self.weight[i] * eigenvals[i]
-            print(
-                "microiteration",
-                microiteration + 1,
-                "current average energy",
-                avg_energy,
-                flush=True,
-            )
-            #current_energy = avg_energy
-
-            start = timer()
-            self.D_tu_avg_old = copy.deepcopy(self.D_tu_avg)
-            self.build_state_average_rdms(eigenvecs)
-            self.density_norm_change = np.linalg.norm(self.D_tu_avg - self.D_tu_avg_old)
-            print("density norm change", self.density_norm_change)
-            if qn_count >0:
-                if qn_count ==1 or self.density_norm_change <0.025 or energy_change < 0:
-                    self.U222 = self.U_zero              
-                    print("ahihi")
-            end = timer()
-            print("building RDM took", end - start)
-            #active_one_e_energy = np.dot(active_fock_core.flatten(), self.D_tu_avg)
-            #active_two_e_energy = 0.5 * np.dot(active_twoeint.flatten(), self.D_tuvw_avg)
-            #active_one_pe_energy = -np.sqrt(self.omega/2) * np.dot(d_cmo[self.n_in_a:self.n_occupied,self.n_in_a:self.n_occupied].flatten(), self.Dpe_tu_avg)
-            #ci_dependent_energy = self.calculate_ci_dependent_energy(eigenvecs, d_cmo)
-            #sum_energy = (active_one_e_energy + active_two_e_energy + active_one_pe_energy + self.E_core2 +
-            #       self.Enuc + self.d_c + ci_dependent_energy)
-            #print("RDM_energy    active_one    active_two E_core active_pe_energy ci_dependent_energy E_nuc")
-            #print("gfhgy",
-            #   "{:20.12f}".format(sum_energy),
-            #   "{:20.12f}".format(active_one_e_energy),
-            #   "{:20.12f}".format(active_two_e_energy),
-            #   "{:20.12f}".format(self.E_core2),
-            #   "{:20.12f}".format(active_one_pe_energy),
-            #   "{:20.12f}".format(ci_dependent_energy),
-            #   "{:20.12f}".format(self.Enuc),
-            #   flush = True
-            #)
-            #print("current gradient_norm and residual", gradient_norm, current_residual)
-            #print("current convergence_threshold", convergence_threshold)
-            #total_norm = np.sqrt(np.power(gradient_norm,2) + np.power(current_residual,2))
-            #if total_norm < convergence_threshold:
-            #   print("total norm", total_norm, flush = True)
-            #   #self.U_total = np.einsum("pq,qs->ps", self.U_total, self.U2)
-            #   #temp8 = np.zeros((self.nmo, self.nmo))
-            #   #temp8 = np.einsum("pq,qs->ps", self.H_spatial2, self.U2)
-            #   #self.H_spatial2[:,:] = np.einsum("ps,pr->rs", temp8, self.U2)
-            #   #self.d_cmo[:,:] = d_cmo[:,:]
-            #   #print(eigenvecs)
-            #   #print("u2i",self.U2)
-            #   print("microiteration converged! (small total norm)", flush = True)
-            #   break
-
-            microiteration += 1
+    # microiteration_optimization5 REMOVED 2026-09-04 (developer's call).
+    # It was the TEMPLATE for the quasi-Newton-off branch of
+    # microiteration_optimization6, which has since absorbed it; it had no
+    # callers and could not be revived as it stood.  1364 lines.  It also
+    # carried its own copy of the LSTRS beta-bisection and of the
+    # both-roots-unnormalizable `exit()` (item 372), so removing it deletes
+    # one of the four duplicates rather than leaving it to be found again.
+    # See git history for the original.
 
     def get_lbfgs_step(self, gradient, diag_hessian, trust_radius):
         """
@@ -12375,12 +11825,157 @@ class PFHamiltonianGenerator:
          
         return sigma
 
+    def _otr_trust_region_step(self, hess_x, h_diag, reduced_gradient, trust_radius, label='OTR'):
+        """MOVED to trust_region_solvers.py (2026-09-04).
+
+        Delegator: the name is part of this class's interface (the solver
+        modules call it as ctx._otr_trust_region_step, and the C++ port cites it).
+        """
+        return _trs__otr_trust_region_step(
+            self,
+            hess_x,
+            h_diag,
+            reduced_gradient,
+            trust_radius,
+            label,
+        )
+
+    def _orbital_hess_x(self, U, A_tilde, G_blocks):
+        """``v -> H v`` through orbital_sigma3, for the AH-Krylov solver.
+
+        A closure rather than a bound method so the same solver can serve the
+        main trust-region site (U2 / A_tilde2 / G_blocks) and the QN site
+        (U_zero / A_tilde_zero / G_blocks_zero), and so the QN-BFGS site can
+        pass ``self.get_bfgs_mv`` instead of anything orbital_sigma3-shaped.
+        """
+        n = self.index_map_size
+
+        def _hess_x(v):
+            r = np.ascontiguousarray(np.asarray(v, dtype=float).reshape(1, n))
+            out = np.zeros((1, n))
+            self.orbital_sigma3(U, A_tilde, G_blocks, r, out, 1, 0)
+            return out[0]
+
+        return _hess_x
+
+    def _ah_krylov_trust_region_step(self, hess_x, h_diag, reduced_gradient, trust_radius, label='AH-Krylov'):
+        """MOVED to trust_region_solvers.py (2026-09-04).
+
+        Delegator: the name is part of this class's interface (the solver
+        modules call it as ctx._ah_krylov_trust_region_step, and the C++ port cites it).
+        """
+        return _trs__ah_krylov_trust_region_step(
+            self,
+            hess_x,
+            h_diag,
+            reduced_gradient,
+            trust_radius,
+            label,
+        )
+
+    def _lstrs_hard_dump(self, U, A_tilde, G_blocks, reduced_gradient, alpha,
+                         alpha_l, alpha_u, trust_radius, mu9, w9, v1, v2,
+                         aa1, bb1, aa2, bb2, epsilon_v, aug_hessian_eigenvals):
+        """Dump the LSTRS subproblem at a both-roots-hard termination.
+
+        DIAGNOSTIC ONLY -- reached solely when QED_LSTRS_HARD_DUMP is set, and
+        it changes nothing.  Builds the reduced Hessian densely by columns with
+        the same batched orbital_sigma3 path the QED_NEWTON_DUMP block uses
+        (:22138), so the near-degenerate pair the Davidson reports can be
+        checked against an EXACT eigendecomposition of the bordered matrix
+        B(alpha) = [[alpha, g^T], [g, H]] rather than against the iterative
+        solver that produced it.
+        """
+        n = int(np.asarray(reduced_gradient).size)
+        _batch = max(1, min(int(_QED_EXACT_TR_BATCH), n))
+        H = np.zeros((n, n))
+        col = 0
+        while col < n:
+            nb = min(_batch, n - col)
+            R = np.zeros((nb, n))
+            for k in range(nb):
+                R[k, col + k] = 1.0
+            R = np.ascontiguousarray(R)
+            S = np.zeros((nb, n))
+            self.orbital_sigma3(U, A_tilde, G_blocks, R, S, nb, 0)
+            H[:, col:col + nb] = S.T
+            col += nb
+        seen = getattr(self, "_lstrs_hard_seen", 0)
+        self._lstrs_hard_seen = seen + 1
+        os.makedirs(_QED_LSTRS_HARD_DUMP, exist_ok=True)
+        np.savez(
+            os.path.join(_QED_LSTRS_HARD_DUMP, "lstrs_hard_%04d.npz" % seen),
+            H=H,
+            g=np.asarray(reduced_gradient, dtype=np.float64).ravel(),
+            alpha=np.float64(alpha),
+            alpha_l=np.float64(alpha_l),
+            alpha_u=np.float64(alpha_u),
+            trust_radius=np.float64(trust_radius),
+            mu9=np.asarray(mu9, dtype=np.float64).ravel(),
+            w9=np.asarray(w9, dtype=np.float64),
+            v=np.array([v1, v2], dtype=np.float64),
+            ab=np.array([aa1, bb1, aa2, bb2], dtype=np.float64),
+            epsilon_v=np.float64(epsilon_v),
+            aug_eigs=np.asarray(aug_hessian_eigenvals, dtype=np.float64).ravel(),
+        )
+        print("QED_LSTRS_HARD_DUMP: wrote lstrs_hard_%04d.npz (n=%d)"
+              % (seen, n), flush=True)
+
+    def _trs_hard_case_fallback(self, U, A_tilde, G_blocks, gradient,
+                                trust_radius, site=""):
+        """A real step for the LSTRS both-roots-unnormalizable state.
+
+        Replaces the bare ``exit()`` those sites used to call
+        (QED_TRS_HARD_FALLBACK).  Two routes, both of which always return a
+        step:
+
+        * dense More-Sorensen, when the reduced space is at or under
+          QED_TRS_FALLBACK_DENSE_MAX.  ``_more_sorensen_dense`` has an explicit
+          hard-case branch -- pseudo-inverse solution plus a multiple of a
+          lowest eigenvector, sign chosen to minimise the model -- which is
+          precisely the step a beta bisection cannot reach, because the
+          quantity it bisects on (the first component of the eigenvector) is
+          identically zero there.  Costs n Hessian-vector products.
+
+        * GLTR above the cap.  Cannot fail, but has NO hard-case branch and its
+          Krylov space is seeded by g, which in the hard case is orthogonal to
+          the direction the optimum needs -- so it returns a valid DESCENT step,
+          not the optimum.  Printed as such rather than passed off as exact.
+        """
+        n = int(np.asarray(gradient).size)
+        if n <= _QED_TRS_FALLBACK_DENSE_MAX:
+            step = self._exact_dense_trust_region_step(
+                U, A_tilde, G_blocks, gradient, trust_radius)
+            how = "dense More-Sorensen, hard case handled exactly"
+        else:
+            step, _lam, _status = self.solve_gltr_trust_region(
+                U, A_tilde, G_blocks,
+                np.asarray(gradient, dtype=float).ravel(),
+                self.reduced_hessian_diagonal, trust_radius, verbose=False)
+            how = ("GLTR (n=%d > QED_TRS_FALLBACK_DENSE_MAX=%d): a descent "
+                   "step, NOT the hard-case optimum"
+                   % (n, _QED_TRS_FALLBACK_DENSE_MAX))
+        step = np.asarray(step, dtype=float).ravel()
+        print("QED_TRS_HARD_FALLBACK%s: both LSTRS roots unnormalizable "
+              "(genuine hard case) -> %s; |step| = %.6e, radius = %.6e"
+              % (site, how, np.linalg.norm(step), trust_radius), flush=True)
+        return step
+
     def microiteration_optimization6(
         self, U, eigenvecs, c_get_roots, convergence_threshold
     ):
         # print("E_core", self.E_core)
         self.U2 = copy.deepcopy(U)
-        trust_radius = 0.5
+        # QED_TRUE_ENERGY_PROBE.  One call to this routine IS one
+        # macroiteration, so these are per-macro state: measure the model error
+        # ONCE on the first candidate step of the macro, then reuse that verdict
+        # for the rest of it.  See the knob note at the top of the file.
+        probe_decided = False
+        probe_engage = True
+        # QED_TR_INIT.  THIS is the site QED_TRUST_PERSIST could not reach --
+        # microiteration 1 takes its radius from function entry here, which is
+        # why that knob measured as a confirmed no-op (item 20).
+        trust_radius = _QED_TR_INIT
         rot_dim = self.nmo
         np1 = self.N_p + 1
         H_dim = self.num_alpha * self.num_alpha * np1
@@ -12412,6 +12007,12 @@ class PFHamiltonianGenerator:
         )
         active_fock_core = np.zeros((self.n_act_orb, self.n_act_orb))
         d_cmo = np.zeros((self.nmo, self.nmo))
+
+        # E(U) at the current accumulated rotation.  Re-seeded from zero_energy
+        # at the top of every microiteration and advanced on every accepted
+        # step, so `true_change` below is always measured against the point the
+        # step actually starts from.
+        true_energy_current = 0.0
 
         gradient_tilde = np.zeros((rot_dim, self.n_occupied))
         hessian_tilde = np.zeros((self.n_occupied, self.n_occupied, rot_dim, rot_dim))
@@ -12448,11 +12049,13 @@ class PFHamiltonianGenerator:
             # this reset discards the step length essentially every time it is
             # learned.  Default 0 reproduces current behavior exactly.
             if not _QED_TRUST_PERSIST:
-                trust_radius = 0.5
+                trust_radius = _QED_TR_INIT  # QED_TR_INIT; default 0.5
             else:
                 print("carried trust radius", trust_radius, flush=True)
+            _mp0 = _mp_start()
             A[:, :] = 0.0
             G[:, :, :, :] = 0.0
+            _mp_end("A_G_memset", _mp0)
             start = timer()
             self.build_intermediates(eigenvecs, A, G, True)
             #G_blocks = self.build_intermediates_with_blocks(eigenvecs, A, G, True)
@@ -12511,6 +12114,54 @@ class PFHamiltonianGenerator:
             zero_energy += self.Enuc
             zero_energy += self.d_c
             print("zero energy", zero_energy, flush=True)
+            # QED_TRUE_ENERGY_RATIO: establish this microiteration's ENERGY(VAR)
+            # reference -- the exact energy at the orbitals the next step will
+            # actually start from.
+            #
+            # CAREFUL, THIS IS THE SUBTLE PART.  `zero_energy` is NOT that
+            # number except on the first microiteration.  self.U2 is set once at
+            # entry (:14770) and then only ACCUMULATES -- it is never reset per
+            # microiteration -- while self.J / self.K / self.H_spatial2 /
+            # self.d_cmo are never rebound inside this routine at all.  So
+            # build_intermediates re-derives self.E_core / self.active_* from the
+            # MACROITERATION-ENTRY integrals every time, and `zero_energy` is the
+            # exact energy at the MACRO-ENTRY orbitals contracted with the RDMs
+            # from the CI solve that just ran.  The model E(T) is likewise a
+            # second-order expansion about macro entry, evaluated at the full
+            # accumulated U3 -- which is precisely why its error grows without
+            # bound as U2 walks away from the expansion point.
+            #
+            # The step's true starting energy is therefore E(U) at self.U2 with
+            # the CURRENT RDMs, which needs one explicit evaluation.  At
+            # microiteration 1 self.U2 is the identity and this reproduces
+            # zero_energy exactly; the cost is one second-order transform per
+            # microiteration (0.0035 s c2h4 / 0.0114 s Cr2 / 0.050 s c10h8).
+            if self.true_energy_mode():
+                # Under QED_TRUE_ENERGY_REEXPAND the expansion point IS the
+                # current orbitals, so self.U2 is the identity here and
+                # zero_energy already is E(U) at that point -- skip a full
+                # transform that would recompute exactly it.
+                if _QED_TRUE_ENERGY_REEXPAND and np.array_equal(
+                    self.U2, np.eye(self.nmo)
+                ):
+                    true_energy_current = zero_energy
+                else:
+                    true_energy_current = self.true_energy_at_trial(
+                        self.U2, eigenvecs
+                    )
+                print(
+                    "true energy at microiteration entry",
+                    true_energy_current,
+                    "(zero energy, at macro entry:",
+                    zero_energy,
+                    ")",
+                    flush=True,
+                )
+            # QED_TRUE_ENERGY_RATIO mode 2 retry state.  Declared here, before
+            # either branch, because the `count == 0` fixup below both branches
+            # has to know whether the microiteration gave up.
+            true_reject_streak = 0
+            true_energy_gave_up = False
             start1 = timer()
             #G1 = G.transpose(3, 1, 2, 0).reshape(
             #    self.nmo * self.n_occupied, self.nmo * self.n_occupied
@@ -12692,6 +12343,7 @@ class PFHamiltonianGenerator:
                     dims=np.array([self.n_in_a, self.n_act_orb, self.n_virtual, self.nmo, self.n_occupied]),
                 )
             #reduced_hessian = np.zeros((self.index_map_size, self.index_map_size))
+            _mp0 = _mp_start()
             index_count1 = 0
             for k in range(self.n_occupied):
                 for r in range(k + 1, self.nmo):
@@ -12702,10 +12354,18 @@ class PFHamiltonianGenerator:
                         and self.n_in_a <= r < self.n_occupied
                     ):
                         continue
+                    # QED_ORBITAL_SYMMETRY: skip rotations that mix symmetry species.
+                    if (
+                        _QED_ORBITAL_SYMMETRY
+                        and self._sym_labels is not None
+                        and self._sym_labels[r] != self._sym_labels[k]
+                    ):
+                        continue
                     reduced_gradient[index_count1] = gradient_tilde[r][k]
                     index_count1 += 1
             #print("reduced_gradient",reduced_gradient, flush = True)
             new_reduced_gradient = copy.deepcopy(reduced_gradient)
+            _mp_end("redgrad_loop_outer", _mp0)
            
             if qn_count > 1:
                 s_vec = step  # The step we just took
@@ -12811,28 +12471,52 @@ class PFHamiltonianGenerator:
                             m_diag=self.reduced_hessian_diagonal_zero,
                             trust_radius=trust_radius,
                         )
-                    _stats_span = _stats_begin("gltr_qn")
-                    step_p, shift_lambda, status = self.solve_gltr_trust_region(
-                                   self.U_zero,
-                                   self.A_tilde_zero,
-                                   self.G_blocks_zero,
-                                   reduced_gradient,
-                                   self.reduced_hessian_diagonal_zero,
-                                   trust_radius,
-                                   max_iter=1000,
-                                   tol=1e-7
-                         )
-                    _stats_end(_stats_span, status=status)
-                    if _qn_gltr_dump_inputs is not None:
-                        # gradient=the actual noised r solve_gltr_trust_region used,
-                        # not reduced_gradient -- see that function's doc comment.
-                        _dump_cpp_casscf_validation_case(
-                            "qn_gltr", step=step_p,
-                            gradient=self._cpp_casscf_last_noised_gradient,
-                            **_qn_gltr_dump_inputs,
+                    if _QED_OTR_TR_QN:
+                        _stats_span = _stats_begin("otr_qn")
+                        step = self._otr_trust_region_step(
+                            self._orbital_hess_x(self.U_zero, self.A_tilde_zero,
+                                                 self.G_blocks_zero),
+                            self.reduced_hessian_diagonal_zero,
+                            reduced_gradient, trust_radius, label="OTR(qn)",
                         )
-                    step = step_p
-                    self.consecutive_skips = 0
+                        _stats_end(_stats_span)
+                        self.consecutive_skips = 0
+                        _qn_gltr_dump_inputs = None
+                    elif _QED_AH_KRYLOV_QN:
+                        _stats_span = _stats_begin("ah_krylov_qn")
+                        step = self._ah_krylov_trust_region_step(
+                            self._orbital_hess_x(self.U_zero, self.A_tilde_zero,
+                                                 self.G_blocks_zero),
+                            self.reduced_hessian_diagonal_zero,
+                            reduced_gradient, trust_radius, label="AH-Krylov(qn)",
+                        )
+                        _stats_end(_stats_span)
+                        self.consecutive_skips = 0
+                        _qn_gltr_dump_inputs = None
+                    else:
+                     _stats_span = _stats_begin("gltr_qn")
+                     step_p, shift_lambda, status = self.solve_gltr_trust_region(
+                                    self.U_zero,
+                                    self.A_tilde_zero,
+                                    self.G_blocks_zero,
+                                    reduced_gradient,
+                                    self.reduced_hessian_diagonal_zero,
+                                    trust_radius,
+                                    max_iter=1000,
+                                    tol=self._subproblem_tol("qn", "gltr_qn")
+                          )
+                     _stats_end(_stats_span, status=status)
+                     self._record_gltr_exit(status, "gltr_qn")
+                     if _qn_gltr_dump_inputs is not None:
+                         # gradient=the actual noised r solve_gltr_trust_region used,
+                         # not reduced_gradient -- see that function's doc comment.
+                         _dump_cpp_casscf_validation_case(
+                             "qn_gltr", step=step_p,
+                             gradient=self._cpp_casscf_last_noised_gradient,
+                             **_qn_gltr_dump_inputs,
+                         )
+                     step = step_p
+                     self.consecutive_skips = 0
 
                 else:
                     print("solve bfgs for updated hessian")
@@ -12857,23 +12541,48 @@ class PFHamiltonianGenerator:
                         )
                     # OR adapt your GLTR call:
                     # You effectively need to solve (B + lambda*I) step = -g
-                    _stats_span = _stats_begin("gltr_qn_bfgs")
-                    step_p, shift_lambda, status= self.solve_gltr_with_operator(B_op, reduced_gradient,
+                    if _QED_OTR_TR_QN:
+                        # get_bfgs_mv is the same symmetric operator B_op wraps;
+                        # OTR, like AH-Krylov, needs only v -> B v plus a
+                        # diagonal for the preconditioner.
+                        _stats_span = _stats_begin("otr_qn_bfgs")
+                        step = self._otr_trust_region_step(
+                            self.get_bfgs_mv,
+                            self.reduced_hessian_diagonal_zero,
+                            reduced_gradient, trust_radius, label="OTR(qn-bfgs)",
+                        )
+                        _stats_end(_stats_span)
+                    elif _QED_AH_KRYLOV_QN:
+                        # get_bfgs_mv is the same symmetric operator B_op wraps;
+                        # the solver only needs v -> B v and a diagonal for the
+                        # preconditioner.
+                        _stats_span = _stats_begin("ah_krylov_qn_bfgs")
+                        step = self._ah_krylov_trust_region_step(
+                            self.get_bfgs_mv,
+                            self.reduced_hessian_diagonal_zero,
+                            reduced_gradient, trust_radius,
+                            label="AH-Krylov(qn-bfgs)",
+                        )
+                        _stats_end(_stats_span)
+                    else:
+                        _stats_span = _stats_begin("gltr_qn_bfgs")
+                        step_p, shift_lambda, status= self.solve_gltr_with_operator(B_op, reduced_gradient,
                                                           self.reduced_hessian_diagonal_zero,
                                                                             trust_radius,
                                                                             max_iter=1000,
-                                                                            tol=1e-7)
-                    _stats_end(_stats_span, status=status)
-                    if _qn_bfgs_dump_inputs is not None:
-                        # gradient=the actual noised r solve_gltr_with_operator used,
-                        # not reduced_gradient -- see that function's doc comment.
-                        _dump_cpp_casscf_validation_case(
-                            "qn_bfgs", step=step_p,
-                            gradient=self._cpp_casscf_last_noised_gradient,
-                            **_qn_bfgs_dump_inputs,
-                        )
-                    step = step_p
-                    print(status)
+                                                                            tol=self._subproblem_tol("qn", "gltr_qn_bfgs"))
+                        _stats_end(_stats_span, status=status)
+                        self._record_gltr_exit(status, "gltr_qn_bfgs")
+                        if _qn_bfgs_dump_inputs is not None:
+                            # gradient=the actual noised r solve_gltr_with_operator used,
+                            # not reduced_gradient -- see that function's doc comment.
+                            _dump_cpp_casscf_validation_case(
+                                "qn_bfgs", step=step_p,
+                                gradient=self._cpp_casscf_last_noised_gradient,
+                                **_qn_bfgs_dump_inputs,
+                            )
+                        step = step_p
+                        print(status)
                     # 3. Trust Region Check
                 step_norm = np.linalg.norm(step)
                 #if step_norm > trust_radius:
@@ -12916,6 +12625,7 @@ class PFHamiltonianGenerator:
                 self.build_unitary_matrix(Rai, Rvi, Rva)
                 # print("jnti",self.E_core)
 
+                U3_before_step = self.U3
                 self.U3 = np.einsum("pq,qs->ps", self.U3, self.U_delta)
                 second_order_energy_change = self.microiteration_exact_energy(
                     self.U3, A, G_blocks
@@ -12948,21 +12658,74 @@ class PFHamiltonianGenerator:
                 print("microiteration predicted energy", predicted_energy2, flush=True)
                 end = timer()
                 print("build unitary matrix and recheck energy took", end - start)
-                qn_count +=1
-                self.U2 = np.einsum("pq,qs->ps", self.U2, self.U_delta)
-                
-                active_twoeint[:, :, :, :] = 0.0
-                active_fock_core[:, :] = 0.0
-                d_cmo[:, :] = 0.0
-                start1 = timer()
-                self.microiteration_ci_integrals_transform(
-                    self.U2, eigenvecs, d_cmo, active_fock_core, active_twoeint
-                )
-                end1 = timer()
-                print("second order integral transformation took", end1 - start1)
-                count += 1
-                current_energy = zero_energy + second_order_energy_change
-                hard_case = 0
+
+                # QED_TRUE_ENERGY_RATIO -- the QN branch.  Unlike the main
+                # branch this one has NO acceptance test, NO ratio and NO trust
+                # radius: it applies its step unconditionally.  That is the
+                # amplifier item 322 identified.  Measure E(U) here too, and in
+                # mode 2 refuse a step that raises it, handing the microiteration
+                # back to the main branch (which does have a trust region) by
+                # clearing qn_optimization.
+                qn_step_rejected = False
+                qn_true_energy_engaged = False
+                qn_te_mode = self.true_energy_mode()
+                if qn_te_mode:
+                    U2_trial = np.einsum("pq,qs->ps", self.U2, self.U_delta)
+                    qn_true_energy_engaged = self.true_energy_should_engage(U2_trial)
+                if qn_true_energy_engaged:
+                    start1 = timer()
+                    true_energy_trial = self.true_energy_at_trial(U2_trial, eigenvecs)
+                    end1 = timer()
+                    print("true energy transformation took", end1 - start1)
+                    true_change = true_energy_trial - true_energy_current
+                    print(
+                        "qn true energy E(U)",
+                        true_energy_trial,
+                        "model energy E(T)",
+                        current_energy + energy_change,
+                        "PROJ-VAR gap",
+                        (current_energy + energy_change) - true_energy_trial,
+                        flush=True,
+                    )
+                    print(
+                        "qn true energy change",
+                        true_change,
+                        "model energy change",
+                        energy_change,
+                        flush=True,
+                    )
+                    if qn_te_mode >= 2 and not (
+                        true_change < _QED_TRUE_ENERGY_TOL
+                    ):
+                        qn_step_rejected = True
+                        print(
+                            "qn step raises the true energy -- rejected,"
+                            " leaving qn optimization",
+                            flush=True,
+                        )
+                        self.U3 = U3_before_step
+                        qn_optimization = False
+
+                if qn_step_rejected:
+                    hard_case = 0
+                else:
+                    qn_count +=1
+                    self.U2 = np.einsum("pq,qs->ps", self.U2, self.U_delta)
+
+                    if qn_true_energy_engaged:
+                        true_energy_current = true_energy_trial
+                    active_twoeint[:, :, :, :] = 0.0
+                    active_fock_core[:, :] = 0.0
+                    d_cmo[:, :] = 0.0
+                    start1 = timer()
+                    self.microiteration_ci_integrals_transform(
+                        self.U2, eigenvecs, d_cmo, active_fock_core, active_twoeint
+                    )
+                    end1 = timer()
+                    print("second order integral transformation took", end1 - start1)
+                    count += 1
+                    current_energy = zero_energy + second_order_energy_change
+                    hard_case = 0
 
 
             else:
@@ -12983,6 +12746,7 @@ class PFHamiltonianGenerator:
                 reduce_predicted_energy = 0
                 while orbital_optimization_step < N_orbital_optimization_steps:
                     self.U3 = copy.deepcopy(self.U2)
+                    _mp0_sv = _mp_start()
                     print("\n", current_energy)
                     print(
                         "Microiteration",
@@ -12992,6 +12756,9 @@ class PFHamiltonianGenerator:
                         flush=True,
                     )
                     gradient_norm = np.linalg.norm(reduced_gradient)
+                    # QED_GRAD_CONV: first gradient of this macro's orbital work.
+                    if getattr(self, "_macro_entry_gnorm", None) is None:
+                        self._macro_entry_gnorm = gradient_norm
                     print("gradient norm", gradient_norm, flush=True)
                     print("convergence_threshold", convergence_threshold, flush=True)
 
@@ -13011,13 +12778,77 @@ class PFHamiltonianGenerator:
                     # new augmented hessian
                     beta = 0
                     dim00 = self.index_map_size + 1
+                    _mp0_ah = _mp_start()
                     augmented_hessian9 = np.zeros((dim00, dim00))
                     w9 = np.zeros((dim00, dim00))
+                    _mp_end("aug_hess_alloc", _mp0_ah)
                     step = np.zeros(self.index_map_size)
                     step10_norm = 0.0
                     
+                    # QED_OTR_TR / QED_AH_KRYLOV: one call replaces the
+                    # TRUST-REGION subproblem only -- GLTR when the projected
+                    # Hessian is positive definite, the LSTRS/Davidson beta
+                    # bisection when it is not.  The gradient-small branch at
+                    # the bottom keeps its MINRES Newton solve under either
+                    # knob: that is a linear solve, not a trust-region
+                    # subproblem, and is out of scope for both ported solvers.
+                    # NOTE this is a DELIBERATE NARROWING of QED_OTR_TR's
+                    # earlier scope, which also replaced newton_small_gradient
+                    # (728 of c10h8's 2430 matvecs).  Measurements taken before
+                    # this change are not comparable to ones taken after.
+                    # Written as leading branches so the original path stays
+                    # byte-for-byte intact when both knobs are off.
+                    # hard_case stays 0 under either: neither ported solver has
+                    # a hard-case branch, they expand the search space instead
+                    # (opentrustregion.f90:763-770).
                     if np.linalg.norm(reduced_gradient) > 1e-3:
-                        if n_negative == 0:
+                        if _QED_EXACT_TR == 2:
+                            # QED_EXACT_TR=2: take the WHOLE main site, both the
+                            # GLTR and the LSTRS branch, for a clean A/B of
+                            # "main site solved exactly".  =1 (below) takes only
+                            # the GLTR branch and leaves LSTRS alone, which is
+                            # the default because LSTRS is used exactly where
+                            # Kreplin's P-subspace guess works.
+                            _stats_span = _stats_begin("exact_tr")
+                            step = self._exact_dense_trust_region_step(
+                                self.U2, A_tilde2, G_blocks,
+                                reduced_gradient, trust_radius,
+                            )
+                            _stats_end(_stats_span)
+                        elif _QED_OTR_TR:
+                            # own QED_SOLVER_STATS site, so its matvecs are
+                            # attributed exactly like gltr's and lstrs's
+                            _stats_span = _stats_begin("otr_trust_region")
+                            step = self._otr_trust_region_step(
+                                self._orbital_hess_x(self.U2, A_tilde2, G_blocks),
+                                self.reduced_hessian_diagonal,
+                                reduced_gradient, trust_radius
+                            )
+                            _stats_end(_stats_span)
+                        elif _QED_AH_KRYLOV:
+                            _stats_span = _stats_begin("ah_krylov")
+                            step = self._ah_krylov_trust_region_step(
+                                self._orbital_hess_x(self.U2, A_tilde2, G_blocks),
+                                self.reduced_hessian_diagonal,
+                                reduced_gradient, trust_radius,
+                            )
+                            _stats_end(_stats_span)
+                        elif _QED_EXACT_TR and n_negative == 0:
+                            # Replaces GLTR ONLY.  This is the branch with the
+                            # coverage gap: n_negative == 0 tests the DIAGONAL,
+                            # and 4 of 7 such subproblems on MgH+ CAS(8,12) are
+                            # indefinite anyway, with a delocalized v_min that
+                            # neither the P-subspace guess nor e_argmin(h_diag)
+                            # can point at.  The LSTRS branch below is left
+                            # untouched -- it is used precisely where its guess
+                            # is good.
+                            _stats_span = _stats_begin("exact_tr")
+                            step = self._exact_dense_trust_region_step(
+                                self.U2, A_tilde2, G_blocks,
+                                reduced_gradient, trust_radius,
+                            )
+                            _stats_end(_stats_span)
+                        elif n_negative == 0:
                              _gltr_dump_inputs = None
                              if _CPP_CASSCF_VALIDATION_DIR:
                                  _n_gltr = self.index_map_size
@@ -13042,9 +12873,10 @@ class PFHamiltonianGenerator:
                                    self.reduced_hessian_diagonal,
                                    trust_radius,
                                    max_iter=1000,
-                                   tol=1e-7
+                                   tol=self._subproblem_tol("main", "gltr")
                              )
                              _stats_end(_stats_span, status=status)
+                             self._record_gltr_exit(status, "gltr")
                              if _gltr_dump_inputs is not None:
                                  # gradient=the actual noised r solve_gltr_trust_region used,
                                  # not reduced_gradient -- see that function's doc comment.
@@ -13091,579 +12923,10 @@ class PFHamiltonianGenerator:
                                  print("adjusted step norm", np.linalg.norm(adjusted_step))
                                  step = adjusted_step
                              else:
-                                 mu9 = np.zeros(dim00)
-                                 beta0 = 0
-                                 both_roots_normalization = 0
-                                 v1 = 0
-                                 v2 = 0
-                                 u1 = np.zeros(self.index_map_size)
-                                 u2 = np.zeros(self.index_map_size)
-                                 x1 = np.zeros(self.index_map_size)
-                                 x2 = np.zeros(self.index_map_size)
-                                 phi1 = 0
-                                 phi2 = 0
-
-                                 lambda1 = 0
-                                 lambda2 = 0
-                                 lambda_c = 0
-                                 idx = self.reduced_hessian_diagonal.argsort()
-                                 delta_u = self.reduced_hessian_diagonal[idx[0]]
-                                 delta_l = 0
-                                 alpha_u = (
-                                     delta_u + np.linalg.norm(reduced_gradient) * trust_radius
-                                 )
-                                 alpha_l = 0
-                                 count10 = 0
-                                 # beta = min(0, alpha_u)
-                                 beta = alpha_u
-                                 aug_hessian_eigenvecs = np.zeros((dim00, 2))
-                                 aug_hessian_eigenvals = np.zeros(2)
-                                 print("trust radius", trust_radius)
-                                 self.collapse_subspace_check = False
-                                 _stats_span = _stats_begin("lstrs_davidson")
-                                 while True:
-                                     print("****************************")
-                                     print("lstrs iteration", count10, "beta", beta)
-                                     beta0 = beta
-                                     # mu9[:] = self.projection_step2(reduced_gradient, reduced_hessian, w9, beta, dim00)
-                                     # print("two roots", mu9[0], mu9[1], mu9[2])
-                                     if count10 == 0:
-                                         alpha_range = np.abs(alpha_u - alpha_l)
-                                         Q = self.Davidson_augmented_hessian_solve6(
-                                             self.U2,
-                                             A_tilde2,
-                                             G,
-                                             G_blocks,
-                                             self.reduced_hessian_diagonal,
-                                             reduced_gradient,
-                                             beta,
-                                             alpha_range,
-                                             trust_radius,
-                                             aug_hessian_eigenvecs,
-                                             aug_hessian_eigenvals,
-                                             guess_vector,
-                                             restart=False
-                                         )
-                                         delta_l = aug_hessian_eigenvals[0]
-                                         alpha_l = (
-                                             delta_l
-                                             - np.linalg.norm(reduced_gradient) / trust_radius
-                                         )
-                                     else:
-                                         alpha_range = np.abs(alpha_u - alpha_l)
-                                         guess_vector = Q
-                                         Q = self.Davidson_augmented_hessian_solve6(
-                                             self.U2,
-                                             A_tilde2,
-                                             G,
-                                             G_blocks,
-                                             self.reduced_hessian_diagonal,
-                                             reduced_gradient,
-                                             beta,
-                                             alpha_range,
-                                             trust_radius,
-                                             aug_hessian_eigenvecs,
-                                             aug_hessian_eigenvals,
-                                             guess_vector,
-                                             restart=True
-                                         )
-                                     # print(aug_hessian_eigenvals)
-                                     # print(aug_hessian_eigenvecs)
-                                     mu9[0] = aug_hessian_eigenvals[0]
-                                     mu9[1] = aug_hessian_eigenvals[1]
-                                     w9[:, 0] = aug_hessian_eigenvecs[:, 0]
-                                     w9[:, 1] = aug_hessian_eigenvecs[:, 1]
-                                     print("ALPHA range", alpha_l, alpha_u)
-                                     # idx = mu9.argsort()[:dim00]
-                                     # print(idx)
-                                     # w9[:,0] = w9[:,0]/np.linalg.norm(w9[:,0])
-                                     # w9[:,1] = w9[:,1]/np.linalg.norm(w9[:,1])
-                                     v1 = w9[0, 0] / np.linalg.norm(w9[:, 0])
-                                     v2 = w9[0, 1] / np.linalg.norm(w9[:, 1])
-                                     u1[:] = w9[1:, 0] / np.linalg.norm(w9[:, 0])
-                                     u2[:] = w9[1:, 1] / np.linalg.norm(w9[:, 1])
-                                     aa1 = np.linalg.norm(reduced_gradient) * np.abs(v1)
-                                     bb1 = np.sqrt(1 - v1 * v1)
-                                     aa2 = np.linalg.norm(reduced_gradient) * np.abs(v2)
-                                     bb2 = np.sqrt(1 - v2 * v2)
-                                     print("aa1, bb1", aa1, bb1, "aa2, bb2", aa2, bb2)
-                                     if mu9[0] > -1e-8 and np.linalg.norm(
-                                         u1
-                                     ) < trust_radius * np.abs(v1):
-                                         hard_case = 2
-                                         print("use newton step")
-                                         break
-                                     delta_u2 = mu9[0] - v1 * np.dot(reduced_gradient, u1) / (
-                                         1 - v1 * v1
-                                     )
-                                     delta_u = min(delta_u, delta_u2)
-                                     print("delta_u2", delta_u2)
-
-                                     epsilon_v = 1e-4
-                                     print(aa1 <= epsilon_v * bb1)
-                                     print(aa2 <= epsilon_v * bb2)
-                                     alpha = beta
-                                     while (
-                                         (aa1 <= epsilon_v * bb1)
-                                         and (aa2 <= epsilon_v * bb2)
-                                         and np.abs(alpha_u - alpha_l)
-                                         > 1e-8 * max(np.abs(alpha_u), np.abs(alpha_l))
-                                     ):
-                                         alpha_u = alpha
-                                         alpha = (alpha_l + alpha_u) / 2
-                                         w9[:, :] = 0.0
-                                         # mu9[:] = self.projection_step2(reduced_gradient, reduced_hessian, w9, alpha, dim00)
-                                         # print("two roots", mu9[0], mu9[1], mu9[2])
-
-                                         alpha_range = np.abs(alpha_u - alpha_l)
-                                         Q = self.Davidson_augmented_hessian_solve6(
-                                             self.U2,
-                                             A_tilde2,
-                                             G,
-                                             G_blocks,
-                                             self.reduced_hessian_diagonal,
-                                             reduced_gradient,
-                                             alpha,
-                                             alpha_range,
-                                             trust_radius,
-                                             aug_hessian_eigenvecs,
-                                             aug_hessian_eigenvals,
-                                             Q,
-                                             restart=True
-                                         )
-                                         mu9[0] = aug_hessian_eigenvals[0]
-                                         mu9[1] = aug_hessian_eigenvals[1]
-                                         w9[:, 0] = aug_hessian_eigenvecs[:, 0]
-                                         w9[:, 1] = aug_hessian_eigenvecs[:, 1]
-                                         v1 = w9[0, 0] / np.linalg.norm(w9[:, 0])
-                                         v2 = w9[0, 1] / np.linalg.norm(w9[:, 1])
-                                         u1[:] = w9[1:, 0] / np.linalg.norm(w9[:, 0])
-                                         u2[:] = w9[1:, 1] / np.linalg.norm(w9[:, 1])
-                                         aa1 = np.linalg.norm(reduced_gradient) * np.abs(v1)
-                                         bb1 = np.sqrt(1 - v1 * v1)
-                                         aa2 = np.linalg.norm(reduced_gradient) * np.abs(v2)
-                                         bb2 = np.sqrt(1 - v2 * v2)
-                                         print(
-                                             alpha,
-                                             aa1 <= epsilon_v * bb1,
-                                             aa2 <= epsilon_v * bb2,
-                                             mu9[0],
-                                             mu9[1],
-                                             bb1,
-                                             bb2,
-                                         )
-                                         delta_u2 = mu9[0] - v1 * np.dot(
-                                             reduced_gradient, u1
-                                         ) / (1 - v1 * v1)
-                                         delta_u = min(delta_u, delta_u2)
-                                         print("new delta_u", delta_u, delta_u2)
-
-                                     if (aa1 <= epsilon_v * bb1) and (aa2 <= epsilon_v * bb2):
-                                         exit()
-                                     elif (aa1 > epsilon_v * bb1) and (aa2 > epsilon_v * bb2):
-                                         both_roots_normalization = 1
-                                     else:
-                                         both_roots_normalization = 0
-                                     beta = alpha
-                                     # update delta_u
-                                     # temptemp = np.dot(reduced_hessian, u1)
-                                     # temptemp2 = np.dot(u1, temptemp)
-
-                                     # delta_u2 = mu9[0] - v1 * np.dot(reduced_gradient, u1)/np.dot(u1,u1)
-                                     # delta_u = min(delta_u, temptemp2/np.dot(u1,u1))
-                                     # print("new delta_u", delta_u)
-                                     ####scale9 = w9[0][0]
-                                     ####print("scale",scale9)
-                                     ####if np.abs(scale9) < 1e-15:
-                                     ####    break
-                                     # assign (k-1) and k-iteration values
-                                     lambda1 = lambda2
-                                     x1 = x2
-                                     phi1 = phi2
-                                     print("two roots", mu9[0], mu9[1])
-                                     if aa1 > epsilon_v * bb1:
-                                         step10 = u1 / v1
-                                         second_component[:] = u2
-                                         lambda2 = mu9[0]
-                                         print("norm from first root", np.linalg.norm(step10))
-                                         # if aa2 > epsilon_v * bb2:
-                                         #    second_component[:] = u2/v2
-                                         #    print("second root norm", np.linalg.norm(second_component))
-                                         if np.linalg.norm(step10) < trust_radius:
-                                             alpha_l = beta
-                                         if np.linalg.norm(step10) > trust_radius:
-                                             alpha_u = beta
-                                     else:
-                                         step10 = u2 / v2
-                                         second_component[:] = u1
-                                         lambda2 = mu9[1]
-                                         print("norm from second root", np.linalg.norm(step10))
-                                         alpha_u = beta
-                                     print("NEW ALPHA range", alpha_l, alpha_u)
-                                     step10_norm = np.linalg.norm(step10)
-                                     x2 = step10
-                                     if mu9[0] > -1e-8 and np.linalg.norm(
-                                         u1
-                                     ) < trust_radius * np.abs(v1):
-                                         hard_case = 2
-                                         print("use newton step")
-                                         break
-                                     phi2 = -np.dot(reduced_gradient, x2)
-                                     # print(step10)
-                                     # print(x1)
-                                     # print(x2)
-                                     # if count10 == 0 and step10_norm < trust_radius: break
-                                     # print("check eigenvalues and step norm from diagonalizing the bordering matrix")
-                                     # print(mu9, flush=True)
-                                     print(
-                                         "step10 norm",
-                                         step10_norm,
-                                         "current beta",
-                                         beta,
-                                         flush=True,
-                                     )
-                                     x1_norm = np.linalg.norm(x1)
-                                     x2_norm = np.linalg.norm(x2)
-                                     phi2_p = np.dot(x2, x2)
-                                     phi1_p = np.dot(x1, x1)
-                                     print(
-                                         "phi1",
-                                         phi1,
-                                         "phi1_p",
-                                         phi1_p,
-                                         "phi2",
-                                         phi2,
-                                         "phi2_p",
-                                         phi2_p,
-                                     )
-                                     if (
-                                         np.abs((step10_norm - trust_radius) / trust_radius)
-                                         <= _QED_LSTRS_NORM_TOL
-                                         and mu9[0] <= 0
-                                     ):
-                                         step = step10
-                                         hard_case = 0
-                                         break
-                                     print("check orthogonality of the first two roots")
-                                     vv1 = w9[0, 0]
-                                     vv2 = w9[0, 1]
-                                     uu1 = w9[1:, 0]
-                                     uu2 = w9[1:, 1]
-                                     # check if the quasi-optimal condition is satisfied
-                                     print(
-                                         "quasi-optimal condition",
-                                         (1 + trust_radius * trust_radius)
-                                         * (vv1 * vv1 + vv2 * vv2),
-                                         flush=True,
-                                     )
-                                     qs = (1 + trust_radius * trust_radius) * (
-                                         vv1 * vv1 + vv2 * vv2
-                                     )
-                                     print(np.dot(w9[:, :2].T, w9[:, :2]))
-
-                                     # construct quasi-optimal step
-                                     epsilon_hc = _QED_LSTRS_EPS_HC  # QED_LSTRS_EPS_HC, default 1e-6
-                                     eta = epsilon_hc / (1 - epsilon_hc)
-                                     tau1 = 1
-                                     tau2 = 1
-                                     if qs > 1.0:
-                                         tau1 = (
-                                             (vv1 - vv2 * np.sqrt(qs - 1))
-                                             / (vv1 * vv1 + vv2 * vv2)
-                                             / np.sqrt(1 + trust_radius * trust_radius)
-                                         )
-                                         tau2 = (
-                                             (vv2 + vv1 * np.sqrt(qs - 1))
-                                             / (vv1 * vv1 + vv2 * vv2)
-                                             / np.sqrt(1 + trust_radius * trust_radius)
-                                         )
-                                     elif np.abs(qs - 1.0) < 2e-308:
-                                         tau1 = vv1 / np.sqrt(vv1 * vv1 + vv2 * vv2)
-                                         tau2 = vv2 / np.sqrt(vv1 * vv1 + vv2 * vv2)
-                                     x_tilde = (tau1 * uu1 + tau2 * uu2) / (
-                                         tau1 * vv1 + tau2 * vv2
-                                     )
-
-                                     lambda_tilde = tau1 * tau1 * lambda1 + tau2 * tau2 * lambda2
-                                     psi_tilde = 0.5 * self.microiteration_predicted_energy2(
-                                         self.U2, reduced_gradient, A_tilde2, G_blocks, x_tilde
-                                     )
-                                     # The quasi-optimal test below reads mu9[1]/vv2/uu2, i.e. the
-                                     # SECOND root -- but Davidson_augmented_hessian_solve6 only
-                                     # converges it once alpha_range <= 1e-5 (nroots 1 -> 2, ~16350).
-                                     # While the range is wide, root 1 is whatever the current
-                                     # subspace happens to give, so accepting x_tilde on it would
-                                     # act on an unconverged vector.  At the default eps_hc = 1e-6
-                                     # the test never passes and this is moot (c10h8: 54 x_tilde
-                                     # constructions, 0 hard_case=3 exits), but loosening eps_hc
-                                     # removes that accidental protection -- so gate the exit on
-                                     # the same condition that makes the second root real.
-                                     _second_root_converged = alpha_range <= 1e-5
-                                     if (qs > 1.0 or np.abs(qs - 1.0) < 2e-308) and _second_root_converged:
-                                         print(
-                                             "x_tilde norm1",
-                                             np.linalg.norm(x_tilde),
-                                             (mu9[1] - mu9[0])
-                                             * tau2
-                                             * tau2
-                                             * (1 + trust_radius * trust_radius),
-                                             -2.0 * eta * psi_tilde,
-                                         )
-                                         if (mu9[1] - mu9[0]) * tau2 * tau2 * (
-                                             1 + trust_radius * trust_radius
-                                         ) < -2.0 * eta * psi_tilde:
-                                             print("find quasi-optimal solution1", flush=True)
-                                             hard_case = 3
-                                             break
-                                         else:
-                                             if qs > 1.0:
-                                                 tau1 = (
-                                                     (vv1 + vv2 * np.sqrt(qs - 1))
-                                                     / (vv1 * vv1 + vv2 * vv2)
-                                                     / np.sqrt(1 + trust_radius * trust_radius)
-                                                 )
-                                                 tau2 = (
-                                                     (vv2 - vv1 * np.sqrt(qs - 1))
-                                                     / (vv1 * vv1 + vv2 * vv2)
-                                                     / np.sqrt(1 + trust_radius * trust_radius)
-                                                 )
-                                                 x_tilde = (tau1 * uu1 + tau2 * uu2) / (
-                                                     tau1 * vv1 + tau2 * vv2
-                                                 )
-                                                 lambda_tilde = (
-                                                     tau1 * tau1 * lambda1
-                                                     + tau2 * tau2 * lambda2
-                                                 )
-                                                 psi_tilde = (
-                                                     0.5
-                                                     * self.microiteration_predicted_energy2(
-                                                         self.U2,
-                                                         reduced_gradient,
-                                                         A_tilde2,
-                                                         G_blocks,
-                                                         x_tilde,
-                                                     )
-                                                 )
-                                                 print(
-                                                     "x_tilde norm2",
-                                                     np.linalg.norm(x_tilde),
-                                                     (mu9[1] - mu9[0])
-                                                     * tau2
-                                                     * tau2
-                                                     * (1 + trust_radius * trust_radius),
-                                                     -2.0 * eta * psi_tilde,
-                                                     flush=True,
-                                                 )
-                                                 if (mu9[1] - mu9[0]) * tau2 * tau2 * (
-                                                     1 + trust_radius * trust_radius
-                                                 ) < -2.0 * eta * psi_tilde:
-                                                     print(
-                                                         "find quasi-optimal solution2",
-                                                         flush=True,
-                                                     )
-                                                     hard_case = 3
-                                                     break
-                                     if np.abs(alpha_u - alpha_l) <= 1e-8 * max(
-                                         np.abs(alpha_u), np.abs(alpha_l)
-                                     ):
-                                         print("interval too small")
-                                         if (
-                                             x2_norm < trust_radius
-                                             and both_roots_normalization == 0
-                                         ):
-                                             hard_case = 1
-                                         if both_roots_normalization == 1:
-                                             hard_case = 4
-                                         break
-
-                                     if count10 == 0:
-                                         beta = beta + (beta - lambda2) / x2_norm * (
-                                             trust_radius - x2_norm
-                                         ) / trust_radius * (trust_radius + 1.0 / x2_norm)
-                                     else:
-                                         print("denominator", x2_norm - x1_norm)
-                                         denom = trust_radius * (x2_norm - x1_norm)
-
-                                         if np.abs(denom) > 2e-308:
-                                             lambda_c = (
-                                                 lambda1 * x1_norm * (x2_norm - trust_radius)
-                                                 + lambda2 * x2_norm * (trust_radius - x1_norm)
-                                             ) / denom
-                                         else:
-                                             lambda_c = delta_u
-                                         if lambda_c > delta_u:
-                                             print(
-                                                 "need to safeguard delta_u", lambda_c, delta_u
-                                             )
-                                             lambda_c = delta_u
-                                         # lambda_c = (lambda1 * x1_norm * (x2_norm - trust_radius) + lambda2 * x2_norm * (trust_radius - x1_norm))/trust_radius/(x2_norm - x1_norm)
-                                         # print(lambda_c)
-                                         if np.abs(lambda2 - lambda1) <= 2e-308:
-                                             print("interpolate alpha by bisection")
-                                             beta = (alpha_l + alpha_u) / 2
-                                         else:
-                                             omega_k = (lambda2 - lambda_c) / (lambda2 - lambda1)
-                                             num = (
-                                                 x1_norm
-                                                 * x2_norm
-                                                 * (x2_norm - x1_norm)
-                                                 * (lambda1 - lambda_c)
-                                                 * (lambda2 - lambda_c)
-                                             )
-
-                                             denom = (
-                                                 omega_k * x2_norm + (1 - omega_k) * x1_norm
-                                             ) * (lambda2 - lambda1)
-                                             print(x1_norm, x2_norm)
-                                             print(lambda1, lambda2, lambda_c)
-                                             print(num, denom)
-                                             if np.abs(denom) <= 2e-308:
-                                                 print("interpolate alpha by bisection2")
-                                                 beta = (alpha_l + alpha_u) / 2
-                                             else:
-                                                 beta = (
-                                                     lambda_c
-                                                     + omega_k * phi1
-                                                     + (1 - omega_k) * phi2
-                                                     + num / denom
-                                                 )
-
-                                     
-                                     print("beta after interpolation", beta)
-                                     # safeguard alpha
-                                     if beta < alpha_l or beta > alpha_u:
-                                         print("need to safeguard alpha")
-                                         if count10 == 0:
-                                             beta = delta_u + phi2 + phi2_p * (delta_u - lambda2)
-                                         elif x2_norm < x1_norm:
-                                             print("use phi2")
-                                             beta = delta_u + phi2 + phi2_p * (delta_u - lambda2)
-                                         else:
-                                             print("use phi1")
-                                             beta = delta_u + phi1 + phi1_p * (delta_u - lambda1)
-                                         if beta < alpha_l or beta > alpha_u:
-                                             print("using bisection")
-                                             beta = (alpha_l + alpha_u) / 2
-                                     count10 += 1
-                                     # if np.abs(beta -beta0) <= 1e-12:
-                                     #    print("possible convergence")
-                                     #    print(beta, beta0)
-                                     #    print(x2_norm)
-
-                                     #    if x2_norm < trust_radius:
-                                     #        print("11111111")
-                                     #        hard_case = 1
-                                     #    elif x2_norm > trust_radius and both_roots_normalization == 1:
-                                     #        print("22222222")
-                                     #        hard_case = 1
-
-                                     #    break
-                                     if count10 == 50:
-                                         break
-                                 print("check hard case", hard_case)
-                                 _stats_end(
-                                     _stats_span,
-                                     iters=count10,
-                                     status="hard_case=%d" % hard_case,
-                                 )
-                                 if hard_case == 1:
-                                     first_component[:] = x2[:]
-                                     if x2_norm > trust_radius:
-                                         print("some logic is wrong")
-                                         exit()
-                                         # temp_vector = np.zeros(self.index_map_size)
-                                         # temp_vector[:] = second_component[:]
-                                         # second_component[:] = first_component[:]
-                                         # first_component[:] = temp_vector[:]
-                                     # print(first_component)
-                                     # print(second_component)
-                                     print(
-                                         "norm of current root", np.linalg.norm(first_component)
-                                     )
-                                     xy_square = np.dot(
-                                         first_component, second_component
-                                     ) * np.dot(first_component, second_component)
-                                     x_square = np.dot(first_component, first_component)
-                                     y_square = np.dot(second_component, second_component)
-                                     delta = 4 * xy_square - 4 * y_square * (
-                                         x_square - trust_radius * trust_radius
-                                     )
-                                     # print(delta)
-                                     t1 = (
-                                         -2 * np.dot(first_component, second_component)
-                                         - np.sqrt(delta)
-                                     ) / (2 * y_square)
-                                     t2 = (
-                                         -2 * np.dot(first_component, second_component)
-                                         + np.sqrt(delta)
-                                     ) / (2 * y_square)
-                                     print(
-                                         "x^2, xy, y^2, t",
-                                         x_square,
-                                         np.dot(first_component, second_component),
-                                         y_square,
-                                         t1,
-                                     )
-                                     adjusted_step = (
-                                         first_component + min(np.abs(t1), np.abs(t2)) * second_component
-                                     )
-                                     print("adjusted step norm", np.linalg.norm(adjusted_step))
-                                     step = adjusted_step
-
-                                 if hard_case == 2:
-                                     #Q = np.zeros((1, self.index_map_size))
-                                     #H1_op = LinearOperator(
-                                     #    (self.index_map_size, self.index_map_size),
-                                     #    matvec=lambda Q: self.mv2(
-                                     #        self.U2, A_tilde2, G1, Q, 1, 0, 0
-                                     #    ),
-                                     #)
-                                     #x, exitCode = minres(H1_op, -reduced_gradient, rtol=1e-6)
-                                     #print("exitcode", exitCode)
-                                     #step = x
-                                     _stats_span_n = _stats_begin("newton_in_lstrs")
-                                     denom = self.reduced_hessian_diagonal
-                                     max_iter = _QED_NEWTON_MAXITER  # QED_NEWTON_MAXITER, default 20
-                                     _solve_newton = self.minres_solve if _QED_USE_MINRES else self.linear_equation_solve
-                                     solution, converged = _solve_newton(self.U2, A_tilde2, G_blocks, reduced_gradient, denom, max_iter, conv_thresh=1e-6)
-                                     if not converged:
-                                         print("\n--- Falling back to MINRES solver ---")
-                                         iteration_count = [0]
-                                         def callback(xk):
-                                             """Callback function called at each iteration"""
-                                             iteration_count[0] += 1
-                                             if not _QED_MINRES_TRACE:
-                                                 return
-                                             # costs one extra mv2 -- see QED_MINRES_TRACE
-                                             absolute_residual = np.linalg.norm(H1_op.matvec(xk) + reduced_gradient)
-                                             relative_residual = absolute_residual / np.linalg.norm(reduced_gradient)
-                                             print(f"MINRES Iter: {iteration_count[0]:3d}   "
-                                             f"Abs Residual: {absolute_residual:.4e}   "
-                                             f"Rel Residual: {relative_residual:.4e}")
-                                         H1_op = LinearOperator(
-                                             (self.index_map_size, self.index_map_size),
-                                             matvec=lambda Q: self.mv2(self.U2, A_tilde2, G_blocks, Q, 1, 0, 0),
-                                         )
-                                         solution, exitCode = minres(H1_op, -reduced_gradient, rtol=1e-6, callback=callback)
-                                         print(f"MINRES exit code: {exitCode}")
-                                         
-                                         if exitCode == 0:
-                                             print("MINRES converged successfully")
-                                         else:
-                                             print(f"MINRES warning: exit code {exitCode}")
-                                     #print("step norm2", np.linalg.norm(solution))
-                                     _stats_end(_stats_span_n, status="newton")
-                                     hard_case = 2
-                                     step = solution
-
-
-                                 if hard_case == 3:
-                                     step = x_tilde
-                                 if hard_case == 4:
-                                     if x2_norm > trust_radius:
-                                         step = x2 / x2_norm * trust_radius
-                                     if x2_norm < trust_radius:
-                                         step = x2
+                                 step, hard_case = solve_lstrs_microiteration(
+                                     self, A_tilde2, G, G_blocks, dim00,
+                                     reduced_gradient, trust_radius, w9, first_component,
+                                     second_component, guess_vector, hard_case, beta)
                                  
 
                     else:
@@ -13671,7 +12934,11 @@ class PFHamiltonianGenerator:
                         _stats_span = _stats_begin("newton_small_gradient")
                         denom = self.reduced_hessian_diagonal
                         max_iter = _QED_NEWTON_MAXITER  # QED_NEWTON_MAXITER, default 20
-                        _solve_newton = self.minres_solve if _QED_USE_MINRES else self.linear_equation_solve
+                        # QED_NEWTON_SCIPY overrides QED_USE_MINRES; both default off.
+                        if _QED_NEWTON_SCIPY:
+                            _solve_newton = self.scipy_minres_solve
+                        else:
+                            _solve_newton = self.minres_solve if _QED_USE_MINRES else self.linear_equation_solve
                         solution,converged = _solve_newton(self.U2, A_tilde2, G_blocks, reduced_gradient, denom, max_iter, conv_thresh=1e-6)
                         if not converged:
                             print("\n--- Falling back to MINRES solver ---")
@@ -13730,6 +12997,7 @@ class PFHamiltonianGenerator:
 
                     print("step norm", step_norm)
                     #print("step", step)
+                    _mp_end("inner_solver_block", _mp0_sv)
                     start = timer()
                     Rai = np.zeros((self.n_act_orb, self.n_in_a))
                     Rvi = np.zeros((self.n_virtual, self.n_in_a))
@@ -13781,13 +13049,94 @@ class PFHamiltonianGenerator:
                     end = timer()
                     print("build unitary matrix and recheck energy took", end - start)
 
+                    # QED_TRUE_ENERGY_RATIO.  `energy_change` above is a change in
+                    # the MODEL E(T); on an indefinite G the model is unbounded
+                    # below, so `energy_change < 0.0` is not evidence the step is
+                    # any good.  Evaluate the TRUE energy E(U) at the trial
+                    # rotation and judge the step by that instead.  See the knob
+                    # note at the top of this file for the cost argument -- on an
+                    # accepted step this transform REPLACES the one further down
+                    # rather than adding to it.
+                    accept_by_true_energy = None
+                    true_change = 0.0
+                    # QED_TRUE_ENERGY_ADAPTIVE (item 330): decide BEFORE paying
+                    # for the transform.  When it declines, nothing below runs
+                    # and the shipping model test governs acceptance, so the
+                    # step keeps WMK's large radius of convergence.
+                    true_energy_engaged = False
+                    te_mode = self.true_energy_mode()
+                    if te_mode:
+                        U2_trial = np.einsum("pq,qs->ps", self.U2, self.U_delta)
+                        if _QED_TRUE_ENERGY_PROBE:
+                            # always measure once per macro, then reuse the verdict
+                            true_energy_engaged = (not probe_decided) or probe_engage
+                        else:
+                            true_energy_engaged = self.true_energy_should_engage(
+                                U2_trial
+                            )
+                    if true_energy_engaged:
+                        start1 = timer()
+                        true_energy_trial = self.true_energy_at_trial(
+                            U2_trial, eigenvecs
+                        )
+                        end1 = timer()
+                        print("true energy transformation took", end1 - start1)
+                        true_change = true_energy_trial - true_energy_current
+                        # PROJ vs VAR, the pair Molpro prints every macroiteration.
+                        print(
+                            "true energy E(U)",
+                            true_energy_trial,
+                            "model energy E(T)",
+                            current_energy + energy_change,
+                            "PROJ-VAR gap",
+                            (current_energy + energy_change) - true_energy_trial,
+                            flush=True,
+                        )
+                        print(
+                            "true energy change",
+                            true_change,
+                            "model energy change",
+                            energy_change,
+                            flush=True,
+                        )
+                        accept_by_true_energy = true_change < _QED_TRUE_ENERGY_TOL
+                        if _QED_TRUE_ENERGY_PROBE and not probe_decided:
+                            denom = abs(energy_change)
+                            rel = (abs(true_change - energy_change) / denom
+                                   if denom > 1e-14 else float("inf"))
+                            probe_engage = rel > _QED_TRUE_ENERGY_PROBE_TOL
+                            probe_decided = True
+                            print(
+                                "probe: rel model error", rel,
+                                "tol", _QED_TRUE_ENERGY_PROBE_TOL,
+                                "-> engage for this macroiteration", probe_engage,
+                                flush=True,
+                            )
+
                     if microiteration == 0 and orbital_optimization_step == 0:
                         convergence_threshold = min(
                             0.01 * gradient_norm, np.power(gradient_norm, 2)
                         )
-                    if energy_change < 0.0 or hard_case == 2:
+                    # Mode 2 ENFORCES the true-energy test; mode 1 measures it and
+                    # steers the radius with it but leaves acceptance alone, so a
+                    # mode-1 run differs from the shipping default only through
+                    # step_control.
+                    # `and true_energy_engaged` is REQUIRED, not cosmetic: when
+                    # the adaptive trigger declines, accept_by_true_energy is
+                    # still None, and `None or hard_case == 2` would reject
+                    # every step that is not a hard case.
+                    if te_mode >= 2 and true_energy_engaged:
+                        step_accepted = accept_by_true_energy or hard_case == 2
+                    else:
+                        step_accepted = energy_change < 0.0 or hard_case == 2
+                    if step_accepted:
                         print("step norm", np.linalg.norm(step))
-                        if step_norm < 0.05 and not _QED_DISABLE_QN:
+                        # QED_TRUE_ENERGY_REEXPAND forces QN off: the QN branch
+                        # caches U_zero / A_tilde_zero / G_blocks_zero /
+                        # reduced_hessian_diagonal_zero in the OLD basis at
+                        # qn_count == 1, and re-expansion invalidates all four.
+                        if (step_norm < 0.05 and not _QED_DISABLE_QN
+                                and not _QED_TRUE_ENERGY_REEXPAND):
                             print("activate qn optimization")
                             qn_optimization = True
                             qn_count +=1
@@ -13806,6 +13155,36 @@ class PFHamiltonianGenerator:
                         # predicted_energy2 = self.microiteration_predicted_energy2(self.U2, reduced_gradient, A_tilde2, G, step)
                         # print("microinteration predicted energy", predicted_energy1, predicted_energy2, flush = True)
                         self.U2 = np.einsum("pq,qs->ps", self.U2, self.U_delta)
+                        # QED_TRUE_ENERGY_REEXPAND: move the expansion point to
+                        # the orbitals just accepted, using the transform
+                        # true_energy_at_trial already ran at exactly this
+                        # rotation.  After this self.U2 is the identity, so the
+                        # build_gradient / build_hessian_diagonal below evaluate
+                        # the NEW A, G at T = 0, and the model increment for the
+                        # next step is measured from here rather than from macro
+                        # entry.  zero_energy / second_order_energy_change are
+                        # reset to match, so the `current_energy = zero_energy +
+                        # second_order_energy_change` at the bottom of this
+                        # branch lands on the exact energy at the new point.
+                        # true_energy_engaged: re-expansion INSTALLS the
+                        # transform true_energy_at_trial produced, so it can
+                        # only run on a step where that transform actually ran.
+                        # te_mode >= 2 as well: under REACTIVE the machinery is
+                        # dormant until armed, and re-expansion installs the
+                        # transform only that path produces.
+                        if (_QED_TRUE_ENERGY_REEXPAND and true_energy_engaged
+                                and te_mode >= 2):
+                            _t_re = timer()
+                            G_blocks = self.reexpand_at_new_orbitals(A, G, eigenvecs)
+                            zero_energy = true_energy_trial
+                            second_order_energy_change = 0.0
+                            true_energy_current = true_energy_trial
+                            print(
+                                "reexpanded model at accepted orbitals, E =",
+                                true_energy_trial,
+                                "took", timer() - _t_re,
+                                flush=True,
+                            )
                         if microiteration == 0 and orbital_optimization_step == 0:
                             # convergence_threshold = min(0.01 * gradient_norm, np.power(gradient_norm,2))
                             # convergence_threshold = 0.01 * gradient_norm
@@ -13830,6 +13209,33 @@ class PFHamiltonianGenerator:
                         orbital_optimization_step += 1
                         ratio = energy_change / predicted_energy2
                         print("compare model with actual energy change", ratio)
+                        # QED_TRUE_ENERGY_RATIO: replace the model-over-model
+                        # ratio with the textbook one, ACTUAL over PREDICTED
+                        # reduction.  The quantity being divided is the only
+                        # thing that changes -- step_control, _record_rho and
+                        # every threshold in them are untouched.  Guard against
+                        # a zero denominator, which the original could not hit
+                        # (predicted_energy2 < 0 whenever a step was accepted)
+                        # but which a true-energy accept can reach on a flat
+                        # step.
+                        # `and true_energy_engaged` IS A CORRECTNESS FIX, not a
+                        # style change: true_change / true_energy_trial are only
+                        # assigned inside the engaged branch, so under the
+                        # ADAPTIVE / PROBE / REACTIVE paths this would otherwise
+                        # read a STALE value from an earlier step and both
+                        # mis-report the ratio and corrupt true_energy_current.
+                        if te_mode and true_energy_engaged:
+                            if predicted_energy2 != 0.0:
+                                ratio = true_change / predicted_energy2
+                            else:
+                                ratio = 0.0
+                            print("compare model with TRUE energy change", ratio)
+                            true_energy_current = true_energy_trial
+                            true_reject_streak = 0
+                        # QED_ADAPTIVE_TOL: same number step_control already
+                        # uses to size the radius now also sizes the subproblem
+                        # exit tolerance.  No extra work, no extra matvecs.
+                        self._record_rho(ratio)
                         trust_radius = self.step_control(ratio, trust_radius, step_norm)
 
                         #self.build_gradient_and_hessian(self.U2, A, G, gradient_tilde, hessian_tilde, True)
@@ -13868,6 +13274,7 @@ class PFHamiltonianGenerator:
                             #    aa = self.reduced_hessian_diagonal[i] - reduced_hessian_diagonal[i]
                             #    if np.abs(aa) > 1e-12: print("ERROR TOO LARGE")
                             # reduced_hessian = np.zeros((self.index_map_size, self.index_map_size))
+                            _mp0 = _mp_start()
                             reduced_gradient = np.zeros(self.index_map_size)
                             index_count1 = 0
                             np.set_printoptions(precision=14)
@@ -13880,13 +13287,27 @@ class PFHamiltonianGenerator:
                                         and self.n_in_a <= r < self.n_occupied
                                     ):
                                         continue
+                                    # QED_ORBITAL_SYMMETRY: skip rotations that mix symmetry species.
+                                    if (
+                                        _QED_ORBITAL_SYMMETRY
+                                        and self._sym_labels is not None
+                                        and self._sym_labels[r] != self._sym_labels[k]
+                                    ):
+                                        continue
                                     reduced_gradient[index_count1] = gradient_tilde[r][k]
                                     
                                     index_count1 += 1
+                            _mp_end("redgrad_loop_inner", _mp0)
+                            _mp0 = _mp_start()
                             print("reduced_gradient",reduced_gradient, flush = True)
+                            _mp_end("redgrad_debug_print", _mp0)
 
                             
 
+                        # NOT reusable from true_energy_at_trial: that returns
+                        # an ENERGY from a full transformation, while the CI
+                        # needs the second-order-updated ACTIVE integrals this
+                        # call produces.  Two different objects; both are needed.
                         active_twoeint[:, :, :, :] = 0.0
                         active_fock_core[:, :] = 0.0
                         d_cmo[:, :] = 0.0
@@ -13913,6 +13334,26 @@ class PFHamiltonianGenerator:
                             trust_radius = 0.5 * trust_radius
                         print("Reject step, restart", flush=True)
                         print("new trust radius", trust_radius, flush=True)
+                        # QED_TRUE_ENERGY_RATIO mode 2: bound the retry.  See
+                        # the knob note at the top of this file -- under the
+                        # true-energy test a stationary point rejects every
+                        # step, and the shipping loop has no way out.
+                        if te_mode >= 2 and true_energy_engaged:
+                            true_reject_streak += 1
+                            if (
+                                true_reject_streak >= _QED_TRUE_ENERGY_MAX_REJECT
+                                or trust_radius < _QED_TRUE_ENERGY_MIN_RADIUS
+                            ):
+                                print(
+                                    "true-energy test rejected",
+                                    true_reject_streak,
+                                    "consecutive steps at radius",
+                                    trust_radius,
+                                    "-- giving up this microiteration",
+                                    flush=True,
+                                )
+                                true_energy_gave_up = True
+                                break
                 # if convergence == 1:
                 #    #active_twoeint[:,:,:,:] = self.active_twoeint[:,:,:,:]
                 #    #active_fock_core[:,:] = self.active_fock_core[:,:]
@@ -13926,7 +13367,11 @@ class PFHamiltonianGenerator:
                 #    #self.d_cmo[:,:] = np.einsum("ps,pr->rs", temp8, self.U2)
                 #    break
 
-            if convergence == 1 and count == 0:
+            if (convergence == 1 or true_energy_gave_up) and count == 0:
+                # `or true_energy_gave_up`: a mode-2 microiteration that applied
+                # no step leaves the local integrals belonging to the CURRENT
+                # self.U2 (or, in the first microiteration, still zero), so the
+                # same restore the convergence exit uses is what the CI needs.
                 active_twoeint[:, :, :, :] = self.active_twoeint[:, :, :, :]
                 active_fock_core[:, :] = self.active_fock_core[:, :]
                 d_cmo[:, :] = self.d_cmo[:, :]
@@ -13934,6 +13379,7 @@ class PFHamiltonianGenerator:
                 
 
             start = timer()
+            _mp0_ci = _mp_start()
             occupied_J = np.zeros(
                 (self.n_occupied, self.n_occupied, self.n_occupied, self.n_occupied)
             )
@@ -13952,11 +13398,13 @@ class PFHamiltonianGenerator:
             occupied_d_cmo = copy.deepcopy(d_cmo[: self.n_occupied, : self.n_occupied])
             gkl2 = copy.deepcopy(active_fock_core)
             gkl2 -= 0.5 * np.einsum("kjjl->kl", active_twoeint)
-            
+
             occupied_J = occupied_J.reshape(
                 self.n_occupied * self.n_occupied, self.n_occupied * self.n_occupied
             )
 
+            _mp_end("ci_prep_arrays", _mp0_ci)
+            _mp0_hd = _mp_start()
             c_H_diag_cas_spin(
                 occupied_fock_core,
                 occupied_J,
@@ -13974,6 +13422,28 @@ class PFHamiltonianGenerator:
                 self.Y,
                 self.target_spin,
             )
+            _mp_end("ci_prep_Hdiag", _mp0_hd)
+            # QED_FRESH_HDIAG_SORT -- see the knob comment at the top of this
+            # file.  H_diag3 has just been rebuilt from the CURRENT orbitals;
+            # without this, index_Hdiag still holds the SETUP argsort (:3693 /
+            # :3900) and the spin-coupling closure at ci_solver.c:2242 walks the
+            # current diagonal in a stale order.  Only the cold path reads it
+            # (casscf == true takes indim = nroots and never gets there), so
+            # this is a no-op for warm/production runs.
+            # This is the LIVE site (microiteration_optimization6); the
+            # byte-identical block in microiteration_optimization5 was dead code
+            # (no callers) and is deliberately left untouched, same convention
+            # as the constint[8] block below.
+            if _QED_FRESH_HDIAG_SORT:
+                _fresh = np.asarray(self.H_diag3.argsort(), dtype=np.int32)
+                if _QED_FRESH_HDIAG_SORT > 1:
+                    _n = min(4000, len(_fresh))
+                    _ov = np.intersect1d(_fresh[:_n], self.index_Hdiag[:_n]).size
+                    _pos = int((_fresh[:_n] == self.index_Hdiag[:_n]).sum())
+                    print(f"[hdiag-sort] lowest-{_n}: stale-vs-fresh set overlap "
+                          f"{_ov}/{_n} ({100.0*_ov/_n:.1f}%), identical positions {_pos}",
+                          flush=True)
+                self.index_Hdiag = _fresh
             print("qn status", qn_optimization, "qn count", qn_count, flush = True)
             print("gradient norm", np.linalg.norm(reduced_gradient), flush = True)
             d_diag = 2.0 * np.einsum("ii->", d_cmo[: self.n_in_a, : self.n_in_a])
@@ -13983,12 +13453,16 @@ class PFHamiltonianGenerator:
             # Experiment knobs, default-no-op -- see the definitions at the
             # top of this file. This is the LIVE coupled-CI site
             # (microiteration_optimization6); the byte-identical block in
-            # microiteration_optimization5 is dead code (no callers) and is
+            # microiteration_optimization5 was dead code (no callers) and was
             # deliberately left untouched.
             self.constint[8] = _QED_CI_UNCOUPLED_MAXITER
             if qn_count > 0:
                 self.constdouble[4] = _QED_CI_COUPLED_FACTOR * np.linalg.norm(reduced_gradient)
-                self.constint[8] = 10000
+                # QED_CI_COUPLED_MAXITER, default 10000 = the literal constant
+                # that stood here before, so the default path is unchanged.
+                # Molpro's equivalent budget is 2 (see the knob comment at the
+                # top of this file); threshold and budget race, first wins.
+                self.constint[8] = _QED_CI_COUPLED_MAXITER
             print("number of CI iteration", self.constint[8])
             eigenvals = np.zeros((self.davidson_roots))
             # eigenvecs = np.zeros((self.davidson_roots, H_dim))
@@ -14009,6 +13483,8 @@ class PFHamiltonianGenerator:
                 _svm_maxdim = int(self.constint[6])
                 self.constint[5] = int(os.environ.get("QED_COLD_START_MICRO_INDIM", str(_svm_indim)))
                 self.constint[6] = int(os.environ.get("QED_COLD_START_MICRO_MAXDIM", str(_svm_maxdim)))
+            _mp_end("ci_prep", _mp0_ci)
+            _mp0_gr = _mp_start()
             c_get_roots(
                 gkl2,
                 occupied_J,
@@ -14028,9 +13504,11 @@ class PFHamiltonianGenerator:
                 (not _cold_micro),
                 self.target_spin,
             )
+            _mp_end("c_get_roots", _mp0_gr)
             if _cold_micro:
                 self.constint[5] = _svm_indim
                 self.constint[6] = _svm_maxdim
+            self._dump_ci_vectors(eigenvecs, "micro")
             end = timer()
             print("CI step took", end - start)
 
@@ -14073,1621 +13551,15 @@ class PFHamiltonianGenerator:
 
 
 
-    def ah_orbital_optimization(self, eigenvecs, c_get_roots):
-        self.H1 = copy.deepcopy(self.H_spatial2)
-        self.d_cmo1 = copy.deepcopy(self.d_cmo)
-        # print("E_core", self.E_core)
-        self.U2 = np.eye(self.nmo)
-        self.U_total = np.eye(self.nmo)
-        U_temp = np.eye(self.nmo)
-        convergence_threshold = 1e-5
-        trust_radius = 0.4
-        rot_dim = self.nmo
-        np1 = self.N_p + 1
-        H_dim = self.num_alpha * self.num_alpha * np1
-        A = np.zeros((rot_dim, rot_dim))
-        G = np.zeros((self.n_occupied, self.n_occupied, rot_dim, rot_dim))
-        # A2 = np.zeros((rot_dim, rot_dim))
-        # G2 = np.zeros((self.n_occupied, self.n_occupied, rot_dim, rot_dim))
-        # print(eigenvecs)
-        self.reduced_hessian_diagonal = np.zeros(self.index_map_size)
-
-        active_twoeint = np.zeros(
-            (self.n_act_orb, self.n_act_orb, self.n_act_orb, self.n_act_orb)
-        )
-        active_fock_core = np.zeros((self.n_act_orb, self.n_act_orb))
-        d_cmo = np.zeros((self.nmo, self.nmo))
-
-        gradient_tilde = np.zeros((rot_dim, self.n_occupied))
-        hessian_tilde = np.zeros((self.n_occupied, self.n_occupied, rot_dim, rot_dim))
-        gradient_tilde2 = np.zeros((rot_dim, self.n_occupied))
-        A_tilde2 = np.zeros((rot_dim, rot_dim))
-
-        davidson_step = np.zeros((1, self.index_map_size))
-        guess_vector = np.zeros((1, self.index_map_size + 1))
-        # convergence_threshold = 1e-4
-        convergence = 0
-        # while(True):
-        macroiteration_energy_initial = 0.0
-        macroiteration_energy_current = 0.0
-        N_orbital_optimization_steps = 4
-        N_microiterations = 25
-        microiteration = 0
-        while microiteration < N_microiterations:
-            print("\n")
-            print("\n")
-            print("MICROITERATION", microiteration + 1, flush=True)
-
-            # while(microiteration < 2):
-            trust_radius = 0.35
-            A[:, :] = 0.0
-            G[:, :, :, :] = 0.0
-            start = timer()
-            self.build_intermediates(eigenvecs, A, G, True)
-            end = timer()
-            print("build intermediates took", end - start)
-            # A2[:,:] = 0.0
-            # G2[:,:,:,:] = 0.0
-            # self.build_intermediates2(eigenvecs, A2, G2, True)
-            # print("LETS CHECK ENERGY AT THE BEGINING OF EACH MICROITERATION")
-            # print(old_energy, current_energy)
-            # print("initial convergence threshold", convergence_threshold)
-            # if (np.abs(current_energy - old_energy) < 0.01 * convergence_threshold) and microiteration >=2:
-            ##if (np.abs(current_energy - old_energy) < 1e-15) and microiteration >=2:
-            #    print("microiteration converged (small energy change)")
-            #    #self.U_total = np.einsum("pq,qs->ps", self.U_total, self.U2)
-            #    break
-
-            start = timer()
-            start1 = timer()
-            macroiteration_energy_initial = macroiteration_energy_current
-            active_twoeint = self.J[
-                self.n_in_a : self.n_occupied,
-                self.n_in_a : self.n_occupied,
-                self.n_in_a : self.n_occupied,
-                self.n_in_a : self.n_occupied,
-            ]
-            fock_core = copy.deepcopy(self.H_spatial2)
-            fock_core += 2.0 * np.einsum(
-                "jjrs->rs", self.J[: self.n_in_a, : self.n_in_a, :, :]
-            )
-            fock_core -= np.einsum(
-                "jjrs->rs", self.K[: self.n_in_a, : self.n_in_a, :, :]
-            )
-
-            E_core = 0.0
-            E_core += np.einsum("jj->", self.H_spatial2[: self.n_in_a, : self.n_in_a])
-            E_core += np.einsum("jj->", fock_core[: self.n_in_a, : self.n_in_a])
-
-            # print(eigenvecs)
-            active_fock_core = np.zeros((self.n_act_orb, self.n_act_orb))
-            active_fock_core[:, :] = fock_core[
-                self.n_in_a : self.n_occupied, self.n_in_a : self.n_occupied
-            ]
-            active_one_e_energy = np.dot(active_fock_core.flatten(), self.D_tu_avg)
-            active_two_e_energy = 0.5 * np.dot(
-                active_twoeint.flatten(), self.D_tuvw_avg
-            )
-            active_one_pe_energy = -np.sqrt(self.omega / 2) * np.dot(
-                self.d_cmo[
-                    self.n_in_a : self.n_occupied, self.n_in_a : self.n_occupied
-                ].flatten(),
-                self.Dpe_tu_avg,
-            )
-            ci_dependent_energy = self.calculate_ci_dependent_energy(
-                eigenvecs, self.d_cmo
-            )
-            macroiteration_energy_current = (
-                active_one_e_energy
-                + active_two_e_energy
-                + active_one_pe_energy
-                + E_core
-                + self.Enuc
-                + self.d_c
-                + ci_dependent_energy
-            )
-            print(
-                "macroiteration_energy_current",
-                "{:20.12f}".format(macroiteration_energy_current),
-                "{:20.12f}".format(active_one_e_energy),
-                "{:20.12f}".format(active_two_e_energy),
-                "{:20.12f}".format(E_core),
-                "{:20.12f}".format(active_one_pe_energy),
-                "{:20.12f}".format(self.Enuc),
-            )
-
-            end = timer()
-            print("check initial energy took", end - start)
-
-            self.build_gradient_and_hessian(
-                self.U2, A, G, gradient_tilde, hessian_tilde, True
-            )
-
-            start = timer()
-            self.build_gradient(self.U2, A, G, gradient_tilde, A_tilde2, True)
-            G1 = G.transpose(3, 1, 2, 0).reshape(
-                self.nmo * self.n_occupied, self.nmo * self.n_occupied
-            )
-            # Davidson_augmented_hessian_solve3 (this dead branch's solver) still
-            # takes the dense G1, but microiteration_predicted_energy2/mv2 are
-            # block-only now, so build the blocks here too.
-            _G_t = G.transpose(3, 1, 2, 0)
-            G_blocks = (
-                _G_t[:, : self.n_in_a, :, : self.n_in_a].reshape(
-                    self.nmo * self.n_in_a, self.nmo * self.n_in_a
-                ),
-                _G_t[:, self.n_in_a :, :, : self.n_in_a].reshape(
-                    self.nmo * self.n_act_orb, self.nmo * self.n_in_a
-                ),
-                _G_t[:, self.n_in_a :, :, self.n_in_a :].reshape(
-                    self.nmo * self.n_act_orb, self.nmo * self.n_act_orb
-                ),
-            )
-            end = timer()
-            # self.build_gradient2(self.U2, A, G, hessian_tilde, gradient_tilde, A_tilde2, True)
-
-            print("build gradient took", end - start)
-            hessian_tilde3 = hessian_tilde.transpose(2, 0, 3, 1)
-            hessian_tilde3 = hessian_tilde3.reshape(
-                (self.n_occupied * self.nmo, self.n_occupied * self.nmo)
-            )
-
-            # hessian_diagonal3 = np.diagonal(hessian_tilde3).reshape((self.nmo, self.n_occupied))
-            reduced_hessian_diagonal = np.zeros(self.index_map_size)
-            start = timer()
-            self.build_hessian_diagonal(self.U2, G, A_tilde2)
-            end = timer()
-            print("build hessian diagonal took", end - start)
-            reduced_hessian = np.zeros((self.index_map_size, self.index_map_size))
-            reduced_gradient = np.zeros(self.index_map_size)
-            index_count1 = 0
-            for k in range(self.n_occupied):
-                for r in range(k + 1, self.nmo):
-                    if k < self.n_in_a and r < self.n_in_a:
-                        continue
-                    if (
-                        self.n_in_a <= k < self.n_occupied
-                        and self.n_in_a <= r < self.n_occupied
-                    ):
-                        continue
-                    reduced_gradient[index_count1] = gradient_tilde[r][k]
-                    # print(r,k,index_count1)
-                    index_count2 = 0
-                    for l in range(self.n_occupied):
-                        for s in range(l + 1, self.nmo):
-                            if l < self.n_in_a and s < self.n_in_a:
-                                continue
-                            if (
-                                self.n_in_a <= l < self.n_occupied
-                                and self.n_in_a <= s < self.n_occupied
-                            ):
-                                continue
-                            # if (k >= self.n_occupied and r >= self.n_occupied): continue
-                            reduced_hessian[index_count1][index_count2] = (
-                                hessian_tilde3[r * self.n_occupied + k][
-                                    s * self.n_occupied + l
-                                ]
-                            )
-                            # print(r,k,s,l,index_count1,index_count2)
-                            index_count2 += 1
-                    index_count1 += 1
-            # print("reduced_gradient",reduced_gradient, flush = True)
-            np.set_printoptions(precision=14)
-            mu1, w1 = np.linalg.eigh(reduced_hessian)
-            print("eigenvalue of the reduced hessian", mu1)
-            print(
-                "dot product of gradient and first eigenvector of hessian",
-                np.dot(reduced_gradient, w1[:, 0]),
-            )
-            print(
-                "dot product of gradient and second eigenvector of hessian",
-                np.dot(reduced_gradient, w1[:, 1]),
-            )
-            H_lambda = reduced_hessian - mu1[0] * np.eye(self.index_map_size)
-            step_limit = -np.einsum(
-                "pq,q->p", np.linalg.pinv(H_lambda), reduced_gradient
-            )
-            print("norm of critical step", np.linalg.norm(step_limit))
-            print("alpha critical", mu1[0] - np.dot(reduced_gradient, step_limit))
-            print("norm of reduced hessian", np.linalg.norm(reduced_hessian))
-            gradient_norm = np.linalg.norm(reduced_gradient)
-            print("gradient norm", gradient_norm)
-            ##if microiteration ==0:
-            ##    convergence_threshold = min(0.01 * gradient_norm, np.power(gradient_norm,2))
-            # if gradient_norm < 1e-6:
-            #    print("Microiteration converged (small gradient norm)")
-            #    break
-            print("LETS CHECK ENERGY AT THE BEGINING OF EACH MICROITERATION")
-            print(macroiteration_energy_initial, macroiteration_energy_current)
-            print("initial convergence threshold", convergence_threshold)
-            if (
-                np.abs(macroiteration_energy_current - macroiteration_energy_initial)
-                < 0.0001 * convergence_threshold
-            ) and microiteration >= 2:
-                # if (np.abs(current_energy - old_energy) < 1e-15) and microiteration >=2:
-                print("microiteration converged (small energy change)")
-                # self.U_total = np.einsum("pq,qs->ps", self.U_total, self.U2)
-                break
-
-            orbital_optimization_step = 0
-            restart = False
-            count = 0
-            current_energy = macroiteration_energy_current
-            hard_case = 0
-            reduce_step = 0
-            first_component = np.zeros(self.index_map_size)
-            second_component = np.zeros(self.index_map_size)
-            critical_step_norm = 0
-            reduce_predicted_energy = 0
-            while orbital_optimization_step < N_orbital_optimization_steps:
-                print("\n")
-                old_energy = current_energy
-                print(
-                    "Microiteration",
-                    microiteration + 1,
-                    "orbital optimization step",
-                    orbital_optimization_step + 1,
-                    flush=True,
-                )
-                print("current energy", current_energy)
-                print("reduced_gradient", reduced_gradient)
-                gradient_norm = np.linalg.norm(reduced_gradient)
-                print("gradient norm", gradient_norm, flush=True)
-                print("convergence_threshold", convergence_threshold, flush=True)
-
-                # if (gradient_norm < max(0.1 * convergence_threshold, 1e-8)):
-                # if (gradient_norm < max(0.1 * convergence_threshold, 1e-6) and microiteration > 0):
-                # if (gradient_norm < 1e-5 and microiteration > 0):
-                if gradient_norm < 0.001 * convergence_threshold and microiteration > 0:
-                    convergence = 1
-                    # print("Microiteration converged (small gradient norm)")
-                    break
-                if gradient_norm < 1e-7:
-                    convergence = 1
-                    break
-                # if microiteration == 1 and orbital_optimization_step == 1:
-                #    np.savetxt("reduced_gradient.out", reduced_gradient)
-                #    np.savetxt("reduced_hessian.out", reduced_hessian)
-
-                #########gradient_tilde = np.zeros((rot_dim, self.n_occupied))
-                #########hessian_tilde = np.zeros((self.n_occupied, self.n_occupied, rot_dim, rot_dim))
-                #########self.build_gradient_and_hessian(self.U2, A, G, gradient_tilde, hessian_tilde, True)
-                #########print(np.shape(gradient_tilde), flush = True)
-
-                #########gradient_tilde2 = np.zeros((rot_dim, self.n_occupied))
-                #########A_tilde2 = np.zeros((rot_dim, rot_dim))
-                #########self.build_gradient(self.U2, A, G, gradient_tilde2, A_tilde2, True)
-
-                #########hessian_tilde3 = hessian_tilde.transpose(2,0,3,1)
-                #########hessian_tilde3 = hessian_tilde3.reshape((self.n_occupied*self.nmo, self.n_occupied*self.nmo))
-
-                #########hessian_diagonal3 = np.diagonal(hessian_tilde3).reshape((self.nmo, self.n_occupied))
-                #########reduced_hessian_diagonal = np.zeros(self.index_map_size)
-                #########index_count1 = 0
-                #########for k in range(self.n_occupied):
-                #########    for r in range(k+1,self.nmo):
-                #########        if (k < self.n_in_a and r < self.n_in_a): continue
-                #########        if (self.n_in_a <= k < self.n_occupied and self.n_in_a <= r < self.n_occupied): continue
-                #########        reduced_hessian_diagonal[index_count1] = hessian_diagonal3[r][k]
-                #########        index_count1 += 1
-                #########self.build_hessian_diagonal(self.U2, G, A_tilde2)
-                ##########print("diagonal elements of the non redundant hessian")
-                ##########for a in range(self.nmo):
-                ##########    for i in range(self.n_occupied):
-                ##########        aa = hessian_diagonal3[a][i] - self.hessian_diagonal[a][i]
-                ##########        if np.abs(aa) > 1e-12: print("ERROR TOO LARGE")
-                #########print("diagonal elements of the reduced hessian")
-                #########for i in range(self.index_map_size):
-                #########    aa = self.reduced_hessian_diagonal[i] - reduced_hessian_diagonal[i]
-                #########    if np.abs(aa) > 1e-12: print("ERROR TOO LARGE")
-                #########reduced_hessian = np.zeros((self.index_map_size, self.index_map_size))
-                #########reduced_gradient = np.zeros(self.index_map_size)
-                #########index_count1 = 0
-                #########for k in range(self.n_occupied):
-                #########    for r in range(k+1,self.nmo):
-                #########        if (k < self.n_in_a and r < self.n_in_a): continue
-                #########        if (self.n_in_a <= k < self.n_occupied and self.n_in_a <= r < self.n_occupied): continue
-                #########        reduced_gradient[index_count1] = gradient_tilde[r][k]
-                #########        #print(r,k,index_count1)
-                #########        index_count2 = 0
-                #########        for l in range(self.n_occupied):
-                #########            for s in range(l+1,self.nmo):
-                #########                if (l < self.n_in_a and s < self.n_in_a): continue
-                #########                if (self.n_in_a <= l < self.n_occupied and self.n_in_a <= s < self.n_occupied): continue
-                #########                #if (k >= self.n_occupied and r >= self.n_occupied): continue
-                #########                reduced_hessian[index_count1][index_count2] = hessian_tilde3[r*self.n_occupied+k][s*self.n_occupied+l]
-                #########                #print(r,k,s,l,index_count1,index_count2)
-                #########                index_count2 += 1
-                #########        index_count1 += 1
-                #########print("reduced_gradient",reduced_gradient, flush = True)
-
-                # new augmented hessian
-                beta = 0
-                dim00 = self.index_map_size + 1
-                # augmented_hessian9= np.zeros((dim00, dim00))
-                w9 = np.zeros((dim00, dim00))
-                step = np.zeros(self.index_map_size)
-                step10_norm = 0.0
-                # print("w",w)
-                # count10 = 0
-                # while np.abs((step10_norm - trust_radius)/trust_radius) > 1e-3:
-                #    print("iteration", count10, "beta", beta)
-                #    augmented_hessian9[:,:] = 0.0
-                #    augmented_hessian9[0,0] = beta
-                #    augmented_hessian9[0,1:] = reduced_gradient
-                #    augmented_hessian9[1:,0] = reduced_gradient.T
-                #    augmented_hessian9[1:,1:] = reduced_hessian
-
-                #    mu9, w9 = np.linalg.eigh(augmented_hessian9)
-                #    print("eig",mu9)
-                #    idx = mu9.argsort()[:dim00]
-                #    scale9 = w9[0][0]
-                #    print("scale",scale9)
-                #    if np.abs(scale9) < 1e-15:
-                #        break
-                #    step10 = w9[1:,0]/scale9
-                #    step10_norm = np.linalg.norm(step10)
-                #    if count10 == 0 and step10_norm < trust_radius: break
-                #    print("check eigenvalues and step norm from diagonalizing the bordering matrix")
-                #    print(mu9, flush=True)
-                #    print("step10 norm", step10_norm, flush=True)
-                #    beta = beta + (beta - mu9[0])/step10_norm * (trust_radius - step10_norm)/trust_radius * (trust_radius + 1.0/step10_norm)
-                #    count10 +=1
-                #    if count10 == 20: break
-                ##w[:,0] = w[:,0]/scale
-                ##print(w)
-                # step9 = w9[1:,0]
-                if np.linalg.norm(reduced_gradient) > 1e-3:
-                    if (
-                        hard_case == 1
-                        and reduce_step == 1
-                        and np.linalg.norm(first_component) < trust_radius
-                        and reduce_predicted_energy == 1
-                    ):
-                        print("hard case and current step is smaller than trust radius")
-                        print(np.linalg.norm(first_component))
-                        xy_square = np.dot(first_component, second_component) * np.dot(
-                            first_component, second_component
-                        )
-                        x_square = np.dot(first_component, first_component)
-                        y_square = np.dot(second_component, second_component)
-                        delta = 4 * xy_square - 4 * y_square * (
-                            x_square - trust_radius * trust_radius
-                        )
-                        # print(delta)
-                        t1 = (
-                            -2 * np.dot(first_component, second_component)
-                            - np.sqrt(delta)
-                        ) / (2 * y_square)
-                        t2 = (
-                            -2 * np.dot(first_component, second_component)
-                            + np.sqrt(delta)
-                        ) / (2 * y_square)
-                        print(
-                            "x^2, xy, y^2, t",
-                            x_square,
-                            np.dot(first_component, second_component),
-                            y_square,
-                            t1,
-                        )
-                        adjusted_step = (
-                            first_component
-                            + min(np.abs(t1), np.abs(t2)) * second_component
-                        )
-                        print("adjusted step norm", np.linalg.norm(adjusted_step))
-                        step = adjusted_step
-                    else:
-                        mu9 = np.zeros(dim00)
-                        beta0 = 0
-                        both_roots_normalization = 0
-                        v1 = 0
-                        v2 = 0
-                        u1 = np.zeros(self.index_map_size)
-                        u2 = np.zeros(self.index_map_size)
-                        x1 = np.zeros(self.index_map_size)
-                        x2 = np.zeros(self.index_map_size)
-                        phi1 = 0
-                        phi2 = 0
-
-                        lambda1 = 0
-                        lambda2 = 0
-                        lambda_c = 0
-                        idx = self.reduced_hessian_diagonal.argsort()
-                        delta_u = self.reduced_hessian_diagonal[idx[0]]
-                        delta_l = 0
-                        alpha_u = (
-                            delta_u + np.linalg.norm(reduced_gradient) * trust_radius
-                        )
-                        alpha_l = 0
-                        count10 = 0
-                        # beta = min(0, alpha_u)
-                        beta = alpha_u
-                        aug_hessian_eigenvecs = np.zeros((dim00, 2))
-                        aug_hessian_eigenvals = np.zeros(2)
-                        print("trust radius", trust_radius)
-                        while True:
-                            print("****************************")
-                            print("lstrs iteration", count10, "beta", beta)
-                            beta0 = beta
-                            # mu9[:] = self.projection_step2(reduced_gradient, reduced_hessian, w9, beta, dim00)
-                            # augmented_hessian9[:,:] = 0.0
-                            # augmented_hessian9[0,0] = beta
-                            # augmented_hessian9[0,1:] = reduced_gradient
-                            # augmented_hessian9[1:,0] = reduced_gradient.T
-                            # augmented_hessian9[1:,1:] = reduced_hessian
-                            # mu9, w9 = np.linalg.eigh(augmented_hessian9)
-                            # print("eig",mu9)
-                            # print("two roots", mu9[0], mu9[1], mu9[2])
-                            if count10 == 0:
-                                Q = self.Davidson_augmented_hessian_solve3(
-                                    self.U2,
-                                    A_tilde2,
-                                    G,
-                                    G1,
-                                    self.reduced_hessian_diagonal,
-                                    reduced_gradient,
-                                    beta,
-                                    aug_hessian_eigenvecs,
-                                    aug_hessian_eigenvals,
-                                    guess_vector,
-                                    restart=False,
-                                )
-                                delta_l = aug_hessian_eigenvals[0]
-                                alpha_l = (
-                                    delta_l
-                                    - np.linalg.norm(reduced_gradient) / trust_radius
-                                )
-                            else:
-                                guess_vector = Q
-                                Q = self.Davidson_augmented_hessian_solve3(
-                                    self.U2,
-                                    A_tilde2,
-                                    G,
-                                    G1,
-                                    self.reduced_hessian_diagonal,
-                                    reduced_gradient,
-                                    beta,
-                                    aug_hessian_eigenvecs,
-                                    aug_hessian_eigenvals,
-                                    guess_vector,
-                                    restart=True,
-                                )
-                            # print(aug_hessian_eigenvals)
-                            # print(aug_hessian_eigenvecs)
-                            mu9[0] = aug_hessian_eigenvals[0]
-                            mu9[1] = aug_hessian_eigenvals[1]
-                            w9[:, 0] = aug_hessian_eigenvecs[:, 0]
-                            w9[:, 1] = aug_hessian_eigenvecs[:, 1]
-                            print("ALPHA range", alpha_l, alpha_u)
-                            # idx = mu9.argsort()[:dim00]
-                            # print(idx)
-                            # w9[:,0] = w9[:,0]/np.linalg.norm(w9[:,0])
-                            # w9[:,1] = w9[:,1]/np.linalg.norm(w9[:,1])
-                            v1 = w9[0, 0] / np.linalg.norm(w9[:, 0])
-                            v2 = w9[0, 1] / np.linalg.norm(w9[:, 1])
-                            u1[:] = w9[1:, 0] / np.linalg.norm(w9[:, 0])
-                            u2[:] = w9[1:, 1] / np.linalg.norm(w9[:, 1])
-                            aa1 = np.linalg.norm(reduced_gradient) * np.abs(v1)
-                            bb1 = np.sqrt(1 - v1 * v1)
-                            aa2 = np.linalg.norm(reduced_gradient) * np.abs(v2)
-                            bb2 = np.sqrt(1 - v2 * v2)
-                            print("aa1, bb1", aa1, bb1, "aa2, bb2", aa2, bb2)
-                            if mu9[0] > -1e-8 and np.linalg.norm(
-                                u1
-                            ) < trust_radius * np.abs(v1):
-                                hard_case = 2
-                                print("use newton step")
-                                break
-                            delta_u2 = mu9[0] - v1 * np.dot(reduced_gradient, u1) / (
-                                1 - v1 * v1
-                            )
-                            delta_u = min(delta_u, delta_u2)
-                            print("delta_u2", delta_u2)
-
-                            epsilon_v = 1e-4
-                            print(aa1 <= epsilon_v * bb1)
-                            print(aa2 <= epsilon_v * bb2)
-                            alpha = beta
-                            while (
-                                (aa1 <= epsilon_v * bb1)
-                                and (aa2 <= epsilon_v * bb2)
-                                and np.abs(alpha_u - alpha_l)
-                                > 1e-8 * max(np.abs(alpha_u), np.abs(alpha_l))
-                            ):
-                                alpha_u = alpha
-                                alpha = (alpha_l + alpha_u) / 2
-                                w9[:, :] = 0.0
-                                # mu9[:] = self.projection_step2(reduced_gradient, reduced_hessian, w9, alpha, dim00)
-                                # print("two roots", mu9[0], mu9[1], mu9[2])
-
-                                Q = self.Davidson_augmented_hessian_solve3(
-                                    self.U2,
-                                    A_tilde2,
-                                    G,
-                                    G1,
-                                    self.reduced_hessian_diagonal,
-                                    reduced_gradient,
-                                    alpha,
-                                    aug_hessian_eigenvecs,
-                                    aug_hessian_eigenvals,
-                                    Q,
-                                    restart=True,
-                                )
-                                mu9[0] = aug_hessian_eigenvals[0]
-                                mu9[1] = aug_hessian_eigenvals[1]
-                                w9[:, 0] = aug_hessian_eigenvecs[:, 0]
-                                w9[:, 1] = aug_hessian_eigenvecs[:, 1]
-                                v1 = w9[0, 0] / np.linalg.norm(w9[:, 0])
-                                v2 = w9[0, 1] / np.linalg.norm(w9[:, 1])
-                                u1[:] = w9[1:, 0] / np.linalg.norm(w9[:, 0])
-                                u2[:] = w9[1:, 1] / np.linalg.norm(w9[:, 1])
-                                aa1 = np.linalg.norm(reduced_gradient) * np.abs(v1)
-                                bb1 = np.sqrt(1 - v1 * v1)
-                                aa2 = np.linalg.norm(reduced_gradient) * np.abs(v2)
-                                bb2 = np.sqrt(1 - v2 * v2)
-                                print(
-                                    alpha,
-                                    aa1 <= epsilon_v * bb1,
-                                    aa2 <= epsilon_v * bb2,
-                                    mu9[0],
-                                    mu9[1],
-                                    bb1,
-                                    bb2,
-                                )
-                                delta_u2 = mu9[0] - v1 * np.dot(
-                                    reduced_gradient, u1
-                                ) / (1 - v1 * v1)
-                                delta_u = min(delta_u, delta_u2)
-                                print("new delta_u", delta_u, delta_u2)
-
-                            if (aa1 <= epsilon_v * bb1) and (aa2 <= epsilon_v * bb2):
-                                exit()
-                            elif (aa1 > epsilon_v * bb1) and (aa2 > epsilon_v * bb2):
-                                both_roots_normalization = 1
-                            else:
-                                both_roots_normalization = 0
-                            beta = alpha
-                            # update delta_u
-                            temptemp = np.dot(reduced_hessian, u1)
-                            temptemp2 = np.dot(u1, temptemp)
-
-                            # delta_u2 = mu9[0] - v1 * np.dot(reduced_gradient, u1)/np.dot(u1,u1)
-                            delta_u = min(delta_u, temptemp2 / np.dot(u1, u1))
-                            # print("new delta_u", delta_u)
-                            ####scale9 = w9[0][0]
-                            ####print("scale",scale9)
-                            ####if np.abs(scale9) < 1e-15:
-                            ####    break
-                            # assign (k-1) and k-iteration values
-                            lambda1 = lambda2
-                            x1 = x2
-                            phi1 = phi2
-                            print("two roots", mu9[0], mu9[1])
-                            if aa1 > epsilon_v * bb1:
-                                step10 = u1 / v1
-                                second_component[:] = u2
-                                lambda2 = mu9[0]
-                                print("norm from first root", np.linalg.norm(step10))
-                                # if aa2 > epsilon_v * bb2:
-                                #    second_component[:] = u2/v2
-                                #    print("second root norm", np.linalg.norm(second_component))
-                                if np.linalg.norm(step10) < trust_radius:
-                                    alpha_l = beta
-                                if np.linalg.norm(step10) > trust_radius:
-                                    alpha_u = beta
-                            else:
-                                step10 = u2 / v2
-                                second_component[:] = u1
-                                lambda2 = mu9[1]
-                                print("norm from second root", np.linalg.norm(step10))
-                                alpha_u = beta
-                            print("NEW ALPHA range", alpha_l, alpha_u)
-                            step10_norm = np.linalg.norm(step10)
-                            x2 = step10
-                            if mu9[0] > -1e-8 and np.linalg.norm(
-                                u1
-                            ) < trust_radius * np.abs(v1):
-                                hard_case = 2
-                                print("use newton step")
-                                break
-                            phi2 = -np.dot(reduced_gradient, x2)
-                            # print(step10)
-                            # print(x1)
-                            # print(x2)
-                            # if count10 == 0 and step10_norm < trust_radius: break
-                            # print("check eigenvalues and step norm from diagonalizing the bordering matrix")
-                            # print(mu9, flush=True)
-                            print(
-                                "step10 norm",
-                                step10_norm,
-                                "current beta",
-                                beta,
-                                flush=True,
-                            )
-                            x1_norm = np.linalg.norm(x1)
-                            x2_norm = np.linalg.norm(x2)
-                            phi2_p = np.dot(x2, x2)
-                            phi1_p = np.dot(x1, x1)
-                            print(
-                                "phi1",
-                                phi1,
-                                "phi1_p",
-                                phi1_p,
-                                "phi2",
-                                phi2,
-                                "phi2_p",
-                                phi2_p,
-                            )
-                            if (
-                                np.abs((step10_norm - trust_radius) / trust_radius)
-                                <= 1e-3
-                                and mu9[0] <= 0
-                            ):
-                                step = step10
-                                hard_case = 0
-                                break
-                            print("check orthogonality of the first two roots")
-                            vv1 = w9[0, 0]
-                            vv2 = w9[0, 1]
-                            uu1 = w9[1:, 0]
-                            uu2 = w9[1:, 1]
-                            # check if the quasi-optimal condition is satisfied
-                            print(
-                                "quasi-optimal condition",
-                                (1 + trust_radius * trust_radius)
-                                * (vv1 * vv1 + vv2 * vv2),
-                                flush=True,
-                            )
-                            qs = (1 + trust_radius * trust_radius) * (
-                                vv1 * vv1 + vv2 * vv2
-                            )
-                            print(np.dot(w9[:, :2].T, w9[:, :2]))
-
-                            # construct quasi-optimal step
-                            epsilon_hc = 1e-6
-                            eta = epsilon_hc / (1 - epsilon_hc)
-                            tau1 = 1
-                            tau2 = 1
-                            if qs > 1.0:
-                                tau1 = (
-                                    (vv1 - vv2 * np.sqrt(qs - 1))
-                                    / (vv1 * vv1 + vv2 * vv2)
-                                    / np.sqrt(1 + trust_radius * trust_radius)
-                                )
-                                tau2 = (
-                                    (vv2 + vv1 * np.sqrt(qs - 1))
-                                    / (vv1 * vv1 + vv2 * vv2)
-                                    / np.sqrt(1 + trust_radius * trust_radius)
-                                )
-                            elif np.abs(qs - 1.0) < 2e-308:
-                                tau1 = vv1 / np.sqrt(vv1 * vv1 + vv2 * vv2)
-                                tau2 = vv2 / np.sqrt(vv1 * vv1 + vv2 * vv2)
-                            x_tilde = (tau1 * uu1 + tau2 * uu2) / (
-                                tau1 * vv1 + tau2 * vv2
-                            )
-
-                            lambda_tilde = tau1 * tau1 * lambda1 + tau2 * tau2 * lambda2
-                            psi_tilde = 0.5 * self.microiteration_predicted_energy2(
-                                self.U2, reduced_gradient, A_tilde2, G_blocks, x_tilde
-                            )
-                            if qs > 1.0 or np.abs(qs - 1.0) < 2e-308:
-                                print(
-                                    "x_tilde norm1",
-                                    np.linalg.norm(x_tilde),
-                                    (mu9[1] - mu9[0])
-                                    * tau2
-                                    * tau2
-                                    * (1 + trust_radius * trust_radius),
-                                    -2.0 * eta * psi_tilde,
-                                )
-                                if (mu9[1] - mu9[0]) * tau2 * tau2 * (
-                                    1 + trust_radius * trust_radius
-                                ) < -2.0 * eta * psi_tilde:
-                                    print("find quasi-optimal solution1", flush=True)
-                                    hard_case = 3
-                                    break
-                                else:
-                                    if qs > 1.0:
-                                        tau1 = (
-                                            (vv1 + vv2 * np.sqrt(qs - 1))
-                                            / (vv1 * vv1 + vv2 * vv2)
-                                            / np.sqrt(1 + trust_radius * trust_radius)
-                                        )
-                                        tau2 = (
-                                            (vv2 - vv1 * np.sqrt(qs - 1))
-                                            / (vv1 * vv1 + vv2 * vv2)
-                                            / np.sqrt(1 + trust_radius * trust_radius)
-                                        )
-                                        x_tilde = (tau1 * uu1 + tau2 * uu2) / (
-                                            tau1 * vv1 + tau2 * vv2
-                                        )
-                                        lambda_tilde = (
-                                            tau1 * tau1 * lambda1
-                                            + tau2 * tau2 * lambda2
-                                        )
-                                        psi_tilde = (
-                                            0.5
-                                            * self.microiteration_predicted_energy2(
-                                                self.U2,
-                                                reduced_gradient,
-                                                A_tilde2,
-                                                G_blocks,
-                                                x_tilde,
-                                            )
-                                        )
-                                        print(
-                                            "x_tilde norm2",
-                                            np.linalg.norm(x_tilde),
-                                            (mu9[1] - mu9[0])
-                                            * tau2
-                                            * tau2
-                                            * (1 + trust_radius * trust_radius),
-                                            -2.0 * eta * psi_tilde,
-                                            flush=True,
-                                        )
-                                        if (mu9[1] - mu9[0]) * tau2 * tau2 * (
-                                            1 + trust_radius * trust_radius
-                                        ) < -2.0 * eta * psi_tilde:
-                                            print(
-                                                "find quasi-optimal solution2",
-                                                flush=True,
-                                            )
-                                            hard_case = 3
-                                            break
-                            if np.abs(alpha_u - alpha_l) <= 1e-8 * max(
-                                np.abs(alpha_u), np.abs(alpha_l)
-                            ):
-                                print("interval too small")
-                                if (
-                                    x2_norm < trust_radius
-                                    and both_roots_normalization == 0
-                                ):
-                                    hard_case = 1
-                                if both_roots_normalization == 1:
-                                    hard_case = 4
-                                break
-
-                            if count10 == 0:
-                                beta = beta + (beta - lambda2) / x2_norm * (
-                                    trust_radius - x2_norm
-                                ) / trust_radius * (trust_radius + 1.0 / x2_norm)
-                            else:
-                                print("denominator", x2_norm - x1_norm)
-                                denom = trust_radius * (x2_norm - x1_norm)
-
-                                if np.abs(denom) > 2e-308:
-                                    lambda_c = (
-                                        lambda1 * x1_norm * (x2_norm - trust_radius)
-                                        + lambda2 * x2_norm * (trust_radius - x1_norm)
-                                    ) / denom
-                                else:
-                                    lambda_c = delta_u
-                                if lambda_c > delta_u:
-                                    print(
-                                        "need to safeguard delta_u", lambda_c, delta_u
-                                    )
-                                    lambda_c = delta_u
-                                # lambda_c = (lambda1 * x1_norm * (x2_norm - trust_radius) + lambda2 * x2_norm * (trust_radius - x1_norm))/trust_radius/(x2_norm - x1_norm)
-                                # print(lambda_c)
-                                if np.abs(lambda2 - lambda1) <= 2e-308:
-                                    print("interpolate alpha by bisection")
-                                    beta = (alpha_l + alpha_u) / 2
-                                else:
-                                    omega_k = (lambda2 - lambda_c) / (lambda2 - lambda1)
-                                    num = (
-                                        x1_norm
-                                        * x2_norm
-                                        * (x2_norm - x1_norm)
-                                        * (lambda1 - lambda_c)
-                                        * (lambda2 - lambda_c)
-                                    )
-
-                                    denom = (
-                                        omega_k * x2_norm + (1 - omega_k) * x1_norm
-                                    ) * (lambda2 - lambda1)
-                                    print(x1_norm, x2_norm)
-                                    print(lambda1, lambda2, lambda_c)
-                                    print(num, denom)
-                                    if np.abs(denom) <= 2e-308:
-                                        print("interpolate alpha by bisection2")
-                                        beta = (alpha_l + alpha_u) / 2
-                                    else:
-                                        beta = (
-                                            lambda_c
-                                            + omega_k * phi1
-                                            + (1 - omega_k) * phi2
-                                            + num / denom
-                                        )
-
-                            # if count10 == 0 or (np.abs(x2_norm - x1_norm) <= 1e-15):
-                            #    if (np.abs(x2_norm - x1_norm) <= 1e-15):
-                            #        print("too small denominator")
-                            #    beta = beta + (beta - lambda2)/x2_norm * (trust_radius - x2_norm)/trust_radius * (trust_radius + 1.0/x2_norm)
-                            # else:
-                            #    print("denominator", x2_norm-x1_norm)
-                            #    if (np.abs(x2_norm - x1_norm) > 1e-15):
-                            #        lambda_c = (lambda1 * x1_norm * (x2_norm - trust_radius) + lambda2 * x2_norm * (trust_radius - x1_norm))/trust_radius/(x2_norm - x1_norm)
-                            #    else:
-                            #        lambda_c = delta_u
-                            #    if lambda_c > delta_u:
-                            #        print("need to safeguard delta_u", lambda_c, delta_u)
-                            #        lambda_c = delta_u
-                            #    #lambda_c = (lambda1 * x1_norm * (x2_norm - trust_radius) + lambda2 * x2_norm * (trust_radius - x1_norm))/trust_radius/(x2_norm - x1_norm)
-                            #    #print(lambda_c)
-                            #    omega_k = (lambda2 - lambda_c)/(lambda2 - lambda1)
-                            #    ratio1 = x1_norm * x2_norm * (x2_norm - x1_norm)/(omega_k * x2_norm + (1-omega_k) * x1_norm)
-                            #    ratio2 = (lambda1 - lambda_c) * (lambda2 - lambda_c) / (lambda2 - lambda1)
-                            #    beta = lambda_c + omega_k *phi1 + (1-omega_k) * phi2 + ratio1 * ratio2
-                            print("beta after interpolation", beta)
-                            # safeguard alpha
-                            if beta < alpha_l or beta > alpha_u:
-                                print("need to safeguard alpha")
-                                if count10 == 0:
-                                    beta = delta_u + phi2 + phi2_p * (delta_u - lambda2)
-                                elif x2_norm < x1_norm:
-                                    print("use phi2")
-                                    beta = delta_u + phi2 + phi2_p * (delta_u - lambda2)
-                                else:
-                                    print("use phi1")
-                                    beta = delta_u + phi1 + phi1_p * (delta_u - lambda1)
-                                if beta < alpha_l or beta > alpha_u:
-                                    print("using bisection")
-                                    beta = (alpha_l + alpha_u) / 2
-                            count10 += 1
-                            # if np.abs(beta -beta0) <= 1e-12:
-                            #    print("possible convergence")
-                            #    print(beta, beta0)
-                            #    print(x2_norm)
-
-                            #    if x2_norm < trust_radius:
-                            #        print("11111111")
-                            #        hard_case = 1
-                            #    elif x2_norm > trust_radius and both_roots_normalization == 1:
-                            #        print("22222222")
-                            #        hard_case = 1
-
-                            #    break
-                            if count10 == 50:
-                                break
-                        print("check hard case", hard_case)
-                        if hard_case == 1:
-                            first_component[:] = x2[:]
-                            if x2_norm > trust_radius:
-                                print("some logic is wrong")
-                                exit()
-                                # temp_vector = np.zeros(self.index_map_size)
-                                # temp_vector[:] = second_component[:]
-                                # second_component[:] = first_component[:]
-                                # first_component[:] = temp_vector[:]
-                            # print(first_component)
-                            # print(second_component)
-                            print(
-                                "norm of current root", np.linalg.norm(first_component)
-                            )
-                            xy_square = np.dot(
-                                first_component, second_component
-                            ) * np.dot(first_component, second_component)
-                            x_square = np.dot(first_component, first_component)
-                            y_square = np.dot(second_component, second_component)
-                            delta = 4 * xy_square - 4 * y_square * (
-                                x_square - trust_radius * trust_radius
-                            )
-                            # print(delta)
-                            t1 = (
-                                -2 * np.dot(first_component, second_component)
-                                - np.sqrt(delta)
-                            ) / (2 * y_square)
-                            t2 = (
-                                -2 * np.dot(first_component, second_component)
-                                + np.sqrt(delta)
-                            ) / (2 * y_square)
-                            print(
-                                "x^2, xy, y^2, t",
-                                x_square,
-                                np.dot(first_component, second_component),
-                                y_square,
-                                t1,
-                            )
-                            adjusted_step = (
-                                first_component
-                                + min(np.abs(t1), np.abs(t2)) * second_component
-                            )
-                            print("adjusted step norm", np.linalg.norm(adjusted_step))
-                            step = adjusted_step
-
-                        if hard_case == 2:
-                            Q = np.zeros((1, self.index_map_size))
-                            H1_op = LinearOperator(
-                                (self.index_map_size, self.index_map_size),
-                                matvec=lambda Q: self.mv2(
-                                    self.U2, A_tilde2, G_blocks, Q, 1, 0, 0
-                                ),
-                            )
-                            x, exitCode = minres(H1_op, -reduced_gradient, rtol=1e-6)
-                            print("exitcode", exitCode)
-                            step = x
-
-                        if hard_case == 3:
-                            step = x_tilde
-                        if hard_case == 4:
-                            if x2_norm > trust_radius:
-                                step = x2 / x2_norm * trust_radius
-                            if x2_norm < trust_radius:
-                                step = x2
-
-                else:
-                    print("gradient is small, use Newton step")
-                    Q = np.zeros((1, self.index_map_size))
-                    H1_op = LinearOperator(
-                        (self.index_map_size, self.index_map_size),
-                        matvec=lambda Q: self.mv2(self.U2, A_tilde2, G_blocks, Q, 1, 0, 0),
-                    )
-                    x, exitCode = minres(H1_op, -reduced_gradient, rtol=1e-6)
-                    print("exitcode", exitCode)
-                    hard_case = 2
-                    step = x
-                    print(step)
-                # w[:,0] = w[:,0]/scale
-                # print(w)
-                step9 = w9[1:, 0]
-
-                ###############alpha = 1
-                ###############alpha_min = 1
-                ###############alpha_max = 1
-                ###############dim0 = self.index_map_size + 1
-                ###############step3= np.zeros((self.index_map_size))
-                ###############step_norm3 = 0
-                ###############step2 =np.zeros((self.index_map_size))
-                ###############step_norm2, scale = self.microiteration_step2(reduced_gradient, reduced_hessian, step2, alpha, dim0)
-                ###############print("scale", scale, flush = True)
-                ###############if np.abs(scale) > 1e-4:
-                ###############    ##find (alpha_min, alpha_max)
-                ###############    while True:
-                ###############        step_norm3 = self.microiteration_step(reduced_gradient, reduced_hessian, step3, alpha, dim0)
-                ###############        #print("step", step, flush=True)
-                ###############        if step_norm3 > trust_radius:
-                ###############            alpha_min = alpha
-                ###############            alpha = alpha * 10
-                ###############        else:
-                ###############            alpha_max = alpha
-                ###############            break
-                ###############    print("alpha range", alpha_min, alpha_max, flush = True)
-                ###############    #bisection search
-                ###############    count1 =0
-                ###############    if alpha_max != 1:
-                ###############        while True:
-                ###############            #print(alpha_min, alpha_max)
-                ###############            alpha = 0.5 * (alpha_min + alpha_max)
-                ###############            step_norm3 = self.microiteration_step(reduced_gradient, reduced_hessian, step3, alpha, dim0)
-                ###############            if np.abs((step_norm3 - trust_radius)/trust_radius) <= 1e-3:
-                ###############            #if trust_radius - step_norm3 <= 1e-2 and trust_radius - step_norm3 >= 0.0:
-                ###############                break
-                ###############            elif (trust_radius - step_norm3)/trust_radius >  1e-3:
-                ###############            #elif trust_radius - step_norm3 > 1e-2:
-                ###############                alpha_max = alpha
-                ###############            else:
-                ###############                alpha_min = alpha
-                ###############            count1 +=1
-                ###############            if count1 ==150: break
-                ###############else:
-                ###############    print("PROBLEM!!!!!!!!!", flush = True)
-                ###############    step3 = trust_radius * step2/step_norm2
-                ###############    step_norm3 = trust_radius
-
-                ###############self.mu_min = 0.0
-                ################start = timer()
-                ################trial_vector, hard_case = self.Davidson_augmented_hessian_solve(self.U2, A_tilde2, G, G1, self.reduced_hessian_diagonal, reduced_gradient,
-                ################        davidson_step, trust_radius, guess_vector, restart)
-                ################end   = timer()
-                ################print("solving augmented hessian took", end - start)
-                ###############start = timer()
-                ###############trial_vector, hard_case = self.Davidson_augmented_hessian_solve2(self.U2, A_tilde2, G, G1, self.reduced_hessian_diagonal, reduced_gradient,
-                ###############        davidson_step, trust_radius, guess_vector, restart)
-                ###############end   = timer()
-                ###############print("solving augmented hessian2 took", end - start)
-
-                ###############print("hard case", hard_case)
-                ###############print("smallest eigenvalue of the augmented hessian", self.mu_min)
-                ###############step2 = davidson_step.flatten()
-                ###############product = np.einsum("p,p->",reduced_gradient, step2)
-                ###############np.set_printoptions(precision = 14)
-                ###############print("check dot product of gradient and first eigenvector", product)
-                ###############trust_radius_hard_case = trust_radius
-                ###############if hard_case == 0:
-                ###############    step = step2
-                ###############else:
-                ###############    ####print("eigenvalue of the non-redundant hessian", mu1, flush = True)
-                ###############    ####product = np.einsum("p,p->",reduced_gradient, w1[:,0])
-                ###############    ####H_lambda = reduced_hessian - mu1[0] * np.eye(self.index_map_size)
-                ###############    ####step_limit = -np.einsum("pq,q->p", np.linalg.pinv(H_lambda), reduced_gradient)
-                ###############    ####H_lambda_inverse = np.linalg.pinv(H_lambda)
-                ###############    ####print("conditional number from product", np.linalg.norm(H_lambda) * np.linalg.norm(H_lambda_inverse))
-                ###############    ####print("step_limit", step_limit)
-                ###############    ####print("limit of step norm", np.linalg.norm(step_limit))
-                ###############    ####print("check dot product of gradient and first eigenvector", product)
-                ###############    Q = np.zeros((1, self.index_map_size))
-                ###############    #H_diag = self.reduced_hessian_diagonal - mu1[0]
-                ###############    #Q[0,:] = np.divide(-reduced_gradient, H_diag, out=np.zeros_like(H_diag), where=H_diag!=0)
-                ###############    #S = np.zeros_like(Q)
-                ###############
-                ###############    #H_op = LinearOperator((self.index_map_size, self.index_map_size), matvec = lambda Q:  self.mv(self.U2, A_tilde2, G, Q, 1,0, self.mu_min))
-                ###############    H1_op = LinearOperator((self.index_map_size, self.index_map_size), matvec = lambda Q:  self.mv2(self.U2, A_tilde2, G1, Q, 1,0, self.mu_min))
-                ###############    #S=H_op.matvec(Q.T)
-                ###############    #print(S)
-                ###############    #S2 = np.einsum("pq,qr->pr", H_lambda, Q.T)
-                ###############    #print(S2)
-                ###############    #print("diagonal element of the reduced hessian", np.diagonal(reduced_hessian))
-                ###############    x, exitCode= minres(H1_op, -reduced_gradient, tol = 1e-6)
-                ###############    #x, istop, itn, normr, normar, norma, conda, normx = lsmr(H_op, -reduced_gradient)[:8]
-                ###############    #print("reo0", x, istop, itn, normr, normx, conda)
-                ###############    print("exitcode", exitCode)
-                ###############    print("step norm from scipy solver", np.linalg.norm(x))
-                ###############    #Q1 = np.random.rand(1, self.index_map_size)
-                ###############    #start = timer()
-                ###############    #S1=H_op.matvec(Q1.T)
-                ###############    #end = timer()
-                ###############    #print("build sigma with numpy took", end - start)
-                ###############    #start = timer()
-                ###############    #S2=H1_op.matvec(Q1.T)
-                ###############    #end = timer()
-                ###############    #print("build sigma with numba took", end - start)
-                ###############    #print("rg8l", np.allclose(S1,S2, rtol=1e-14,atol=1e-14))
-                ###############    #for j in range(self.index_map_size):
-                ###############    #    abc = S1[j] -S2[j]
-                ###############    #    if np.abs(abc) > 1e-14: print(j, abc)
-                ###############    #for i in range(1):
-                ###############    #   for r in range(self.nmo):
-                ###############    #       for l in range(self.n_occupied):
-                ###############    #           a = sigma_total4[i][r][l]-self.sigma_total5[i][r][l]
-                ###############    #           if np.absolute(a) > 1e-14: print (i,r,l,a, "large error")
-                ###############
-
-                ###############    #print("step from scipy solver", x)
-                ###############    #print(np.shape(x))
-                ###############    #S = np.zeros((1, self.index_map_size))
-                ###############    #S = H_op.matvec(davidson_step.T)
-                ###############    #print(S)
-                ###############    #test_g = np.einsum("pq,q->p", H_lambda,x)
-                ###############    #test_g2 = np.einsum("pq,q->p", H_lambda,step_limit)
-                ###############    #print(test_g)
-                ###############    #print(test_g2)
-                ###############    #print(reduced_gradient)
-                ###############    if (np.linalg.norm(x) < trust_radius):
-                ###############        step = x
-                ###############        #product2 = np.dot(x, step2)
-                ###############        xy_square = np.dot(x, step2) * np.dot(x, step2)
-                ###############        x_square = np.dot(x, x)
-                ###############        y_square = np.dot(step2, step2)
-                ###############        delta = 4 * xy_square - 4 * y_square * (x_square - trust_radius * trust_radius)
-                ###############        #print(delta)
-                ###############        t1= (-2 * np.dot(x,step2) - np.sqrt(delta))/ (2*y_square)
-                ###############        t2= (-2 * np.dot(x,step2) + np.sqrt(delta))/ (2*y_square)
-                ###############        print("x^2, xy, y^2, t", x_square, np.dot(x, step2), y_square, t1)
-                ###############        adjusted_step = step + min(np.abs(t1), np.abs(t2)) * step2
-                ###############        print("adjusted step norm", np.linalg.norm(adjusted_step))
-                ###############        step = adjusted_step
-                ###############        trust_radius_hard_case = np.linalg.norm(adjusted_step)
-                ###############        trust_radius = trust_radius_hard_case
-                ###############    else:
-                ###############        step = x/np.linalg.norm(x) * trust_radius
-
-                ###############    #step = step2/np.linalg.norm(step2) * trust_radius
-
-                step_norm = np.linalg.norm(step)
-
-                start = timer()
-                Rai = np.zeros((self.n_act_orb, self.n_in_a))
-                Rvi = np.zeros((self.n_virtual, self.n_in_a))
-                Rva = np.zeros((self.n_virtual, self.n_act_orb))
-                for i in range(self.index_map_size):
-                    s = self.index_map[i][0]
-                    l = self.index_map[i][1]
-                    if s >= self.n_in_a and s < self.n_occupied and l < self.n_in_a:
-                        Rai[s - self.n_in_a][l] = step[i]
-                    elif s >= self.n_occupied and l < self.n_in_a:
-                        Rvi[s - self.n_occupied][l] = step[i]
-                    else:
-                        Rva[s - self.n_occupied][l - self.n_in_a] = step[i]
-
-                self.build_unitary_matrix(Rai, Rvi, Rva)
-                # print("jnti",self.E_core)
-
-                U_temp = np.einsum("pq,qs->ps", self.U_total, self.U_delta)
-                J_temp = np.zeros(
-                    (self.n_occupied, self.n_occupied, self.nmo, self.nmo)
-                )
-                K_temp = np.zeros(
-                    (self.n_occupied, self.n_occupied, self.nmo, self.nmo)
-                )
-
-                K_temp = np.ascontiguousarray(K_temp)
-                c_full_transformation_macroiteration(
-                    U_temp,
-                    self.twoeint,
-                    J_temp,
-                    K_temp,
-                    self.index_map_pq,
-                    self.index_map_kl,
-                    self.nmo,
-                    self.n_occupied,
-                )
-                # self.full_transformation_macroiteration(self.U_total, self.J, self.K)
-
-                temp8 = np.zeros((self.nmo, self.nmo))
-                temp8 = np.einsum("pq,qs->ps", self.H1, U_temp)
-                h1_temp = np.einsum("ps,pr->rs", temp8, U_temp)
-                temp8 = np.einsum("pq,qs->ps", self.d_cmo1, U_temp)
-                d_cmo_temp = np.einsum("ps,pr->rs", temp8, U_temp)
-
-                new_energy = self.rdm_exact_energy(
-                    J_temp, K_temp, h1_temp, d_cmo_temp, eigenvecs
-                )
-                energy_change = new_energy - old_energy
-                print(
-                    "old energy",
-                    old_energy,
-                    "new energy",
-                    new_energy,
-                    "energy change",
-                    energy_change,
-                    flush=True,
-                )
-
-                # predicted_energy1 = self.microiteration_predicted_energy(reduced_gradient, reduced_hessian, step)
-                predicted_energy2 = self.microiteration_predicted_energy2(
-                    self.U2, reduced_gradient, A_tilde2, G_blocks, step
-                )
-                print("microiteration predicted energy", predicted_energy2, flush=True)
-                if predicted_energy2 < 0:
-                    reduce_predicted_energy = 1
-                else:
-                    reduce_predicted_energy = 0
-                end = timer()
-                print("build unitary matrix and recheck energy took", end - start)
-
-                if microiteration == 0 and orbital_optimization_step == 0:
-                    convergence_threshold = min(
-                        0.01 * gradient_norm, np.power(gradient_norm, 2)
-                    )
-                if energy_change < 0.0 or hard_case == 2:
-                    # restart = False
-                    # predicted_energy1 = self.microiteration_predicted_energy(reduced_gradient, reduced_hessian, step)
-                    # predicted_energy2 = self.microiteration_predicted_energy2(self.U2, reduced_gradient, A_tilde2, G, step)
-                    # print("microinteration predicted energy", predicted_energy1, predicted_energy2, flush = True)
-                    self.U_total = np.einsum("pq,qs->ps", self.U_total, self.U_delta)
-                    if microiteration == 0 and orbital_optimization_step == 0:
-                        #    convergence_threshold = min(0.01 * gradient_norm, np.power(gradient_norm,2))
-                        # convergence_threshold = 0.01 * gradient_norm
-                        ###10/10/2024 comment out this part to use standard trust region method
-                        # if step_norm > 0.1:
-                        #    N_microiterations = 5
-                        #    N_orbital_optimization_steps = 4
-                        # elif step_norm <= 0.1 and step_norm > 0.01:
-                        #    N_microiterations = 7
-                        #    N_orbital_optimization_steps = 3
-                        ###end comment
-                        print("number of microiteration", N_microiterations, flush=True)
-                        print(
-                            "number of optimization steps",
-                            N_orbital_optimization_steps,
-                            flush=True,
-                        )
-                    orbital_optimization_step += 1
-                    ratio = energy_change / predicted_energy2
-                    print("compare model with actual energy change", ratio)
-                    trust_radius = self.step_control(ratio, trust_radius)
-
-                    # self.build_gradient_and_hessian(self.U2, A, G, gradient_tilde, hessian_tilde, True)
-                    # print(np.shape(gradient_tilde), flush = True)
-
-                    start = timer()
-                    self.J[:, :, :, :] = J_temp
-                    self.K[:, :, :, :] = K_temp
-                    self.H_spatial2[:, :] = h1_temp
-                    self.d_cmo[:, :] = d_cmo_temp
-                    # self.full_transformation_macroiteration(self.U_total, self.J, self.K)
-                    temp_energy = self.rdm_exact_energy(
-                        self.J, self.K, self.H_spatial2, self.d_cmo, eigenvecs
-                    )
-                    print("check energy again", temp_energy)
-                    A[:, :] = 0
-                    A_tilde2[:, :] = 0
-                    G[:, :, :, :] = 0
-                    gradient_tilde[:] = 0
-                    hessian_tilde[:, :, :, :] = 0
-                    self.build_intermediates(eigenvecs, A, G, True)
-                    self.build_gradient_and_hessian(
-                        self.U2, A, G, gradient_tilde, hessian_tilde, True
-                    )
-                    self.build_gradient(self.U2, A, G, gradient_tilde, A_tilde2, True)
-                    end = timer()
-                    # self.build_gradient2(self.U2, A, G, hessian_tilde, gradient_tilde, A_tilde2, True)
-                    G1 = G.transpose(3, 1, 2, 0).reshape(
-                        self.nmo * self.n_occupied, self.nmo * self.n_occupied
-                    )
-                    # Davidson_augmented_hessian_solve3 (this dead branch's solver) still
-                    # takes the dense G1, but microiteration_predicted_energy2/mv2 are
-                    # block-only now, so build the blocks here too.
-                    _G_t = G.transpose(3, 1, 2, 0)
-                    G_blocks = (
-                        _G_t[:, : self.n_in_a, :, : self.n_in_a].reshape(
-                            self.nmo * self.n_in_a, self.nmo * self.n_in_a
-                        ),
-                        _G_t[:, self.n_in_a :, :, : self.n_in_a].reshape(
-                            self.nmo * self.n_act_orb, self.nmo * self.n_in_a
-                        ),
-                        _G_t[:, self.n_in_a :, :, self.n_in_a :].reshape(
-                            self.nmo * self.n_act_orb, self.nmo * self.n_act_orb
-                        ),
-                    )
-                    print("build gradient took", end - start)
-
-                    hessian_tilde3 = hessian_tilde.transpose(2, 0, 3, 1)
-                    hessian_tilde3 = hessian_tilde3.reshape(
-                        (self.n_occupied * self.nmo, self.n_occupied * self.nmo)
-                    )
-
-                    # hessian_diagonal3 = np.diagonal(hessian_tilde3).reshape((self.nmo, self.n_occupied))
-                    # reduced_hessian_diagonal = np.zeros(self.index_map_size)
-                    # index_count1 = 0
-                    # for k in range(self.n_occupied):
-                    #    for r in range(k+1,self.nmo):
-                    #        if (k < self.n_in_a and r < self.n_in_a): continue
-                    #        if (self.n_in_a <= k < self.n_occupied and self.n_in_a <= r < self.n_occupied): continue
-                    #        reduced_hessian_diagonal[index_count1] = hessian_diagonal3[r][k]
-                    #        index_count1 += 1
-                    start = timer()
-                    self.build_hessian_diagonal(self.U2, G, A_tilde2)
-                    end = timer()
-                    print("build hessian diagonal took", end - start)
-                    # print("diagonal elements of the reduced hessian")
-                    # for i in range(self.index_map_size):
-                    #    aa = self.reduced_hessian_diagonal[i] - reduced_hessian_diagonal[i]
-                    #    if np.abs(aa) > 1e-12: print("ERROR TOO LARGE")
-                    # reduced_hessian = np.zeros((self.index_map_size, self.index_map_size))
-                    reduced_gradient[:] = 0
-                    reduced_hessian[:, :] = 0
-                    np.set_printoptions(precision=14)
-                    index_count1 = 0
-                    for k in range(self.n_occupied):
-                        for r in range(k + 1, self.nmo):
-                            if k < self.n_in_a and r < self.n_in_a:
-                                continue
-                            if (
-                                self.n_in_a <= k < self.n_occupied
-                                and self.n_in_a <= r < self.n_occupied
-                            ):
-                                continue
-                            reduced_gradient[index_count1] = gradient_tilde[r][k]
-                            print(r, k, index_count1)
-                            index_count2 = 0
-                            for l in range(self.n_occupied):
-                                for s in range(l + 1, self.nmo):
-                                    if l < self.n_in_a and s < self.n_in_a:
-                                        continue
-                                    if (
-                                        self.n_in_a <= l < self.n_occupied
-                                        and self.n_in_a <= s < self.n_occupied
-                                    ):
-                                        continue
-                                    # if (k >= self.n_occupied and r >= self.n_occupied): continue
-                                    reduced_hessian[index_count1][index_count2] = (
-                                        hessian_tilde3[r * self.n_occupied + k][
-                                            s * self.n_occupied + l
-                                        ]
-                                    )
-                                    # print(r,k,s,l,index_count1,index_count2)
-                                    index_count2 += 1
-                            index_count1 += 1
-                    print("reduced_gradient", reduced_gradient, flush=True)
-                    mu1, w1 = np.linalg.eigh(reduced_hessian)
-                    print("eigenvalue of the reduced hessian", mu1)
-                    print(
-                        "dot product of gradient and first eigenvector of hessian",
-                        np.dot(reduced_gradient, w1[:, 0]),
-                    )
-                    print(
-                        "dot product of gradient and second eigenvector of hessian",
-                        np.dot(reduced_gradient, w1[:, 1]),
-                    )
-                    H_lambda = reduced_hessian - mu1[0] * np.eye(self.index_map_size)
-                    step_limit = -np.einsum(
-                        "pq,q->p", np.linalg.pinv(H_lambda), reduced_gradient
-                    )
-                    print("norm of critical step", np.linalg.norm(step_limit))
-                    print(
-                        "alpha critical", mu1[0] - np.dot(reduced_gradient, step_limit)
-                    )
-                    print("gradient norm", np.linalg.norm(reduced_gradient))
-
-                    current_energy = old_energy + energy_change
-                    print("now accept step, check current energy", current_energy)
-                    hard_case = 0
-                else:
-                    # restart = False
-                    # guess_vector = trial_vector
-                    reduce_step = 1
-                    trust_radius = 0.5 * trust_radius
-                    print("Reject step, restart", flush=True)
-                    print("new trust radius", trust_radius, flush=True)
-            # if convergence == 1:
-            #    #active_twoeint[:,:,:,:] = self.active_twoeint[:,:,:,:]
-            #    #active_fock_core[:,:] = self.active_fock_core[:,:]
-            #    #d_cmo[:,:] = self.d_cmo[:,:]
-
-            #    #self.U_total = np.einsum("pq,qs->ps", self.U_total, self.U2)
-            #    #temp8 = np.zeros((self.nmo, self.nmo))
-            #    #temp8 = np.einsum("pq,qs->ps", self.H_spatial2, self.U2)
-            #    #self.H_spatial2[:,:] = np.einsum("ps,pr->rs", temp8, self.U2)
-            #    #temp8 = np.einsum("pq,qs->ps", self.d_cmo, self.U2)
-            #    #self.d_cmo[:,:] = np.einsum("ps,pr->rs", temp8, self.U2)
-            #    break
-
-            start = timer()
-            active_twoeint = self.J[
-                self.n_in_a : self.n_occupied,
-                self.n_in_a : self.n_occupied,
-                self.n_in_a : self.n_occupied,
-                self.n_in_a : self.n_occupied,
-            ]
-            fock_core = copy.deepcopy(self.H_spatial2)
-            fock_core += 2.0 * np.einsum(
-                "jjrs->rs", self.J[: self.n_in_a, : self.n_in_a, :, :]
-            )
-            fock_core -= np.einsum(
-                "jjrs->rs", self.K[: self.n_in_a, : self.n_in_a, :, :]
-            )
-
-            E_core = 0.0
-            E_core += np.einsum("jj->", self.H_spatial2[: self.n_in_a, : self.n_in_a])
-            E_core += np.einsum("jj->", fock_core[: self.n_in_a, : self.n_in_a])
-
-            active_fock_core = np.zeros((self.n_act_orb, self.n_act_orb))
-            active_fock_core[:, :] = fock_core[
-                self.n_in_a : self.n_occupied, self.n_in_a : self.n_occupied
-            ]
-            d_cmo = self.d_cmo
-            occupied_J = np.zeros(
-                (self.n_occupied, self.n_occupied, self.n_occupied, self.n_occupied)
-            )
-            occupied_J[
-                self.n_in_a : self.n_occupied,
-                self.n_in_a : self.n_occupied,
-                self.n_in_a : self.n_occupied,
-                self.n_in_a : self.n_occupied,
-            ] = copy.deepcopy(active_twoeint)
-            self.H_diag3 = np.zeros(H_dim)
-            occupied_fock_core = np.zeros((self.n_occupied, self.n_occupied))
-            occupied_fock_core[
-                self.n_in_a : self.n_occupied, self.n_in_a : self.n_occupied
-            ] = copy.deepcopy(active_fock_core)
-            occupied_d_cmo = np.zeros((self.n_occupied, self.n_occupied))
-            occupied_d_cmo = copy.deepcopy(d_cmo[: self.n_occupied, : self.n_occupied])
-            gkl2 = copy.deepcopy(active_fock_core)
-            gkl2 -= 0.5 * np.einsum("kjjl->kl", active_twoeint)
-            # print("recheck energy", flush = True)
-            # active_one_e_energy = np.dot(occupied_fock_core[self.n_in_a: self.n_occupied,self.n_in_a: self.n_occupied].flatten(), self.D_tu_avg)
-            # active_two_e_energy = 0.5 * np.dot(occupied_J[self.n_in_a: self.n_occupied,self.n_in_a: self.n_occupied,self.n_in_a: self.n_occupied,self.n_in_a: self.n_occupied].flatten(), self.D_tuvw_avg)
-            # active_one_pe_energy = -np.sqrt(self.omega/2) * np.dot(occupied_d_cmo[self.n_in_a:self.n_occupied,self.n_in_a:self.n_occupied].flatten(), self.Dpe_tu_avg)
-            # ci_dependent_energy = self.calculate_ci_dependent_energy(eigenvecs, d_cmo)
-            # sum_energy = (active_one_e_energy + active_two_e_energy + active_one_pe_energy + self.E_core2 +
-            #        self.Enuc + self.d_c + ci_dependent_energy)
-            # print("sum_energy    active_one    active_two E_core active_pe_energy ci_dependent_energy E_nuc")
-            # print("gfhgy",
-            #    "{:20.12f}".format(sum_energy),
-            #    "{:20.12f}".format(active_one_e_energy),
-            #    "{:20.12f}".format(active_two_e_energy),
-            #    "{:20.12f}".format(self.E_core2),
-            #    "{:20.12f}".format(active_one_pe_energy),
-            #    "{:20.12f}".format(ci_dependent_energy),
-            #    "{:20.12f}".format(self.Enuc),
-            #    flush = True
-            # )
-            occupied_J = occupied_J.reshape(
-                self.n_occupied * self.n_occupied, self.n_occupied * self.n_occupied
-            )
-
-            c_H_diag_cas_spin(
-                occupied_fock_core,
-                occupied_J,
-                self.H_diag3,
-                self.N_p,
-                self.num_alpha,
-                self.nmo,
-                self.n_act_a,
-                self.n_act_orb,
-                self.n_in_a,
-                E_core,
-                self.omega,
-                self.Enuc,
-                self.d_c,
-                self.Y,
-                self.target_spin,
-            )
-            print(self.H_diag3)
-            d_diag = 2.0 * np.einsum("ii->", d_cmo[: self.n_in_a, : self.n_in_a])
-            self.constdouble[3] = self.d_exp - d_diag
-            self.constdouble[4] = 1e-9
-            self.constdouble[5] = E_core
-            self.constint[8] = 4
-            eigenvals = np.zeros((self.davidson_roots))
-            # eigenvecs = np.zeros((self.davidson_roots, H_dim))
-            # eigenvecs[:,:] = 0.0
-            # print("heyhey5", eigenvecs)
-            c_get_roots(
-                gkl2,
-                occupied_J,
-                occupied_d_cmo,
-                self.H_diag3,
-                self.S_diag,
-                self.S_diag_projection,
-                eigenvals,
-                eigenvecs,
-                self.table,
-                self.table_creation,
-                self.table_annihilation,
-                self.b_array,
-                self.constint,
-                self.constdouble,
-                self.index_Hdiag,
-                True,
-                self.target_spin,
-            )
-            end = timer()
-            print("CI step took", end - start, flush=True)
-
-            # print("current residual", self.constdouble[4])
-            current_residual = self.constdouble[4]
-            avg_energy = 0.0
-            for i in range(self.davidson_roots):
-                avg_energy += self.weight[i] * eigenvals[i]
-            print(
-                "microiteration",
-                microiteration + 1,
-                "current average energy",
-                avg_energy,
-                flush=True,
-            )
-            current_energy = avg_energy
-
-            start = timer()
-            self.build_state_average_rdms(eigenvecs)
-            end = timer()
-            print("building RDM took", end - start)
-
-            current_energy2 = self.rdm_exact_energy(
-                self.J, self.K, self.H_spatial2, self.d_cmo, eigenvecs
-            )
-
-            self.build_intermediates(eigenvecs, A, G, True)
-            self.build_gradient_and_hessian(
-                self.U2, A, G, gradient_tilde, hessian_tilde, True
-            )
-            # print(np.shape(gradient_tilde), flush = True)
-
-            start = timer()
-            self.build_gradient(self.U2, A, G, gradient_tilde, A_tilde2, True)
-            G1 = G.transpose(3, 1, 2, 0).reshape(
-                self.nmo * self.n_occupied, self.nmo * self.n_occupied
-            )
-            # Davidson_augmented_hessian_solve3 (this dead branch's solver) still
-            # takes the dense G1, but microiteration_predicted_energy2/mv2 are
-            # block-only now, so build the blocks here too.
-            _G_t = G.transpose(3, 1, 2, 0)
-            G_blocks = (
-                _G_t[:, : self.n_in_a, :, : self.n_in_a].reshape(
-                    self.nmo * self.n_in_a, self.nmo * self.n_in_a
-                ),
-                _G_t[:, self.n_in_a :, :, : self.n_in_a].reshape(
-                    self.nmo * self.n_act_orb, self.nmo * self.n_in_a
-                ),
-                _G_t[:, self.n_in_a :, :, self.n_in_a :].reshape(
-                    self.nmo * self.n_act_orb, self.nmo * self.n_act_orb
-                ),
-            )
-            end = timer()
-            # self.build_gradient2(self.U2, A, G, hessian_tilde, gradient_tilde, A_tilde2, True)
-
-            print("build gradient took", end - start)
-            hessian_tilde3 = hessian_tilde.transpose(2, 0, 3, 1)
-            hessian_tilde3 = hessian_tilde3.reshape(
-                (self.n_occupied * self.nmo, self.n_occupied * self.nmo)
-            )
-
-            # hessian_diagonal3 = np.diagonal(hessian_tilde3).reshape((self.nmo, self.n_occupied))
-            reduced_hessian_diagonal = np.zeros(self.index_map_size)
-            start = timer()
-            self.build_hessian_diagonal(self.U2, G, A_tilde2)
-            end = timer()
-            print("build hessian diagonal took", end - start)
-            reduced_hessian = np.zeros((self.index_map_size, self.index_map_size))
-            reduced_gradient = np.zeros(self.index_map_size)
-            index_count1 = 0
-            for k in range(self.n_occupied):
-                for r in range(k + 1, self.nmo):
-                    if k < self.n_in_a and r < self.n_in_a:
-                        continue
-                    if (
-                        self.n_in_a <= k < self.n_occupied
-                        and self.n_in_a <= r < self.n_occupied
-                    ):
-                        continue
-                    reduced_gradient[index_count1] = gradient_tilde[r][k]
-                    # print(r,k,index_count1)
-                    index_count2 = 0
-                    for l in range(self.n_occupied):
-                        for s in range(l + 1, self.nmo):
-                            if l < self.n_in_a and s < self.n_in_a:
-                                continue
-                            if (
-                                self.n_in_a <= l < self.n_occupied
-                                and self.n_in_a <= s < self.n_occupied
-                            ):
-                                continue
-                            # if (k >= self.n_occupied and r >= self.n_occupied): continue
-                            reduced_hessian[index_count1][index_count2] = (
-                                hessian_tilde3[r * self.n_occupied + k][
-                                    s * self.n_occupied + l
-                                ]
-                            )
-                            # print(r,k,s,l,index_count1,index_count2)
-                            index_count2 += 1
-                    index_count1 += 1
-            # print("reduced_gradient",reduced_gradient, flush = True)
-            np.set_printoptions(precision=14)
-            mu1, w1 = np.linalg.eigh(reduced_hessian)
-            print("eigenvalue of the reduced hessian", mu1)
-            print(
-                "dot product of gradient and first eigenvector of hessian",
-                np.dot(reduced_gradient, w1[:, 0]),
-            )
-            print(
-                "dot product of gradient and second eigenvector of hessian",
-                np.dot(reduced_gradient, w1[:, 1]),
-            )
-            H_lambda = reduced_hessian - mu1[0] * np.eye(self.index_map_size)
-            step_limit = -np.einsum(
-                "pq,q->p", np.linalg.pinv(H_lambda), reduced_gradient
-            )
-            print("norm of critical step", np.linalg.norm(step_limit))
-            print("alpha critical", mu1[0] - np.dot(reduced_gradient, step_limit))
-            gradient_norm = np.linalg.norm(reduced_gradient)
-            print("gradient norm", gradient_norm)
-            alpha_critical = mu1[0] - np.dot(reduced_gradient, step_limit)
-            augmented_hessian90 = np.zeros((dim00, dim00))
-            augmented_hessian90[0, 0] = alpha_critical
-            augmented_hessian90[0, 1:] = reduced_gradient
-            augmented_hessian90[1:, 0] = reduced_gradient.T
-            augmented_hessian90[1:, 1:] = reduced_hessian
-
-            mu90, w90 = np.linalg.eigh(augmented_hessian90)
-            print(mu90[0], mu90[1])
-            if w90[0, 0] > 1e-15:
-                zzzz = w90[1:, 0] / w90[0, 0]
-                print(np.linalg.norm(zzzz))
-            elif w90[0, 1] > 1e-15:
-                yyyy = w90[1:, 1] / w90[0, 1]
-                print("second case", np.linalg.norm(yyyy))
-            print("ci energy", current_energy, "rdm_energy", current_energy2)
-            print("current gradient_norm and residual", gradient_norm, current_residual)
-            print("current convergence_threshold", convergence_threshold)
-            total_norm = np.sqrt(
-                np.power(gradient_norm, 2) + np.power(current_residual, 2)
-            )
-            # macroiteration_energy_current = current_energy2
-            # if total_norm < convergence_threshold:
-            #    print("total norm", total_norm, flush = True)
-            #    #self.U_total = np.einsum("pq,qs->ps", self.U_total, self.U2)
-            #    #temp8 = np.zeros((self.nmo, self.nmo))
-            #    #temp8 = np.einsum("pq,qs->ps", self.H_spatial2, self.U2)
-            #    #self.H_spatial2[:,:] = np.einsum("ps,pr->rs", temp8, self.U2)
-            #    #self.d_cmo[:,:] = d_cmo[:,:]
-            #    #print(eigenvecs)
-            #    #print("u2i",self.U2)
-            #    print("microiteration converged! (small total norm)", flush = True)
-            #    break
-
-            microiteration += 1
+    # ah_orbital_optimization REMOVED 2026-09-04 (developer's call).
+    # It was the PROTOTYPE for the reactive true-energy strategy
+    # (QED_TRUE_ENERGY_REACTIVE), which has since been adapted into
+    # microiteration_optimization6 -- see the h4 24000 A case, item 375,
+    # where the reactive knob converges the deck in 24 macroiterations.
+    # Its only call site was already commented out, and its subproblem
+    # solver Davidson_augmented_hessian_solve3 had been deleted earlier, so
+    # it could not run at all.  1638 lines, including a fourth copy of the
+    # LSTRS beta-bisection and its `exit()`.  See git history.
 
     def bfgs_orbital_optimization(self, eigenvecs, c_get_roots):
         self.eigenvecs = eigenvecs
@@ -15865,16 +13737,7 @@ class PFHamiltonianGenerator:
             K_temp = np.zeros((self.n_occupied, self.n_occupied, self.nmo, self.nmo))
 
             K_temp = np.ascontiguousarray(K_temp)
-            c_full_transformation_macroiteration(
-                U_temp,
-                self.twoeint,
-                J_temp,
-                K_temp,
-                self.index_map_pq,
-                self.index_map_kl,
-                self.nmo,
-                self.n_occupied,
-            )
+            self._macro_JK(U_temp, J_temp, K_temp)
             # self.full_transformation_macroiteration(self.U_total, self.J, self.K)
 
             temp8 = np.zeros((self.nmo, self.nmo))
@@ -16178,100 +14041,17 @@ class PFHamiltonianGenerator:
             microiteration += 1
 
     def build_hessian_diagonal(self, U, G, A_tilde):
-        dim1 = self.n_occupied * self.nmo
-        # start = timer()
-        temp1 = np.zeros((self.n_occupied, self.nmo, self.nmo))
-        temp1 = np.einsum(
-            "kkrs->krs",
-            G[: self.n_occupied, : self.n_occupied, :, :],
-            optimize="optimal",
-        )
-        temp2 = np.zeros((self.n_occupied, self.nmo, self.n_virtual))
-        temp2 = np.einsum(
-            "krs,sa->kra", temp1, U[:, self.n_occupied : self.nmo], optimize="optimal"
-        )
-        self.hessian_diagonal = np.zeros((self.nmo, self.n_occupied))
-        self.hessian_diagonal[self.n_occupied : self.nmo, :] = np.einsum(
-            "kra,ra->ak", temp2, U[:, self.n_occupied : self.nmo], optimize="optimal"
-        )
+        """MOVED to trust_region_solvers.py (2026-09-04).
 
-        # end = timer()
-        # print("hessian diagonal step took", end - start)
-        # B = np.zeros((self.nmo, self.nmo))
-        # T = U - np.eye(self.nmo)
-        # B[:,:self.n_occupied] = A[:,:self.n_occupied] + np.einsum("klrs,sl->rk", G[:,:,:,:], T[:,:self.n_occupied])
-        # A_tilde = np.zeros((self.nmo, self.nmo))
-        # A_tilde = np.einsum("rs,sk->rk",U.T, B)
-        temp4 = np.zeros((self.n_occupied, self.n_occupied))
-
-        # start = timer()
-        o = np.full((self.n_occupied), 1)
-        v = np.full((self.n_virtual), 1)
-        self.hessian_diagonal[self.n_occupied : self.nmo, :] -= np.einsum(
-            "k,a->ak",
-            o,
-            np.diagonal(
-                A_tilde[self.n_occupied : self.nmo, self.n_occupied : self.nmo]
-            ),
+        Delegator: the name is part of this class's interface (the solver
+        modules call it as ctx.build_hessian_diagonal, and the C++ port cites it).
+        """
+        return _trs_build_hessian_diagonal(
+            self,
+            U,
+            G,
+            A_tilde,
         )
-        self.hessian_diagonal[self.n_occupied : self.nmo, :] -= np.einsum(
-            "a,k->ak", v, np.diagonal(A_tilde[: self.n_occupied, : self.n_occupied])
-        )
-        # end = timer()
-        # print("hessian diagonal step 1 took", end - start)
-        # start = timer()
-        temp3 = np.zeros((self.n_occupied, self.nmo, self.n_occupied))
-        temp3 = np.einsum(
-            "krs,sl->krl", temp1, U[:, : self.n_occupied], optimize="optimal"
-        )
-        temp4 = np.einsum(
-            "krl,rl->lk", temp3, U[:, : self.n_occupied], optimize="optimal"
-        )
-        self.hessian_diagonal[: self.n_occupied, :] += 1.0 * temp4
-        self.hessian_diagonal[: self.n_occupied, :] += 1.0 * temp4.T
-        # end = timer()
-        # print("hessian diagonal step 2 took", end - start)
-        # start = timer()
-        temp3 = np.einsum(
-            "klrs,sk->krl", G, U[:, : self.n_occupied], optimize="optimal"
-        )
-        # end = timer()
-        # print("hessian diagonal step 3 took", end - start)
-        # start = timer()
-        self.hessian_diagonal[: self.n_occupied, :] -= 2.0 * np.einsum(
-            "krl,rl->kl", temp3, U[:, : self.n_occupied], optimize="optimal"
-        )
-        self.hessian_diagonal[: self.n_occupied, :] -= np.einsum(
-            "k,l->kl", o, np.diagonal(A_tilde[: self.n_occupied, : self.n_occupied])
-        )
-        self.hessian_diagonal[: self.n_occupied, :] -= np.einsum(
-            "l,k->kl", o, np.diagonal(A_tilde[: self.n_occupied, : self.n_occupied])
-        )
-        temp4 = (
-            A_tilde[: self.n_occupied, : self.n_occupied]
-            + A_tilde.T[: self.n_occupied, : self.n_occupied]
-        )
-        self.hessian_diagonal[: self.n_occupied, :] += np.einsum(
-            "kl,kl->kl", np.eye(self.n_occupied), temp4, optimize="optimal"
-        )
-        # end = timer()
-        # print("hessian diagonal step 4 took", end - start)
-        # print("i7gt",hessian_diagonal)
-        # start = timer()
-        index_count1 = 0
-        for k in range(self.n_occupied):
-            for r in range(k + 1, self.nmo):
-                if k < self.n_in_a and r < self.n_in_a:
-                    continue
-                if (
-                    self.n_in_a <= k < self.n_occupied
-                    and self.n_in_a <= r < self.n_occupied
-                ):
-                    continue
-                self.reduced_hessian_diagonal[index_count1] = self.hessian_diagonal[r][
-                    k
-                ]
-                index_count1 += 1
         # end = timer()
         # print("hessian diagonal step 5 took", end - start)
     
@@ -16332,105 +14112,24 @@ class PFHamiltonianGenerator:
 
 
 
-    def inner_solve_pcg(self, residual_k, theta_k, Q_conv, P_diag,
-                    U, A_tilde, G_blocks, reduced_gradient, alpha):
+    def inner_solve_pcg(self, residual_k, theta_k, Q_conv, P_diag, U, A_tilde, G_blocks, reduced_gradient, alpha):
+        """MOVED to trust_region_solvers.py (2026-09-04).
 
-        H_dim = residual_k.shape[0]
-        n_conv = Q_conv.shape[0]
-
-        # Define a helper function to project a vector (or batch)
-        # This makes it orthogonal to the converged roots.
-        def project_out(vectors):
-            if n_conv == 0:
-                return vectors
-            # Use np.einsum for batch dot product, it's fast
-            # (N_vec, N_dim) @ (N_dim, N_conv) -> (N_vec, N_conv)
-            coeffs = np.dot(vectors, Q_conv.T)
-            # (N_vec, N_conv) @ (N_conv, N_dim) -> (N_vec, N_dim)
-            return vectors - np.dot(coeffs, Q_conv)
-
-        # Define a helper for the "A*p" matrix-vector product
-        # This is (H - theta*I) * p
-        def apply_H_minus_theta(vector, theta_k):
-            # We need a (1, H_dim) vector for your sigma function
-            p_vec = vector.reshape(1, H_dim)
-            Hp = np.zeros_like(p_vec)
-
-            # This is your expensive "H*p" product
-            # You must adapt this to use your existing functions
-
-            # 1. Apply the (H) part
-            # This is equivalent to your self.orbital_sigma(...)
-            # and the gradient/alpha parts
-            #self.orbital_sigma(U, A_tilde, G1, p_vec, Hp, 1, 1) # Assumes 'self' is available
-            #start = timer()
-            self.orbital_sigma3(U, A_tilde, G_blocks, p_vec, Hp, 1, 1) # Assumes 'self' is available
-            Hp[:, 1:] += np.einsum("p,q->qp", reduced_gradient, p_vec[:, 0])
-            Hp[:, 0] = alpha * p_vec[:, 0] + np.dot(p_vec[:, 1:], reduced_gradient)
-            #end = timer()
-            #print("build orbital sigma for precondition took", end - start)
-
-
-            # 2. Apply the (-theta*I) part
-            Hp -= theta_k * p_vec
-
-            return Hp.flatten() # Return a 1D vector
-
-        # === PCG Algorithm ===
-        # QED_JD_MAXITER: inner iteration cap.  Each inner iteration is one
-        # sigma build, so this trades inner matvecs against OUTER Davidson
-        # iterations (which each cost a matvec plus orthogonalization plus the
-        # projected eigensolve).  Default 5 = the original value.
-        max_inner_iter = _QED_JD_MAXITER
-        _stats_span_jd = _stats_begin("jd_inner_pcg")
-        _jd_iters = 0
-        _jd_exit = "cap"
-        v_corr = np.zeros(H_dim)    # Initial guess: 0
-        r = -residual_k             # RHS of (H - theta*I)v = -r
-
-        # 1. Apply preconditioner: z = P_inv * r
-        z = r / P_diag
-        # 2. Project!
-        z = project_out(z)
-
-        p = z                       # Initial search direction
-        rho = np.dot(r, z)
-
-        for _ in range(max_inner_iter):
-            # 1. Matrix-vector product: q = A * p
-            # Our "A" is the projected operator (I-Q_conv)(H-theta)(I-Q_conv)
-            # We apply it in steps:
-            p_proj = project_out(p) # This is (I-Q_conv)*p
-            q = apply_H_minus_theta(p_proj, theta_k) # This is (H-theta)*(I-Q_conv)*p
-            q = project_out(q) # This is (I-Q_conv)*(H-theta)*(I-Q_conv)*p
-            _jd_iters += 1
-
-            alpha = rho / np.dot(p_proj, q)
-
-            v_corr += alpha * p_proj
-            r -= alpha * q
-
-            # Check for convergence (optional but good)
-            # if np.linalg.norm(r) < 1e-3 * np.linalg.norm(residual_k):
-            #     break
-            # ⭐️ ADD THIS EARLY EXIT ⭐️
-            # Check if the *inner* residual is 10x smaller than the *outer* residual
-            if np.linalg.norm(r) < _QED_JD_TOL * np.linalg.norm(residual_k):
-                _jd_exit = "tol"
-                break
-            # 2. Apply preconditioner: z = P_inv * r
-            z = r / P_diag
-            # 3. Project!
-            z = project_out(z)
-
-            rho_new = np.dot(r, z)
-            beta = rho_new / rho
-            rho = rho_new
-
-            p = z + beta * p # p is implicitly projected in the next loop
-
-        _stats_end(_stats_span_jd, iters=_jd_iters, status=_jd_exit)
-        return v_corr
+        Delegator: the name is part of this class's interface (the solver
+        modules call it as ctx.inner_solve_pcg, and the C++ port cites it).
+        """
+        return _trs_inner_solve_pcg(
+            self,
+            residual_k,
+            theta_k,
+            Q_conv,
+            P_diag,
+            U,
+            A_tilde,
+            G_blocks,
+            reduced_gradient,
+            alpha,
+        )
 
 
     def check_root_0(self, aug_hessian_eigenvecs, aug_hessian_eigenvals, reduced_gradient, trust_radius):
@@ -16454,24 +14153,21 @@ class PFHamiltonianGenerator:
     
 
     def aug_matvec(self, U, A_tilde, G_blocks, reduced_gradient, vector, alpha, H_dim):
-        p_vec = vector.reshape(1, H_dim)
-        Hp = np.zeros_like(p_vec)
+        """MOVED to trust_region_solvers.py (2026-09-04).
 
-        # This is your expensive "H*p" product
-        # You must adapt this to use your existing functions
-
-        # 1. Apply the (H) part
-        # This is equivalent to your self.orbital_sigma(...)
-        # and the gradient/alpha parts
-        #self.orbital_sigma(U, A_tilde, G1, p_vec, Hp, 1, 1) # Assumes 'self' is available
-        #start = timer()
-        self.orbital_sigma3(U, A_tilde, G_blocks, p_vec, Hp, 1, 1) # Assumes 'self' is available
-        Hp[:, 1:] += np.einsum("p,q->qp", reduced_gradient, p_vec[:, 0])
-        Hp[:, 0] = alpha * p_vec[:, 0] + np.dot(p_vec[:, 1:], reduced_gradient)
-        #end = timer()
-        #print("build orbital sigma for precondition took", end - start)
-
-        return Hp.flatten() # Return a 1D vector
+        Delegator: the name is part of this class's interface (the solver
+        modules call it as ctx.aug_matvec, and the C++ port cites it).
+        """
+        return _trs_aug_matvec(
+            self,
+            U,
+            A_tilde,
+            G_blocks,
+            reduced_gradient,
+            vector,
+            alpha,
+            H_dim,
+        )
     def modified_gram_schmidt(self, V, new_vec):
         """
         Orthonormalize new_vec against basis V.
@@ -16649,588 +14345,212 @@ class PFHamiltonianGenerator:
 
 
 
-    def print_matrix_nice(self, matrix, precision=6, width=12, cols_per_line=6, threshold=1e-10):
+    # ---------------------------------------------------------------
+    # print_matrix_nice and the Steihaug-Toint solvers
+    # solve_pcg_trust_region / solve_pcg_with_operator MOVED to
+    # legacy_python_ci.py on 2026-09-04 -- no live caller, only
+    # commented-out references.  Kept rather than deleted because the
+    # C++ port cites them as the source of PcgTrustRegionSolver.
+    # ---------------------------------------------------------------
+
+    def solve_gltr_with_operator(self, B_operator, g, M_diag, radius, max_iter=100, tol=0.0001, verbose=True):
+        """MOVED to trust_region_solvers.py (2026-09-04).
+
+        Delegator: the name is part of this class's interface (the solver
+        modules call it as ctx.solve_gltr_with_operator, and the C++ port cites it).
         """
-        Print matrix with custom formatting
+        return _trs_solve_gltr_with_operator(
+            self,
+            B_operator,
+            g,
+            M_diag,
+            radius,
+            max_iter,
+            tol,
+            verbose,
+        )
+
+
+
+    def _record_rho(self, ratio):
+        """Log one model-fidelity observation for QED_ADAPTIVE_TOL.
+
+        Called right where `ratio` is already computed for step_control, so it
+        adds no work and no matvecs.  Kept unconditional and side-effect free
+        when the knob is off (the list is simply never read).
         """
-        rows, cols = matrix.shape
+        if not hasattr(self, "_rho_history"):
+            self._rho_history = []
+        try:
+            self._rho_history.append(float(ratio))
+        except (TypeError, ValueError):
+            return
 
-        for start_col in range(0, cols, cols_per_line):
-            end_col = min(start_col + cols_per_line, cols)
+    def _record_gltr_exit(self, status, gltr_site):
+        """Log one GLTR termination for QED_SUBSPACE_TOL.
 
-            print(f"\nColumns {start_col} to {end_col-1}:")
-            print("-" * (width * (end_col - start_col)))
-
-            for i in range(rows):
-                row_str = ""
-                for j in range(start_col, end_col):
-                    value = matrix[i, j]
-                    if abs(value) < threshold:  # Treat very small numbers as zero
-                        value = 0.0
-                    row_str += f"{value:{width}.{precision}f}"
-                print(f"Row {i}: {row_str}")
-
-    def solve_gltr_with_operator(self, B_operator, g, M_diag, radius, max_iter=100, tol=1e-4, verbose=True):
+        Called immediately after each GLTR solve returns, with the status string
+        that solve already produced -- no work, no matvecs.  Kept unconditional
+        and side-effect free when the knob is off (the lists are never read).
+        Histories are PER SITE: the three GLTR sites have very different exit
+        mixes and pooling them would average away the signal.
         """
-        Returns: (p, lambda, status)
-        lambda is the shift such that (H + lambda*M) is positive semidefinite.
+        if not hasattr(self, "_gltr_exit_history"):
+            self._gltr_exit_history = {}
+        self._gltr_exit_history.setdefault(gltr_site, []).append(status)
+        # QED_EXIT_CONTROL freshness token.  step_control has FOUR call sites and
+        # the main site can dispatch to LSTRS / OTR / AH instead of GLTR, so a
+        # radius rule that simply read the last recorded exit would act on a
+        # STALE one whenever a non-GLTR solver produced the step.  The token is
+        # consumed by _take_gltr_exit(), so each exit can steer exactly one
+        # radius update and a non-GLTR step steers none.
+        self._gltr_exit_pending = gltr_site
+
+    def _take_gltr_exit(self):
+        """Consume the pending GLTR exit, if the current step came from one.
+
+        Returns that site's exit history, or None when the step did not come
+        from a GLTR solve -- in which case the caller must not adapt.
         """
-        n = len(g)
-        if max_iter is None or max_iter > n:
-            max_iter = n
+        site = getattr(self, "_gltr_exit_pending", None)
+        if site is None:
+            return None
+        self._gltr_exit_pending = None
+        return getattr(self, "_gltr_exit_history", {}).get(site)
 
-        # QED_GLTR_TOL_SCALE (see the knob block at the top of this file);
-        # no-op at the default 1.0.
-        tol = tol * _QED_GLTR_TOL_SCALE
+    def _subproblem_tol(self, site, gltr_site=None):
+        """Exit tolerance for a trust-region subproblem solve at `site`.
 
-        Q = np.zeros((max_iter + 1, n))
-        alpha = np.zeros(max_iter)
-        beta = np.zeros(max_iter)
-        
-        M_abs = np.abs(M_diag) + 1e-12 
-        
-        #r = g.copy()
-        # NEW: Add microscopic noise to see hidden negative curvature
-        noise_scale = 1e-6 * np.linalg.norm(g)
-        noise = np.random.randn(n)
-        r = g + noise_scale * noise
-        # Validation instrumentation: capture the actual realized (post-noise)
-        # gradient so the C++ port can be replayed against the literal vector
-        # Python used (GltrConfig.add_noise = false, fed this r directly) --
-        # rather than disabling the noise draw, which would remove the very
-        # mechanism this hack exists to provide (steering away from exact
-        # hard-case degeneracies). No effect when CPP_CASSCF_VALIDATION_DIR
-        # is unset.
-        if _CPP_CASSCF_VALIDATION_DIR:
-            self._cpp_casscf_last_noised_gradient = r.copy()
+        Returns the hard-coded 1e-7 unless QED_ADAPTIVE_TOL or QED_SUBSPACE_TOL
+        selects this site, so with both knobs off every call site is
+        byte-for-byte unchanged.  `site` is "main" or "qn" and selects by mode
+        (1 adapts "main" only, 2 adapts both) for either controller.
+        `gltr_site` is the FINE site name ("gltr" / "gltr_qn" / "gltr_qn_bfgs")
+        and is what QED_SUBSPACE_TOL keys its per-site history on; it is
+        optional so the signature stays compatible with any other caller.
 
-        z = r / M_abs
-        inner_prod = np.dot(r, z)
-        
-        if inner_prod <= 1e-20:
-            return np.zeros(n), 0.0, "success_zero_gradient"
-            
-        beta_0 = np.sqrt(inner_prod)
-        Q[0] = z / beta_0
-        
-        hist_len = 5
-        hist_eig = deque(maxlen=hist_len)
-        hist_norm = deque(maxlen=hist_len)
-        
-        if verbose:
-            print(f"\n--- GLTR START (Rad={radius:.4f}, Dim={n}) ---")
-            print(f"{'Iter':<5} | {'Min Eig':<12} | {'Step Norm':<12} | {'Residual':<12} | {'Status'}")
-    
-        for k in range(max_iter):
-            v_curr = Q[k]
-            
-            H_v = B_operator(v_curr)
-            al = np.dot(v_curr, H_v)
-            alpha[k] = al
-            
-            w = H_v / M_abs
-            if k == 0:
-                r_next = w - al * v_curr
-            else:
-                r_next = w - al * v_curr - beta[k-1] * Q[k-1]
-                
-            for j in range(k + 1):
-                overlap = np.dot(r_next, Q[j] * M_abs)
-                r_next = r_next - overlap * Q[j]
-    
-            inner_prod = np.dot(r_next, r_next * M_abs)
-            be = np.sqrt(max(0.0, inner_prod)) 
-            beta[k] = be
-            
-            solve_final = False
-            if be < 1e-12:
-                solve_final = True
-                curr_betas = beta[:k]
-            else:
-                if k < max_iter - 1:
-                    Q[k+1] = r_next / be
-                curr_betas = beta[:k]
-    
-            curr_alphas = alpha[:k+1]
-            try:
-                w_eig, v_eig = eigh_tridiagonal(curr_alphas, curr_betas)
-            except ValueError:
-                print("GLTR: Tridiagonal solver failed.")
-                break
-    
-            min_eig = np.min(w_eig)
-            g_inner = beta_0 * v_eig[0, :]
-            
-            p_current = None
-            step_norm_val = 0.0
-            resid_val = 0.0
-            status_tag = ""
-            final_lambda = 0.0 # Default for Newton step
-    
-            # --- CHECK A: Interior Newton Step ---
-            if min_eig > 1e-12:
-                z_newton = -g_inner / w_eig
-                y_T_newton = v_eig @ z_newton
-                
-                p_newton = np.zeros(n)
-                for i in range(k+1):
-                    p_newton += y_T_newton[i] * Q[i]
-                    
-                norm_newton = np.linalg.norm(p_newton)
-                resid = be * abs(y_T_newton[-1])
-                
-                p_current = p_newton
-                step_norm_val = norm_newton
-                resid_val = resid
-                
-                if norm_newton <= radius:
-                    if resid < tol or solve_final:
-                        if verbose: print(f"{k:<5} | {min_eig: .4e}   | {norm_newton:.4e}   | {resid:.4e}   | CONVERGED (Newton)")
-                        return p_newton, 0.0, f"Interior (Newton) iter {k+1}"
-                    status_tag = "Newton"
-                else:
-                    status_tag = "Newton(Out)"
-            else:
-                status_tag = "Indefinite"
-    
-            # --- CHECK B: Boundary / Hard Case ---
-            should_solve_boundary = solve_final or (k == max_iter - 1) or (min_eig < 0) or (min_eig > 0 and step_norm_val > radius)
-            
-            if should_solve_boundary:
-                # 1. Secular Function
-                def get_norm_error(lam):
-                    # Calculate norm of p(lam) - radius
-                    z_local = -g_inner / (w_eig + lam)
-                    coeffs = v_eig @ z_local
-                    
-                    # Fast reconstruction of norm (since vectors are not orthogonal in Euclidean metric)
-                    p_temp = np.zeros(n)
-                    for i in range(k+1):
-                        p_temp += coeffs[i] * Q[i]
-                    return np.linalg.norm(p_temp) - radius
-
-                # 2. Establish Bounds
-                # lam_min must be slightly above the singularity to avoid division by zero
-                # singularity is at -min_eig (which is positive if min_eig is negative)
-                lam_min = max(0, -min_eig) + 1e-6
-                
-                # --- CRITICAL CHECK FOR HARD CASE ---
-                # Check the norm at the closest safe point to the singularity.
-                # If the norm here is ALREADY smaller than radius, we are in the Hard Case.
-                # The function ||p(lambda)|| is monotonically decreasing. 
-                # If it starts below Delta, it will never hit Delta.
-                
-                err_low = get_norm_error(lam_min)
-                
-                if err_low < 0:
-                    # HARD CASE: No root exists. 
-                    # Stop Bisection immediately.
-                    lam_final = lam_min
-                    status_tag += "/Hard"
-                    
-                    # We will handle the eigenvector addition in Step 4 below.
-                    
-                else:
-                    # STANDARD CASE: Root exists.
-                    # We need an upper bound where ||p(lambda)|| < Delta (error < 0).
-                    # Since ||p(lambda)|| -> 0 as lambda -> infinity, such an upper bound must exist.
-                    
-                    low = lam_min
-                    high = lam_min + 1.0 # Initial guess for upper bound
-                    
-                    # Exponential search for valid upper bound
-                    found_bracket = False
-                    for _ in range(15):
-                        if get_norm_error(high) < 0:
-                            found_bracket = True
-                            break
-                        high = max(high * 2.0, high + 10.0)
-                    
-                    # Fallback if bracket not found (should be rare/impossible for valid inputs)
-                    if not found_bracket:
-                        lam_final = high 
-                    else:
-                        # Bisection / Root Finding
-                        for _ in range(30):
-                            mid = (low + high) / 2
-                            err = get_norm_error(mid)
-                            
-                            if abs(err) < 1e-4 * radius:
-                                low = mid
-                                break
-                            
-                            if err > 0: 
-                                # Norm too big -> Need larger lambda (to shrink step)
-                                low = mid
-                            else:
-                                # Norm too small -> Need smaller lambda
-                                high = mid
-                        lam_final = low
-                        status_tag += "/Bound"
-
-                final_lambda = lam_final # Store for return
-    
-                z_boundary = -g_inner / (w_eig + lam_final)
-                y_T_boundary = v_eig @ z_boundary
-                
-                p_boundary = np.zeros(n)
-                for i in range(k+1):
-                    p_boundary += y_T_boundary[i] * Q[i]
-                    
-                if err_low < 0:
-                    idx_min = np.argmin(w_eig)
-                    if abs(g_inner[idx_min]) < 1e-6:
-                        curr_norm = np.linalg.norm(p_boundary)
-                        if curr_norm < radius:
-                            y_eig = v_eig[:, idx_min]
-                            eig_vec = np.zeros(n)
-                            for i in range(k+1):
-                                eig_vec += y_eig[i] * Q[i]
-                            tau = np.sqrt(max(0.0, radius**2 - curr_norm**2))
-                            p_boundary += tau * (eig_vec / np.linalg.norm(eig_vec))
-    
-                p_current = p_boundary
-                step_norm_val = np.linalg.norm(p_boundary)
-                resid_val = be * abs(y_T_boundary[-1])
-    
-                if resid_val < tol or solve_final:
-                    if verbose: print(f"{k:<5} | {min_eig: .4e}   | {step_norm_val:.4e}   | {resid_val:.4e}   | CONVERGED (Boundary)")
-                    return p_boundary, final_lambda, f"Boundary iter {k+1}"
-    
-            ## --- CHECK C: Stagnation ---
-            #hist_eig.append(min_eig)
-            #hist_norm.append(step_norm_val)
-            #
-            #if len(hist_eig) == hist_len:
-            #    eig_range = max(hist_eig) - min(hist_eig)
-            #    norm_range = max(hist_norm) - min(hist_norm)
-            #    if eig_range < 1e-5 and norm_range < 1e-5 * radius:
-            #        if verbose: print(f"{k:<5} | {min_eig: .4e}   | {step_norm_val:.4e}   | {resid_val:.4e}   | CONVERGED (Stagnation)")
-            #        return p_current, final_lambda, f"Stagnation iter {k+1}"
-    
-            if _QED_SOLVER_STATS:
-                # per-Lanczos-iteration convergence trace: lets the report say how
-                # many iterations earlier this solve could have exited at a looser
-                # tolerance, without spending an extra matvec to find out.
-                _solver_stats.trace_iter(resid_val, step_norm_val, tol)
-            if verbose:
-                print(f"{k:<5} | {min_eig: .4e}   | {step_norm_val:.4e}   | {resid_val:.4e}   | {status_tag}")
-
-        return p_current if p_current is not None else np.zeros(n), 0.0, "Failure"
-
-
-
-    def solve_gltr_trust_region(self, U, A_tilde, G_blocks, g, M_diag, radius, max_iter=100, tol=1e-4, verbose=True):
+        The two controllers are mutually exclusive by construction -- they drive
+        the same number from contradictory inputs (rho vs exit reason), so
+        running both at once would measure neither.  QED_SUBSPACE_TOL wins if
+        both are set, and says so.
         """
-        Returns: (p, lambda, status)
-        lambda is the shift such that (H + lambda*M) is positive semidefinite.
-        """
-        n = len(g)
-        if max_iter is None or max_iter > n:
-            max_iter = n
-
-        # QED_GLTR_TOL_SCALE (see the knob block at the top of this file);
-        # no-op at the default 1.0.
-        tol = tol * _QED_GLTR_TOL_SCALE
-
-        Q = np.zeros((max_iter + 1, n))
-        alpha = np.zeros(max_iter)
-        beta = np.zeros(max_iter)
-
-        M_abs = np.abs(M_diag) + 1e-12
-
-        # QED_GLTR_REUSE: a rejected step re-enters this solver with the SAME
-        # Hessian and gradient and only a smaller radius -- the reject branch
-        # (~13037) touches nothing else, self.U3 is re-seeded from self.U2 at
-        # ~12148, and only the ACCEPT branch updates U2 / rebuilds the gradient
-        # and the Hessian diagonal.  The Lanczos recurrence below depends only on
-        # (H, M_abs, r): the radius enters at CHECK A/B, never in the vectors.
-        # So the cached basis is EXACT for the retry and the step is bit-identical
-        # to what a cold rebuild produces -- the property GLTR is built on
-        # (Gould/Lucidi/Roma/Toint: re-solution over a sequence of radii).
-        # Keyed on the CONTENT of g and M_diag, so an accepted step invalidates
-        # the cache automatically with no manual bookkeeping.
-        _cache = getattr(self, "_gltr_cache", None)
-        _n_cached = 0
-        if (
-            _QED_GLTR_REUSE
-            and _cache is not None
-            and _cache["n"] == n
-            and radius < _cache["radius"]
-            and np.array_equal(_cache["g"], g)
-            and np.array_equal(_cache["M_diag"], M_diag)
-        ):
-            _n_cached = _cache["kmax"] + 1
-            # Reuse the cached NOISED gradient too: the noise is redrawn per call,
-            # and a different r generates a different Krylov space -- exactly what
-            # the cache exists to avoid.
-            r = _cache["r"].copy()
-            alpha[:_n_cached] = _cache["alpha"][:_n_cached]
-            beta[:_n_cached] = _cache["beta"][:_n_cached]
-            _nq = min(_n_cached + 1, max_iter + 1)
-            Q[:_nq] = _cache["Q"][:_nq]
-            if verbose:
+        if _QED_SUBSPACE_TOL:
+            if _QED_ADAPTIVE_TOL and not getattr(self, "_subspace_tol_warned", False):
+                self._subspace_tol_warned = True
                 print(
-                    f"GLTR: reusing {_n_cached} cached Lanczos vectors "
-                    f"(radius {_cache['radius']:.4f} -> {radius:.4f})"
+                    "  [QED_SUBSPACE_TOL] both tolerance controllers are enabled;"
+                    " QED_ADAPTIVE_TOL is IGNORED for this run."
                 )
-        else:
-            #r = g.copy()
-            # NEW: Add microscopic noise to see hidden negative curvature
-            noise_scale = 1e-6 * np.linalg.norm(g)
-            noise = np.random.randn(n)
-            r = g + noise_scale * noise
-        # Validation instrumentation: capture the actual realized (post-noise)
-        # gradient so the C++ port can be replayed against the literal vector
-        # Python used (GltrConfig.add_noise = false, fed this r directly) --
-        # rather than disabling the noise draw, which would remove the very
-        # mechanism this hack exists to provide (steering away from exact
-        # hard-case degeneracies). No effect when CPP_CASSCF_VALIDATION_DIR
-        # is unset.
-        if _CPP_CASSCF_VALIDATION_DIR:
-            self._cpp_casscf_last_noised_gradient = r.copy()
-
-        z = r / M_abs
-        inner_prod = np.dot(r, z)
-
-        if inner_prod <= 1e-20:
-            return np.zeros(n), 0.0, "success_zero_gradient"
-
-        beta_0 = np.sqrt(inner_prod)
-        Q[0] = z / beta_0
-
-        hist_len = 5
-        hist_eig = deque(maxlen=hist_len)
-        hist_norm = deque(maxlen=hist_len)
-
-        if verbose:
-            print(f"\n--- GLTR START (Rad={radius:.4f}, Dim={n}) ---")
-            print(f"{'Iter':<5} | {'Min Eig':<12} | {'Step Norm':<12} | {'Residual':<12} | {'Status'}")
-
-        for k in range(max_iter):
-            v_curr = Q[k]
-
-            if k < _n_cached:
-                # QED_GLTR_REUSE hit: alpha[k], beta[k] and Q[k+1] were produced by
-                # the discarded solve from the identical (H, M_abs, r).  Skip the
-                # Hessian-vector product -- that is the entire point of the cache.
-                al = alpha[k]
-                be = beta[k]
-            else:
-                v_curr_reshaped = v_curr.reshape(1, n)
-                H_v = np.zeros_like(v_curr_reshaped)
-                self.orbital_sigma3(U, A_tilde, G_blocks, v_curr_reshaped, H_v, 1, 0)
-                H_v = H_v.reshape(n)
-
-                al = np.dot(v_curr, H_v)
-                alpha[k] = al
-
-                w = H_v / M_abs
-                if k == 0:
-                    r_next = w - al * v_curr
-                else:
-                    r_next = w - al * v_curr - beta[k-1] * Q[k-1]
-
-                for j in range(k + 1):
-                    overlap = np.dot(r_next, Q[j] * M_abs)
-                    r_next = r_next - overlap * Q[j]
-
-                inner_prod = np.dot(r_next, r_next * M_abs)
-                be = np.sqrt(max(0.0, inner_prod))
-                beta[k] = be
-
-                if be >= 1e-12 and k < max_iter - 1:
-                    Q[k+1] = r_next / be
-
-            solve_final = be < 1e-12
-            curr_betas = beta[:k]
-
-            if _QED_GLTR_REUSE:
-                # Bank the basis as it grows, so ANY of the returns below leaves a
-                # usable cache.  Q is trimmed to what has actually been filled
-                # (the full array is max_iter+1 rows and would pin ~46 MB on c10h8).
-                # Never shrink below what we inherited: a retry that converges in
-                # fewer iterations than the cached solve must not truncate the
-                # basis for the NEXT retry in the same cascade.
-                _bank = max(k, _n_cached - 1)
-                self._gltr_cache = {
-                    "n": n,
-                    "g": g.copy(),
-                    "M_diag": M_diag.copy(),
-                    "r": r.copy(),
-                    "alpha": alpha[:_bank+1].copy(),
-                    "beta": beta[:_bank+1].copy(),
-                    "Q": Q[:min(_bank+2, max_iter+1)].copy(),
-                    "kmax": _bank,
-                    "radius": radius,
-                }
-
-            curr_alphas = alpha[:k+1]
-            try:
-                w_eig, v_eig = eigh_tridiagonal(curr_alphas, curr_betas)
-            except ValueError:
-                print("GLTR: Tridiagonal solver failed.")
-                break
-    
-            min_eig = np.min(w_eig)
-            g_inner = beta_0 * v_eig[0, :]
-            
-            p_current = None
-            step_norm_val = 0.0
-            resid_val = 0.0
-            status_tag = ""
-            final_lambda = 0.0 # Default for Newton step
-    
-            # --- CHECK A: Interior Newton Step ---
-            if min_eig > 1e-12:
-                z_newton = -g_inner / w_eig
-                y_T_newton = v_eig @ z_newton
-                
-                p_newton = np.zeros(n)
-                for i in range(k+1):
-                    p_newton += y_T_newton[i] * Q[i]
-                    
-                norm_newton = np.linalg.norm(p_newton)
-                resid = be * abs(y_T_newton[-1])
-                
-                p_current = p_newton
-                step_norm_val = norm_newton
-                resid_val = resid
-                
-                if norm_newton <= radius:
-                    if resid < tol or solve_final:
-                        if verbose: print(f"{k:<5} | {min_eig: .4e}   | {norm_newton:.4e}   | {resid:.4e}   | CONVERGED (Newton)")
-                        return p_newton, 0.0, f"Interior (Newton) iter {k+1}"
-                    status_tag = "Newton"
-                else:
-                    status_tag = "Newton(Out)"
-            else:
-                status_tag = "Indefinite"
-    
-            # --- CHECK B: Boundary / Hard Case ---
-            should_solve_boundary = solve_final or (k == max_iter - 1) or (min_eig < 0) or (min_eig > 0 and step_norm_val > radius)
-            
-            if should_solve_boundary:
-                # 1. Secular Function
-                def get_norm_error(lam):
-                    # Calculate norm of p(lam) - radius
-                    z_local = -g_inner / (w_eig + lam)
-                    coeffs = v_eig @ z_local
-                    
-                    # Fast reconstruction of norm (since vectors are not orthogonal in Euclidean metric)
-                    p_temp = np.zeros(n)
-                    for i in range(k+1):
-                        p_temp += coeffs[i] * Q[i]
-                    return np.linalg.norm(p_temp) - radius
-
-                # 2. Establish Bounds
-                # lam_min must be slightly above the singularity to avoid division by zero
-                # singularity is at -min_eig (which is positive if min_eig is negative)
-                lam_min = max(0, -min_eig) + 1e-6
-                
-                # --- CRITICAL CHECK FOR HARD CASE ---
-                # Check the norm at the closest safe point to the singularity.
-                # If the norm here is ALREADY smaller than radius, we are in the Hard Case.
-                # The function ||p(lambda)|| is monotonically decreasing. 
-                # If it starts below Delta, it will never hit Delta.
-                
-                err_low = get_norm_error(lam_min)
-                
-                if err_low < 0:
-                    # HARD CASE: No root exists. 
-                    # Stop Bisection immediately.
-                    lam_final = lam_min
-                    status_tag += "/Hard"
-                    
-                    # We will handle the eigenvector addition in Step 4 below.
-                    
-                else:
-                    # STANDARD CASE: Root exists.
-                    # We need an upper bound where ||p(lambda)|| < Delta (error < 0).
-                    # Since ||p(lambda)|| -> 0 as lambda -> infinity, such an upper bound must exist.
-                    
-                    low = lam_min
-                    high = lam_min + 1.0 # Initial guess for upper bound
-                    
-                    # Exponential search for valid upper bound
-                    found_bracket = False
-                    for _ in range(15):
-                        if get_norm_error(high) < 0:
-                            found_bracket = True
-                            break
-                        high = max(high * 2.0, high + 10.0)
-                    
-                    # Fallback if bracket not found (should be rare/impossible for valid inputs)
-                    if not found_bracket:
-                        lam_final = high 
-                    else:
-                        # Bisection / Root Finding
-                        for _ in range(30):
-                            mid = (low + high) / 2
-                            err = get_norm_error(mid)
-                            
-                            if abs(err) < 1e-4 * radius:
-                                low = mid
-                                break
-                            
-                            if err > 0: 
-                                # Norm too big -> Need larger lambda (to shrink step)
-                                low = mid
-                            else:
-                                # Norm too small -> Need smaller lambda
-                                high = mid
-                        lam_final = low
-                        status_tag += "/Bound"
-
-                final_lambda = lam_final # Store for return
-    
-                z_boundary = -g_inner / (w_eig + lam_final)
-                y_T_boundary = v_eig @ z_boundary
-                
-                p_boundary = np.zeros(n)
-                for i in range(k+1):
-                    p_boundary += y_T_boundary[i] * Q[i]
-                    
-                if err_low < 0:
-                    idx_min = np.argmin(w_eig)
-                    if abs(g_inner[idx_min]) < 1e-6:
-                        curr_norm = np.linalg.norm(p_boundary)
-                        if curr_norm < radius:
-                            y_eig = v_eig[:, idx_min]
-                            eig_vec = np.zeros(n)
-                            for i in range(k+1):
-                                eig_vec += y_eig[i] * Q[i]
-                            tau = np.sqrt(max(0.0, radius**2 - curr_norm**2))
-                            p_boundary += tau * (eig_vec / np.linalg.norm(eig_vec))
-    
-                p_current = p_boundary
-                step_norm_val = np.linalg.norm(p_boundary)
-                resid_val = be * abs(y_T_boundary[-1])
-    
-                if resid_val < tol or solve_final:
-                    if verbose: print(f"{k:<5} | {min_eig: .4e}   | {step_norm_val:.4e}   | {resid_val:.4e}   | CONVERGED (Boundary)")
-                    return p_boundary, final_lambda, f"Boundary iter {k+1}"
-    
-            ## --- CHECK C: Stagnation ---
-            #hist_eig.append(min_eig)
-            #hist_norm.append(step_norm_val)
-            #
-            #if len(hist_eig) == hist_len:
-            #    eig_range = max(hist_eig) - min(hist_eig)
-            #    norm_range = max(hist_norm) - min(hist_norm)
-            #    if eig_range < 1e-5 and norm_range < 1e-5 * radius:
-            #        if verbose: print(f"{k:<5} | {min_eig: .4e}   | {step_norm_val:.4e}   | {resid_val:.4e}   | CONVERGED (Stagnation)")
-            #        return p_current, final_lambda, f"Stagnation iter {k+1}"
-    
+            if site == "qn" and _QED_SUBSPACE_TOL < 2:
+                return 1e-7
+            key = gltr_site or site
+            if not hasattr(self, "_subspace_tol_cur"):
+                self._subspace_tol_cur = {}
+            hist = getattr(self, "_gltr_exit_history", {}).get(key, [])
+            cur = _subspace_tol_from_exits(hist, self._subspace_tol_cur.get(key))
+            self._subspace_tol_cur[key] = cur
             if _QED_SOLVER_STATS:
-                # per-Lanczos-iteration convergence trace: lets the report say how
-                # many iterations earlier this solve could have exited at a looser
-                # tolerance, without spending an extra matvec to find out.
-                _solver_stats.trace_iter(resid_val, step_norm_val, tol)
-            if verbose:
-                print(f"{k:<5} | {min_eig: .4e}   | {step_norm_val:.4e}   | {resid_val:.4e}   | {status_tag}")
+                w = hist[-_QED_SUBSPACE_TOL_WINDOW:]
+                frac = (
+                    sum(_gltr_exit_is_interior(s) for s in w) / float(len(w))
+                    if w
+                    else float("nan")
+                )
+                print(
+                    f"  subspace_tol[{key}]: n={len(hist)} frac_interior={frac:.3f}"
+                    f" tol={cur:.3e}"
+                )
+            return cur
+        if not _QED_ADAPTIVE_TOL:
+            return 1e-7
+        if site == "qn" and _QED_ADAPTIVE_TOL < 2:
+            return 1e-7
+        cur = getattr(self, "_adaptive_tol_cur", None)
+        cur = _adaptive_tol_from_rho(getattr(self, "_rho_history", []), cur)
+        self._adaptive_tol_cur = cur
+        if _QED_SOLVER_STATS:
+            h = getattr(self, "_rho_history", [])[-_QED_ADAPTIVE_TOL_WINDOW:]
+            med = float(np.median([r for r in h if np.isfinite(r)])) if h else float("nan")
+            print(f"  adaptive_tol[{site}]: median_rho={med:.4f} tol={cur:.3e}")
+        return cur
 
-        return p_current if p_current is not None else np.zeros(n), 0.0, "Failure"
+    def _exact_dense_trust_region_step(self, U, A_tilde, G_blocks, gradient, trust_radius):
+        """Materialize the reduced orbital Hessian densely, then solve the
+        trust-region subproblem exactly (QED_EXACT_TR).
+
+        Costs exactly n = index_map_size Hessian-vector products, pushed through
+        orbital_sigma3 in batches of QED_EXACT_TR_BATCH.  The matvec COUNT is n
+        regardless of batch size; batching only buys wall time, and QED_MV_BENCH
+        shows per-call cost is nearly flat in the batch size.
+
+        THE GAP THIS FILLS.  The main-site dispatch picks GLTR when the Hessian
+        DIAGONAL has no negative entry (n_negative == 0) and the LSTRS/Davidson
+        beta bisection otherwise.  That split is deliberate: the LSTRS initial
+        guess is Kreplin's P-subspace construction, which keys off NEGATIVE
+        diagonal entries, so with an all-positive diagonal its Davidson would
+        need many more iterations -- LSTRS is used exactly where it has a guess.
+        But a positive diagonal does not imply a positive definite Hessian.  On
+        the MgH+ CAS(8,12) dumps, 4 of the 7 all-positive-diagonal subproblems
+        are INDEFINITE (up to 5 negative eigenvalues, lam_min ~ -3.6e-4), and in
+        those the lowest eigenvector is DELOCALIZED (participation ratio
+        4.5-5.6) -- so there is no negative diagonal entry to seed from, and
+        QED_AH_NEG_CURV's e_argmin(h_diag) seed is orthogonal to it (overlap
+        <= 0.001).  Those subproblems reach GLTR, which has no hard-case branch,
+        and the Krylov space built from g never contains v_min.  A dense exact
+        solve needs no initial guess and no Krylov space at all, which is the
+        only reason to prefer it here.
+
+        Deliberately NOT a replacement for the LSTRS branch by default: where
+        the diagonal does carry negative entries the lowest eigenvector is
+        localized on a single coordinate (participation ratio 1.0), which is the
+        configuration Kreplin's guess handles well.  QED_EXACT_TR=2 overrides
+        that and takes the whole main site, for A/B purposes.
+        """
+        n = self.index_map_size
+        batch = max(1, min(int(_QED_EXACT_TR_BATCH), n))
+        H = np.zeros((n, n))
+        col = 0
+        while col < n:
+            nb = min(batch, n - col)
+            R = np.zeros((nb, n))
+            for k in range(nb):
+                R[k, col + k] = 1.0
+            R = np.ascontiguousarray(R)
+            S = np.zeros((nb, n))
+            self.orbital_sigma3(U, A_tilde, G_blocks, R, S, nb, 0)
+            # S[k, :] is H @ e_{col+k}, i.e. column col+k of H.
+            H[:, col:col + nb] = S.T
+            col += nb
+
+        g = np.asarray(gradient, dtype=float).ravel()
+        step, lam_shift, kind = _more_sorensen_dense(H, g, trust_radius)
+        if _QED_SOLVER_STATS:
+            asym = float(np.abs(H - H.T).max())
+            print(
+                f"  exact_tr: n={n} kind={kind} lambda={lam_shift:.6e} "
+                f"|step|={np.linalg.norm(step):.6e} radius={trust_radius:.6e} "
+                f"asym={asym:.2e}"
+            )
+        return step
+
+    def solve_gltr_trust_region(self, U, A_tilde, G_blocks, g, M_diag, radius, max_iter=100, tol=0.0001, verbose=True):
+        """MOVED to trust_region_solvers.py (2026-09-04).
+
+        Delegator: the name is part of this class's interface (the solver
+        modules call it as ctx.solve_gltr_trust_region, and the C++ port cites it).
+        """
+        return _trs_solve_gltr_trust_region(
+            self,
+            U,
+            A_tilde,
+            G_blocks,
+            g,
+            M_diag,
+            radius,
+            max_iter,
+            tol,
+            verbose,
+        )
 
 
 
@@ -17251,1342 +14571,98 @@ class PFHamiltonianGenerator:
         guess_vector,
         restart
     ):
-        # Attributes this Davidson solve's matvecs separately from the LSTRS
-        # bisection that wraps it, split by how the subspace was seeded.
-        # NOTE the parameter name reads backwards: restart=True means "restart
-        # FROM the previous search space" (Q = deepcopy(guess_vector), the warm
-        # start used for every alpha after the first), while restart=False
-        # builds a fresh guess subspace from |g|/H_diag.  So restart=True is the
-        # CHEAP path.  Labelled by what they do, not by the flag's name.
-        _stats_span_d = _stats_begin(
-            "davidson_ah_warmstart" if restart else "davidson_ah_coldbuild"
+        """Augmented-Hessian Davidson.  MOVED to davidson_augmented_hessian.py.
+
+        The 861-line body left this file on 2026-09-04; see that module for what
+        the solver does, why it takes ``ctx`` rather than otr_trust_region.py's
+        ``hess_x`` closure, and which generator attributes it carries across
+        calls.  Nothing about the arithmetic changed -- the move is gated
+        bit-exactly by validation/lstrs_refactor_gate.sh.
+
+        The METHOD stays because the name is part of this class's interface:
+        ``lstrs_trust_region.solve_lstrs_microiteration`` calls
+        ``ctx.Davidson_augmented_hessian_solve6`` at three sites, the
+        micro-profiler list at the bottom of this file patches it by name, and
+        the C++ port cites it as the source of ``DavidsonAugmentedHessianSolver``
+        (cpp_casscf/README.md).  Deleting it would break all three for no gain.
+        """
+        return davidson_augmented_hessian_solve(
+            self,
+            U,
+            A_tilde,
+            G,
+            G_blocks,
+            reduced_hessian_diagonal,
+            reduced_gradient,
+            alpha,
+            alpha_range,
+            trust_radius,
+            aug_hessian_eigenvecs,
+            aug_hessian_eigenvals,
+            guess_vector,
+            restart,
         )
-        # Analyze problem structure
-        n_negative = np.sum(reduced_hessian_diagonal < 0)
-        min_diag = np.min(reduced_hessian_diagonal)
-        max_diag = np.max(reduced_hessian_diagonal)
-        grad_norm = np.linalg.norm(reduced_gradient)
-        
-        print(f"Problem structure:")
-        print(f"  Negative curvature directions: {n_negative}/{self.index_map_size}")
-        print(f"  H_diag range: [{min_diag:.2e}, {max_diag:.2e}]")
-        print(f"  ||gradient||: {grad_norm:.2e}")
-        print(f"  Condition estimate: {max_diag/abs(min_diag) if min_diag != 0 else 'inf'}") 
-        print("collapse subspace check", self.collapse_subspace_check)
-        threshold = 1e-7
-        count = 0
-        # start = timer()
-        print("restart", restart, "alpha", alpha)
-        for i in range(self.index_map_size):
-            if reduced_hessian_diagonal[i] <= 1e-14:
-                count += 1
-        if self.index_map_size > 600:
-            dim0 = 200
-        else:
-            dim0 = self.index_map_size // 2
-            #dim0 = self.index_map_size 
-        dim1 = max(count, dim0)
-        # print("eepp",reduced_hessian_diagonal)
 
-        dim2 = self.index_map_size + 1
-        H_dim = dim2
-        H_diag0 = copy.deepcopy(reduced_hessian_diagonal)
-        # print(H_diag)
-        H_diag = np.concatenate(([alpha], H_diag0))
-        #print("H_diag", H_diag)
-        indim = dim1 + 1
-        # maxdim = dim1 + 3
-        maxdim = min(H_dim, dim1 + min(dim1, 40))
-        self.project_augmented_hessian00 = np.zeros((maxdim, maxdim))
-        print("indim", indim, "maxdim", maxdim, "Hdim", H_dim)
-        H_pp = np.zeros((indim, indim))
-        unconverged_idx = []
-        if alpha_range > 1e-5:
-            nroots = 1
-            roots_to_check = [0]
-        else:
-            nroots = 2
-            roots_to_check = [0, 1]
+    def scipy_minres_solve(self, U, A_tilde, G_blocks, reduced_gradient, denom, max_iter, conv_thresh=1e-06):
+        """MOVED to trust_region_solvers.py (2026-09-04).
 
-        nroots_target = 2
-        root_0_locked = False
-
-        # end   = timer()
-        # print("guess1 took", end - start)
-
-        # start = timer()
-        if restart == False:
-            # start1 = timer()
-            out = np.empty(self.index_map_size)
-            out.fill(1e14)
-            d = np.divide(
-                    np.absolute(reduced_gradient),
-                    reduced_hessian_diagonal,
-                    out,
-                    where=reduced_hessian_diagonal > 1e-5,
-                    )
-            
-
-            self.idx_hessian = (-d).argsort()[:dim1]
-
-            self.indim = indim
-
-
-            #print(d)
-            #print("order", self.idx_hessian)
-            self.guess_hessian = np.zeros((dim1, dim1))
-            self.guess_gradient = np.zeros(dim1)
-            sym_A_tilde = A_tilde + A_tilde.T
-            # end1   = timer()
-            # print("building orbital guess1 took1", end1 - start1, flush = True)
-
-            
-
-            print("davidson iteration", 1)
-            self.build_orbital_hessian_guess(
-                    U,
-                    sym_A_tilde,
-                    reduced_gradient,
-                    G,
-                    self.guess_hessian,
-                    self.guess_gradient,
-                    dim1,
-                    self.idx_hessian,
-                    )
-            if _CPP_CASSCF_VALIDATION_DIR:
-                _dump_cpp_casscf_validation_case(
-                    "hessian_guess",
-                    U=U, sym_A_tilde=sym_A_tilde, reduced_gradient=reduced_gradient, G=G,
-                    idx=np.asarray(self.idx_hessian, dtype=float),
-                    guess_hessian=self.guess_hessian, guess_gradient=self.guess_gradient,
-                    dims=np.array([self.n_in_a, self.n_act_orb, self.n_virtual, self.nmo, self.n_occupied]),
-                )
-
-            aug_eigvecs = np.zeros((dim1 + 1, dim1 + 1))
-            Lmax = maxdim
-            L = indim
-
-            H_pp = np.zeros((indim, indim))
-            H_pp[0, 0] = alpha
-            H_pp[0, 1:] = self.guess_gradient
-            H_pp[1:, 0] = self.guess_gradient.T
-            H_pp[1:, 1:] = self.guess_hessian
-            self.H_pp = copy.deepcopy(H_pp)
-            self.H_qp = np.zeros((0, indim))
-            self.sigma_total = np.zeros((maxdim, H_dim))
-            Q = np.zeros((indim, H_dim))
-            projected_step = np.zeros(dim1)
-            theta = self.projection_step2(
-                self.guess_gradient, self.guess_hessian, aug_eigvecs, alpha, dim1 + 1
-            )
-
-            # start1 = timer()
-            for i in range(dim1 + 1):
-                for j in range(dim1):
-                    index1 = self.idx_hessian[j]
-                    Q[i][0] = aug_eigvecs[0][i]
-                    Q[i][index1 + 1] = aug_eigvecs[j + 1][i]
-            
-            
-            num_to_build = len(roots_to_check)
-            w_sigma = np.zeros((num_to_build, H_dim)) # Holds sigma vectors
-            # Build sigma only for active roots (e.g., [0] or [0, 1])
-            ##self.orbital_sigma(U, A_tilde, G1, Q, w, nroots, 1)
-            start = timer()
-            Q_slice = np.ascontiguousarray(Q[roots_to_check, :])
-            self.orbital_sigma3(U, A_tilde, G_blocks, Q_slice, w_sigma, num_to_build, 1)
-            end = timer()
-            print("build orbital sigma for w took", end - start)
-
-
-            w = np.zeros((nroots_target, H_dim)) # Full residual matrix
-            residual_norm = np.full(nroots_target, np.inf)
-            conv_status = [False] * nroots_target
-            
-            for i, root_idx in enumerate(roots_to_check):
-                vec = Q[root_idx, :]
-                w_vec = w_sigma[i, :] # Get the corresponding sigma
-                w_vec[1:] += reduced_gradient * vec[0]
-                w_vec[0] = alpha * vec[0] + np.dot(vec[1:], reduced_gradient)
-                
-                r_vec = w_vec - theta[root_idx] * vec
-                w[root_idx, :] = r_vec # Store the *residual*
-                residual_norm[root_idx] = np.linalg.norm(r_vec)
-                
-                if residual_norm[root_idx] < threshold:
-                    conv_status[root_idx] = True 
-
-
-
-            unconverged_idx = []
-            exit_solver = False
-            converged_indices = []
-            # --- NEW LSTRS CONVERGENCE CHECK (Initial Guess) ---
-            if nroots == 1:
-                if conv_status[0]:
-                    converged_indices.append(0)
-                    # Root 0 is converged. Call the callback.
-                    if self.check_root_0(Q, theta[0], reduced_gradient, trust_radius):
-                        # === EASY CASE ===
-                        print("LSTRS (Initial Guess): Root 0 converged (Easy Case). Exiting.")
-                        aug_hessian_eigenvals[0] = theta[0]
-                        aug_hessian_eigenvecs[:, 0] = Q[0, :].T
-                        aug_hessian_eigenvals[1] = 1e10 # Fake root 1
-                        aug_hessian_eigenvecs[:, 1] = 1e-14
-                        exit_solver = True
-                    else:
-                        # === HARD CASE ===
-                        print("LSTRS (Initial Guess): Root 0 converged (Hard Case). Checking Root 1.")
-                        root_0_locked = True
-                        roots_to_check = [1] # Now we only care about Root 1
-                        
-                        # We must check Root 1 *now*
-                        start1 = timer()
-                        w1_sigma = np.zeros((1, H_dim))
-                        self.orbital_sigma3(U, A_tilde, G_blocks, Q[1:2, :], w1_sigma, 1, 1)
-                        #w1_sigma[0, 1:] += np.einsum("p,q->qp", reduced_gradient, Q[1, 0])
-                        w1_sigma[0, 1:] += reduced_gradient * Q[1, 0] # Changed from einsum
-                        w1_sigma[0, 0] = alpha * Q[1, 0] + np.dot(Q[1, 1:], reduced_gradient)
-                        end1 = timer()
-                        print("build orbital sigma for w took", end1 - start1)
-
-           
-                        r_1 = w1_sigma[0, :] - theta[1] * Q[1, :]
-                        w[1, :] = r_1 # Store residual
-                        residual_norm[1] = np.linalg.norm(r_1)
-                        
-                        if residual_norm[1] < threshold:
-                            converged_indices.append(1)
-                            conv_status[1] = True
-                            print("LSTRS (Initial Guess): Root 1 also converged. Exiting.")
-                            exit_solver = True
-                            aug_hessian_eigenvals[0] = theta[0]
-                            aug_hessian_eigenvecs[:, 0] = Q[0, :].T
-                            aug_hessian_eigenvals[1] = theta[1]
-                            aug_hessian_eigenvecs[:, 1] = Q[1, :].T
-                        else:
-                            unconverged_idx = [1]
-
-                        #if is_root_1_conv:
-                        #    print("LSTRS (Initial Guess): Root 1 also converged. Exiting.")
-                        #    aug_hessian_eigenvals[0] = theta[0]
-                        #    aug_hessian_eigenvecs[:, 0] = Q[0, :].T
-                        #    aug_hessian_eigenvals[1] = theta[1]
-                        #    aug_hessian_eigenvecs[:, 1] = Q[1, :].T
-                        #    exit_solver = True
-                        #else:
-                        #    print("LSTRS (Initial Guess): Root 1 unconverged. Adding to search.")
-                        #    unconverged_idx = [1]
-                else:
-                    # Root 0 is not converged
-                    unconverged_idx = [0]
-            elif nroots == 2:
-                if conv_status[0] and conv_status[1]:
-                    if conv_status[0]: converged_indices.append(0)
-                    if conv_status[1]: converged_indices.append(1)
-                    # Both are converged
-                    print("LSTRS: Both roots converged. Exiting.")
-                    aug_hessian_eigenvals[:] = theta[:nroots_target]
-                    aug_hessian_eigenvecs[:, :] = full_eigvecs.T
-                    exit_solver = True
-                else:
-                    # Find whichever is not converged
-                    if not conv_status[0]: unconverged_idx.append(0)
-                    if not conv_status[1]: unconverged_idx.append(1)
-                    #if not is_root_0_conv:
-                    #    unconverged_idx.append(0)
-                    #if not is_root_1_conv:
-                    #    unconverged_idx.append(1)
-
-            print(unconverged_idx)
-            #print("root", "AH residual norm", "Eigenvalue", "Convergence")
-            #for j in range(nroots_target):
-            #    print(
-            #        j + 1, residual_norm[j], theta[j], convergence_check[j], flush=True
-            #    )
-            print("root", "AH residual norm", "Eigenvalue", "Convergence")
-            for j in range(nroots_target):
-                print(
-                    j + 1, residual_norm[j], theta[j], "Yes" if conv_status[j] else "No", flush=True
-                )
-
-            if exit_solver:
-                # self.projected_augmented_hessian = np.block([[0, self.guess_gradient], [self.guess_gradient.T, self.guess_hessian]])
-                self.projected_augmented_hessian = np.zeros((L, L))
-                self.projected_augmented_hessian[0, 0] = 0
-                self.projected_augmented_hessian[0, 1:] = self.guess_gradient
-                self.projected_augmented_hessian[1:, 0] = self.guess_gradient.T
-                self.projected_augmented_hessian[1:, 1:] = self.guess_hessian
-
-                print("converged from the first iteration!", flush=True)
-
-            # end1   = timer()
-            # print("building orbital guess7 took", end1 - start1, flush = True)
-            QQ = np.zeros((dim1, self.index_map_size))
-            for i in range(dim1):
-               index1 = self.idx_hessian[i]
-               r = self.index_map[index1][0]
-               k = self.index_map[index1][1]
-               #guess_gradient2[i] = reduced_gradient[index1]
-               QQ[i][index1] = 1.0
-            Q = np.zeros((indim, H_dim))
-            Q[0,0] = 1
-            Q[1:,1:] = QQ
-
-            preconditioned_w = np.zeros((0, H_dim)) # Initialize empty
-            if len(unconverged_idx) > 0:
-                w_unconv = w[unconverged_idx, :]
-                precon_denom = theta[unconverged_idx].reshape(
-                    len(unconverged_idx), 1
-                ) - H_diag.reshape(1, H_dim)
-                preconditioned_w = np.divide(
-                    w_unconv, 
-                    precon_denom,
-                    out=np.zeros_like(w_unconv),
-                    where=precon_denom != 0,
-                )
-           
-            
-            Q = np.concatenate((Q, preconditioned_w), axis=0)
-            c_gram_schmidt_add(Q, L, H_dim, len(preconditioned_w))
-            L = Q.shape[0]
-            print("current dimension", L, flush = True)
-            
-        else:
-            print("restart from previous search space")
-            # if indim == maxdim:
-            #    maxdim +=1
-            #print(H_dim, indim)
-            Q = copy.deepcopy(guess_vector)
-            Lmax = maxdim
-            L = Q.shape[0]
-            indim = self.indim
-            print("current dim", L)
-            print("indim", indim)
-            if self.collapse_subspace_check == False:
-                if L == indim:
-                    self.projected_augmented_hessian[0, 0] = alpha
-                else:
-                    print("indim", indim)
-                    start1 = timer()
-                    b_dim = L - indim
-                    self.projected_augmented_hessian[0, 0] = alpha
-                    H_qp = np.zeros((b_dim, indim))
-                    Sq = np.zeros((b_dim, H_dim))
-                    Sq[:, 0] += alpha * Q[indim:, 0]
-                    self.sigma_total[indim:L,0] += Sq[:, 0]
-                    if indim > 0:
-                        for i in range(b_dim):
-                            self.projected_augmented_hessian[indim + i][0] += Sq[i][0]
-                            self.projected_augmented_hessian[0][indim + i] += Sq[i][0]
-                            self.H_qp[i][0] += Sq[i][0]
-                            # for j in range(dim1):
-                            #    #index1 = self.idx_hessian[j]
-                            #    #H_qp[i][0] = Sq[i][0]
-                            #    #H_qp[i][j+1] = Sq[i][index1+1]
-                        self.H_pp[0, 0] = alpha
-                        H_qq = np.dot(Sq, Q[indim:, :].T)
-                        self.projected_augmented_hessian[indim:, indim:] += H_qq
-                    else:
-                        self.projected_augmented_hessian[indim:, indim:] = np.dot(self.sigma_total[:L,:], Q[:L, :].T)
-                        print("qqqq")
-                    theta, aug_eigvecs = np.linalg.eigh(self.projected_augmented_hessian)
-                    #print("iiii", theta)
-                    end1 = timer()
-                    print("restart took", end1 - start1)
-            else:
-                L_new = Q.shape[0]
-                Sq = np.zeros((L_new, H_dim))
-                Sq[:, 0] += alpha * Q[:, 0]
-                self.sigma_total[:L_new,0] += Sq[:,0]
-                self.projected_augmented_hessian = np.dot(self.sigma_total[:L_new,:], Q[:L_new, :].T)
-                             
-                # Set unconverged indices based on current LSTRS state
-                if nroots == 1 and not root_0_locked:
-                    unconverged_idx = [0]
-                elif nroots == 1 and root_0_locked:
-                    unconverged_idx = [1]
-                elif nroots == 2:
-                    unconverged_idx = [0, 1]
-                # --- END MODIFIED RESTART=TRUE BLOCK ---
-        if (len(unconverged_idx) > 0 and restart == False) or restart == True:
-            num_iter = 10000
-            # num_iter = 20
-            L_old = indim
-            collapse = True
-            for davidson_iteration in range(1, num_iter):
-                if davidson_iteration == num_iter - 1:
-                    print(
-                        "maximum iteration reaches but no converged roots have been found"
-                    )
-                    exit()
-                print("\n")
-                L_new = Q.shape[0]
-                L = Q.shape[0]
-                projected_step = np.zeros(L - 1)
-                full_eigvecs = np.zeros((nroots, H_dim))
-                full_eigvecs2 = np.zeros((nroots, H_dim))
-                projected_augmented_hessian = np.zeros((1, 1))
-                if restart == True:
-                    print("davidson iteration", davidson_iteration)
-                else:
-                    print("davidson iteration", davidson_iteration + 1)
-                if restart == True and davidson_iteration == 1:
-                    projected_augmented_hessian = self.projected_augmented_hessian
-                else:
-                    if self.collapse_subspace_check == False:   
-                        
-
-                        start = timer()
-                        c_dim = L_new - L_old
-                        Sq1 = np.zeros((c_dim, H_dim))
-                        # self.build_sigma_reduced2(U, A_tilde, G, Q[indim:,:], Sq0, b_dim, 1)
-                        # c_build_sigma_reduced(U, A_tilde, self.index_map1, G1, Q[indim:,:], Sq0, b_dim, 1, self.nmo, self.index_map_size, self.n_occupied)
-                        #self.orbital_sigma(U, A_tilde, G1,  Q[L_old:, :], Sq1, c_dim, 1)
-                        
-                        self.orbital_sigma3(U, A_tilde, G_blocks,  Q[L_old:, :], Sq1, c_dim, 1)
-                        
-                        gradient1 = np.einsum("p,q->qp", reduced_gradient, Q[L_old:, 0])
-                        gradient2 = np.dot(Q[L_old:, 1:], reduced_gradient)
-                        print("c dim, L old, L new", c_dim, L_old, L_new) 
-                        end = timer()
-                        print("build orbital sigma for Q space took", end - start)
-                        Sq = copy.deepcopy(Sq1)
-                        # Sq[:,1:] += alpha * np.einsum("p,q->qp", reduced_gradient, Q[indim:,0])
-                        Sq[:, 1:] += gradient1
-                        # Sq[:,0] = alpha * np.einsum("p,rp->r", reduced_gradient, Q[indim:,1:] )
-                        Sq[:, 0] = alpha * Q[L_old:, 0] + gradient2
-                        self.sigma_total[L_old:L_new,:] = np.copy(Sq)
-                        if indim > 0:
-                            H_qp = np.zeros((c_dim, indim))
-                            for i in range(c_dim):
-                                for j in range(dim1):
-                                    index1 = self.idx_hessian[j]
-                                    H_qp[i][0] = Sq[i][0]
-                                    H_qp[i][j + 1] = Sq[i][index1 + 1]
-                            self.H_qp = np.vstack([self.H_qp, H_qp])
-                            H_qq = np.dot(self.sigma_total[indim:L_new,:], Q[indim:, :].T)
-                            print("dimension of sigma", np.shape(self.sigma_total))
-                            H1 = np.concatenate((self.H_pp, self.H_qp), axis=0)
-                            H2 = np.concatenate((self.H_qp.T, H_qq), axis=0)
-                            self.projected_augmented_hessian00 = np.concatenate((H1, H2), axis=1)
-                            projected_augmented_hessian = np.concatenate((H1, H2), axis=1)
-                        else: 
-                            # Pure Q-space case (Krylov guess start)
-                            # The projected matrix is just the Q-space projection H_qq
-                            H_qq = np.dot(self.sigma_total[:L_new,:], Q[:L_new, :].T)
-
-                            # No H_pp, H_qp, or H_pq to concatenate
-                            self.projected_augmented_hessian00 = H_qq
-                            projected_augmented_hessian = H_qq
-                            #self.print_matrix_nice(H_qq, precision=10, width=14, cols_per_line=6)
-                    else:   
-                        print("collapse", collapse)
-                        if collapse == False:
-                            L_new = Q.shape[0]
-                            c_dim = L_new - L_old
-                            Sq1 = np.zeros((c_dim, H_dim))
-                            # self.build_sigma_reduced2(U, A_tilde, G, Q[indim:,:], Sq0, b_dim, 1)
-                            # c_build_sigma_reduced(U, A_tilde, self.index_map1, G1, Q[indim:,:], Sq0, b_dim, 1, self.nmo, self.index_map_size, self.n_occupied)
-                            start = timer()
-                            #self.orbital_sigma(U, A_tilde, G1,  Q[L_old:, :], Sq1, c_dim, 1)
-                            self.orbital_sigma3(U, A_tilde, G_blocks,  Q[L_old:, :], Sq1, c_dim, 1)
-                            end = timer()
-                            print("build orbital sigma for Q space took", end - start)
-
-                            gradient1 = np.einsum("p,q->qp", reduced_gradient, Q[L_old:, 0])
-                            gradient2 = np.dot(Q[L_old:, 1:], reduced_gradient)
-                            print("c dim, L old, L new", c_dim, L_old, L_new) 
-                            Sq = copy.deepcopy(Sq1)
-                            # Sq[:,1:] += alpha * np.einsum("p,q->qp", reduced_gradient, Q[indim:,0])
-                            Sq[:, 1:] += gradient1
-                            # Sq[:,0] = alpha * np.einsum("p,rp->r", reduced_gradient, Q[indim:,1:] )
-                            Sq[:, 0] = alpha * Q[L_old:, 0] + gradient2
-                            self.sigma_total[L_old:L_new,:] = np.copy(Sq)
-                            projected_augmented_hessian = np.dot(self.sigma_total[:L_new,:], Q[:L_new, :].T)
-                            L_old = Q.shape[0]
-                        else:
-                            L_new = Q.shape[0]
-                            self.sigma_total[:,:] = 0
-                            c_dim = L_new
-                            Sq1 = np.zeros((c_dim, H_dim))
-                            start = timer()
-                            #self.orbital_sigma(U, A_tilde, G1,  Q, Sq1, c_dim, 1)
-                            self.orbital_sigma3(U, A_tilde, G_blocks,  Q, Sq1, c_dim, 1)
-                            end = timer()
-                            print("build orbital sigma for Q space took", end - start)
-
-                            gradient1 = np.einsum("p,q->qp", reduced_gradient, Q[:, 0])
-                            gradient2 = np.dot(Q[:, 1:], reduced_gradient)
-                            print("c dim, L old, L new", c_dim, L_old, L_new) 
-                            Sq = copy.deepcopy(Sq1)
-                            # Sq[:,1:] += alpha * np.einsum("p,q->qp", reduced_gradient, Q[indim:,0])
-                            Sq[:, 1:] += gradient1
-                            # Sq[:,0] = alpha * np.einsum("p,rp->r", reduced_gradient, Q[indim:,1:] )
-                            Sq[:, 0] = alpha * Q[:, 0] + gradient2
-                            self.sigma_total[:L_new,:] = np.copy(Sq)
-                            projected_augmented_hessian = np.dot(self.sigma_total[:L_new,:], Q[:L_new, :].T)
-
-                theta, aug_eigvecs = np.linalg.eigh(projected_augmented_hessian)
-                #print("zopp",theta)
-                # print(np.shape(aug_eigvecs))
-                # print(aug_eigvecs.T[0,:])
-                full_eigvecs = np.dot(aug_eigvecs.T[:nroots_target, :], Q[:,])
-                full_eigvecs2 = copy.deepcopy(full_eigvecs)
-                  
-
-
-                start = timer()
-                roots_to_check = []
-                if nroots == 1 and not root_0_locked:
-                    roots_to_check = [0]
-                elif nroots == 1 and root_0_locked:
-                    roots_to_check = [1]
-                elif nroots == 2:
-                    roots_to_check = [0, 1]
-                
-                num_to_build = len(roots_to_check)
-                w = np.zeros((nroots_target, H_dim)) # Full residual matrix
-                residual_norm = np.full(nroots_target, np.inf)
-                conv_status = [False] * nroots_target
-                
-                if num_to_build > 0:
-                    w_sigma = np.zeros((num_to_build, H_dim)) # For sigma vectors
-                    
-                    # --- CORE BUG FIX ---
-                    if self.collapse_subspace_check == True:
-                        # sigma_total *already* has gradient/alpha terms from the rebuild
-                        w_sigma = np.dot(aug_eigvecs.T[roots_to_check, :], self.sigma_total[:L_new,:])
-                    else:
-                        # We must build sigma from scratch and add gradient/alpha terms
-                        self.orbital_sigma3(U, A_tilde, G_blocks, full_eigvecs[roots_to_check, :], w_sigma, num_to_build, 1)
-                        for i, root_idx in enumerate(roots_to_check):
-                            vec = full_eigvecs[root_idx, :]
-                            w_vec = w_sigma[i, :] # Get the corresponding sigma
-                            w_vec[1:] += reduced_gradient * vec[0] 
-                            w_vec[0] = alpha * vec[0] + np.dot(vec[1:], reduced_gradient)
-                    # --- END FIX ---
-
-                    # Now, calculate residuals using the correct w_sigma
-                    for i, root_idx in enumerate(roots_to_check):
-                        vec = full_eigvecs[root_idx, :]
-                        w_vec = w_sigma[i, :] # This is (H*y + G*y)
-                        r_vec = w_vec - theta[root_idx] * vec
-                        w[root_idx, :] = r_vec # Store the *residual*
-                        residual_norm[root_idx] = np.linalg.norm(r_vec)
-                        
-                        if residual_norm[root_idx] < threshold:
-                            conv_status[root_idx] = True
-
-                if root_0_locked:
-                    conv_status[0] = True # It's locked, so it's "converged"
- 
-               
-
-                
-
-                unconverged_idx = []
-                exit_solver = False
-                # --- NEW LSTRS CONVERGENCE CHECK (Main Loop) ---
-                if nroots == 1:
-                    if conv_status[0] and not root_0_locked: # Root 0 *just* converged
-                    #if is_root_0_conv:
-                        if self.check_root_0(full_eigvecs, theta[0], reduced_gradient, trust_radius):
-                            # === EASY CASE ===
-                            print("LSTRS: Root 0 converged (Easy Case). Exiting.")
-                            aug_hessian_eigenvals[0] = theta[0]
-                            aug_hessian_eigenvecs[:, 0] = full_eigvecs[0, :].T
-                            aug_hessian_eigenvals[1] = 1e10 # Fake root 1
-                            aug_hessian_eigenvecs[:, 1] = 0.0
-                            exit_solver = True
-                        else:
-                            # === HARD CASE ===
-                            root_0_locked = True
-                            print("LSTRS: Root 0 converged (Hard Case). Checking Root 1.")
-                            # *Now* we must check Root 1 for the *first time*
-                            start1 = timer()
-                            w1_sigma = np.zeros((1, H_dim))
-                            # --- CORE BUG FIX (Hard Case Check) ---
-                            if self.collapse_subspace_check == True:
-                                # sigma_total *already* has gradient/alpha terms
-                                w1_sigma = np.dot(aug_eigvecs.T[1:2, :], self.sigma_total[:L_new,:])
-                            else:
-                                self.orbital_sigma3(U, A_tilde, G_blocks, full_eigvecs[1:2, :], w1_sigma, 1, 1) # <-- SLICE FIX
-                                w1_sigma[0, 1:] += reduced_gradient * full_eigvecs[1, 0] # Changed from einsum
-                                w1_sigma[0, 0] = alpha * full_eigvecs[1, 0] + np.dot(full_eigvecs[1, 1:], reduced_gradient)
-                            # --- END FIX ---
-                            
-                            r_1 = w1_sigma[0, :] - theta[1] * full_eigvecs[1, :]
-                            w[1, :] = r_1 # Store residual
-                            residual_norm[1] = np.linalg.norm(r_1)
-                            
-                            #if is_root_1_conv:
-                            if residual_norm[1] < threshold:
-                                conv_status[1] = True
-                                print("LSTRS: Root 1 also converged. Exiting.")
-                                aug_hessian_eigenvals[:] = theta[:nroots_target]
-                                aug_hessian_eigenvecs[:, :] = full_eigvecs.T
-                                exit_solver = True
-                            else:
-                                print("LSTRS: Root 1 unconverged. Adding to search.")
-                                unconverged_idx = [1]
-                    elif not conv_status[0]: # Root 0 still unconverged
-                        unconverged_idx = [0]    
-                    elif root_0_locked: # Root 0 is locked, check Root 1
-                        if not conv_status[1]:
-                            unconverged_idx = [1]
-                    #else:
-                    #    # Root 0 is not converged
-                    #    unconverged_idx = [0]
-
-                elif nroots == 2:
-                    #if is_root_0_conv and is_root_1_conv:
-                    #    # Both are converged
-                    #    print("LSTRS: Both roots converged. Exiting.")
-                    #    aug_hessian_eigenvals[:] = theta[:nroots_target]
-                    #    aug_hessian_eigenvecs[:, :] = full_eigvecs.T
-                    #    exit_solver = True
-                    #else:
-                    # Find whichever is not converged
-                    if not conv_status[0]: unconverged_idx.append(0)
-                    if not conv_status[1]: unconverged_idx.append(1)
-                    #if not is_root_0_conv:
-                    #    unconverged_idx.append(0)
-                    #if not is_root_1_conv:
-                    #    unconverged_idx.append(1)
-                # Check for final convergence
-                if (nroots == 2 and not unconverged_idx) or \
-                   (nroots == 1 and root_0_locked and not unconverged_idx):
-                    print("LSTRS: All required roots converged.")
-                    exit_solver = True
-                    aug_hessian_eigenvals[:] = theta[:nroots_target]
-                    aug_hessian_eigenvecs[:, :] = full_eigvecs.T
-        
-                # --- END NEW LOGIC ---
-                #print(unconverged_idx)
-                #print("root", "AH residual norm", "Eigenvalue", "Convergence")
-                #for j in range(nroots_target):
-                #    print(
-                #        j + 1,
-                #        residual_norm[j],
-                #        theta[j],
-                #        convergence_check[j],
-                #        flush=True,
-                #    )
-                print(unconverged_idx)
-                print("root", "AH residual norm", "Eigenvalue", "Convergence")
-                for j in range(nroots_target):
-                    print(
-                        j + 1, residual_norm[j], theta[j], "Yes" if conv_status[j] else "No", flush=True
-                    )
-                 
-
-
-
-                if exit_solver:
-                    aug_hessian_eigenvecs[:, :] = full_eigvecs.T
-                    aug_hessian_eigenvals[:] = theta[:nroots_target]
-                    if self.collapse_subspace_check == False:
-                        Q1 = full_eigvecs
-                        start1 = timer()
-                        b_dim = L - indim
-                        print("b_dim", b_dim)
-                        print("indim", indim)
-
-                        self.projected_augmented_hessian = copy.deepcopy(
-                            projected_augmented_hessian
-                        )
-                        self.projected_augmented_hessian[0, 0] = alpha
-                        if b_dim > 0:
-                            Sq = np.zeros((b_dim, H_dim))
-                            Sq[:, 0] = alpha * Q[indim:, 0]
-                            self.sigma_total[indim:L,0] -= Sq[:, 0]
-                            if indim > 0:
-                                # H_qp = np.zeros((b_dim, indim))
-                                for i in range(b_dim):
-                                    self.projected_augmented_hessian[indim + i][0] -= Sq[i][0]
-                                    self.projected_augmented_hessian[0][indim + i] -= Sq[i][0]
-                                    self.H_qp[i][0] -= Sq[i][0]
-                                    # for j in range(dim1):
-                                    #    #index1 = self.idx_hessian[j]
-                                    #    #H_qp[i][0] = Sq[i][0]
-                                    #    #H_qp[i][j+1] = Sq[i][index1+1]
-                                H_qq = np.dot(Sq, Q[indim:, :].T)
-                                self.projected_augmented_hessian[indim:, indim:] -= H_qq
-                            else:
-                                self.projected_augmented_hessian[indim:, indim:] = 0.0 
-
-                        end1 = timer()
-                        print("initialize took", end1 - start1)
-                    else:
-                        Sq = np.zeros((L_new, H_dim))
-                        Sq[:, 0] = alpha * Q[:, 0]
-                        self.sigma_total[:L_new,0] -= Sq[:, 0]
-
-                    print("converged!", flush=True)
-                    break
-                
-                # --- NEW HYBRID LOGIC ---
-                preconditioned_w = np.zeros((len(unconverged_idx), H_dim))
-                converged_indices = [i for i in range(nroots) if i not in unconverged_idx]
-                
-                if not converged_indices:
-                    # preconditioned_w = np.zeros((len(unconverged_idx),H_dim))
-                    if len(unconverged_idx) > 0:
-                        preconditioned_w = np.zeros((len(unconverged_idx), H_dim))
-                        preconditioned_w = theta[unconverged_idx].reshape(
-                            len(unconverged_idx), 1
-                        ) - H_diag.reshape(1, H_dim)
-                        # print(np.shape(preconditioned_w))
-                        preconditioned_w = np.divide(
-                            w[unconverged_idx],
-                            preconditioned_w,
-                            out=np.zeros_like(w[unconverged_idx]),
-                            where=preconditioned_w != 0,
-                        )
-
-
-                    
-                
-                else:
-                    # === PHASE 2: At least one root is converged ===
-                    # NOW use the robust (but tuned-down) Jacobi-Davidson solver
-                    # to prevent the 70-iteration stall for Root 1.
-                    
-                    Q_conv = full_eigvecs2[converged_indices, :]
-
-                    if _QED_SOLVER_STATS:
-                        # How wide could a BLOCKED correction solve be here?  This
-                        # branch is guarded by "at least one root converged", and
-                        # nroots is 1 or 2, so the answer is expected to be 1 --
-                        # i.e. there is nothing to block across.  Counted rather
-                        # than assumed.
-                        _solver_stats.jd_width(len(unconverged_idx))
-
-                    for i in range(len(unconverged_idx)):
-                        idx = unconverged_idx[i]
-                        current_residual = w[idx, :]
-                        current_theta = theta[idx]
-                        P_diag = H_diag - current_theta
-                        # ... (handle P_diag safety) ...
-                        
-                        # Call the inner solver, but make sure its
-                        # max_inner_iter is set to a low number, like 3 or 5.
-                        v_corr = self.inner_solve_pcg(
-                            current_residual,
-                            current_theta,
-                            Q_conv,
-                            P_diag,
-                            U, A_tilde, G_blocks, reduced_gradient, alpha # Need to pass these through
-                        )
-                        
-                        preconditioned_w[i, :] = v_corr
-                # --- END HYBRID LOGIC ---
-
-
-                ## --- NEW JACOBI-DAVIDSON LOGIC ---
-                #preconditioned_w = np.zeros((len(unconverged_idx), H_dim))
-                #converged_indices = [i for i in range(nroots) if i not in unconverged_idx]
-                #Q_conv = full_eigvecs2[converged_indices, :] # Converged eigenvectors (N_conv, H_dim)
-                #
-                #for i in range(len(unconverged_idx)):
-                #    idx = unconverged_idx[i] # The root we are solving for
-                #    
-                #    # Get inputs for the inner solver
-                #    current_residual = w[idx, :]
-                #    current_theta = theta[idx]
-                #    
-                #    # This is your *diagonal* preconditioner. We still use it
-                #    # to precondition the *inner* solver.
-                #    P_diag = H_diag - current_theta
-                #    # (Handle divide by zero, e.g., set P_diag[P_diag == 0] = 1.0)
-                #    
-                #    # Call the inner solver to find the correction vector
-                #    v_corr = self.inner_solve_pcg(
-                #        current_residual,
-                #        current_theta,
-                #        Q_conv,
-                #        P_diag,
-                #        U, A_tilde, G1, reduced_gradient, alpha # Need to pass these through
-                #    )
-                #    
-                #    preconditioned_w[i, :] = v_corr        
-
-
-                
-                
-                ## preconditioned_w = np.zeros((len(unconverged_idx),H_dim))
-                #if len(unconverged_idx) > 0:
-                #    preconditioned_w = np.zeros((len(unconverged_idx), H_dim))
-                #    preconditioned_w = theta[unconverged_idx].reshape(
-                #        len(unconverged_idx), 1
-                #    ) - H_diag.reshape(1, H_dim)
-                #    # print(np.shape(preconditioned_w))
-                #    preconditioned_w = np.divide(
-                #        w[unconverged_idx],
-                #        preconditioned_w,
-                #        out=np.zeros_like(w[unconverged_idx]),
-                #        where=preconditioned_w != 0,
-                #    )
-
-                    
-               
-                end = timer()
-                print("residual took", end - start)
-                L_old = Q.shape[0]
-                start = timer()
-
-                if Lmax - L < len(unconverged_idx):
-                    if Lmax > 40:
-                        num_restart_vecs = 40
-                    else:
-                        num_restart_vecs = Lmax//2
-                    
-                    print(f"Subspace limit reached. Performing soft restart from {L} to {num_restart_vecs} vectors.")
-                    t_collapsing_begin = time.time()
-                    
-                    # 1. Choose how many vectors to keep.
-                    # This is a tunable parameter. Let's say 40.
-
-                    # 2. 'aug_eigvecs' holds the (L, L) eigenvectors of the projected Hessian.
-                    # 'theta' holds the eigenvalues. You already have these from np.linalg.eigh.
-                    
-                    # 3. Get the k "best" projected eigenvectors (the first k columns)
-                    # Note: np.linalg.eigh already sorts them by eigenvalue.
-                    best_projected_vecs = aug_eigvecs[:, :num_restart_vecs] # Shape (L, k)
-
-                    # 4. Transform these k vectors back into the full H_dim space.
-                    # Q is (L, H_dim). We need to project it down.
-                    # (k, L) @ (L, H_dim) -> (k, H_dim)
-                    Q_restarted = np.dot(best_projected_vecs.T, Q) # Shape (k, H_dim)
-                    
-                    # 5. Add your new correction vectors to this restarted subspace
-                    Q = np.concatenate((Q_restarted, preconditioned_w), axis=0) # Shape (k + n_unconv, H_dim)
-
-                    # 6. Re-orthogonalize the new, smaller subspace
-                    c_gram_schmidt_orthogonalization(
-                       Q, Q.shape[0], H_dim
-                    )
-                    
-                    t_collapsing_end = time.time()
-                    print(
-                        "restart took", t_collapsing_end - t_collapsing_begin, "seconds"
-                    )
-                    
-                    # 7. IMPORTANT: You MUST tell your code to rebuild the projected Hessian
-                    # from this new Q, as it's not just an expansion.
-                    # Your existing logic handles this perfectly.
-                    self.collapse_subspace_check = True 
-                    collapse = True
-                    L_old = 0 # Tell the expansion logic the "old" size is 0 
-
-                else:
-                    t_expanding_begin = time.time()
-
-                    Q = np.concatenate((Q, preconditioned_w), axis=0)
-                    c_gram_schmidt_add(Q, L, H_dim, len(preconditioned_w))
-                    # gc.collect()
-                    t_expanding_end = time.time()
-                    print("expand took", t_expanding_end - t_expanding_begin, "seconds")
-                    collapse = False
-                    print("collapse subspace check", self.collapse_subspace_check)
-                    # print(Q)
-                end = timer()
-
-        _stats_end(_stats_span_d, status="warm" if restart else "cold")
-        return Q
-
-    def minres_solve(self, U, A_tilde, G_blocks, reduced_gradient, denom, max_iter, conv_thresh=1e-6):
+        Delegator: the name is part of this class's interface (the solver
+        modules call it as ctx.scipy_minres_solve, and the C++ port cites it).
         """
-        Diagonally-preconditioned MINRES (Paige & Saunders) for the Newton
-        equations  H x = -g,  where H is the reduced orbital Hessian applied
-        matrix-free through self.mv2 and g is `reduced_gradient`.
-
-        Drop-in replacement for linear_equation_solve: same argument list, same
-        (solution, converged) return contract, so the call sites can dispatch
-        between the two on _QED_USE_MINRES without any other change.
-
-        Why replace linear_equation_solve here.  That routine drives
-        LinearRMSolver, which minimizes ||H c + g||^2 over its stored subspace
-        -- i.e. it forms and solves the NORMAL equations S^T S a = -S^T g with
-        S = H C.  Two consequences: the effective condition number is
-        cond(H)^2, which is exactly the wrong property near the singular
-        Hessians this branch is called on; and every iteration rebuilds the
-        size x size `mat`/`overlap` matrices from scratch and re-transforms the
-        whole basis, i.e. O(k^2 n) work on top of the one mv2.  MINRES gets the
-        same minimum-residual property from a three-term Lanczos recurrence:
-        one mv2 and O(n) work per iteration, no subspace storage, and it
-        operates on cond(H) rather than cond(H)^2.
-
-        H is symmetric but INDEFINITE here (self.reduced_hessian_diagonal
-        routinely has negative entries -- that count is what n_negative
-        measures), which is why this is MINRES and not CG.
-
-        Preconditioner: M = max(|denom|, 1e-6), elementwise.  MINRES requires
-        an SPD preconditioner, so the absolute value is mandatory, not a
-        safeguard -- `denom` is self.reduced_hessian_diagonal and is signed.
-        This is the same construction solve_pcg_trust_region already uses
-        (M_diag = np.abs(M_diag), then np.maximum against epsilon=1e-6).
-        Note this differs from how linear_equation_solve used `denom`: it
-        divided the residual by the SIGNED diagonal to form the next trial
-        vector.
-
-        Deviation from linear_equation_solve, flagged rather than silently
-        dropped: that routine, when ||g|| < 1e-3, replaced the initial residual
-        with one built from a random trial vector.  There is no analogue here
-        and none is needed -- MINRES starts from x0 = 0, for which the residual
-        is exactly -g, and a small ||g|| simply means a small solution.  The
-        random start also made that routine non-reproducible run to run.
-        """
-        eps = np.finfo(np.float64).eps
-
-        # --- Preconditioner M (SPD by construction), and psolve = r / M ---
-        M_diag_raw = np.abs(np.asarray(denom, dtype=np.float64))
-        M_diag = np.maximum(M_diag_raw, 1e-6)
-        if _QED_SOLVER_STATS:
-            # Diagnostic for "is the Jacobi preconditioner the bottleneck?".
-            # The 1e-6 floor is ABSOLUTE, so any entry it catches gets
-            # M^-1 = 1e6 -- a huge amplification applied to exactly the
-            # near-null directions that make this branch fire in the first
-            # place.  n_floored > 0 means the floor, not the diagonal, is
-            # setting the preconditioned spectrum; the effective condition
-            # number max(M)/min(M) bounds how much Jacobi can help at all.
-            _n_floored = int(np.count_nonzero(M_diag_raw < 1e-6))
-            print(
-                "PMINRES precond: |diag| min %.3e max %.3e  floored %d/%d  "
-                "cond(M) %.3e"
-                % (M_diag_raw.min(), M_diag_raw.max(), _n_floored,
-                   M_diag_raw.size, M_diag.max() / M_diag.min())
-            )
-        # ||r||_2 <= sqrt(max(M)) * ||r||_{M^-1}, since r^T M^-1 r >= ||r||^2 / max(M).
-        # phibar below is exactly ||r_k||_{M^-1}, so this converts the free
-        # recurrence quantity into a rigorous upper bound on the true residual
-        # norm -- no extra mv2 per iteration to monitor convergence.
-        bound_factor = np.sqrt(np.max(M_diag))
-
-        b = -np.asarray(reduced_gradient, dtype=np.float64).ravel()
-        n = b.shape[0]
-        x = np.zeros(n)
-
-        print("--------------------------------------------")
-        print("--- Start solving Hx=-g equations (preconditioned MINRES) ---")
-        print("--------------------------------------------")
-
-        # --- Set up the first Lanczos vector ---
-        r1 = b.copy()
-        y = r1 / M_diag
-        beta1 = np.dot(r1, y)
-        if beta1 < 0.0:
-            # Cannot happen mathematically for SPD M; clamp rather than raise so
-            # a roundoff-level sign flip can't kill the whole optimization.
-            beta1 = 0.0
-        if beta1 == 0.0:
-            print("PMINRES: rhs is zero, x = 0 is exact")
-            return x, True
-        beta1 = np.sqrt(beta1)
-
-        oldb = 0.0
-        beta = beta1
-        dbar = 0.0
-        epsln = 0.0
-        phibar = beta1
-        cs = -1.0
-        sn = 0.0
-        w = np.zeros(n)
-        w2 = np.zeros(n)
-        r2 = r1
-
-        converged = False
-        bound_converged = False  # exited on the rigorous ||Hx+g||_2 upper bound
-        residual_bound = np.inf
-        itn = 0
-        for itn in range(1, max_iter + 1):
-            # --- Lanczos step: v = M^-1-normalized next basis vector ---
-            v = y / beta
-            y = self.mv2(U, A_tilde, G_blocks, v, 1, 0, 0).ravel()
-            if itn >= 2:
-                y = y - (beta / oldb) * r1
-            alfa = np.dot(v, y)
-            y = y - (alfa / beta) * r2
-            r1 = r2
-            r2 = y
-            y = r2 / M_diag
-            oldb = beta
-            beta = np.dot(r2, y)
-            if beta < 0.0:
-                beta = 0.0
-            beta = np.sqrt(beta)
-
-            # --- Apply the previous plane rotation Q_{k-1} ---
-            oldeps = epsln
-            delta = cs * dbar + sn * alfa
-            gbar = sn * dbar - cs * alfa
-            epsln = sn * beta
-            dbar = -cs * beta
-
-            # --- Compute and apply the next plane rotation Q_k ---
-            gamma = max(np.sqrt(gbar * gbar + beta * beta), eps)
-            cs = gbar / gamma
-            sn = beta / gamma
-            phi = cs * phibar
-            phibar = sn * phibar
-
-            # --- Update the solution ---
-            w1 = w2
-            w2 = w
-            w = (v - oldeps * w1 - delta * w2) / gamma
-            x = x + phi * w
-
-            residual_bound = bound_factor * phibar
-            print(f"PMINRES Iter: {itn:3d}   Residual Norm (bound): {residual_bound:.4e}")
-
-            if residual_bound < conv_thresh:
-                converged = True
-                bound_converged = True
-                break
-            if beta <= eps * max(1.0, oldb):
-                # Krylov space exhausted: x already minimizes the residual over
-                # the full invariant subspace, so verify and stop either way.
-                print("PMINRES: Lanczos breakdown (invariant subspace reached)")
-                break
-
-        if bound_converged:
-            # `residual_bound` is a RIGOROUS UPPER BOUND on ||Hx + g||_2 (see
-            # bound_factor above: ||r||_2 <= sqrt(max(M)) * ||r||_{M^-1}, and
-            # phibar IS ||r||_{M^-1}).  Having broken on it, ||Hx + g|| <
-            # conv_thresh is already proved, so evaluating the true residual can
-            # only re-confirm what we know -- at the cost of one full mv2.
-            # Measured on c10h8: 97 of 97 solves exit here (none reaches the
-            # iteration cap), so skipping it is 97 Hessian applications, 3.8% of
-            # that run's 2548, for a bit-identical x and `converged` flag.
-            # The bound runs a measured 3.3-6.8x above the true residual, so
-            # this exit is conservative, never optimistic.
-            print(
-                f"PMINRES: residual bound {residual_bound:.4e} < {conv_thresh:.1e} "
-                f"after {itn} iterations (bound is rigorous; no verification mv2)"
-            )
-            print("\n--- Convergence Achieved ---")
-            print("total iteration", itn)
-            return x, True
-
-        # Reached only on the iteration cap or a Lanczos breakdown, where the
-        # recurrence bound never certified convergence.  One true residual
-        # evaluation (a single extra mv2 for the whole solve, not one per
-        # iteration) so the caller's `converged` flag reflects ||Hx + g||, the
-        # same quantity linear_equation_solve tested against -- the bound is
-        # conservative, so a solve can still be converged in truth after
-        # failing to prove it.
-        true_residual = np.linalg.norm(
-            self.mv2(U, A_tilde, G_blocks, x, 1, 0, 0).ravel() - b
+        return _trs_scipy_minres_solve(
+            self,
+            U,
+            A_tilde,
+            G_blocks,
+            reduced_gradient,
+            denom,
+            max_iter,
+            conv_thresh,
         )
-        converged = bool(true_residual < conv_thresh)
-        print(f"PMINRES: true residual ||Hx+g|| = {true_residual:.4e} after {itn} iterations")
-        if converged:
-            print("\n--- Convergence Achieved ---")
-            print("total iteration", itn)
-        else:
-            print("\n--- Solver did not converge within max iterations ---")
-        return x, converged
 
+    def minres_solve(self, U, A_tilde, G_blocks, reduced_gradient, denom, max_iter, conv_thresh=1e-06):
+        """MOVED to trust_region_solvers.py (2026-09-04).
 
-    def linear_equation_solve(self, U, A_tilde, G_blocks, reduced_gradient, denom, max_iter, conv_thresh=1e-6):
+        Delegator: the name is part of this class's interface (the solver
+        modules call it as ctx.minres_solve, and the C++ port cites it).
         """
-        Main driver loop to solve the linear system Ax + b = 0.
+        return _trs_minres_solve(
+            self,
+            U,
+            A_tilde,
+            G_blocks,
+            reduced_gradient,
+            denom,
+            max_iter,
+            conv_thresh,
+        )
 
-        Superseded by minres_solve above (see its docstring for why); kept as
-        the _QED_USE_MINRES=0 comparison path and as the TAMM/cpp_casscf port
-        reference, whose LinearRMSolver mirrors this routine.
+
+    def linear_equation_solve(self, U, A_tilde, G_blocks, reduced_gradient, denom, max_iter, conv_thresh=1e-06):
+        """MOVED to trust_region_solvers.py (2026-09-04).
+
+        Delegator: the name is part of this class's interface (the solver
+        modules call it as ctx.linear_equation_solve, and the C++ port cites it).
         """
-        #self._reset()
-        residual = reduced_gradient.copy()
-        if np.linalg.norm(residual) < 1e-3:
-            #random guess
-            dim00 = self.index_map_size
-            trial_0 = np.random.rand(dim00)
-
-            norm = np.linalg.norm(trial_0)
-            if norm > 1e-12:
-                trial_0 /= norm
-
-            sigma = self.mv2(U, A_tilde, G_blocks, trial_0, 1, 0, 0)
-            residual = sigma + reduced_gradient
-
-        #print("initial guess", residual)
-        #residual = self.apply_preconditioner(A, G1, z)
-        #residual /= np.linalg.norm(residual)
-        solver_sym = LinearRMSolver(b_vector=reduced_gradient, max_subspace=max_iter)
-        #solution_sym = solver_sym.solve(matvec_prod_sym, precond_sym, max_iter=100, conv_thresh=1e-7)
-        #print(denom[:self.index_map_size])
-        print("--------------------------------------------")
-        print("--- Start solving Hx=-g equations ---")
-        print("--------------------------------------------")
-        for i in range(max_iter):
-            #sigma0 = matvec_product(residual, A, G1)
-            #residual0 = sigma0 + self.total_gradient
-            #print("zzz", np.linalg.norm(residual0))
-            residual_norm = np.linalg.norm(residual)
-            print(f"Iter: {i+1:3d}   Residual Norm: {residual_norm:.4e}")
-
-            if residual_norm < conv_thresh:
-                print("\n--- Convergence Achieved ---")
-                print("total iteration", i+1)
-                return solver_sym.get_solution(), True
-
-            trial_c = residual/denom
-            
-            #print("trial_c", trial_c)
-            norm = np.linalg.norm(trial_c)
-            if norm > 1e-12:
-                trial_c /= norm
-
-            sigma = self.mv2(U, A_tilde, G_blocks, trial_c, 1, 0, 0)
-            #print("sigma", sigma)
-            residual_old =copy.deepcopy(residual)
-            residual = solver_sym.update_subspace_and_extrapolate(trial_c, sigma)
-            residual_new = copy.deepcopy(residual)
-            error = residual_new - residual_old
-            if i > 0 and np.linalg.norm(error) < 1e-8:
-                print("\n--- Convergence Achieved (solution becomes self-consistent)---")
-                print("total iteration", i+1)
-                return solver_sym.get_solution(), True
+        return _trs_linear_equation_solve(
+            self,
+            U,
+            A_tilde,
+            G_blocks,
+            reduced_gradient,
+            denom,
+            max_iter,
+            conv_thresh,
+        )
 
 
-        print("\n--- Solver did not converge within max iterations ---")
-        return solver_sym.get_solution(), False
-
-
-    def solve_pcg_trust_region(self, U, A_tilde, G_blocks, g, M_diag, trust_radius, tol=1e-8, max_iter=1000):
-        """
-        Solves the trust-region subproblem using Preconditioned Conjugate Gradient (Steihaug-CG).
-    
-        This solver finds a step 'p' that minimizes the quadratic model:
-            m(p) = g^T p + 0.5 * p^T H p
-        subject to:
-            ||p|| <= trust_radius
-    
-        It is "matrix-free" and handles the key cases:
-        1. Finds the Newton step if H is positive definite and the step is inside the trust region.
-        2. Stops if H is found to be non-positive-definite (negative curvature).
-        3. Stops if the step exceeds the trust radius.
-    
-        Arguments:
-        Hess_vec_product (callable): A function that takes a vector 'v' 
-                                     and returns the Hessian-vector product H*v.
-        g (np.ndarray):              The current gradient vector.
-        M_diag (np.ndarray):         A vector of the diagonal entries of the preconditioner M.
-        trust_radius (float):        The current trust radius (Delta).
-        tol (float):                 Tolerance for convergence (based on residual norm).
-        max_iter (int):              Maximum number of CG iterations.
-    
-        Returns:
-        (np.ndarray, str): A tuple containing the computed step 'p' and a string 
-                           indicating the reason for termination.
-        """
-        M_diag = np.abs(M_diag)
-        # Prevent division by zero (or extremely large steps) for near-zero diagonals
-        epsilon = 1e-6
-        M_diag = np.maximum(M_diag, epsilon)
-        # --- 1. Initialization ---
-        p = np.zeros_like(g) # Step (starts at 0)
-        r = -g               # Residual (r = -g - H*p, but p=0)
-        
-        # --- This is where the diagonal preconditioner is used ---
-        # z = M_inv * r. For a diagonal M, M_inv * r is just r / M_diag
-        z = r / M_diag
-        
-        d = z.copy()         # Search direction
-        r_dot_z = np.dot(r, z)
-        print(r)
-        print(z)
-        print("r_dot_z", r_dot_z) 
-        # Check for a trivial solution (gradient is already zero)
-        if np.sqrt(r_dot_z) < tol:
-            return p, "success_gradient_zero"
-    
-        # --- 2. PCG Iteration Loop ---
-        for j in range(max_iter):
-            
-            # --- This is the main matrix-vector product ---
-            
-            Hd = self.mv2(U, A_tilde, G_blocks, d, 1, 0, 0)
-            # --- This is the Positive-Definite (Curvature) Check ---
-            d_H_d = np.dot(d, Hd)
-            print(d_H_d)
-            if d_H_d <= 0:
-                # The Hessian is not positive definite (negative or zero curvature).
-                # We must find the step 'p' that extends to the trust boundary
-                # along the current direction 'd'.
-                # We need to find tau > 0 such that ||p + tau*d|| = trust_radius
-                
-                a = np.dot(d, d)
-                b = 2 * np.dot(p, d)
-                c = np.dot(p, p) - trust_radius**2
-                
-                # Solve a*tau^2 + b*tau + c = 0 for the positive root tau
-                discriminant = b**2 - 4*a*c
-                tau = (-b + np.sqrt(discriminant)) / (2 * a)
-                
-                return p + tau * d, "stop_negative_curvature"
-            
-            # --- Standard PCG Step ---
-            alpha = r_dot_z / d_H_d
-            p_new = p + alpha * d
-            print("norm of p", np.linalg.norm(p_new)) 
-            # --- This is the Trust-Radius Boundary Check ---
-            if np.linalg.norm(p_new) > trust_radius:
-                # The step has crossed the boundary. We must find the
-                # step 'p' that stops exactly *on* the boundary.
-                # We use the same quadratic formula as in the negative curvature case.
-                
-                a = np.dot(d, d)
-                b = 2 * np.dot(p, d)
-                c = np.dot(p, p) - trust_radius**2
-                
-                discriminant = b**2 - 4*a*c
-                tau = (-b + np.sqrt(discriminant)) / (2 * a)
-                
-                return p + tau * d, "stop_trust_boundary"
-            
-            # --- Update for next iteration (no problems found) ---
-            p = p_new
-            r = r - alpha * Hd
-            
-            # --- Check for Convergence (Newton step found) ---
-            print(j, np.linalg.norm(r))
-            if np.linalg.norm(r) < tol:
-                return p, "success_solution_found" # This is the internal Newton step
-                
-            # --- Apply preconditioner again ---
-            z = r / M_diag
-            
-            r_dot_z_new = np.dot(r, z)
-            
-            # Beta calculation (Fletcher-Reeves)
-            beta = r_dot_z_new / r_dot_z
-            
-            # Update search direction
-            d = z + beta * d
-            r_dot_z = r_dot_z_new
-    
-        # If the loop finishes, we ran out of iterations
-        return p, "stop_max_iterations"   
-
-
-    def solve_pcg_with_operator(self, B_op, g, M_diag, trust_radius, tol=1e-8, max_iter=1000):
-        """
-        Solves the trust-region subproblem using Preconditioned Conjugate Gradient (Steihaug-CG).
-    
-        This solver finds a step 'p' that minimizes the quadratic model:
-            m(p) = g^T p + 0.5 * p^T H p
-        subject to:
-            ||p|| <= trust_radius
-    
-        It is "matrix-free" and handles the key cases:
-        1. Finds the Newton step if H is positive definite and the step is inside the trust region.
-        2. Stops if H is found to be non-positive-definite (negative curvature).
-        3. Stops if the step exceeds the trust radius.
-    
-        Arguments:
-        Hess_vec_product (callable): A function that takes a vector 'v' 
-                                     and returns the Hessian-vector product H*v.
-        g (np.ndarray):              The current gradient vector.
-        M_diag (np.ndarray):         A vector of the diagonal entries of the preconditioner M.
-        trust_radius (float):        The current trust radius (Delta).
-        tol (float):                 Tolerance for convergence (based on residual norm).
-        max_iter (int):              Maximum number of CG iterations.
-    
-        Returns:
-        (np.ndarray, str): A tuple containing the computed step 'p' and a string 
-                           indicating the reason for termination.
-        """
-        M_diag = np.abs(M_diag)
-        # Prevent division by zero (or extremely large steps) for near-zero diagonals
-        epsilon = 1e-6
-        M_diag = np.maximum(M_diag, epsilon)
-        # --- 1. Initialization ---
-        p = np.zeros_like(g) # Step (starts at 0)
-        r = -g               # Residual (r = -g - H*p, but p=0)
-        
-        # --- This is where the diagonal preconditioner is used ---
-        # z = M_inv * r. For a diagonal M, M_inv * r is just r / M_diag
-        z = r / M_diag
-        
-        d = z.copy()         # Search direction
-        r_dot_z = np.dot(r, z)
-        #print(r)
-        #print(z)
-        print("r_dot_z", r_dot_z) 
-        # Check for a trivial solution (gradient is already zero)
-        if np.sqrt(r_dot_z) < tol:
-            return p, "success_gradient_zero"
-    
-        # --- 2. PCG Iteration Loop ---
-        for j in range(max_iter):
-            
-            # --- This is the main matrix-vector product ---
-            
-            Hd = B_op(d) 
-            # --- This is the Positive-Definite (Curvature) Check ---
-            d_H_d = np.dot(d, Hd)
-            print(d_H_d)
-            if d_H_d <= 0:
-                # The Hessian is not positive definite (negative or zero curvature).
-                # We must find the step 'p' that extends to the trust boundary
-                # along the current direction 'd'.
-                # We need to find tau > 0 such that ||p + tau*d|| = trust_radius
-                
-                a = np.dot(d, d)
-                b = 2 * np.dot(p, d)
-                c = np.dot(p, p) - trust_radius**2
-                
-                # Solve a*tau^2 + b*tau + c = 0 for the positive root tau
-                discriminant = b**2 - 4*a*c
-                tau = (-b + np.sqrt(discriminant)) / (2 * a)
-                
-                return p + tau * d, "stop_negative_curvature"
-            
-            # --- Standard PCG Step ---
-            alpha = r_dot_z / d_H_d
-            p_new = p + alpha * d
-            print("norm of p", np.linalg.norm(p_new)) 
-            # --- This is the Trust-Radius Boundary Check ---
-            if np.linalg.norm(p_new) > trust_radius:
-                # The step has crossed the boundary. We must find the
-                # step 'p' that stops exactly *on* the boundary.
-                # We use the same quadratic formula as in the negative curvature case.
-                
-                a = np.dot(d, d)
-                b = 2 * np.dot(p, d)
-                c = np.dot(p, p) - trust_radius**2
-                
-                discriminant = b**2 - 4*a*c
-                tau = (-b + np.sqrt(discriminant)) / (2 * a)
-                
-                return p + tau * d, "stop_trust_boundary"
-            
-            # --- Update for next iteration (no problems found) ---
-            p = p_new
-            r = r - alpha * Hd
-            
-            # --- Check for Convergence (Newton step found) ---
-            print(j, np.linalg.norm(r))
-            if np.linalg.norm(r) < tol:
-                return p, "success_solution_found" # This is the internal Newton step
-                
-            # --- Apply preconditioner again ---
-            z = r / M_diag
-            
-            r_dot_z_new = np.dot(r, z)
-            
-            # Beta calculation (Fletcher-Reeves)
-            beta = r_dot_z_new / r_dot_z
-            
-            # Update search direction
-            d = z + beta * d
-            r_dot_z = r_dot_z_new
-    
-        # If the loop finishes, we ran out of iterations
-        return p, "stop_max_iterations"   
+    # ---------------------------------------------------------------
+    # print_matrix_nice and the Steihaug-Toint solvers
+    # solve_pcg_trust_region / solve_pcg_with_operator MOVED to
+    # legacy_python_ci.py on 2026-09-04 -- no live caller, only
+    # commented-out references.  Kept rather than deleted because the
+    # C++ port cites them as the source of PcgTrustRegionSolver.
+    # ---------------------------------------------------------------
 
 
     def build_orbital_hessian_element(self, U, sym_A_tilde, G, r, k, s, l):
@@ -18620,21 +14696,15 @@ class PFHamiltonianGenerator:
             a += np.einsum("p, p ->", temp3, temp4)
         return a
 
-    def build_orbital_hessian_guess(
-        self,
-        U,
-        sym_A_tilde,
-        reduced_gradient,
-        G,
-        guess_hessian,
-        guess_gradient,
-        dim1,
-        idx,
-    ):
-        index_map = self.index_map
-        nmo = self.nmo
-        n_occupied = self.n_occupied
-        return self.hessian_guess(
+    def build_orbital_hessian_guess(self, U, sym_A_tilde, reduced_gradient, G, guess_hessian, guess_gradient, dim1, idx):
+        """Guess-subspace Hessian/gradient for the AH Davidson.  MOVED to orbital_sigma.py (2026-09-04).
+
+        Kept as a method because the name is this class's interface: the
+        solver modules call it as ctx.build_orbital_hessian_guess(...).  See
+        orbital_sigma.py for the kernel and for why that module is a leaf.
+        """
+        return _os_build_orbital_hessian_guess(
+            self,
             U,
             sym_A_tilde,
             reduced_gradient,
@@ -18642,83 +14712,11 @@ class PFHamiltonianGenerator:
             guess_hessian,
             guess_gradient,
             dim1,
-            nmo,
-            n_occupied,
-            index_map,
             idx,
         )
 
-    @staticmethod
-    # @nb.njit("""void(float64[:,::1], float64[:,::1], int64[:,::1], float64[:,::1], float64[:,:,:,::1], float64[:,::1], float64[:,::1],
-    #        int64, int64, int64, int64, int64)""", fastmath = True, parallel = True)
-    # def build_sigma_reduced6(U, A_tilde, index_map, G1, G, R_reduced, sigma_reduced, num_states, pointer, nmo, index_map_size, n_occupied):
-    @nb.njit(
-        """void(float64[:,::1], float64[:,::1], float64[::1], float64[:,:,:,::1], float64[:,::1], float64[::1],
-            int64, int64, int64, int64[:,::1], int64[::1])""",
-        fastmath=True,
-        parallel=True,
-    )
-    def hessian_guess(
-        U,
-        sym_A_tilde,
-        reduced_gradient,
-        G,
-        guess_hessian,
-        guess_gradient,
-        dim1,
-        nmo,
-        n_occupied,
-        index_map,
-        idx,
-    ):
-        for i in nb.prange(dim1):
-            index1 = idx[i]
-            r = index_map[index1][0]
-            k = index_map[index1][1]
-            guess_gradient[i] = reduced_gradient[index1]
-            for j in range(dim1):
-                index2 = idx[j]
-                s = index_map[index2][0]
-                l = index_map[index2][1]
-                # print(r,k,s,l)
-                # b = self.build_orbital_hessian_element(U, sym_A_tilde, G, r,k,s,l)
-                temp1 = np.copy(G[k, l, :, :])
-                temp2 = np.copy(U[:, s])
-                temp3 = np.copy(U[:, r])
-                temp4 = np.zeros((nmo))
-                # temp4 = np.einsum("pq, q ->p", temp1, temp2)
-                temp4 = np.dot(temp1, temp2)
-                # a = np.einsum("p, p ->", temp3, temp4)
-                a = np.dot(temp3, temp4)
-                a -= 0.5 * (k == l) * (sym_A_tilde[r][s])
-                a -= 0.5 * (r == s) * (sym_A_tilde[k][l])
-                # print(np.shape(temp1))
-                if r < n_occupied:
-                    temp1 = np.copy(G[r, l, :, :])
-                    temp3 = np.copy(U[:, k])
-                    # temp4 = np.einsum("pq, q ->p", temp1, temp2)
-                    temp4 = np.dot(temp1, temp2)
-                    # a -= np.einsum("p, p ->", temp3, temp4)
-                    a -= np.dot(temp3, temp4)
-                    a += 0.5 * (r == l) * (sym_A_tilde[k][s])
-                if s < n_occupied:
-                    temp1 = np.copy(G[k, s, :, :])
-                    temp2 = np.copy(U[:, l])
-                    temp3 = np.copy(U[:, r])
-                    # temp4 = np.einsum("pq, q ->p", temp1, temp2)
-                    temp4 = np.dot(temp1, temp2)
-                    # a -= np.einsum("p, p ->", temp3, temp4)
-                    a -= np.dot(temp3, temp4)
-                    a += 0.5 * (k == s) * (sym_A_tilde[r][l])
-                if r < n_occupied and s < n_occupied:
-                    temp1 = np.copy(G[r, s, :, :])
-                    temp2 = np.copy(U[:, l])
-                    temp3 = np.copy(U[:, k])
-                    # temp4 = np.einsum("pq, q ->p", temp1, temp2)
-                    temp4 = np.dot(temp1, temp2)
-                    # a += np.einsum("p, p ->", temp3, temp4)
-                    a += np.dot(temp3, temp4)
-                guess_hessian[i][j] = a
+    # hessian_guess MOVED to orbital_sigma.py (2026-09-04) -- module-private
+    # there: its only caller is in that module.
                 # print(b, hessian_tilde[r*self.n_occupied+k][s*self.n_occupied+l])
 
     def microiteration_step(self, gradient_tilde, hessian_tilde, step, alpha, dim0):
@@ -18828,31 +14826,20 @@ class PFHamiltonianGenerator:
         # print(mu, flush=True)
         return mu
 
-    def projection_step2(
-        self, gradient_tilde, hessian_tilde, aug_eigenvecs, alpha, dim0
-    ):
-        if _QED_SOLVER_STATS:
-            _solver_stats.bordered_solve()
-        augmented_hessian = np.zeros((dim0, dim0))
-        # print("projected_gradient", gradient_tilde, flush = True)
+    def projection_step2(self, gradient_tilde, hessian_tilde, aug_eigenvecs, alpha, dim0):
+        """MOVED to trust_region_solvers.py (2026-09-04).
 
-        augmented_hessian[0, 0] = alpha
-        augmented_hessian[0, 1:] = gradient_tilde
-        augmented_hessian[1:, 0] = gradient_tilde.T
-        augmented_hessian[1:, 1:] = hessian_tilde
-        # print("projected_hessian")
-        # self.printA(hessian_tilde)
-        # print("projected_augmented_hessian")
-        # self.printA(augmented_hessian)
-        # print(" ", flush = True)
-
-        mu, aug_eigenvecs[:, :] = np.linalg.eigh(augmented_hessian)
-        # np.set_printoptions(precision = 14)
-        # print("check eigenvalues and eigenvectors of the projected augmented hessian", flush = True)
-        # print("eigenvecs",aug_eigenvecs, flush = True)
-        # print("alpha",alpha, flush = True)
-        print(mu, flush=True)
-        return mu
+        Delegator: the name is part of this class's interface (the solver
+        modules call it as ctx.projection_step2, and the C++ port cites it).
+        """
+        return _trs_projection_step2(
+            self,
+            gradient_tilde,
+            hessian_tilde,
+            aug_eigenvecs,
+            alpha,
+            dim0,
+        )
 
     def mv(self, U, A_tilde, G, R_reduced, num_states, pointer, eigval):
         R_reduced = R_reduced.reshape((1, self.index_map_size))
@@ -18914,341 +14901,25 @@ class PFHamiltonianGenerator:
         return sigma_reduced
 
     def mv2(self, U, A_tilde, G_blocks, R_reduced, num_states, pointer, eigval):
-        _mv_t0 = timer() if _QED_SOLVER_STATS else None
-        R_reduced = R_reduced.reshape((1, self.index_map_size)).astype(np.float64)
-        nmo = self.nmo
-        index_map = self.index_map
-        index_map_size = self.index_map_size
-        n_occupied = self.n_occupied
-        n_inactive = self.n_in_a
-        n_active = self.n_act_orb
-        G_ij, G_ti, G_tu = G_blocks
-        G_ij = np.ascontiguousarray(G_ij)
-        G_ti = np.ascontiguousarray(G_ti)
-        G_tu = np.ascontiguousarray(G_tu)
-        # print("U dtype:", U.dtype, "shape:", U.shape)
-        # print("A_tilde dtype:", A_tilde.dtype, "shape:", A_tilde.shape)
-        # print("index_map dtype:", index_map.dtype, "shape:", index_map.shape)
-        # print("G dtype:", G.dtype, "shape:", G.shape)
-        # print("R_reduced dtype:", R_reduced.dtype, "shape:", R_reduced.shape)
-        _ret = self.build_sigma_reduced8(
+        """Single-vector (H - eigval*I) product, for the LinearOperator sites.  MOVED to orbital_sigma.py (2026-09-04).
+
+        Kept as a method because the name is this class's interface: the
+        solver modules call it as ctx.mv2(...).  See
+        orbital_sigma.py for the kernel and for why that module is a leaf.
+        """
+        return _os_mv2(
+            self,
             U,
             A_tilde,
-            index_map,
-            G_ij,
-            G_ti,
-            G_tu,
+            G_blocks,
             R_reduced,
             num_states,
             pointer,
-            nmo,
-            index_map_size,
-            n_occupied,
-            n_inactive,
-            n_active,
             eigval,
-            _QED_G_SYMV,
         )
-        if _QED_SOLVER_STATS:
-            _solver_stats.matvec(1, timer() - _mv_t0)
-        return _ret
 
-    @staticmethod
-    @nb.jit(
-        """float64[::1](float64[:,::1], float64[:,::1], int64[:,::1], float64[:,::1], float64[:,::1], float64[:,::1], float64[:,::1],
-            int64, int64, int64, int64, int64, int64, int64, float64, int64)""",
-        nopython=True,
-        cache=True,   # see build_sigma_reduced7 / _symv_accumulate for why
-        fastmath=True,
-        parallel=False,
-    )
-    def build_sigma_reduced8(
-        U,
-        A_tilde,
-        index_map,
-        G_ij,
-        G_ti,
-        G_tu,
-        R_reduced,
-        num_states,
-        pointer,
-        nmo,
-        index_map_size,
-        n_occupied,
-        n_inactive,
-        n_active,
-        eigval,
-        use_symv,
-    ):
-        assert U.shape == (nmo, nmo)
-        assert A_tilde.shape == (nmo, nmo)
-        sigma_reduced = np.zeros((1, index_map_size))
-        R_total = np.zeros((num_states, nmo, n_occupied))
-        #print("oivdpw", num_states)
-        for i in range(num_states):
-            for j in range(index_map_size):
-                r = index_map[j][0]
-                k = index_map[j][1]
-                R_total[i][r][k] = R_reduced[i][j + pointer]
-
-        sigma_total = np.zeros((num_states, nmo, n_occupied))
-
-        R1 = R_total.transpose(1, 0, 2)
-        R1 = np.ascontiguousarray(R1)
-        R1 = np.reshape(R1, (nmo, num_states * n_occupied))
-        temp2 = np.dot(U, R1)
-        temp1 = temp2.reshape(nmo, num_states, n_occupied).transpose(1, 0, 2)
-        R1 = np.ascontiguousarray(R_total[:, :n_occupied, :].transpose(2, 0, 1))
-        # R_total1 = np.ascontiguousarray(R_total1)
-        R1 = np.reshape(R1, (n_occupied, num_states * n_occupied))
-        U1 = np.ascontiguousarray(U[:, :n_occupied])
-        temp2 = np.dot(U1, R1)
-        temp1 -= temp2.reshape(nmo, num_states, n_occupied).transpose(1, 0, 2)
-
-        ##sigma_total1 = np.zeros((num_states, nmo, n_occupied))
-        ##temp11 = np.einsum("qs,isl->iql", U, R_total)
-        # for q in nb.prange(nmo):
-        #    for i in range(num_states):
-        #        for l in range(n_occupied):
-        #            #a = 0.0
-        #            a = np.float64(0)
-        #            for s in range(nmo):
-        #                a += U[q,s] * R_total[i,s,l]
-        #                #temp1[i,q,l] += U[q,s] * R_total[i,s,l]
-        #            temp1[i,q,l] = a
-        #
-
-        # for q in nb.prange(nmo):
-        #    for i in range(num_states):
-        #        for s in range(n_occupied):
-        #            a = np.float64(0)
-        #            for l in range(n_occupied):
-        #                a -= U[q,l] * R_total[i,s,l]
-        #                #temp1[i,q,s] -= U[q,l] * R_total[i,s,l]
-        #            temp1[i,q,s] += a
-        # The flat R1/R2 staging that used to sit here fed the single dense
-        # np.dot(R1, G1); the blocked product below consumes temp1 directly, so
-        # it is gone (build_sigma_reduced7 has no equivalent either).
-        ##for i in nb.prange(num_states):
-        ##    for r in range(nmo):
-        ##        for k in range(n_occupied):
-        ##            a = R1[i][r*n_occupied+k] - temp1[i,r,k]
-        ##            if np.abs(a) > 1e-14: print("LARGE error")
-
-        # Blocked replacement for the former  temp1 = np.dot(R1, G1)  over the
-        # full (nmo*n_occupied) square G1.  Identical to the block section of
-        # build_sigma_reduced7 (helper_PFCI.py:8760-8775): the G blocks are
-        # flattened with index (r,k) -> r*n_block_occ + k, and the (i,t)
-        # quadrant is recovered as G_ti.T by the Hessian's pair-exchange
-        # symmetry.  temp1 here is (num_states, nmo, n_occupied).
-        R_i_tensor = temp1[:, :, :n_inactive]
-        R_a_tensor = temp1[:, :, n_inactive:]
-        R1_i = R_i_tensor.copy().reshape(num_states, nmo * n_inactive)
-        R1_a = R_a_tensor.copy().reshape(num_states, nmo * n_active)
-
-        # QED_G_SYMV, as in build_sigma_reduced7 -- see the note there and the
-        # module-level block.  mv2 always passes num_states == 1, so the gate is
-        # always taken when the knob is on; it is written the same way as the
-        # twin so the two stay comparable.
-        if use_symv == 1 and num_states == 1:
-            sigma_i = np.dot(R1_a, G_ti)
-            _symv_accumulate(G_ij, R1_i[0], sigma_i[0])
-        else:
-            sigma_i = np.dot(R1_i, G_ij) + np.dot(R1_a, G_ti)
-        sigma_a = np.dot(R1_i, G_ti.T) + np.dot(R1_a, G_tu)
-
-        temp2 = np.zeros((num_states, nmo, n_occupied))
-        temp2[:, :, :n_inactive] = sigma_i.reshape(num_states, nmo, n_inactive)
-        temp2[:, :, n_inactive:] = sigma_a.reshape(num_states, nmo, n_active)
-        # for r in nb.prange(nmo):
-        #    for i in range(num_states):
-        #        for k in range(n_occupied):
-        #            a = np.float64(0)
-        #            for p in range(nmo):
-        #                a += U[p,r] * temp2[i,p,k]
-        #                #sigma_total[i,r,k] += U[p,r] * temp2[i,p,k]
-        #            temp1[i,r,k] = a
-        #            sigma_total[i,r,k] = a
-        #
-
-        # for r in nb.prange(n_occupied):
-        #    for i in range(num_states):
-        #        for k in range(n_occupied):
-        #            sigma_total[i,r,k] -= temp1[i,k,r]
-
-        #######for i in nb.prange(num_states):
-        #######    R3 = np.dot(R1[i,:], G)
-        #######    R2[i,:] = R3
-
-        temp2 = temp2.transpose(0, 2, 1)
-        temp2 = np.ascontiguousarray(temp2)
-        temp2 = np.reshape(temp2, (num_states * n_occupied, nmo))
-        temp1 = np.dot(temp2, U)
-        temp2 = temp1.reshape(num_states, n_occupied, nmo)
-        sigma_total[:, :, :] = temp2.transpose(0, 2, 1)[:, :, :]
-        sigma_total[:, :n_occupied, :] -= temp2[:, :, :n_occupied]
-
-        A3_tilde = A_tilde + A_tilde.T
-        # temp1 = np.zeros((num_states, nmo, n_occupied))
-        # temp2 = np.zeros((num_states, nmo, n_occupied))
-
-        ##hessian_tilde -= 0.5 * np.einsum("kl,rs->klrs", np.eye(self.n_occupied), A3_tilde)
-        ##hessian_tilde[:,:,:self.n_occupied,:] += 0.5 * np.einsum("rl,ks->klrs", np.eye(self.n_occupied), A3_tilde[:self.n_occupied,:])
-        # for i in nb.prange(num_states):
-        #    for r in range(nmo):
-        #        for k in range(n_occupied):
-        #            a = np.float64(0)
-        #            for s in range(nmo):
-        #                a += A3_tilde[r,s] * R_total[i,s,k]
-        #            temp1[i,r,k] = a
-        #            sigma_total[i,r,k] -= 0.5 * a
-        #
-        # for i in nb.prange(num_states):
-        #    for r in range(n_occupied):
-        #        for k in range(n_occupied):
-        #            sigma_total[i,r,k] += 0.5 * temp1[i,k,r]
-        #
-        ##hessian_tilde -= 0.5 * np.einsum("rs,kl->klrs", np.eye(self.nmo), A3_tilde[:self.n_occupied,:self.n_occupied])
-        # for i in nb.prange(num_states):
-        #    for r in range(nmo):
-        #        for k in range(n_occupied):
-        #            a = np.float64(0)
-        #            for l in range(n_occupied):
-        #                a += A3_tilde[k,l] * R_total[i,r,l]
-        #            sigma_total[i,r,k] -= 0.5 * a
-
-        ##hessian_tilde[:,:,:,:self.n_occupied] += 0.5 * np.einsum("ks,rl->klrs", np.eye(self.n_occupied), A3_tilde[:,:self.n_occupied])
-        # for i in nb.prange(num_states):
-        #    for r in range(nmo):
-        #        for k in range(n_occupied):
-        #            a = np.float64(0)
-        #            for l in range(n_occupied):
-        #                a += A3_tilde[r,l] * R_total[i,k,l]
-        #            sigma_total[i,r,k] += 0.5 * a
-        R1 = R_total.transpose(1, 0, 2)
-        R1 = np.ascontiguousarray(R1)
-        R1 = np.reshape(R1, (nmo, num_states * n_occupied))
-        temp2 = np.dot(A3_tilde, R1)
-        temp1 = temp2.reshape(nmo, num_states, n_occupied).transpose(1, 0, 2)
-        sigma_total[:, :, :] -= 0.5 * temp1[:, :, :]
-        sigma_total[:, :n_occupied, :] += (
-            0.5 * temp1.transpose(0, 2, 1)[:, :, :n_occupied]
-        )
-        A3 = A3_tilde[:n_occupied, :n_occupied].T
-        A3 = np.ascontiguousarray(A3)
-        R1 = np.ascontiguousarray(R_total)
-        R1 = np.reshape(R1, (num_states * nmo, n_occupied))
-        temp2 = np.dot(R1, A3)
-        sigma_total[:, :, :] -= (
-            0.5 * temp2.reshape(num_states, nmo, n_occupied)[:, :, :]
-        )
-        A3 = A3_tilde[:, :n_occupied].T
-        A3 = np.ascontiguousarray(A3)
-        R1 = np.ascontiguousarray(R_total[:, :n_occupied, :])
-        R1 = np.reshape(R1, (num_states * n_occupied, n_occupied))
-        temp2 = np.dot(R1, A3)
-        temp1 = temp2.reshape(num_states, n_occupied, nmo)
-        sigma_total[:, :, :] += 0.5 * temp1.transpose(0, 2, 1)[:, :, :]
-
-        #####sigma_total1 = np.zeros((num_states, nmo, n_occupied))
-        #####temp11 = np.einsum("qs,isl->iql", U, R_total)
-        ####for q in nb.prange(nmo):
-        ####    for i in range(num_states):
-        ####        for l in range(n_occupied):
-        ####            for s in range(nmo):
-        ####                temp1[i,q,l] += U[q,s] * R_total[i,s,l]
-        ####
-
-        ####for q in nb.prange(nmo):
-        ####    for i in range(num_states):
-        ####        for s in range(n_occupied):
-        ####            for l in range(n_occupied):
-        ####                temp1[i,q,s] -= U[q,l] * R_total[i,s,l]
-        ####
-
-        #####print("aipo1", np.allclose(temp11,temp1, rtol=1e-14,atol=1e-14))
-        #####temp22 = np.einsum("klpq,iql->ipk", G, temp11)
-        ####for p in nb.prange(nmo):
-        ####    for i in range(num_states):
-        ####        for k in range(n_occupied):
-        ####            for q in range(nmo):
-        ####                for l in range(n_occupied):
-        ####                    temp2[i,p,k] += G[k,l,p,q] * temp1[i,q,l]
-        ####
-        #####print("aipo2", np.allclose(temp22,temp2, rtol=1e-14,atol=1e-14))
-        #####sigma_total1 = np.einsum("ipk,pr->irk", temp22, U, optimize ="optimal")
-        ####for r in nb.prange(nmo):
-        ####    for i in range(num_states):
-        ####        for k in range(n_occupied):
-        ####            for p in range(nmo):
-        ####                sigma_total[i,r,k] += U[p,r] * temp2[i,p,k]
-        #####print("aipo3", np.allclose(sigma_total1,sigma_total, rtol=1e-14,atol=1e-14))
-        ####
-
-        #####sigma_total1[:,:n_occupied,:] -= np.einsum("ipr,pk->irk", temp22, U[:,:n_occupied])
-        ####for r in nb.prange(n_occupied):
-        ####    for i in range(num_states):
-        ####        for k in range(n_occupied):
-        ####            for p in range(nmo):
-        ####                sigma_total[i,r,k] -= U[p,k] * temp2[i,p,r]
-        #####print("aipo4", np.allclose(sigma_total1,sigma_total, rtol=1e-14,atol=1e-14))
-        ####
-        #####temp11 = np.einsum("ql,isl->iqs", U[:,:n_occupied], R_total[:,:n_occupied,:])
-        #####temp1[:,:,:] = 0.0
-        #####for q in nb.prange(nmo):
-        #####    for i in range(num_states):
-        #####        for s in range(n_occupied):
-        #####            for l in range(n_occupied):
-        #####                temp1[i,q,s] += U[q,l] * R_total[i,s,l]
-        #####print("aipo5", np.allclose(temp11,temp1, rtol=1e-14,atol=1e-14))
-        ####
-        #####temp22 = np.einsum("kspq,iqs->ipk", G, temp11, optimize = "optimal")
-        #####temp2[:,:,:] = 0.0
-        #####for p in nb.prange(nmo):
-        #####    for i in range(num_states):
-        #####        for k in range(n_occupied):
-        #####            for q in range(nmo):
-        #####                for l in range(n_occupied):
-        #####                    temp2[i,p,k] += G[k,l,p,q] * temp1[i,q,l]
-        #####print("aipo6", np.allclose(temp22,temp2, rtol=1e-14,atol=1e-14))
-        ####
-        #####sigma_total1 -= np.einsum("ipk,pr->irk", temp22, U)
-        #####for r in nb.prange(nmo):
-        #####    for i in range(num_states):
-        #####        for k in range(n_occupied):
-        #####            for p in range(nmo):
-        #####                sigma_total[i,r,k] -= U[p,r] * temp2[i,p,k]
-        #####print("aipo7", np.allclose(sigma_total1,sigma_total, rtol=1e-14,atol=1e-14))
-        ####
-        #####sigma_total1[:,:n_occupied,:] += np.einsum("ipr,pk->irk", temp22, U[:,:n_occupied])
-        #####for r in nb.prange(n_occupied):
-        #####    for i in range(num_states):
-        #####        for k in range(n_occupied):
-        #####            for p in range(nmo):
-        #####                sigma_total[i,r,k] += U[p,k] * temp2[i,p,r]
-        #####print("aipo8", np.allclose(sigma_total1,sigma_total, rtol=1e-14,atol=1e-14))
-
-        #####sigma_total1 += np.einsum("klrs,isl->irk", hessian_tilde, R_total, optimize = "optimal")
-        ####for r in nb.prange(nmo):
-        ####    for i in range(num_states):
-        ####        for k in range(n_occupied):
-        ####            for s in range(nmo):
-        ####                for l in range(n_occupied):
-        ####                    sigma_total[i,r,k] += hessian_tilde[k,l,r,s] * R_total[i,s,l]
-        #####print("aipo9", np.allclose(sigma_total1,sigma_total, rtol=1e-14,atol=1e-14))
-
-        #####sigma_total4[:,:,:] =sigma_total[:,:,:]
-        #####sigma_total3[:,:,:] =sigma_total[:,:,:]
-
-        for i in range(num_states):
-            for j in range(index_map_size):
-                r = index_map[j][0]
-                k = index_map[j][1]
-                sigma_reduced[i][j + pointer] = sigma_total[i][r][k]
-                # sigma_reduced[i][j+pointer] -= eigval * R_reduced[i][j+pointer]
-        sigma_reduced -= eigval * R_reduced
-        sigma_reduced = sigma_reduced.flatten()
-        return sigma_reduced
+    # build_sigma_reduced8 MOVED to orbital_sigma.py (2026-09-04) -- module-private
+    # there: its only caller is in that module.
 
     def classifySpinState(self):
         self.triplets = []
@@ -19390,7 +15061,9 @@ if _QED_PROFILE_MICRO:
         (
             "solve_gltr_trust_region",
             "solve_gltr_with_operator",
-            "solve_pcg_trust_region",
+            # "solve_pcg_trust_region" was listed here until 2026-09-04; it is
+            # now in legacy_python_ci.py, and _install_micro_profilers would
+            # print a MICRO_PROF_WARNING for it on every run with the knob on.
             "Davidson_augmented_hessian_solve6",
             "minres_solve",
             "linear_equation_solve",
