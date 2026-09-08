@@ -32,6 +32,78 @@ from ctypes import *
 import os
 import psutil
 import copy
+
+# QED_PROJ_ALL: which CI-response projector solve3 uses.
+#   0 (DEFAULT since 2026-09-08) = the MINIMAL projection, z^(n).c^(n) = 0 only.
+#   1                            = the historical all-states project_out_all.
+#
+# WHY THE DEFAULT CHANGED.  project_out_all orthogonalises every CI response
+# vector z^(n) against EVERY state-averaged CI vector, not just its own.  The
+# theory fixes exactly one component -- z^(n).c^(n) = 0 -- because that is the
+# only one left undetermined.  The off-diagonal components z^(n).c^(m), m != n,
+# LOOK equally redundant (adding theta*c^(m) to z^(n) leaves the CI stationarity
+# term zero, since H c^(n) = E_n c^(n)), which is why an equal-weight code can
+# project them out and why solve3 inherited the habit.  But a Lagrange
+# multiplier earns its keep in the DERIVATIVE, and dH/dx has no such eigenvalue
+# property.  Under the antisymmetric pair z^(n) -> z^(n) + theta c^(m),
+# z^(m) -> z^(m) - theta c^(n) the gradient shifts by
+#
+#     Delta(grad) = theta * (W_n - W_m) * <c^(m)| dH/dx |c^(n)>
+#
+# so the components are redundant ONLY when the weights are equal.  With
+# unequal weights project_out_all deletes a real contribution and leaves the CI
+# equation unsatisfied; the equation itself determines the component,
+# t_mn = -2 <c^(m)|H~|c^(n)> / (E_m - E_n).
+#
+# MOLECULAR SYMMETRY HID THIS.  H~ is totally symmetric, so <c^(m)|H~|c^(n)>
+# vanishes between states of different spatial symmetry -- and every earlier
+# unequal-weight validation (H2O C2v, C2H4 D2h) was on a symmetric geometry,
+# where t_mn = 0 is the correct answer and projecting costs nothing.
+#
+# MEASURED, H2O CAS(6,5)/6-31G at a C1 geometry, max |Delta gradient| vs Molpro
+# (`noextra`), states 0/1/2:
+#   weights 1,1,1  project_out_all 6.5e-09 / 3.3e-08 / 2.8e-08
+#                  minimal         2.3e-08 / 3.2e-08 / 3.1e-08   (agree, as
+#                  (W_n - W_m) = 0 predicts)
+#   weights 5,2,1  project_out_all 1.366e-03 / 3.178e-04 / 7.467e-03   WRONG
+#                  minimal         1.66e-08 / 5.59e-08 / 7.14e-08      RIGHT
+# The minimal projection matches Molpro in BOTH regimes, so this is a fix, not
+# a trade-off.  Full derivation and measurement:
+#   ~/mgh_repro_20260804/unequal_weight_sa/BUG_project_out_all.md
+#   ~/mgh_repro_20260804/unequal_weight_sa/why_project_out_all_is_equal_weight_only.md
+#
+# NOTE the third project_out_all at build_total_gradient (on Y_z): for a
+# GRADIENT Y_z = 0 and it is a no-op, but for DERIVATIVE COUPLING Y_z != 0 and
+# it does act.  That site is governed by this knob too.
+_QED_PROJ_ALL = os.environ.get("QED_PROJ_ALL", "0") not in ("0", "", "false")
+
+# QED_PROJ_ALL_YZ: the SAME choice, but for the third site only -- the
+# projection of Y_z in build_total_gradient.  SEPARATE KNOB, OPPOSITE DEFAULT,
+# because the evidence points opposite ways at the two places:
+#
+#   sites 1-2 (solve3's preconditioner/matvec wrappers, the z-vector SOLVE):
+#       the MINIMAL projection is right.  Unequal-weight GRADIENTS vs Molpro go
+#       from 1.4e-03..7.5e-03 wrong to 1.7e-08..7.5e-08 right.  See
+#       BUG_project_out_all.md.
+#
+#   site 3 (Y_z, the CI block of the z-vector RHS, nonzero ONLY for a coupling):
+#       PROJECT_OUT_ALL is right.  Measured 2026-09-08 against BOTH pyscf's
+#       nac_method and Molpro (which agree with each other to ~5e-07): our
+#       derivative couplings match to 5e-07..7e-06 with project_out_all here,
+#       and are 15%-84% wrong with the minimal projection.
+#
+# That is not a contradiction.  Rotations WITHIN the state-averaged CI space are
+# not part of z at all -- they are carried by the separate off-diagonal
+# multipliers fixed by (E_m - E_n) t_mn + 2<c^(m)|H~|c^(n)> = 0.  Y_z is built
+# ENTIRELY from those in-space directions (Y_z[state1] is proportional to
+# eigenvecs[state2]), so removing them here is not deleting a source term, it is
+# declining to double-count one.  The z-vector solve is a different question:
+# there the minimal projection is what the theory licenses, and projecting more
+# discards a physical (W_n - W_m) component whenever the weights are unequal.
+#
+# DEFAULT 1 = project_out_all = the historical behaviour, which the references
+# confirm.  Set 0 only to reproduce the A/B.
+_QED_PROJ_ALL_YZ = os.environ.get("QED_PROJ_ALL_YZ", "1") not in ("0", "", "false")
 import scipy.sparse
 import ortho_script
 import gc
@@ -674,8 +746,17 @@ class nuclear_grad(PFHamiltonianGenerator):
         #print(Y_z[state1])
         #print(self.eigenvals[state2], self.Enuc)
         #print(np.dot(Y_z[state1], self.eigenvecs[state1]))
-        temp3 = self.project_out_all(Y_z, self.eigenvecs)
-        Y_z = np.copy(temp3)
+        # Y_z = 0 for a gradient (no-op either way); for DERIVATIVE COUPLING
+        # Y_z != 0 and the choice matters -- see _QED_PROJ_ALL_YZ above.
+        if _QED_PROJ_ALL_YZ:
+            temp3 = self.project_out_all(Y_z, self.eigenvecs)
+            Y_z = np.copy(temp3)
+        else:
+            # Per-row form of self.projection, written out rather than reshaping
+            # to 1-D: reshape returns a VIEW only for a contiguous array, so the
+            # in-place subtraction would silently be lost if that ever changed.
+            for i in range(self.davidson_roots):
+                Y_z[i] -= np.dot(Y_z[i], self.eigenvecs[i]) * self.eigenvecs[i]
 
         y = self.pack_solution(Y_Z,Y_z)
         return y
@@ -1443,11 +1524,13 @@ class nuclear_grad(PFHamiltonianGenerator):
         end = start + self.davidson_roots * self.H_dim
         
         if len(trial_c) > start:
-            temp2 = trial_c[start:].reshape(self.davidson_roots, self.H_dim)
-            temp2 = self.project_out_all(temp2, self.eigenvecs)
-            trial_c[start:] = temp2.flatten()
-            
-        #self.projection(trial_c[self.index_map_size:])
+            if _QED_PROJ_ALL:
+                temp2 = trial_c[start:].reshape(self.davidson_roots, self.H_dim)
+                temp2 = self.project_out_all(temp2, self.eigenvecs)
+                trial_c[start:] = temp2.flatten()
+            else:
+                # minimal: z^(n).c^(n) = 0 only.  In place on a view.
+                self.projection(trial_c[start:])
         return trial_c
 
     def my_matvec_wrapper(self, x):
@@ -1462,10 +1545,12 @@ class nuclear_grad(PFHamiltonianGenerator):
         start = self.index_map_size
         
         if len(sigma) > start:
-            temp3 = sigma[start:].reshape(self.davidson_roots, self.H_dim)
-            temp3 = self.project_out_all(temp3, self.eigenvecs)
-            sigma[start:] = temp3.flatten()
-        #self.projection(sigma[self.index_map_size:])
+            if _QED_PROJ_ALL:
+                temp3 = sigma[start:].reshape(self.davidson_roots, self.H_dim)
+                temp3 = self.project_out_all(temp3, self.eigenvecs)
+                sigma[start:] = temp3.flatten()
+            else:
+                self.projection(sigma[start:])
 
         return sigma
      
