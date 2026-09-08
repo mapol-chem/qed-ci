@@ -93,16 +93,35 @@ _QED_SCF_REUSE_JK = os.environ.get("QED_SCF_REUSE_JK", "0") not in ("0", "", "fa
 # DF number labelled "Psi4 SCF energy" unremarked.
 #
 # Value: "1"/"df" = df; any other non-zero string is handed to psi4 as the
-# scf_type verbatim (e.g. "disk_df", "mem_df").
-_QED_SCF_GUESS_DF = os.environ.get("QED_SCF_GUESS_DF", "0")
+# scf_type verbatim (e.g. "disk_df", "mem_df").  QED_SCF_GUESS_DF=0 restores
+# psi4's SCF to the deck's own scf_type.
+#
+# DEFAULT "1" SINCE 2026-09-08 (was "0").  It was measured and validated in
+# item 370 and then shipped off, so the ~238 s it saves at nmo 302 never
+# reached a real run.  Nothing downstream of psi4's SCF changes: only Ca() is
+# consumed, and the CQED-RHF iterations that produce <d_HF>, d_c and d_cmo run
+# against the exact `jk` built at :281 after scf_type is restored.
+_QED_SCF_GUESS_DF_RAW = os.environ.get("QED_SCF_GUESS_DF")
+_QED_SCF_GUESS_DF_EXPLICIT = _QED_SCF_GUESS_DF_RAW is not None
+_QED_SCF_GUESS_DF = "1" if _QED_SCF_GUESS_DF_RAW is None else _QED_SCF_GUESS_DF_RAW
 _QED_SCF_GUESS_DF = None if _QED_SCF_GUESS_DF in ("0", "", "false") else (
     "df" if _QED_SCF_GUESS_DF in ("1", "true") else _QED_SCF_GUESS_DF)
 if _QED_SCF_GUESS_DF is not None and _QED_SCF_REUSE_JK:
-    raise ValueError(
-        "QED_SCF_GUESS_DF and QED_SCF_REUSE_JK are mutually exclusive: reusing "
-        "psi4's SCF JK object under a density-fitted SCF would density-fit the "
-        "CQED-RHF iterations, and with them <d_HF>, d_c and d_cmo -- the frozen "
-        "coherent-state constants of the CASSCF Hamiltonian.  Pick one.")
+    if not _QED_SCF_GUESS_DF_EXPLICIT:
+        # Only the DEFAULT collided.  A default must never turn another knob
+        # into an import-time crash, so QED_SCF_REUSE_JK=1 alone still means
+        # what it meant before this became a default: yield to it, and say so.
+        _QED_SCF_GUESS_DF = None
+        print("QED_SCF_GUESS_DF: default off because QED_SCF_REUSE_JK=1 "
+              "(mutually exclusive); set QED_SCF_GUESS_DF=1 explicitly to see "
+              "the conflict reported instead.")
+    else:
+        raise ValueError(
+            "QED_SCF_GUESS_DF and QED_SCF_REUSE_JK are mutually exclusive: "
+            "reusing psi4's SCF JK object under a density-fitted SCF would "
+            "density-fit the CQED-RHF iterations, and with them <d_HF>, d_c "
+            "and d_cmo -- the frozen coherent-state constants of the CASSCF "
+            "Hamiltonian.  Pick one.")
 
 #   QED_PSI4_MEM : memory handed to psi4          (default unset = psi4's own)
 #

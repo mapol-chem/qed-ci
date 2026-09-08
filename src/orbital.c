@@ -46,12 +46,21 @@ static int jk_prof_enabled(void) {
    resident array, which is why this commit is a BITWISE no-op.  A file-backed
    source plugs in here without touching the loop. */
 /* --- QED_JK_Q2K -----------------------------------------------------------
-   Step 2 of the SLW99 restructure: Appendix B's Q2(K).  Default 0 = the
-   gather form this routine has always used.  See the long note at the K-side
-   quarter transform for what it changes and what it costs. */
+   Step 2 of the SLW99 restructure: Appendix B's Q2(K).  See the long note at
+   the K-side quarter transform for what it changes and what it costs.
+
+   DEFAULT 1 SINCE 2026-09-08 (was 0).  It was measured default-off through
+   items 358/359 and then shipped off, so none of the -68.8% peak-RSS chain
+   reached a real run.  At nmo 302 this knob is 13.65 -> 13.14 GiB on its own,
+   and it is the PRECONDITION for QED_JK_T1BLOCK (13.14 -> 9.74).  K moves by
+   ~1 ULP (a different dgemm blocking of the same terms); J stays bitwise.
+   QED_JK_Q2K=0 restores the gather form exactly.
+   Value 2 is the debug variant (write packed temp3, keep the original S10
+   scatter) and is NOT a default. */
 static int jk_q2k_enabled(void) {
     const char* e = getenv("QED_JK_Q2K");
-    if (!e || !*e || *e == '0') return 0;
+    if (!e || !*e) return 1;                     /* default ON */
+    if (*e == '0') return 0;
     return atoi(e);
 }
 
@@ -59,7 +68,8 @@ static int jk_q2k_enabled(void) {
    Step 2 phase 2 (option A).  Number of bra pairs per block for the BLOCKED
    PRODUCER: S2, S3, S4 and the Q2K bra-row pass run inside one loop over
    blocks of pq_up, so `temp1` never exists whole (4.01 GiB at nmo 302) and
-   `temp3` shrinks to one block.  0 = off = the resident producer.
+   `temp3` shrinks to one block.  0 = off = the resident producer; the default
+   is 1024 whenever QED_JK_Q2K is 1 (see jk_t1block_rows below).
 
    It REQUIRES QED_JK_Q2K=1 and says so rather than silently doing nothing: the
    gather form of S8+S9 reads slabs pidx(p,r) for every r, which no block can
@@ -84,9 +94,16 @@ static int jk_fuse_kl(void) {
     return (e && *e && *e != '0') ? 1 : 0;
 }
 
-static size_t jk_t1block_rows(void) {
+/* DEFAULT 1024 SINCE 2026-09-08 (was 0), but ONLY when q2k == 1.  The default
+   has to be conditional: the guard in full_transformation_macroiteration exits
+   the process when a block size is asked for without Q2K=1, so an
+   unconditional default would turn the documented `QED_JK_Q2K=0` escape hatch
+   into a crash.  Under an explicit QED_JK_Q2K=0 (or the =2 debug variant) the
+   blocked producer stays off unless the user asks for it by name -- and asking
+   for it by name still hits the guard, which is the intended refusal. */
+static size_t jk_t1block_rows(int q2k) {
     const char* e = getenv("QED_JK_T1BLOCK");
-    if (!e || !*e) return 0;
+    if (!e || !*e) return (q2k == 1) ? 1024 : 0; /* default ON with Q2K */
     long long v = atoll(e);
     return (v > 0) ? (size_t) v : 0;
 }
@@ -175,7 +192,7 @@ void full_transformation_macroiteration(double* U, double* h2e, double* J, doubl
     size_t n_occupied_t = (size_t) n_occupied;
     int jkp = jk_prof_enabled();
     const int q2k = jk_q2k_enabled();
-    size_t t1blk = jk_t1block_rows();
+    size_t t1blk = jk_t1block_rows(q2k);
     const int fusekl = jk_fuse_kl();
     if (t1blk && q2k != 1) {
         fprintf(stderr, "QED_JK_T1BLOCK needs QED_JK_Q2K=1 -- the gather "
