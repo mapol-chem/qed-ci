@@ -2783,11 +2783,59 @@ class PFHamiltonianGenerator:
             maxdim = self.davidson_maxdim * self.davidson_roots
             # print(H_dim, self.n_act_a,self.nmo)
             if indim > H_dim or maxdim > H_dim:
+                # WAS: print(...) + sys.exit().  That is a SILENT SUCCESS -- the
+                # process died mid-CASSCF with status 0 and no traceback, so any
+                # runner scoring a return code read it as a completed job.  It
+                # also fired on perfectly reasonable input: a small active space
+                # (CAS(2,2) singlet spans 3 CSFs) cannot host the DEFAULT
+                # subspace, and there is nothing wrong with such a request.
+                #
+                # A subspace larger than the space itself is not an error, it is
+                # a request that has one obvious meaning: use the whole space.
+                # So clamp, say so once, and carry on.  Note the alternative a
+                # user is likely to reach for -- full_diagonalization=True -- is
+                # NOT equivalent: it is CASCI, it skips the SA-CASSCF orbital
+                # optimisation entirely and leaves self.eigenvals unset, so
+                # nuclear_grad then dies with AttributeError.
+                if H_dim < self.davidson_roots:
+                    raise ValueError(
+                        "CI space has dimension %d but %d roots were requested; "
+                        "no solver can return more roots than the space has. "
+                        "Reduce davidson_roots or enlarge the active space."
+                        % (H_dim, self.davidson_roots)
+                    )
+                new_indim = min(indim, H_dim)
+                new_maxdim = min(maxdim, H_dim)
                 print(
-                    "subspace size is too large, try to set maxdim and indim <",
-                    H_dim // self.davidson_roots,
+                    "Davidson subspace clamped to the CI space: indim %d -> %d, "
+                    "maxdim %d -> %d (H_dim %d, %d roots). The requested "
+                    "subspace was larger than the space itself."
+                    % (indim, new_indim, maxdim, new_maxdim, H_dim,
+                       self.davidson_roots),
+                    flush=True,
                 )
-                sys.exit()
+                indim, maxdim = new_indim, new_maxdim
+            if maxdim <= self.davidson_roots:
+                # A subspace that cannot grow beyond the number of roots cannot
+                # iterate, so there is no honest way to continue on this path.
+                # Raise instead of dying quietly.
+                #
+                # NOTE for anyone tempted to "just diagonalise it here": on this
+                # branch self.H_PF is the DUMMY np.eye(2) set at :4642 (the
+                # direct solver never materialises the CI Hamiltonian), so a
+                # dense eigh here would silently return garbage.  Making very
+                # small active spaces work through this path means building the
+                # real H, which is a separate change.
+                raise ValueError(
+                    "CI space has dimension %d, which is too small to run an "
+                    "iterative solver for %d roots (the subspace cannot grow "
+                    "beyond the roots). Enlarge the active space, ask for "
+                    "fewer roots, or use a code path that builds the CI "
+                    "Hamiltonian explicitly. NOTE full_diagonalization=True is "
+                    "NOT a workaround: it is CASCI and skips the SA-CASSCF "
+                    "orbital optimisation, leaving self.eigenvals unset."
+                    % (H_dim, self.davidson_roots)
+                )
             t_H_build = time.time()
             print(
                 "memory required for sigma and CI vectors",
