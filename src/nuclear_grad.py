@@ -2883,7 +2883,8 @@ class nuclear_grad(PFHamiltonianGenerator):
             # (Assuming rdm1_ao is a numpy array)
     
     
-            print("Overlap CSF gradient", flush = True)
+            print("CSF / overlap contribution (the term whose omission gives the "
+                  "ETF form; it is what breaks translational invariance)", flush = True)
             overlap_csf_grad = self.compute_overlap_csf_contribution(egap)
             self.print_matrix_nice(overlap_csf_grad.reshape(self.n_atoms, 3), precision=10, width=14, cols_per_line=6)
         else:
@@ -2894,11 +2895,43 @@ class nuclear_grad(PFHamiltonianGenerator):
             print(self.total_gradient)
             print("nuclear gradient norm", np.linalg.norm(self.total_gradient), flush = True)
         else:
-            print("h vector", flush = True)
-            self.h0 = self.total_gradient - self.nuclear_energy_gradient  
+            # ---- LABELS ----------------------------------------------------
+            # Both blocks below used to be mislabelled: the first as "h vector"
+            # and the second as "Total gradient", which it is not -- it is the
+            # first divided by the energy difference.  The names now say which
+            # standard quantity each one IS.  Every mapping below was verified
+            # componentwise on H2O CAS(6,5)/6-31G at a C1 geometry against BOTH
+            # pyscf's nac_method and Molpro's SA-MC NACME (which agree with each
+            # other to ~5e-07); our agreement is 5e-07..7e-06.  See
+            # ~/mgh_repro_20260804/unequal_weight_sa/NAC_two_projectors.md
+            #
+            #   deriv_type="full"  -> WITH the CSF/overlap term
+            #        h0        == pyscf kernel(mult_ediff=True)          [C]
+            #        h0/dE     == pyscf kernel(state=(i,j))              [A]
+            #                  == Molpro "SA-MC NACME"
+            #   deriv_type=None    -> ETF form, no CSF term
+            #        h0        == pyscf kernel(use_etfs=True,
+            #                                  mult_ediff=True)          [D]
+            #                  == <i|dH/dR|j>, the MECI branching-plane vector
+            #        h0/dE     == pyscf kernel(use_etfs=True)            [B]
+            #
+            # NOTE dE here is E[state1] - E[state2]; pyscf's `ediff` for
+            # state=(i,j) is E_j - E_i, and a NAC carries the arbitrary relative
+            # CI phase anyway, so an overall sign per pair is convention, not
+            # disagreement.
+            csf = "with CSF" if deriv_type == "full" else "ETF, no CSF"
+            pys = ("mult_ediff=True" if deriv_type == "full"
+                   else "use_etfs=True, mult_ediff=True")
+            pys2 = ("kernel(state=(i,j))  == Molpro SA-MC NACME"
+                    if deriv_type == "full" else "use_etfs=True")
+            self.h0 = self.total_gradient - self.nuclear_energy_gradient
             self.h0 +=  overlap_csf_grad.reshape(self.n_atoms * 3)
+            print("NAC * dE  (%s)   [pyscf %s]%s"
+                  % (csf, pys,
+                     "  == <%d|dH/dR|%d>, MECI branching vector" % (state1, state2)
+                     if deriv_type != "full" else ""), flush = True)
             self.print_matrix_nice(self.h0.reshape(self.n_atoms, 3), precision=10, width=14, cols_per_line=6)
-            print("Total gradient", flush = True)
+            print("NAC       (%s)   [pyscf %s]" % (csf, pys2), flush = True)
             self.h_vector = self.h0/(self.eigenvals[state1]-self.eigenvals[state2])
             self.print_matrix_nice(self.h_vector.reshape(self.n_atoms, 3), precision=10, width=14, cols_per_line=6)
         
