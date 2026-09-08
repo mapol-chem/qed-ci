@@ -15,9 +15,130 @@ __date__ = "2021-08-19"
 
 # ==> Import Psi4, NumPy, & SciPy <==
 from curses import def_shell_mode
+import os
 import psi4
 import numpy as np
 import time
+
+#   QED_SCF_TIMING : print a phase breakdown of cqed_rhf     (default 0)
+#
+# `Completed QED-RHF` is ~155 s on c10h8 and does not thread (24 threads buys
+# 4%) -- nothing had ever profiled inside this file.  The accumulators below
+# split it into psi4's own SCF, the AO integral builds, and the per-iteration
+# SCF kernels.  Off by default: it costs a few time.time() calls per iteration
+# and prints a block that existing drivers do not expect.
+_QED_SCF_TIMING = os.environ.get("QED_SCF_TIMING", "0") not in ("0", "", "false")
+_scf_t = {}
+
+#   QED_SCF_JK : build J/K with psi4's JK object          (default 1)
+#   QED_SCF_JK_MEM : doubles of scratch handed to it      (default 1e9 = 8 GB)
+#
+# The conventional (non-density-fitted) branch used to call mints.ao_eri() and
+# hold the whole nbf^4 AO ERI in core -- 8.4 GB and 176-210 s at c10h8 cc-pVDZ
+# dimensions -- purely to contract it twice per SCF iteration.  psi4's JK object
+# does the same contractions from the occupied orbitals, honouring the deck's
+# own SCF_TYPE, so a `pk` deck still gets exact integrals.  Set QED_SCF_JK=0 to
+# restore the dense path.
+_QED_SCF_JK = os.environ.get("QED_SCF_JK", "1") not in ("0", "", "false")
+_QED_SCF_JK_MEM = float(os.environ.get("QED_SCF_JK_MEM", 1e9))
+# QED_SCF_REUSE_JK: reuse the JK object psi4's own SCF already built, instead of
+# calling psi4.core.JK.build() and forming the PK supermatrix a SECOND time.
+# Default 0 = off, so every existing run is unchanged.
+#
+# MEASURED (c10h8/aug-cc-pVDZ, QED_SCF_TIMING=1): QED-RHF is 344.78 s, of which
+# `ao_eri / JK init` is 75.21 s -- and psi4's own timer.dat reports
+# "Total PK formation time 231.800w, 2 CALLS".  That second call IS this JK
+# build: it collapses to 0.001 s under scf_type=direct, which forms no PK.
+# psi4 frees its JK after the SCF (wfn.jk() returns None), but the `save_jk`
+# option keeps it alive and it is fully usable afterwards (probe: C_left_add /
+# compute() / J,K correct).  So set save_jk and take psi4's object.
+# NOT a memory regression: we hold psi4's JK instead of building our own, so at
+# most one PK supermatrix is live either way.
+_QED_SCF_REUSE_JK = os.environ.get("QED_SCF_REUSE_JK", "0") not in ("0", "", "false")
+
+# QED_SCF_GUESS_DF: run psi4's OWN SCF density-fitted, then restore the deck's
+# scf_type before anything else.  psi4's SCF is a GUESS GENERATOR for us -- the
+# only product consumed downstream is `C = np.asarray(wfn.Ca())` (:190, "use
+# canonical RHF orbitals for guess CQED-RHF orbitals"), which the CQED-RHF
+# iterations below re-converge against OUR jk object.
+#
+# THE KNOB DOES NOT DENSITY-FIT THE REFERENCE.  In the coherent-state basis the
+# CASSCF Hamiltonian carries three quantities frozen at the reference:
+#     <d_HF>  = d_exp_el          (:577, from the CONVERGED CQED-RHF density)
+#     d_c     = 1/2 <d_HF>^2      (:580)
+#     d_cmo   = d_el_mo           (:630, from the CONVERGED CQED-RHF orbitals)
+# consumed as helper_PFCI.py:6318-6320 -> self.d_exp/self.d_c/self.d_cmo and
+# used as CONSTANTS of the Hamiltonian (constdouble[3] = self.d_exp - d_diag,
+# helper_PFCI.py:4773).  The CASSCF re-optimises orbitals *within* that
+# Hamiltonian; it does not re-optimise its coherent-state origin.  A
+# density-fitted CQED-RHF would therefore define a DIFFERENT problem, not a
+# worse starting point for the same one.  All three stay exact here because
+# `jk` is built at :281 AFTER scf_type is restored, so every CQED-RHF iteration
+# uses exact integrals -- only the guess is approximate, and a guess is free.
+#
+# MUTUALLY EXCLUSIVE with QED_SCF_REUSE_JK, which hands us psi4's *DF* JK object
+# and so density-fits the reference after all.  Refused below rather than
+# silently preferred, because the failure is a wrong Hamiltonian, not a crash.
+#
+# WHY IT IS WORTH A KNOB (c10h8/aug-cc-pVDZ, nmo 302, QED_SCF_TIMING=1):
+#   default  (pk, reuse off)   psi4 scf 255.4 s + ao_eri/JK init 73.8 s = 341.8
+#   QED_SCF_REUSE_JK=1 (pk)    psi4 scf 255.2 s +                  0.0 s = 268.3
+#   this knob                  psi4 scf ~ 30  s + ao_eri/JK init 73.8 s = ~104
+# psi4's pk SCF pays a PK supermatrix formation AND ~13 iterations against it,
+# when all we take from it is Ca().  Here PK is formed once, by us.
+#
+# psi4's plain-RHF energy IS density-fitted under this knob ("RHF ENERGY" ->
+# helper_PFCI.py:6298 self.rhf_reference_energy, which is stored and never
+# read, but is also printed).  The knob says so on stdout rather than leaving a
+# DF number labelled "Psi4 SCF energy" unremarked.
+#
+# Value: "1"/"df" = df; any other non-zero string is handed to psi4 as the
+# scf_type verbatim (e.g. "disk_df", "mem_df").
+_QED_SCF_GUESS_DF = os.environ.get("QED_SCF_GUESS_DF", "0")
+_QED_SCF_GUESS_DF = None if _QED_SCF_GUESS_DF in ("0", "", "false") else (
+    "df" if _QED_SCF_GUESS_DF in ("1", "true") else _QED_SCF_GUESS_DF)
+if _QED_SCF_GUESS_DF is not None and _QED_SCF_REUSE_JK:
+    raise ValueError(
+        "QED_SCF_GUESS_DF and QED_SCF_REUSE_JK are mutually exclusive: reusing "
+        "psi4's SCF JK object under a density-fitted SCF would density-fit the "
+        "CQED-RHF iterations, and with them <d_HF>, d_c and d_cmo -- the frozen "
+        "coherent-state constants of the CASSCF Hamiltonian.  Pick one.")
+
+#   QED_PSI4_MEM : memory handed to psi4          (default unset = psi4's own)
+#
+# THIS IS NOT A SOLVER KNOB -- it is the companion to NTHREAD (helper_PFCI.py
+# :471) and exists for the same class of defect: a process-wide psi4 default
+# that silently degrades an algorithm the deck asked for.  psi4 defaults to
+# 500 MiB.  At that size a `scf_type pk` deck does NOT get in-core PK -- psi4
+# falls back to `DiskJK: Disk-Based J/K Matrices` and writes the AO integrals
+# out in batches, then re-reads all of them on every SCF iteration.  Measured
+# on c10h8 cc-pVDZ (nbf=180, 1.06 GB of PK integrals, 13 psi4 SCF iterations,
+# 8 threads), psi4.energy("scf") alone:
+#     default 500 MiB (DiskJK)   35.9 s
+#     8 GB     (in-core PK)      14.0 s
+#
+# DELIBERATELY OPT-IN, for the same reason NTHREAD is: the right value is a
+# property of the SYSTEM and the machine, not something this file can guess,
+# and over-promising memory on a shared node is worse than a slow SCF.  Leaving
+# it unset preserves today's exact behaviour for every existing driver.
+#
+# Accepts anything psi4.set_memory does: a byte count ("8e9", "8000000000") or
+# a unit string ("8 GB", "800 MB").
+_QED_PSI4_MEM = os.environ.get("QED_PSI4_MEM")
+if _QED_PSI4_MEM:
+    try:
+        psi4.set_memory(int(float(_QED_PSI4_MEM)))
+    except ValueError:
+        # not a bare number -- hand the string to psi4 to parse the unit
+        psi4.set_memory(_QED_PSI4_MEM)
+
+
+def _tick(key, t0):
+    """Accumulate elapsed time since t0 under `key`; return a fresh timestamp."""
+    now = time.time()
+    if _QED_SCF_TIMING:
+        _scf_t[key] = _scf_t.get(key, 0.0) + (now - t0)
+    return now
 
 
 def b_coefficient(error_vectors):
@@ -29,7 +150,11 @@ def b_coefficient(error_vectors):
     rhs[-1, -1] = -1
     for i in range(len(error_vectors)):
         for j in range(i + 1):
-            b_mat[i, j] = np.dot(error_vectors[i].transpose(), error_vectors[j])
+            # .item(): error_vectors are (N,1) column vectors, so this dot is a
+            # (1,1) array, not a scalar.  numpy <=2.2 squeezed it implicitly on
+            # assignment; numpy >=2.3 raises "setting an array element with a
+            # sequence".  Value-identical to the old implicit squeeze.
+            b_mat[i, j] = np.dot(error_vectors[i].transpose(), error_vectors[j]).item()
             b_mat[j, i] = b_mat[i, j]
     *diis_coeff, _ = np.linalg.solve(b_mat, rhs)
     return diis_coeff
@@ -74,12 +199,52 @@ def cqed_rhf(lambda_vector, molecule_string, psi4_options_dict, canonical_basis=
     mol = psi4.geometry(molecule_string)
     # define options for the calculation
     psi4.set_options(psi4_options_dict)
+    if _QED_SCF_REUSE_JK:
+        # must be set BEFORE the SCF, or psi4 frees the JK when it finishes
+        psi4.set_options({"save_jk": True})
+    # QED_SCF_GUESS_DF: density-fit psi4's SCF, which supplies only the guess
+    # orbitals.  The deck's own scf_type is restored immediately afterwards, so
+    # the jk built at :281 -- and every quantity the coherent-state Hamiltonian
+    # freezes at the reference -- is exact.  See the knob's note above.
+    _deck_scf_type = None
+    if _QED_SCF_GUESS_DF is not None:
+        _deck_scf_type = next(
+            (v for k, v in psi4_options_dict.items() if k.lower() == "scf_type"),
+            psi4.core.get_global_option("SCF_TYPE"))
+        print(f"QED_SCF_GUESS_DF: psi4 SCF runs scf_type={_QED_SCF_GUESS_DF} for "
+              f"the guess orbitals only; scf_type={_deck_scf_type} is restored "
+              f"before the CQED-RHF jk is built.  The 'Psi4 SCF energy' printed "
+              f"below is therefore density-fitted; <d_HF>, d_c and d_cmo are not.",
+              flush=True)
+        psi4.set_options({"scf_type": _QED_SCF_GUESS_DF})
     # run psi4 to get ordinary scf energy and wavefunction object
+    _t = time.time()
     psi4_rhf_energy, wfn = psi4.energy("scf", return_wfn=True)
+    _t = _tick("psi4 scf", _t)
+    if _deck_scf_type is not None:
+        # restore BEFORE mints/JK.build: psi4.core.JK.build() reads the global
+        # SCF_TYPE, and under disk_df it does not merely return a DF object --
+        # it raises "Bad BraKet type in Libint2TwoElectronInt".
+        psi4.set_options({"scf_type": _deck_scf_type})
 
     # Create instance of MintsHelper class
     mints = psi4.core.MintsHelper(wfn.basisset())
-
+    
+    #basisset = wfn.basisset()
+    #mol = basisset.molecule()
+    #ao_idx = 0
+    #for ishell in range(basisset.nshell()):
+    #    shell = basisset.shell(ishell)
+    #    center = shell.ncenter
+    #    am = shell.am  # 0=s, 1=p, 2=d
+    #    nfunc = shell.nfunction  # 1 for s, 3 for p, 5 for d (spherical)
+    #    symbol = mol.symbol(center)
+    #    am_label = 'spdfg'[am]
+    #    
+    #    for f in range(nfunc):
+    #        print(f"AO {ao_idx:3d}: {symbol}{center}  {am_label}  (shell {ishell})")
+    #        ao_idx += 1
+           
     # Grab data from wavfunction
     # number of doubly occupied orbitals
     ndocc = wfn.nalpha()
@@ -97,6 +262,8 @@ def cqed_rhf(lambda_vector, molecule_string, psi4_options_dict, canonical_basis=
     # Ordinary integrals first
     V = np.asarray(mints.ao_potential())
     T = np.asarray(mints.ao_kinetic())
+    _t = _tick("ao 1-e (V,T)", _t)
+    jk = None
     if "df_basis_scf" in psi4_options_dict:
         df_basis_name = psi4_options_dict["df_basis_scf"]
         density_fitting = True
@@ -138,18 +305,27 @@ def cqed_rhf(lambda_vector, molecule_string, psi4_options_dict, canonical_basis=
         naux = aux_basis.nbf()
         nbf = orb_basis.nbf()
         raw_3c_np = np.asarray(raw_3c).reshape(naux, nbf, nbf)
-        
+
         metric_obj = psi4.core.FittingMetric(aux_basis, True)
         metric_obj.form_eig_inverse(1.0e-10)
         J_inv_half = np.asarray(metric_obj.get_metric())
-        
-        # Apply metric: (pq|Q) = J^{-1/2} @ (pq|A)
-        Qpq_reconstructed = np.einsum('QA,Amn->Qmn', J_inv_half, raw_3c_np)
 
-        #diff = np.max(np.abs(Qpq_reconstructed - B_array))
+        # Apply metric: (pq|Q) = J^{-1/2} @ (pq|A)
+        #
+        # B_Q,mn = sum_A Jinv[Q,A] raw[A,m,n] is a single GEMM once the (m,n)
+        # pair index is flattened -- the leading index is the one being
+        # contracted and (m,n) are pure spectators.  Was
+        # np.einsum('QA,Amn->Qmn', ...), which numpy runs as a naive nested
+        # loop over Q,A,m,n with no BLAS and no threading: naux^2 * nbf^2
+        # scalar operations.
+        B_array = (J_inv_half @ raw_3c_np.reshape(naux, nbf * nbf)).reshape(
+            naux, nbf, nbf
+        )
+        del raw_3c, raw_3c_np
+
+        #diff = np.max(np.abs(B_array - B_ref))
         #print(f"Difference: {diff:.2e}")  # Should be ~1e-10 or smaller
 
-        B_array = np.copy(Qpq_reconstructed)
         #Correct contraction for (naux, nbf, nbf) format
         #if B_array.shape == (naux, nbf, nbf):
         #    print("Using Einstein summation: (μν|λσ) = Σ_P B_P^μν * B_P^λσ")
@@ -157,8 +333,32 @@ def cqed_rhf(lambda_vector, molecule_string, psi4_options_dict, canonical_basis=
 
     else:
         density_fitting = False
-        I = np.asarray(mints.ao_eri())
-    print("density_fitting", density_fitting)        
+        if _QED_SCF_JK:
+            # Build J and K through psi4's own JK object instead of
+            # materialising the dense nbf^4 AO ERI.  `I` was used for NOTHING
+            # but the two contractions in the SCF loop and is never returned,
+            # so nothing else in the package sees this change.
+            #
+            # jk_type defaults to the deck's SCF_TYPE, so a `pk` deck still
+            # gets exact (non-density-fitted) integrals -- this is not a
+            # switch to DF.  Measured on c10h8 cc-pVDZ (nbf=180): the
+            # mints.ao_eri() call alone was 176-210 s and the array 8.4 GB.
+            I = None
+            jk = wfn.jk() if _QED_SCF_REUSE_JK else None
+            if jk is None:
+                jk = psi4.core.JK.build(wfn.basisset())
+                jk.set_memory(int(_QED_SCF_JK_MEM))
+                jk.initialize()
+            else:
+                # psi4's SCF already initialised it; re-initialising would
+                # re-form PK, which is the whole cost being avoided here.
+                print("QED_SCF_REUSE_JK: reusing psi4's SCF JK object",
+                      flush=True)
+        else:
+            jk = None
+            I = np.asarray(mints.ao_eri())
+    _t = _tick("ao_eri / JK init", _t)
+    print("density_fitting", density_fitting)
 
 
     # Extra terms for Pauli-Fierz Hamiltonian
@@ -236,11 +436,12 @@ def cqed_rhf(lambda_vector, molecule_string, psi4_options_dict, canonical_basis=
     H = H_0 + Q_ao
 
     # Overlap for DIIS
-    S = mints.ao_overlap()
+    S = np.asarray(mints.ao_overlap())
     # Orthogonalizer A = S^(-1/2) using Psi4's matrix power.
     A = mints.ao_overlap()
     A.power(-0.5, 1.0e-16)
     A = np.asarray(A)
+    _t = _tick("ao dipole/quadrupole/overlap", _t)
 
     print("\nStart SCF iterations:\n")
     t = time.time()
@@ -317,16 +518,47 @@ def cqed_rhf(lambda_vector, molecule_string, psi4_options_dict, canonical_basis=
         # maxiter
         maxiter = 500
         for SCF_ITER in range(1, maxiter + 1):
+            _t = time.time()
             # Build fock matrix: [Szabo:1996] Eqn. 3.154, pp. 141\
-            if density_fitting == False:        
-                J = np.einsum("pqrs,rs->pq", I, D)
-                K = np.einsum("prqs,rs->pq", I, D)
+            if density_fitting == False:
+                if jk is not None:
+                    # D is idempotent (D = Cocc Cocc^T) at every iteration, so
+                    # handing psi4 Cocc reproduces exactly the two contractions
+                    # below with the same D.
+                    jk.C_clear()
+                    jk.C_left_add(psi4.core.Matrix.from_array(Cocc))
+                    jk.compute()
+                    J = np.asarray(jk.J()[0])
+                    K = np.asarray(jk.K()[0])
+                else:
+                    J = np.einsum("pqrs,rs->pq", I, D)
+                    K = np.einsum("prqs,rs->pq", I, D)
             else:
-                Q_temp = np.einsum("Qmn,mn->Q", B_array, D)
-                J = np.einsum("Qpq,Q->pq", B_array, Q_temp)
-                temp1 = np.einsum("Qqs,rs->Qqr", B_array, D)
-                K = np.einsum("Qpr,Qqr->pq", B_array, temp1)
-                
+                # All four contractions below were 2-operand np.einsum calls,
+                # which numpy evaluates as naive nested loops -- no BLAS, no
+                # threading.  The K pair was the expensive one at
+                # naux * nbf^3 scalar operations each.  Rewritten as GEMMs;
+                # `B_flat` and `Cocc` views cost nothing (B_array is
+                # C-contiguous, so the reshape is a view, not a copy).
+                B_flat = B_array.reshape(naux, nbf * nbf)
+
+                # J: contract B with D over the flattened (m,n) pair, then
+                # expand back -- two GEMVs.
+                Q_temp = B_flat @ D.ravel()
+                J = (Q_temp @ B_flat).reshape(nbf, nbf)
+
+                # K: route through the OCCUPIED index instead of the full AO
+                # pair.  D = Cocc Cocc^T at every iteration, so
+                #   K_pq = sum_{Q,r,s} B_Qpr D_rs B_Qqs
+                #        = sum_{Q,i} Bo_Qpi Bo_Qqi,   Bo_Qpi = sum_r B_Qpr C_ri
+                # This is naux*nbf^2*ndocc work instead of naux*nbf^3, and Bo
+                # is ndocc/nbf the size of the old `temp1` intermediate.
+                Bo = (B_array.reshape(naux * nbf, nbf) @ Cocc).reshape(
+                    naux, nbf, ndocc
+                )
+                Bo = Bo.transpose(1, 0, 2).reshape(nbf, naux * ndocc)
+                K = Bo @ Bo.T
+
                 #jk = psi4.core.JK.build_JK(primary_basis, df_basis)
                 #jk.set_memory(int(1e9))
                 #jk.initialize()
@@ -340,18 +572,29 @@ def cqed_rhf(lambda_vector, molecule_string, psi4_options_dict, canonical_basis=
                 ## Compare with your computed J, K
                 #print("J max diff:", np.max(np.abs(J - J_ref)))
                 #print("K max diff:", np.max(np.abs(K - K_ref)))                
+            _t = _tick("  J/K build", _t)
             # Pauli-Fierz 2-e dipole-dipole terms, line 2 of Eq. (12) in [McTague:2021:ChemRxiv]
             # M = np.einsum("pq,rs,rs->pq", l_dot_mu_el, l_dot_mu_el, D)
-            N = np.einsum("pr,qs,rs->pq", d_el_ao, d_el_ao, D)
+            #
+            # N_pq = sum_rs d_pr d_qs D_rs = (d @ D @ d.T)_pq.  Was
+            # np.einsum("pr,qs,rs->pq", d_el_ao, d_el_ao, D): a THREE-operand
+            # einsum, which numpy evaluates as a single nested loop over
+            # p,r,q,s with no BLAS and no threading -- i.e. O(nbf^4) scalar
+            # work for a quantity that is two GEMMs.  2.21 s -> 0.2 ms at
+            # nbf=180 (c10h8 cc-pVDZ).  Same contraction, agrees to 1e-11.
+            N = d_el_ao @ D @ d_el_ao.T
 
             # Build fock matrix: [Szabo:1996] Eqn. 3.154, pp. 141
             # plus Pauli-Fierz terms Eq. (12) in [McTague:2021:ChemRxiv]
             F = H + 2 * J - K - N
             # save current Fock matrix into memory
             fock_list.append(F)
-            diis_e = np.einsum("ij,jk,kl->il", F, D, S) - np.einsum(
-                "ij,jk,kl->il", S, D, F
-            )
+            # FDS - SDF.  The second term is the transpose of the first because
+            # F, D and S are all symmetric, so one triple product suffices.
+            # Was two three-operand einsums, again O(nbf^4) scalar work:
+            # 1.48 s -> 0.3 ms at nbf=180.
+            FDS = F @ D @ S
+            diis_e = FDS - FDS.T
             # turn diis_e into column vector and then save to memory
             error_vector = diis_e.reshape(diis_e.shape[0] * diis_e.shape[0], 1)
             error_list.append(error_vector)
@@ -367,6 +610,7 @@ def cqed_rhf(lambda_vector, molecule_string, psi4_options_dict, canonical_basis=
                 "SCF Iteration %3d: Energy = %4.16f   dE = % 1.5E   dRMS = %1.5E"
                 % (SCF_ITER, SCF_E, (SCF_E - Eold), dRMS)
             )
+            _t = _tick("  DIIS error + energy", _t)
             if (abs(SCF_E - Eold) < E_conv) and (dRMS < D_conv):
                 break
 
@@ -407,12 +651,20 @@ def cqed_rhf(lambda_vector, molecule_string, psi4_options_dict, canonical_basis=
 
             # update Core Hamiltonian
             H = H_0 + Q_ao
+            _t = _tick("  DIIS extrap + eigh + density", _t)
 
             if SCF_ITER == maxiter:
                 psi4.core.clean()
                 raise Exception("Maximum number of SCF cycles exceeded.")
 
         print("Total time for SCF iterations: %.3f seconds \n" % (time.time() - t))
+        if jk is not None:
+            jk.finalize()
+        if _QED_SCF_TIMING:
+            print(" cqed_rhf phase breakdown (%d SCF iterations):" % SCF_ITER)
+            for k, v in _scf_t.items():
+                print("   %-32s %9.3f s" % (k, v))
+            print("   %-32s %9.3f s" % ("TOTAL ACCOUNTED", sum(_scf_t.values())))
         print("QED-RHF   energy: %.8f hartree" % SCF_E)
         print("Psi4  SCF energy: %.8f hartree" % psi4_rhf_energy)
 
