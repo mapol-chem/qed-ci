@@ -477,3 +477,56 @@ The $P = D(\gamma)$ finite-difference leg is validated against this relation to
 reproduce it with the $h^2$ convergence of §5, while the $P = \mathbb{1}$ leg
 continues to regression-test the working-frame quantity and $\kappa\!\cdot\!f$.
 
+## Appendix B. "The transformation acts on H -- why does it still act on Psi?"
+
+The natural objection, and worth answering directly because the answer is a
+one-line fact that is easy to lose sight of.
+
+**A unitary transformation leaves eigenVALUES alone but moves eigenVECTORS.**
+If $H_{\text{CS}} = U^\dagger H U$, then
+
+$$H|\Psi\rangle = E|\Psi\rangle
+\;\Longrightarrow\;
+H_{\text{CS}}\,(U^\dagger|\Psi\rangle) = U^\dagger H U U^\dagger|\Psi\rangle
+= E\,(U^\dagger|\Psi\rangle) .$$
+
+So diagonalising $H_{\text{CS}}$ returns
+$\Psi_{\text{CS}} = U^\dagger\Psi_{\text{lab}}$: the *same physical state* in
+the displaced photon basis, with the same energy but a different component
+vector. Recovering the physical state means applying $U$. And this has
+consequences only because $U$ depends on geometry -- a constant $U$ drops out of
+$\langle\Psi_m|\partial_x|\Psi_n\rangle$ entirely, since $U^\dagger\partial_x U = 0$.
+
+Put physically: "photon number $=0$" in the CS basis means *the field is at its
+displaced equilibrium for this geometry's* $\langle d_{\text{HF}}\rangle$. That
+reference field moves with the nuclei, so the state labelled $|0\rangle$ at $x$
+and the one labelled $|0\rangle$ at $x+h$ are different physical field states.
+A derivative coupling asks how the physical state changes, so it must account
+for the label's meaning shifting underneath it.
+
+**Demonstrated exactly** by `frame_toy_model.py` (numpy/scipy only, no psi4).
+Strip out the electrons and let the dipole be a c-number moving with $x$:
+$H(x) = \omega b^\dagger b - \sqrt{\omega/2}\,d(x)(b+b^\dagger) + d(x)^2/2$.
+Then
+
+| | |
+|---|---|
+| $U^\dagger H(x) U - \omega b^\dagger b$ | 3e-16 -- $H_{\text{CS}}$ is *x-independent* |
+| eigenvalues of $H(x)$ | $n\omega$, x-independent |
+| $d_{\text{CS}}(0,1)$ from eigenvectors of $H_{\text{CS}}$ | **exactly 0** (they are the bare $|n\rangle$ at every $x$) |
+| $d_{\text{lab}}(0,1)$ from eigenvectors of $H(x)$ | **−1.02062072** |
+| $(dz/dx)\langle 0|b^\dagger-b|1\rangle$ | −1.02062073 (residual 5e-09) |
+
+A calculation done entirely inside the CS frame reports *zero* coupling here,
+so dynamics driven by it would predict that a moving nucleus never excites the
+field. The energies are right in both frames, which is exactly why gradients,
+$g$-vectors and MECPs are unaffected and only the NAC is.
+
+**What the model does and does not show.** It is a demonstration, not the
+production path: with electrons, $H_{\text{CS}}$ genuinely does depend on $x$,
+so $d_{\text{CS}}$ is nonzero and carries a real part of the coupling. What the
+model isolates is the piece arising from the *frame* moving, which is missing
+from any calculation performed entirely inside that frame. On the real
+`h2o_cav` case that piece is −0.899 (§7) -- larger than the working-frame
+coupling itself.
+
