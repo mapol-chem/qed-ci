@@ -12,7 +12,7 @@ Written 2026-09-08.
 | finite-difference convergence | error ∝ h², ratios 4.00 / 4.00 over h = 4e-3 → 1e-3 Å |
 | cavity on (ω = 0.121, λ = 0.05, 1 photon), unequal weights 5,2,1 | 1.48e-05, h² ratios 4.00 / 3.99 |
 | QED-HF orbital response (Σ κ_ai f_ai) dropped | 1.6e-02 — **1100× worse, so the term is required** |
-| photon-basis-derivative factor added | ~8.8e-01 — **breaks agreement; off by default (§7)** |
+| photon-basis-derivative factor added | ~9.0e-01 — this is the **frame** term, §7 |
 
 ## 1. Why this is not a numerical gradient
 
@@ -224,9 +224,9 @@ $$\langle m|D(\gamma)|n\rangle = \sqrt{\tfrac{n!}{m!}}\,\gamma^{m-n}
 sentence are measurements.
 
 *Not small:* for `h2o_cav` at h = 1e-3 Å, `d_exp` moves −0.007361 → −0.008198,
-so $\gamma = -1.70\times10^{-3}$ and $\gamma/(2h) = -0.45$. Since the leading
-off-diagonal element is $\langle 0|D|1\rangle = -\gamma + O(\gamma^3)$, the factor
-would contribute at **first** order — O(0.5) on a coupling of order 1.
+so $dz/dx = -0.899$ with $z = \langle d_{\text{HF}}\rangle/\sqrt{2\omega}$. Since the
+leading off-diagonal is $\langle 0|D|1\rangle = -\gamma + O(\gamma^3)$, the factor
+contributes at **first** order — here **larger than the coupling itself**.
 
 *Must not be added:* measured against the analytic coupling (h2o_cav, weights
 5,2,1, h = 1e-3 Å):
@@ -260,35 +260,72 @@ size:
 | term | worth, in the same comparison |
 |---|---|
 | dropping $\kappa\!\cdot\!f$ entirely (`QED_NO_HF_RESPONSE=1`) | 1.6e-02 |
-| adding the photon-basis factor | ~8.8e-01 |
+| adding the photon-basis factor | ~9.0e-01 |
 
 The photon factor is ~55x the *entire* $\kappa\!\cdot\!f$ contribution. A term
 that duplicated $\kappa\!\cdot\!f$ would be of its order. So this is very
 probably not double counting, and an earlier draft of this note saying it was
 is corrected here.
 
-**The likelier reading is a FRAME distinction.** The code works entirely in the
-coherent-state-transformed frame: its Hamiltonian is $U^\dagger H U$ and its
-wavefunction is $U^\dagger\Psi$. Taking overlaps of those transformed objects
-against undisplaced Fock states yields the **working-frame** coupling — and the
-analytic coupling, derived from the same transformed Hamiltonian, is the
-working-frame one as well. That is why they agree, and why the cavity-on
-comparison is a genuine check rather than a tautology. Including the
-displaced-basis factor moves the numerical estimate toward the **lab-frame**
-coupling, a different quantity.
+**The reading is a FRAME distinction, and it is settled, not a matter of
+convention.** $\langle d_{\text{HF}}\rangle(x)$ enters in two distinct roles:
 
-On that reading neither is wrong, but they are not interchangeable: a dynamics
-propagation must use the coupling in the same frame as the Hamiltonian driving
-it. Which frame is wanted is a question about the intended use, not something
-this comparison can settle.
+1. as a *parameter inside* $H_{\text{CS}}$ (the $-\langle d\rangle d_{pq}$,
+   $\tfrac12\langle d\rangle^2$ and $O^{\text{SA}}$ terms). Its geometry
+   dependence through the QED-HF orbitals is what $\kappa\!\cdot\!f$ handles,
+   and §5b shows that works;
+2. as the *definition of the frame*, $U = \exp[z(b^\dagger-b)]$ with
+   $z = \langle d_{\text{HF}}\rangle/\sqrt{2\omega}$. Since
+   $\Psi_{\text{lab}} = U(x)\Psi_{\text{CS}}$ and $U$ depends on $x$,
 
-**What is and is not established.** Established: the two sides share a
-convention, to 1.48e-05 with clean h^2 convergence, and $\kappa\!\cdot\!f$ is
-required within it (1100x, §5 of `test_numerical_nac.py`). NOT established:
-which convention the physics calls for. Agreement cannot distinguish "both are
-the working-frame coupling, correctly" from "both omit the same lab-frame
-term". `--photon-basis-derivative` exists so the alternative can be examined
-without rewriting anything.
+$$d^{mn}_{\text{lab}} = d^{mn}_{\text{CS}} + \frac{dz}{dx}\,
+  \langle \Psi_m^{\text{CS}}|(b^\dagger-b)|\Psi_n^{\text{CS}}\rangle .$$
+
+The analytic Lagrangian differentiates $H_{\text{CS}}$ with
+$\langle d_{\text{HF}}\rangle$ as a parameter, so it produces
+$d_{\text{CS}}$; the FD overlap with $P = \mathbb{1}$ also produces
+$d_{\text{CS}}$. **Neither includes role 2.**
+
+**Verified directly** (`--frame-decomposition`, h2o_cav, 5,2,1, h = 1e-3 Å),
+against the right-hand side computed from the CI vectors and
+$d\langle d_{\text{HF}}\rangle/dx$ alone — i.e. with no reference to our
+analytic code:
+
+| pair | $d_{\text{CS}}$ | $d_{\text{lab}}$ | difference | $\frac{dz}{dx}\langle m|b^\dagger-b|n\rangle$ | residual |
+|---|---|---|---|---|---|
+| 0-1 | +0.010887 | −0.888228 | −0.899115 | −0.899189 | 7.4e-05 |
+| 0-2 | −0.217718 | −0.225018 | −0.007299 | −0.007300 | 8.8e-07 |
+| 1-2 | −0.002637 | −0.002527 | +0.000110 | +0.000110 | 8.3e-08 |
+
+with $dz/dx = -0.899$. On pair 0-1 the frame term is **larger than the coupling
+itself**, so this is not cosmetic. (An earlier draft quoted 0.45; that was a
+one-sided $\gamma$ divided by a two-sided $2h$ — an arithmetic slip, not a code
+defect. The implementation reproduces the identity above.)
+
+**Which frame is physical.** A c-number model settles it: with no electrons,
+$H = \omega b^\dagger b - \sqrt{\omega/2}\,d(x)(b+b^\dagger) + \tfrac12 d(x)^2$
+has exact eigenstates $D(\alpha(x))|n\rangle$, $\alpha = d/\sqrt{2\omega}$, with
+energies $n\omega$ **independent of $x$**. In the CS frame
+$H_{\text{CS}} = \omega b^\dagger b$, the eigenvectors are the fixed
+$|n\rangle$ and $d_{\text{CS}} \equiv 0$. Yet a moving nucleus *does* excite
+the oscillator: $d^{01}_{\text{lab}} = -\partial_x\alpha \neq 0$. Dynamics
+propagated in the CS frame with $d_{\text{CS}}$ would predict no photon
+excitation, ever. Equivalently, transforming the TDSE with a time-dependent
+$U(x(t))$ adds $-i\dot{x}(\partial_x z)(b^\dagger-b)$ to $H_{\text{CS}}$, which
+in the adiabatic basis is exactly the term above.
+
+**So for anything coupled to nuclear motion, the lab-frame coupling is the
+physical one** — unless $\langle d_{\text{HF}}\rangle$ is deliberately frozen at
+a reference geometry, which then degrades the one-photon truncation as the
+geometry moves.
+
+**What is unaffected.** Energies are invariant under a unitary transformation,
+so gradients, $g$-vectors and MECPs are correct as they stand — confirmed
+independently by the finite-difference *gradient* checks. And since
+$h = d\,\Delta E$, the frame difference in $h$ carries a factor $E_m - E_n$ and
+**vanishes at degeneracy**: the branching-plane vector is frame-invariant at a
+conical intersection. Only the NAC carrying the $1/\Delta E$ — the one handed to
+a dynamics code — needs the correction.
 
 ## 8. Usage
 
@@ -308,29 +345,41 @@ unequal weights plus the h² scaling check. Null-tested: under
 the projection defect without reference to any external code, which matters
 because the Molpro comparisons expire with the licence on 2026/09/20.
 
-## 9. The open question, stated plainly
+## 9. Status, and what remains
 
-Everything above is either derived or measured except one thing, and it is the
-thing worth arguing about.
+**Settled.** The frame question of §7 is not a matter of taste: the lab-frame
+coupling is the physical one for anything coupled to nuclear motion, and both
+our analytic route and the $P=\mathbb{1}$ finite-difference route produce the
+working-frame coupling $d_{\text{CS}}$. The relation between them is verified
+to 7.4e-05 against theory (§7), so the displaced-basis leg is correct and is
+the reference for a corrected implementation.
 
-**Established.** The analytic coupling and this finite-difference reference
-agree — cavity off and cavity on, equal and unequal weights — to ~1e-05 with
-clean h² convergence, and cavity-off they both agree with Molpro to ~5e-07.
-Within that shared convention the QED-HF orbital response is required (1100×).
+**Unaffected, and worth stating because it bounds the impact.** Energies,
+gradients, $g$-vectors and MECPs are invariant — a unitary transformation does
+not move eigenvalues, and the FD gradient checks confirm it independently. The
+branching-plane vector $h$ is frame-invariant *at* a conical intersection,
+since the frame term in $h$ carries $E_m - E_n$. So MECP results stand.
 
-**Not established.** Whether that shared convention is the coupling the physics
-calls for. The code works in the coherent-state-transformed frame; both sides
-therefore produce what is naturally called the *working-frame* coupling.
-Including the displaced-basis photon factor would move the numerical estimate
-toward a *lab-frame* coupling — a different quantity, larger by O(0.5) here.
-Agreement between two implementations that share a frame cannot distinguish
+**Outstanding, on the analytic side.** The lab-frame NAC needs one further term
+in the *objective* — not a constraint. The distinction matters: $\kappa\!\cdot\!f$
+and $\mathbf{X}^{\text{HF}}$ are constraints describing how
+$\langle d_{\text{HF}}\rangle$ *responds* implicitly, and they already work; the
+frame term changes *what is being differentiated*. It is the photonic analogue
+of the term already added for the moving AO basis, so the objective gains
 
-  * both are the working-frame coupling, correctly, and that is what is
-    wanted; from
-  * both omit the same lab-frame term.
+$$(E_n - E_m)\,
+  \frac{\langle m|b^\dagger - b|n\rangle}{\sqrt{2\omega}}\,
+  \langle d_{\text{HF}}\rangle$$
 
-Deciding that is a question about the intended use — in particular, a dynamics
-propagation must use the coupling in the same frame as the Hamiltonian that
-drives it — and not something a consistency check can settle.
-`--photon-basis-derivative` switches the alternative on without rewriting
-anything, so the comparison is one command away if it is wanted.
+with the matrix element held fixed as a number from the CI vectors and only
+$\langle d_{\text{HF}}\rangle$ differentiated. The existing $\kappa$ and
+$\mathbf{X}^{\text{HF}}$ machinery then supplies its orbital response
+automatically — one more contribution to $Y^{\text{HF}}$ and to the
+$D^{\text{HF}}$ coefficient, no new constraint. The natural decomposition is
+then $d = d_{\text{CI}} + d_{\text{det}} + d_{\text{photon}}$, the third being
+the photonic counterpart of the second.
+
+**Testing, once that lands.** Keep both finite-difference legs:
+$P=\mathbb{1}$ as the regression test for the working-frame quantity and for
+$\kappa\!\cdot\!f$ (§5b), $P = D(\gamma)$ as the test for the corrected
+lab-frame NAC. Both should show the $h^2$ convergence of §5.

@@ -266,6 +266,70 @@ def align(S):
     return perm, signs, bool(np.any(perm != np.arange(nr)))
 
 
+def frame_decomposition(a):
+    """Check d_lab - d_CS against theory, with no reference to the analytic code.
+
+    The coherent-state transformation U = exp[z (b+ - b)] with
+    z = <d_HF>/sqrt(2 w) depends on geometry, so the working-frame ("CS") and
+    lab-frame states differ and so do their derivative couplings:
+
+        d_lab = d_CS + (dz/dx) <Psi_m|(b+ - b)|Psi_n>
+
+    The right-hand side is computable from the CI vectors and from d(<d_HF>)/dx
+    alone, so this validates the displaced-basis photon overlap against theory
+    rather than against our own analytic gradient -- the two FD legs differ by
+    exactly this, or the photon implementation is wrong.
+    """
+    sd = SYSTEMS[a.system]
+    nr = sd["roots"]
+    w = [float(x) for x in a.weights.split(",")] if a.weights else [1.0] * nr
+    options, cav = build_options(sd, w)
+    psi4.core.be_quiet()
+    psi4.core.set_output_file(f"{a.system}_frame.psi4.out", False)
+    hb = a.delta * BOHR_PER_ANGSTROM
+    pts = {}
+    for lab, dx in (("0", 0.0), ("+", a.delta), ("-", -a.delta)):
+        p = sd["pos"].copy()
+        p[0, 0] += dx
+        pts[lab] = run_point(sd, p, options, cav)
+    ref, np1 = pts["0"], pts["0"]["np1"]
+    n = len(strings(sd, ref["ndocc"]))
+    dz = ((pts["+"]["d_exp"] - pts["-"]["d_exp"]) / (2.0 * hb)
+          / np.sqrt(2.0 * ref["omega"]))
+    B = np.zeros((np1, np1))
+    for q in range(np1):
+        if q + 1 < np1:
+            B[q + 1, q] += np.sqrt(q + 1)          # <p|b^dag|q>
+        if q - 1 >= 0:
+            B[q - 1, q] -= np.sqrt(q)              # -<p|b|q>
+    c = ref["vecs"][:nr].reshape(nr, np1, n, n)
+    Bmn = np.einsum("mpab,pq,nqab->mn", c, B, c)
+    pred = dz * Bmn
+
+    def leg(with_photon):
+        _NO_PHOTON[0] = not with_photon
+        S = {}
+        for sgn in ("+", "-"):
+            Sm = wf_overlap(sd, ref, pts[sgn], photon_sign=a.photon_sign)
+            perm, sg, _ = align(Sm)
+            S[sgn] = Sm[:, perm] * sg[None, :]
+        return (S["+"] - S["-"]) / (2.0 * hb)
+
+    d_cs, d_lab = leg(False), leg(True)
+    print(f"dz/dx = {dz:+.8f}   (z = <d_HF>/sqrt(2w), w = {ref['omega']:.6f})")
+    print(f"{'pair':>6s} {'d_CS':>13s} {'d_lab':>13s} {'d_lab-d_CS':>13s} "
+          f"{'predicted':>13s} {'diff':>11s}")
+    worst = 0.0
+    for i in range(nr):
+        for j in range(i + 1, nr):
+            dd = d_lab[i, j] - d_cs[i, j]
+            worst = max(worst, abs(dd - pred[i, j]))
+            print(f"{i}-{j:<4d} {d_cs[i,j]:13.8f} {d_lab[i,j]:13.8f} "
+                  f"{dd:13.8f} {pred[i,j]:13.8f} {abs(dd-pred[i,j]):11.2e}")
+    print(f"\nWORST OVERALL {worst:.3e}   tol {a.tol:.0e}")
+    return 0 if worst < a.tol else 1
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--system", default="h2o_c1", choices=sorted(SYSTEMS))
@@ -273,6 +337,10 @@ def main():
     ap.add_argument("--delta", type=float, default=1e-3, help="Angstrom")
     ap.add_argument("--components", type=int, default=0)
     ap.add_argument("--tol", type=float, default=1e-3)
+    ap.add_argument("--frame-decomposition", action="store_true",
+                    help="report d_CS, d_lab and the predicted difference "
+                         "(dz/dx)<m|b+ - b|n>, z = <d_HF>/sqrt(2w), instead of "
+                         "comparing to the analytic coupling")
     ap.add_argument("--photon-sign", type=float, default=1.0,
                     help="sign convention of the coherent-state displacement")
     ap.add_argument("--photon-basis-derivative", action="store_true",
@@ -282,6 +350,8 @@ def main():
     a = ap.parse_args()
 
     _NO_PHOTON[0] = not a.photon_basis_derivative
+    if a.frame_decomposition:
+        return frame_decomposition(a)
     sd = SYSTEMS[a.system]
     nr = sd["roots"]
     w = [float(x) for x in a.weights.split(",")] if a.weights else [1.0] * nr

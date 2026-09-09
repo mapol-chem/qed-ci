@@ -160,6 +160,44 @@ def test_qed_hf_orbital_response_is_required(tmp_path):
         f"the diagnostic switch stopped working -- both worth knowing")
 
 
+def test_photon_basis_term_matches_the_frame_relation(tmp_path):
+    """Validate the displaced-basis photon overlap against THEORY, not our code.
+
+    The coherent-state transformation U = exp[z (b+ - b)], z = <d_HF>/sqrt(2w),
+    depends on geometry, so the working-frame and lab-frame states have
+    different derivative couplings:
+
+        d_lab = d_CS + (dz/dx) <Psi_m|(b+ - b)|Psi_n>
+
+    The right-hand side follows from the CI vectors and d(<d_HF>)/dx alone, so
+    this checks the photon implementation without reference to the analytic
+    gradient -- the two finite-difference legs must differ by exactly this.
+
+    Measured (h2o_cav, 5,2,1, h = 1e-3 A): 7.4e-05 / 8.8e-07 / 8.3e-08 across
+    the three pairs, against a d_lab - d_CS of -0.899 on pair 0-1.  Note the
+    two legs differ by MORE than the coupling itself there, which is why the
+    frame choice is not cosmetic.
+    """
+    env = dict(os.environ)
+    env.update({"OMP_NUM_THREADS": "1", "QED_SKIP_GKL": "1",
+                "PYTHONPATH": _SRC + os.pathsep + env.get("PYTHONPATH", "")})
+    env.update(TIGHT)
+    r = subprocess.run(
+        [sys.executable,
+         os.path.join(_SRC, "validation", "numerical_nac_check.py"),
+         "--system", "h2o_cav", "--weights", "5,2,1",
+         "--frame-decomposition", "--delta", DELTA, "--tol", str(TOL)],
+        capture_output=True, text=True, timeout=3600, cwd=str(tmp_path), env=env)
+    assert r.returncode in (0, 1), r.stdout[-3000:] + r.stderr[-2000:]
+    worst = _worst(r.stdout)
+    assert worst < TOL, (
+        f"d_lab - d_CS departs from (dz/dx)<m|b+ - b|n> by {worst:.3e}; the "
+        f"photon overlap or its contraction is wrong\n{r.stdout[-2000:]}")
+    # and the term must be LARGE here, or the test is not exercising anything
+    assert "-0.89" in r.stdout or "0.89" in r.stdout, (
+        "expected an O(0.9) frame difference on pair 0-1:\n" + r.stdout[-2000:])
+
+
 def test_finite_difference_error_scales_as_delta_squared(tmp_path):
     """The residual is TRUNCATION, not disagreement -- and this proves it.
 
