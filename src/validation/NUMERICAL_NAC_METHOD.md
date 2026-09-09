@@ -389,23 +389,39 @@ lab-frame NAC. Both should show the $h^2$ convergence of §5.
 Written out because the result is easy to state and easy to mis-derive, and
 because the one non-obvious step is the one that decides whether it is exact.
 
-The physical (lab) state and the one the code computes are related by the
-coherent-state transformation,
+**Conventions are the paper's**, and both differ from the more common ones in
+ways that matter here:
 
-$$|\Psi_n^{\text{lab}}(x)\rangle = U(x)\,|\Psi_n^{\text{CS}}(x)\rangle,
-\qquad U(x) = e^{z(x)A},\quad A \equiv b^\dagger - b,\quad
-z = \frac{\langle d_{\text{HF}}\rangle(x)}{\sqrt{2\omega}} .$$
+$$\hat H_{\text{CS}} = \hat U_{\text{CS}}\hat H_{\text{PF}}\hat U^\dagger_{\text{CS}},
+\qquad \hat U_{\text{CS}} = e^{z A},\quad A \equiv b^\dagger - b,
+\qquad z = \frac{-\langle \hat d\rangle}{\sqrt{2\omega}} .$$
+
+Note $U$ sits on the **left** in the similarity transformation, and $z$ carries
+a **minus**. Consequently
+
+$$\hat H_{\text{CS}}|\Psi^{\text{CS}}\rangle = E|\Psi^{\text{CS}}\rangle
+\;\Longrightarrow\;
+\hat H_{\text{PF}}\,(U^\dagger|\Psi^{\text{CS}}\rangle)
+ = E\,(U^\dagger|\Psi^{\text{CS}}\rangle),
+\qquad\text{so}\qquad
+|\Psi^{\text{lab}}\rangle = U^\dagger|\Psi^{\text{CS}}\rangle$$
+
+-- $U^\dagger$, not $U$. (Checked numerically: with the paper's $z$,
+$\|UH_{\text{PF}}U^\dagger - \omega b^\dagger b\| = 3.9\times10^{-16}$, and the
+overlap of the true $H_{\text{PF}}$ ground state with $U^\dagger|0\rangle$ is
+1.0000000000 against 0.472 for $U|0\rangle$.)
 
 **1. Product rule.**
 $\partial_x|\Psi_n^{\text{lab}}\rangle
- = (\partial_x U)|\Psi_n^{\text{CS}}\rangle + U|\partial_x\Psi_n^{\text{CS}}\rangle$
+ = (\partial_x U^\dagger)|\Psi_n^{\text{CS}}\rangle
+ + U^\dagger|\partial_x\Psi_n^{\text{CS}}\rangle$
 
-**2. The bra.** $\langle\Psi_m^{\text{lab}}| = \langle\Psi_m^{\text{CS}}|U^\dagger$
+**2. The bra.** $\langle\Psi_m^{\text{lab}}| = \langle\Psi_m^{\text{CS}}|U$
 
-**3. Combine,** using $U^\dagger U = \mathbb{1}$ on the second piece:
+**3. Combine,** using $UU^\dagger = \mathbb{1}$ on the second piece:
 
 $$d^{mn}_{\text{lab}}
- = \langle\Psi_m^{\text{CS}}|\,U^\dagger(\partial_x U)\,|\Psi_n^{\text{CS}}\rangle
+ = \langle\Psi_m^{\text{CS}}|\,U(\partial_x U^\dagger)\,|\Psi_n^{\text{CS}}\rangle
  + \langle\Psi_m^{\text{CS}}|\partial_x\Psi_n^{\text{CS}}\rangle .$$
 
 **4. The step that matters.** $U^\dagger\partial_x U$ appears to need a
@@ -413,9 +429,9 @@ Baker-Campbell-Hausdorff expansion, and does not. The generator $A$ is
 *x-independent* -- only the scalar $z$ moves -- so $\{U(x)\}$ is a
 one-parameter abelian family, $[A,U] = 0$, and
 
-$$\partial_x U = (\partial_x z)\,A\,U
+$$\partial_x U^\dagger = -(\partial_x z)\,A\,U^\dagger
 \qquad\Longrightarrow\qquad
-U^\dagger(\partial_x U) = (\partial_x z)\,A$$
+U(\partial_x U^\dagger) = -(\partial_x z)\,A$$
 
 *exactly*. Were the generator itself x-dependent (a geometry-dependent mode or
 coupling vector), this would instead be an integral of nested commutators and
@@ -424,9 +440,21 @@ the clean result below would not hold.
 **5. Result.**
 
 $$d^{mn}_{\text{lab}} = d^{mn}_{\text{CS}}
+ - \frac{\partial z}{\partial x}\,
+   \langle\Psi_m^{\text{CS}}|(b^\dagger - b)|\Psi_n^{\text{CS}}\rangle
+ \;=\; d^{mn}_{\text{CS}}
  + \frac{1}{\sqrt{2\omega}}
    \frac{\partial\langle d_{\text{HF}}\rangle}{\partial x}\,
    \langle\Psi_m^{\text{CS}}|(b^\dagger - b)|\Psi_n^{\text{CS}}\rangle$$
+
+using $z = -\langle\hat d\rangle/\sqrt{2\omega}$ in the second step.
+
+**A WARNING ABOUT THE TWO SIGNS.** They cancel. Assuming instead the commoner
+$H_{\text{CS}} = U^\dagger H U$ *and* $z = +\langle d\rangle/\sqrt{2\omega}$
+gives the identical final formula -- but getting either one right and the other
+wrong flips the sign of the whole term. Both conventions must be read off the
+same source. (An earlier draft of this note made exactly that pair of errors
+and arrived at the correct answer for compensating wrong reasons.)
 
 **Checks.** $A$ is anti-Hermitian, so the term is antisymmetric in $(m,n)$ as a
 coupling must be, and its diagonal $\langle n|A|n\rangle$ vanishes -- no
@@ -485,13 +513,14 @@ one-line fact that is easy to lose sight of.
 **A unitary transformation leaves eigenVALUES alone but moves eigenVECTORS.**
 If $H_{\text{CS}} = U^\dagger H U$, then
 
-$$H|\Psi\rangle = E|\Psi\rangle
+$$H_{\text{CS}}|\Psi^{\text{CS}}\rangle = E|\Psi^{\text{CS}}\rangle
 \;\Longrightarrow\;
-H_{\text{CS}}\,(U^\dagger|\Psi\rangle) = U^\dagger H U U^\dagger|\Psi\rangle
-= E\,(U^\dagger|\Psi\rangle) .$$
+H_{\text{PF}}\,(U^\dagger|\Psi^{\text{CS}}\rangle)
+= U^\dagger H_{\text{CS}} |\Psi^{\text{CS}}\rangle
+= E\,(U^\dagger|\Psi^{\text{CS}}\rangle) .$$
 
 So diagonalising $H_{\text{CS}}$ returns
-$\Psi_{\text{CS}} = U^\dagger\Psi_{\text{lab}}$: the *same physical state* in
+$\Psi_{\text{CS}} = U\Psi_{\text{lab}}$: the *same physical state* in
 the displaced photon basis, with the same energy but a different component
 vector. Recovering the physical state means applying $U$. And this has
 consequences only because $U$ depends on geometry -- a constant $U$ drops out of
@@ -533,9 +562,11 @@ coupling itself.
 ## Appendix C. The frame term in the paper's notation
 
 Written after seeing the theory section, so this is keyed to its intermediates
-rather than to generic notation. Verify the sign against your own definition of
-$U$ -- the sign used below was pinned *numerically* (§7, 7.4e-05), not derived
-from the paper's convention.
+rather than to generic notation. **The sign below is now derived from the
+paper's own conventions** ($\hat H_{\text{CS}} = \hat U\hat H_{\text{PF}}\hat
+U^\dagger$ with $z = -\langle\hat d\rangle/\sqrt{2\omega}$, Appendix A), and
+agrees with the numerical pinning of §7 to 7.4e-05 and with the exactly
+solvable model to 5.3e-09. It is no longer an open point.
 
 ### C.1 The new intermediate is the antisymmetric twin of $O^{SA}$
 
