@@ -1253,6 +1253,27 @@ def _mp_end(label, t0):
 #                           still had work to do (9.5e-04) is 949x.
 _QED_GRAD_CONV = float(os.environ.get("QED_GRAD_CONV", "1e-6"))
 
+# QED_MACRO_ENERGY_CONV: the macroiteration ENERGY convergence cut, which was
+# hardcoded at 1e-10.  DEFAULT 1e-10 = exactly the previous behaviour; 0
+# disables the energy criterion so the run stops on the GRADIENT alone.
+#
+# WHY IT NEEDS A KNOB.  The energy test is evaluated BEFORE the gradient test
+# and sets convergence on its own, so it SHORT-CIRCUITS QED_GRAD_CONV.  Near a
+# stationary point dE ~ |g|^2 / 2k, so a 1e-10 energy cut corresponds to
+# |g| ~ 1.4e-05: the energy criterion structurally caps the reachable gradient
+# at about 1e-5 and NO SETTING OF QED_GRAD_CONV CAN GO BELOW IT.  Measured on
+# C2H4 distorted to C1, CAS(4,7)/cc-pVDZ, with QED_GRAD_CONV=1e-8: the run
+# stopped at |g| = 2.55e-06 after a step of dE = -6.5e-11, printing
+# "OPTIMIZATION CONVERGED" without ever satisfying the gradient criterion.
+# Molpro reaches 1.3e-12 on the same system.
+#
+# That matters beyond tidiness: E_SA is stationary at the solution but the
+# INDIVIDUAL state energies are not, so stopping 2.6e-06 short splits them by
+# +-5.3e-07 (equal and opposite, average still exact to 1e-12) and moves the
+# state gradients by 3e-06 -- which is what made that system unusable as a
+# regression test against Molpro.
+_QED_MACRO_ENERGY_CONV = float(os.environ.get("QED_MACRO_ENERGY_CONV", "1e-10"))
+
 
 #
 #   QED_GRAD_BLOCKS : build_gradient's contraction off the G blocks (default 0)
@@ -5482,7 +5503,9 @@ class PFHamiltonianGenerator:
                                       new_avg_energy - old_avg_energy,
                                       "-- arming the true-energy test from here on",
                                       flush=True)
-                            if np.abs(new_avg_energy - old_avg_energy) < 1e-10:
+                            if (_QED_MACRO_ENERGY_CONV > 0.0
+                                    and np.abs(new_avg_energy - old_avg_energy)
+                                        < _QED_MACRO_ENERGY_CONV):
                                 convergence = 1
                             # QED_GRAD_CONV (item 244): OR-ed gradient criterion.
                             # _macro_entry_gnorm is the gradient at the start of
