@@ -1274,6 +1274,25 @@ _QED_GRAD_CONV = float(os.environ.get("QED_GRAD_CONV", "1e-6"))
 # regression test against Molpro.
 _QED_MACRO_ENERGY_CONV = float(os.environ.get("QED_MACRO_ENERGY_CONV", "1e-10"))
 
+# QED_MICRO_GRAD_FLOOR / QED_MICRO_ENERGY_FLOOR: the two ABSOLUTE backstops
+# inside microiteration_optimization6.  Defaults 1e-7 and 1e-10 reproduce the
+# previous hardcoded behaviour exactly.
+#
+# The microiteration has an ADAPTIVE test (0.1 * convergence_threshold for the
+# gradient, 0.01 * convergence_threshold for the energy) and, underneath it, an
+# absolute floor.  The gradient floor is unconditional:
+#
+#     if gradient_norm < 1e-7: convergence = 1; break
+#
+# so the inner orbital optimisation cannot drive the reduced gradient below
+# 1e-7 no matter what the outer loop asks for -- and therefore neither can the
+# MACRO gradient.  That is the ~1e-7 floor measured on C2H4 distorted to C1
+# (9.58e-08 at davidson_threshold 1e-9, 9.89e-08 at 1e-11, 9.83e-08 at 1e-13 --
+# invariant in the CI accuracy, and every value sitting just under this cutoff),
+# against Molpro's 1.3e-12 on the same system.
+_QED_MICRO_GRAD_FLOOR = float(os.environ.get("QED_MICRO_GRAD_FLOOR", "1e-7"))
+_QED_MICRO_ENERGY_FLOOR = float(os.environ.get("QED_MICRO_ENERGY_FLOOR", "1e-10"))
+
 
 #
 #   QED_GRAD_BLOCKS : build_gradient's contraction off the G blocks (default 0)
@@ -12282,7 +12301,7 @@ class PFHamiltonianGenerator:
             print("initial convergence threshold", convergence_threshold)
             if (
                 np.abs(current_energy - old_energy)
-                < max(0.01 * convergence_threshold, 1e-10)
+                < max(0.01 * convergence_threshold, _QED_MICRO_ENERGY_FLOOR)
             ) and microiteration >= 2:
                 # if (np.abs(current_energy - old_energy) < 1e-15) and microiteration >=2:
                 print("microiteration converged (small energy change)")
@@ -12792,7 +12811,8 @@ class PFHamiltonianGenerator:
                         convergence = 1
                         # print("Microiteration converged (small gradient norm)")
                         break
-                    if gradient_norm < 1e-7:
+                    if (_QED_MICRO_GRAD_FLOOR > 0.0
+                            and gradient_norm < _QED_MICRO_GRAD_FLOOR):
                         convergence = 1
                         break
                     #print("calling pcg for trust region") 

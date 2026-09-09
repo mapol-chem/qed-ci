@@ -20,35 +20,37 @@ basis, the active space or the state ordering.
 The runs are SUBPROCESSES because the projection knobs are read at import time.
 
 SENSITIVITY -- WHICH LEGS ACTUALLY CATCH THE DEFECT.  Measured by re-running
-the whole module under QED_PROJ_ALL=1, which restores the old projector.  Seven
-of the fourteen parameterised legs fail, i.e. actually guard something:
+the whole module under QED_PROJ_ALL=1, which restores the old projector.  NINE
+of the eighteen parameterised legs fail, i.e. actually guard something, and all
+four systems contribute one gradient and one coupling leg at unequal weights:
 
-    gradients  h2o_c1  5,2,1     FAILS        couplings  h2o_c1  5,2,1   FAILS
-    gradients  h2o_c1b 5,2,1     FAILS        couplings  h2o_c1  28,2,2  FAILS
-    gradients  ch2o_c1 5,2,1     FAILS        couplings  h2o_c1b 5,2,1   FAILS
-                                              couplings  ch2o_c1 5,2,1   FAILS
+    gradients  h2o_c1  5,2,1  FAILS      couplings  h2o_c1  5,2,1   FAILS
+    gradients  h2o_c1b 5,2,1  FAILS      couplings  h2o_c1  28,2,2  FAILS
+    gradients  ch2o_c1 5,2,1  FAILS      couplings  h2o_c1b 5,2,1   FAILS
+    gradients  c2h4_c1 3,1    FAILS      couplings  ch2o_c1 5,2,1   FAILS
+                                         couplings  c2h4_c1 3,1     FAILS
 
-    every 1,1,1 leg              passes -- controls, (W_n - W_m) = 0, MUST pass
-    gradients  h2o_c1  28,2,2    passes -- 5.3e-08 off: genuinely INSENSITIVE
+    every equal-weight leg      passes -- controls, (W_n - W_m) = 0, MUST pass
+    gradients h2o_c1 28,2,2     passes -- 5.3e-08 off: genuinely INSENSITIVE
 
 **The 28,2,2 GRADIENT leg does not catch the defect and its passing proves
 nothing about the projector.**  At 0.875/0.0625/0.0625 the average is close
 enough to state-specific that <c(m)|H~|c(n)> is tiny for the wide-spread pairs.
-It is kept because it pins the VALUE against Molpro at a third weighting, and
-because the 28,2,2 COUPLING leg IS sensitive -- but do not read it as coverage.
+It is kept because it pins the VALUE at a third weighting, and because the
+28,2,2 COUPLING leg IS sensitive -- but do not read it as coverage.
 
 If you add a system or a weighting, RE-RUN THE NULL TEST and record what it
 moves.  A test that cannot fail for the reason it exists creates false
 confidence, which is worse than no test.
 
-C2H4 distorted to C1 was built and measured and is deliberately NOT here: our
-SA-CASSCF cannot converge it.  With the macro energy cut disabled it floors at
-|g| ~ 9.8e-08 -- invariant across four orders of davidson_threshold, so not a
-CI-accuracy limit -- where Molpro reaches 1.3e-12.  E_SA is stationary but the
-individual E_n are not, so that residual splits the state energies by ~3e-08
-and the gradients by more than this module's tolerance.  Deck and Molpro
-reference are banked in ~/mgh_repro_20260804/unequal_weight_sa/ for when the
-optimiser is fixed.
+c2h4_c1 ALSO PINS THE CONVERGENCE KNOBS.  It is the one system here that needs
+non-default settings (see SYSTEMS["c2h4_c1"]["env"]): at the shipped defaults
+two absolute backstops inside microiteration_optimization6 -- a gradient cutoff
+at 1e-7 and an energy floor at 1e-10 -- stop the inner orbital optimisation
+early, the macro gradient floors at ~9.8e-08 instead of reaching ~8e-10, the
+individual state energies drift by 5.3e-07 (equal and opposite, average exact)
+and the gradients move by 4e-06.  If someone re-hardcodes either backstop, this
+system stops matching Molpro and these four legs fail.
 """
 import os
 import subprocess
@@ -66,8 +68,19 @@ _SRC = os.path.dirname(_HERE)
 # Geometries must match the Molpro decks EXACTLY (frame included: no_reorient
 # /nocom here, orient,noorient there).  A rotated frame makes gradient and
 # coupling VECTORS silently incomparable.
-GEOMS = {
-    "h2o_c1": """
+#
+# `env` carries per-system convergence overrides.  c2h4_c1 needs them: at the
+# SHIPPED defaults our SA-CASSCF cannot converge it, because two absolute
+# backstops inside microiteration_optimization6 -- a gradient cutoff at 1e-7
+# and an energy floor at 1e-10 -- stop the inner orbital optimisation before
+# the outer loop's target is reached.  With those lowered it converges to
+# |g| ~ 8e-10 and agrees with Molpro to 4.3e-08 on gradients and 1.2e-07 on
+# couplings; with them at their defaults it floors at |g| ~ 9.8e-08 and the
+# individual state energies drift by 5.3e-07, moving the gradients by 4e-06.
+# The other systems converge at the defaults and set no env, so they keep
+# testing the SHIPPED configuration.
+SYSTEMS = {
+    "h2o_c1": dict(basis="6-31g", nact_orbs=5, nact_els=6, roots=3, env={}, geom="""
 0 1
    O            0.000000000000     0.000000000000    -0.068516219320
    H            0.000000000000    -0.790689573744     0.543701060715
@@ -75,8 +88,8 @@ GEOMS = {
 symmetry c1
 no_reorient
 nocom
-""",
-    "h2o_c1b": """
+"""),
+    "h2o_c1b": dict(basis="6-31g", nact_orbs=5, nact_els=6, roots=3, env={}, geom="""
 0 1
    O            0.000000000000     0.000000000000    -0.068516219320
    H            0.000000000000    -0.850000000000     0.600000000000
@@ -84,8 +97,8 @@ nocom
 symmetry c1
 no_reorient
 nocom
-""",
-    "ch2o_c1": """
+"""),
+    "ch2o_c1": dict(basis="6-31g", nact_orbs=5, nact_els=6, roots=3, env={}, geom="""
 0 1
    C            0.000000000000     0.000000000000    -0.522500000000
    O            0.000000000000     0.000000000000     0.677500000000
@@ -94,7 +107,24 @@ nocom
 symmetry c1
 no_reorient
 nocom
-""",
+"""),
+    "c2h4_c1": dict(basis="cc-pvdz", nact_orbs=7, nact_els=4, roots=2,
+                    env={"QED_MACRO_ENERGY_CONV": "0",
+                         "QED_GRAD_CONV": "1e-9",
+                         "QED_MICRO_GRAD_FLOOR": "1e-12",
+                         "QED_MICRO_ENERGY_FLOOR": "1e-14"},
+                    geom="""
+0 1
+   C       -0.67874677       0.00000002      -0.00000002
+   C        0.67874683      -0.00000004       0.00000001
+   H       -1.19058330       0.92302210       0.13000000
+   H       -1.24058332      -0.92302209       0.00000001
+   H        1.24058327       0.92302208      -0.00000000
+   H        1.24058328      -0.92302208      -0.00000001
+symmetry c1
+no_reorient
+nocom
+"""),
 }
 
 CASES = [(s, w) for s in MOLPRO for w in MOLPRO[s]]
@@ -111,24 +141,24 @@ from nuclear_grad import nuclear_grad
 
 psi4.core.be_quiet()
 geom = '''{geom}'''
-options = dict(basis="6-31g", scf_type="pk", e_convergence=1e-12,
+options = dict(basis="{basis}", scf_type="pk", e_convergence=1e-12,
                d_convergence=1e-12)
 cavity = dict(omega_value=0.0, lambda_vector=np.array([0.0, 0.0, 0.0]),
               ci_level="cas", ignore_coupling=False, number_of_photons=0,
               natural_orbitals=False, photon_number_basis=False,
               canonical_mos=False, coherent_state_basis=True,
-              spin_adaptation="singlet", davidson_roots=3,
-              davidson_threshold=1e-9, davidson_maxdim=30,
+              spin_adaptation="singlet", davidson_roots={roots},
+              davidson_threshold={cithr}, davidson_maxdim=30,
               davidson_maxiter=200, davidson_indim=10, test_mode=False,
-              nact_orbs=5, nact_els=6,
+              nact_orbs={nact_orbs}, nact_els={nact_els},
               casscf_weight=np.array([{weights}]))
 psi4.set_options(options)
 psi4.core.set_output_file("psi4.out", False)
 calc = nuclear_grad(geom, options, cavity)
-for i in range(3):
+for i in range({roots}):
     print("### GRADIENT OF STATE %d" % i, flush=True)
     calc.compute_grad(i, i)
-for (i, j) in [(0, 1), (0, 2), (1, 2)]:
+for (i, j) in [(a, b) for a in range({roots}) for b in range(a + 1, {roots})]:
     print("### COUPLING STATES %d-%d" % (i, j), flush=True)
     calc.compute_grad(i, j, deriv_type="full")
 """
@@ -138,9 +168,14 @@ def _run(system, weights, proj_all, tmp_path):
     env = dict(os.environ)
     env.update({"OMP_NUM_THREADS": "1", "QED_SKIP_GKL": "1",
                 "PYTHONPATH": _SRC + os.pathsep + env.get("PYTHONPATH", "")})
+    sd = SYSTEMS[system]
+    env.update(sd["env"])
     if proj_all is not None:
         env["QED_PROJ_ALL"] = proj_all
-    script = _DRIVER.format(src=_SRC, geom=GEOMS[system],
+    script = _DRIVER.format(src=_SRC, geom=sd["geom"], basis=sd["basis"],
+                            roots=sd["roots"], nact_orbs=sd["nact_orbs"],
+                            nact_els=sd["nact_els"],
+                            cithr="1e-12" if sd["env"] else "1e-9",
                             weights=weights.replace(",", ", "))
     return subprocess.run([sys.executable, "-c", textwrap.dedent(script)],
                           capture_output=True, text=True, timeout=3600,
