@@ -193,22 +193,52 @@ h = 4e-3 / 2e-3 / 1e-3 Å, ratios 4.00 and 3.99 — the same quality as
 cavity-off. So the analytic implementation and this overlap share a convention,
 and the numerical cavity-on coupling is a real check rather than a tautology.
 
-**Why, most likely — and this is the developer's call, not established here.**
-The motion of the coherent-state origin is plausibly already carried by the
-QED-HF orbital response in the Lagrangian: the $\sum_{ai}\kappa_{ai}f_{ai}$ term
-with its $\mathrm{tr}[\mathbf{X}^{\text{HF}}(\mathbf{C}^{\text{HF}}\mathbf{S}
-\mathbf{C}^{\text{HF}\dagger}-\mathbf{1})]$ constraint. If so, a separate
-photon-basis-derivative term double counts it. That is structurally the *same
-trap* as `Y_z` in `nuclear_grad.py` — a legitimate Lagrangian object that must
-nevertheless not be added on top of a contribution already present, and which
-also announced itself as a large, clean, wrong contribution rather than a
-subtle one.
+**What the extra term would be, physically.** The wavefunction has *two*
+geometry-dependent factors,
 
-What this does **not** settle: whether the shared convention is the physically
-complete derivative coupling. The agreement shows the two sides are consistent;
-it cannot by itself distinguish "both correct" from "both missing the same
-term". Deciding that is a question about the Lagrangian, and
-`--photon-basis-derivative` exists so the alternative can be re-examined
+$$|\Psi(x)\rangle = \sum_{I,n} c_{I,n}(x)\,|D_I(x)\rangle \otimes |n\rangle_{\alpha(x)},$$
+
+the determinants (MOs move — handled by §2) and the photon basis (the origin
+moves). Only the second is at issue.
+
+**A double-counting reading against $\kappa\!\cdot\!f$ does not survive the
+magnitudes.** It is tempting — the origin's motion is driven by
+$\langle d_{\text{HF}}\rangle$, a functional of the CQED-HF orbitals whose
+response the Lagrangian already carries — and it is structurally the same shape
+as the `Y_z` trap in `nuclear_grad.py`. But the two terms are not comparable in
+size:
+
+| term | worth, in the same comparison |
+|---|---|
+| dropping $\kappa\!\cdot\!f$ entirely (`QED_NO_HF_RESPONSE=1`) | 1.6e-02 |
+| adding the photon-basis factor | ~8.8e-01 |
+
+The photon factor is ~55x the *entire* $\kappa\!\cdot\!f$ contribution. A term
+that duplicated $\kappa\!\cdot\!f$ would be of its order. So this is very
+probably not double counting, and an earlier draft of this note saying it was
+is corrected here.
+
+**The likelier reading is a FRAME distinction.** The code works entirely in the
+coherent-state-transformed frame: its Hamiltonian is $U^\dagger H U$ and its
+wavefunction is $U^\dagger\Psi$. Taking overlaps of those transformed objects
+against undisplaced Fock states yields the **working-frame** coupling — and the
+analytic coupling, derived from the same transformed Hamiltonian, is the
+working-frame one as well. That is why they agree, and why the cavity-on
+comparison is a genuine check rather than a tautology. Including the
+displaced-basis factor moves the numerical estimate toward the **lab-frame**
+coupling, a different quantity.
+
+On that reading neither is wrong, but they are not interchangeable: a dynamics
+propagation must use the coupling in the same frame as the Hamiltonian driving
+it. Which frame is wanted is a question about the intended use, not something
+this comparison can settle.
+
+**What is and is not established.** Established: the two sides share a
+convention, to 1.48e-05 with clean h^2 convergence, and $\kappa\!\cdot\!f$ is
+required within it (1100x, §5 of `test_numerical_nac.py`). NOT established:
+which convention the physics calls for. Agreement cannot distinguish "both are
+the working-frame coupling, correctly" from "both omit the same lab-frame
+term". `--photon-basis-derivative` exists so the alternative can be examined
 without rewriting anything.
 
 ## 8. Usage

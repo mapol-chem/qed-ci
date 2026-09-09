@@ -57,13 +57,18 @@ h = 4e-3 / 2e-3 / 1e-3 A; ratios 4.00 and 3.99), which is the same quality as
 the cavity-off case.  So the analytic implementation and this overlap use the
 SAME convention, and adding the displaced-basis factor on top breaks it.
 
-The likely reason -- and this is the developer's call, not something measured
-here -- is that the motion of the coherent-state origin is ALREADY carried by
-the QED-HF orbital response in the Lagrangian (the sum_ai kappa_ai f_ai term
-with its HF orthonormality constraint), so a separate photon-basis-derivative
-term would DOUBLE COUNT it.  That is structurally the same trap as the Y_z
-source term in nuclear_grad.py, which is a legitimate Lagrangian object that
-must nevertheless not be added on top of a contribution already present.
+WHY, most likely: a FRAME distinction, not double counting.  The code works
+entirely in the coherent-state-transformed frame -- Hamiltonian U+HU,
+wavefunction U+Psi -- so overlaps of those objects against undisplaced Fock
+states give the WORKING-FRAME coupling, and the analytic coupling, from the
+same transformed Hamiltonian, is the working-frame one too.  Including the
+displaced-basis factor moves the estimate toward the LAB-FRAME coupling, which
+is a different quantity.  Neither is wrong; they are not interchangeable.
+
+A double-counting reading against the QED-HF response (sum_ai kappa_ai f_ai)
+was considered and does NOT fit the magnitudes: dropping that term entirely
+moves the comparison by 1.6e-02, while adding the photon factor moves it by
+~8.8e-01, ~55x larger.  A term duplicating kappa.f would be of its order.
 
 `--photon-basis-derivative` switches the displaced-basis factor on for anyone
 who wants to re-examine that; it is OFF by default because the measurement

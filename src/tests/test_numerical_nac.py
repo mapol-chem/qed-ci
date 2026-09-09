@@ -33,11 +33,12 @@ term would be O(0.5) on a coupling of order 1).  Measured against the analytic
 coupling: treating the photon states as geometry-independent agrees to 1.5e-05
 and converges as h^2, while adding the displaced-basis overlap is off by ~0.9
 with either sign.  The two implementations therefore share a convention, and
-the likely reason -- the developer's call, not something established here -- is
-that the origin's motion is already carried by the QED-HF orbital response
-(the kappa_ai f_ai term with its HF orthonormality constraint), so a separate
-photon-basis term would double count it.  Same trap as the Y_z source in
-nuclear_grad.py.
+the likelier reason is a FRAME distinction: the code works in the
+coherent-state-transformed frame, so both sides produce the WORKING-FRAME
+coupling, while the displaced-basis factor moves toward the LAB-FRAME one.  A
+double-counting reading against the QED-HF response does not fit the
+magnitudes -- dropping kappa.f entirely is worth 1.6e-02, the photon factor
+~8.8e-01.
 
 Method note: validation/NUMERICAL_NAC_METHOD.md
 """
