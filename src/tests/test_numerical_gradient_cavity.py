@@ -125,7 +125,13 @@ def test_convergence_floors_are_what_make_the_per_state_legs_work(tmp_path):
     """
     loose = {"QED_MACRO_ENERGY_CONV": "1e-10", "QED_GRAD_CONV": "1e-6",
              "QED_MICRO_GRAD_FLOOR": "1e-7", "QED_MICRO_ENERGY_FLOOR": "1e-10"}
-    r = _run("5,2,1", 1, tmp_path, extra_env=loose)
+    # NCOMP, not 1.  With one component this samples only O0-X, where the
+    # degradation happens to be 2.2e-08 (state 0) and 1.6e-07 (state 2) -- both
+    # UNDER the threshold below, so the test failed intermittently depending on
+    # run-to-run noise.  The effect lives in the Y and Z components
+    # (3.7e-06 .. 3.6e-05).  A test whose signal depends on which component it
+    # happens to sample is not measuring what it claims to.
+    r = _run("5,2,1", NCOMP, tmp_path, extra_env=loose)
     assert r.returncode in (0, 1), r.stdout[-3000:]
     w = _worsts(r.stdout)
     per_state = [v for k, v in w.items() if k.startswith("STATE ")]
