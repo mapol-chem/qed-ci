@@ -1293,6 +1293,24 @@ _QED_MACRO_ENERGY_CONV = float(os.environ.get("QED_MACRO_ENERGY_CONV", "1e-10"))
 _QED_MICRO_GRAD_FLOOR = float(os.environ.get("QED_MICRO_GRAD_FLOOR", "1e-7"))
 _QED_MICRO_ENERGY_FLOOR = float(os.environ.get("QED_MICRO_ENERGY_FLOOR", "1e-10"))
 
+# QED_MICRO_GRAD_SCALE / QED_MICRO_ENERGY_SCALE: the Kreplin-style RELATIVE part
+# of the same two microiteration tests -- the criterion is a fraction of the
+# convergence_threshold carried in from the macro loop (i.e. of the scaled
+# initial gradient), with the absolute floors above underneath it:
+#
+#     gradient:  gradient_norm < QED_MICRO_GRAD_SCALE * convergence_threshold
+#     energy:    |dE| < max(QED_MICRO_ENERGY_SCALE * convergence_threshold,
+#                           QED_MICRO_ENERGY_FLOOR)
+#
+# Defaults 0.1 and 0.01 are the values that were hardcoded.  They are exposed
+# for the same reason as the floors: the absolute cutoffs existed because the
+# augmented-Hessian subproblem was unreliable at very small gradients, and that
+# constraint is weaker now that the small-gradient case takes a Newton step --
+# so how tightly the microiteration should be driven is a choice worth being
+# able to make per run rather than one baked into the source.
+_QED_MICRO_GRAD_SCALE = float(os.environ.get("QED_MICRO_GRAD_SCALE", "0.1"))
+_QED_MICRO_ENERGY_SCALE = float(os.environ.get("QED_MICRO_ENERGY_SCALE", "0.01"))
+
 
 #
 #   QED_GRAD_BLOCKS : build_gradient's contraction off the G blocks (default 0)
@@ -12301,7 +12319,8 @@ class PFHamiltonianGenerator:
             print("initial convergence threshold", convergence_threshold)
             if (
                 np.abs(current_energy - old_energy)
-                < max(0.01 * convergence_threshold, _QED_MICRO_ENERGY_FLOOR)
+                < max(_QED_MICRO_ENERGY_SCALE * convergence_threshold,
+                      _QED_MICRO_ENERGY_FLOOR)
             ) and microiteration >= 2:
                 # if (np.abs(current_energy - old_energy) < 1e-15) and microiteration >=2:
                 print("microiteration converged (small energy change)")
@@ -12807,7 +12826,9 @@ class PFHamiltonianGenerator:
                     # if (gradient_norm < max(0.1 * convergence_threshold, 1e-8)):
                     # if (gradient_norm < max(0.1 * convergence_threshold, 1e-6) and microiteration > 0):
                     # if (gradient_norm < 1e-5 and microiteration > 0):
-                    if gradient_norm < 0.1 * convergence_threshold and microiteration > 0:
+                    if (gradient_norm
+                            < _QED_MICRO_GRAD_SCALE * convergence_threshold
+                            and microiteration > 0):
                         convergence = 1
                         # print("Microiteration converged (small gradient norm)")
                         break
