@@ -530,3 +530,102 @@ from any calculation performed entirely inside that frame. On the real
 `h2o_cav` case that piece is −0.899 (§7) -- larger than the working-frame
 coupling itself.
 
+## Appendix C. The frame term in the paper's notation
+
+Written after seeing the theory section, so this is keyed to its intermediates
+rather than to generic notation. Verify the sign against your own definition of
+$U$ -- the sign used below was pinned *numerically* (§7, 7.4e-05), not derived
+from the paper's convention.
+
+### C.1 The new intermediate is the antisymmetric twin of $O^{SA}$
+
+The paper already carries
+
+$$O^{SA} = \sum_{IMn} W_n\left(\sqrt{M}\,c^{(n)}_{IM}c^{(n)}_{I,M-1}
+ + \sqrt{M+1}\,c^{(n)}_{IM}c^{(n)}_{I,M+1}\right),$$
+
+which is precisely the state-averaged $\langle b + b^\dagger\rangle$. The frame
+term needs the *antisymmetric* combination, i.e. the same expression between
+states $m$ and $n$ with the plus turned into a minus:
+
+$$\boxed{\;G^{mn} = \sum_{IM}\left(\sqrt{M}\,c^{m}_{IM}c^{n}_{I,M-1}
+ - \sqrt{M+1}\,c^{m}_{IM}c^{n}_{I,M+1}\right)
+ = \langle\Psi^m|(b^\dagger - b)|\Psi^n\rangle\;}$$
+
+Both identifications were checked numerically to 1e-16. Two properties follow
+and both matter:
+
+* **$G^{mn}$ is antisymmetric**, as a contribution to a derivative coupling
+  must be (contrast $O^{SA}$, which is symmetric).
+* **$G^{mm} = 0$ identically.** So the term below is *absent from the gradient
+  Lagrangian*: adding it to the general Lagrangian cannot disturb any
+  gradient, $g$-vector or MECP result. That is the formal counterpart of the
+  numerical observation that only the NAC is affected.
+
+### C.2 The term to add to the objective
+
+$$L \;\longrightarrow\; L \;+\; (E_n - E_m)\,\frac{G^{mn}}{\sqrt{2\omega}}\,
+   \langle d^{HF}\rangle$$
+
+with $G^{mn}$ and $E_n - E_m$ held **fixed** -- they are coefficients, in the
+same sense that $D^{mn}_{rs}$ is a coefficient in the existing
+$(E_n - E_m)D^{mn}_{rs}U_{rs}$ term added for $d^{mn}_{det}$. This is the same
+device, applied to the photonic basis instead of the determinant basis. Note
+$1/\sqrt{2\omega} = \sqrt{\omega/2}/\omega$ if you prefer the paper's
+$\sqrt{\omega/2}$ throughout.
+
+Dividing $L^x$ by $(E_n - E_m)$ as usual returns
+
+$$d^{mn}_{photon} = \frac{G^{mn}}{\sqrt{2\omega}}\,
+  \frac{d\langle d^{HF}\rangle}{dx},$$
+
+giving $d^{mn} = d^{mn}_{CI} + d^{mn}_{det} + d^{mn}_{photon}$, with the third
+standing to the photon basis exactly as the second stands to the determinant
+basis: *the basis moves with the nuclei*.
+
+### C.3 Where it lands -- no new constraint
+
+$\langle d^{HF}\rangle$ already appears in the objective through
+$h'_{pq} = h_{pq} - \tfrac12 q_{pq} - \langle \hat d_e\rangle d_{pq}$, through
+$\sqrt{\omega/2}\langle d^{HF}\rangle O^{SA}$, and through
+$\tfrac12\langle d^{HF}\rangle^2$. The existing $Y^{HF}$ is exactly
+$4\,(\partial E^{(n)}/\partial\langle d^{HF}\rangle)\,d^{HF}_{rs}$ -- compare
+
+$$Y^{HF}_{rs} = -4\left(\mathrm{tr}(\mathbf{d}\mathbf{D}^{(n)})
+ - \sqrt{\tfrac{\omega}{2}}O - \langle d\rangle\right) d^{HF}_{rs}.$$
+
+So the new term contributes through the *same* channel, with no new constraint
+and no new response equation:
+
+1. **CP-QED-HF driver.** $Y^{HF}$ gains
+
+$$\Delta Y^{HF}_{rs} = 4\,(E_n - E_m)\,\frac{G^{mn}}{\sqrt{2\omega}}\;d^{HF}_{rs},$$
+
+   which propagates through Eq. (Eq: full_cphf) into $\kappa$, and then into
+   $X^{HF}$ via Eq. (EQN:X_HF) and into $\Breve{\mathbf{D}}$.
+
+2. **Explicit nuclear derivative.** Since
+   $\langle d^{HF}\rangle = \sum_{\mu\nu} d_{\mu\nu}D^{HF}_{\mu\nu}$, the
+   explicit part contracts $d^x_{\mu\nu}$ with $D^{HF}$, i.e. it adds to the
+   $D^{HF}_{\mu\nu}$ coefficient already collected in the last line of
+   $(D^{pe})^{eff}$:
+
+$$\Delta (D^{pe})^{eff}_{\mu\nu}
+ = (E_n - E_m)\,\frac{G^{mn}}{\sqrt{2\omega}}\;D^{HF}_{\mu\nu}.$$
+
+That is the whole change: one new CI intermediate, one addition to $Y^{HF}$,
+one addition to $(D^{pe})^{eff}$. The $\kappa$ and $\mathbf{X}^{HF}$ machinery
+supplies the orbital response of $\langle d^{HF}\rangle$ automatically, as it
+already does for the three existing $\langle d^{HF}\rangle$-dependent pieces.
+
+### C.4 Consistency checks worth doing on the implementation
+
+* $G^{mm} = 0$ ⇒ every gradient number must be **bitwise unchanged**. If any
+  moves, the term has been added to the wrong Lagrangian.
+* The added objective carries $(E_n - E_m)$, so its contribution to $h^{mn}$
+  **vanishes at degeneracy** ⇒ MECP and branching-plane results unchanged.
+* Against the finite-difference reference: the corrected $d^{mn}$ must match
+  the $P = D(\gamma)$ leg (§7) with the $h^2$ convergence of §5, while the
+  $P = \mathbb{1}$ leg keeps reproducing the uncorrected $d_{CS}$ and
+  $\kappa\!\cdot\!f$ (§5b).
+
