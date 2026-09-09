@@ -3,6 +3,17 @@
 Method note for `numerical_nac_check.py` and `tests/test_numerical_nac.py`.
 Written 2026-09-08.
 
+**Results at a glance** (H2O, CAS(6,5)/6-31G, C1 geometry, SA-3):
+
+| what | result |
+|---|---|
+| cavity off, analytic vs FD overlap | 1.6e-05 (pair 0-1), 1.9e-04 (pair 1-2, whose \|NAC\| ~ 2) |
+| the same analytic value vs Molpro | ~5e-07 — so analytic, Molpro and FD all agree |
+| finite-difference convergence | error ∝ h², ratios 4.00 / 4.00 over h = 4e-3 → 1e-3 Å |
+| cavity on (ω = 0.121, λ = 0.05, 1 photon), unequal weights 5,2,1 | 1.48e-05, h² ratios 4.00 / 3.99 |
+| QED-HF orbital response (Σ κ_ai f_ai) dropped | 1.6e-02 — **1100× worse, so the term is required** |
+| photon-basis-derivative factor added | ~8.8e-01 — **breaks agreement; off by default (§7)** |
+
 ## 1. Why this is not a numerical gradient
 
 A gradient can be checked by differencing energies. A derivative coupling
@@ -71,6 +82,19 @@ with the CI vector reshaped to `(n_alpha, n_beta)`. For H2O CAS(6,5) this is
 **100 small determinants rather than 10 000**, and the cost is negligible next
 to the CASSCF runs themselves.
 
+With a cavity the CI vector carries a photon index as well. The layout is
+**photon-major** — `helper_PFCI` reshapes a CI vector as `(np1, num_det)` at
+`helper_PFCI.py:5098` — so `num_det` then splits into `(n_alpha, n_beta)` and
+the contraction gains one index:
+
+```python
+np.einsum("ipab,pq,aA,bB,jqAB->ij", c_ref, P, D, D, c_dis, optimize=True)
+```
+
+where `P` is the photon overlap. **`P` is the identity by default**, which is
+the substantive question §7 is about — not a simplification made for
+convenience.
+
 *Determinant ordering.* The direct (Davidson) path does not populate
 `self.CASdets` — the string tables live in the C backend — but the ordering is
 reproducible from `generateCASCIDeterminants`: `for alpha in combinations(...):
@@ -135,6 +159,31 @@ Three checks, in increasing order of how much they prove.
    4× per halving shows the numerical estimate is *converging to* the analytic
    value rather than coincidentally near it. It is a test in its own right
    (`test_finite_difference_error_scales_as_delta_squared`).
+
+### 5b. A separate, positive check: the QED-HF orbital response
+
+Agreement between two sides shows they are *consistent*; it does not show that
+a particular term inside one of them is carrying its weight. The
+$\sum_{ai}\kappa_{ai}f_{ai}$ term — the CP-HF response of the QED-HF orbitals,
+with its
+$\mathrm{tr}[\mathbf{X}^{\text{HF}}(\mathbf{C}^{\text{HF}}\mathbf{S}
+\mathbf{C}^{\text{HF}\dagger}-\mathbf{1})]$ constraint — is made falsifiable
+by `QED_NO_HF_RESPONSE=1`, which discards the solved CP-HF response and leaves
+everything else intact.
+
+This works as a test because the finite-difference reference contains the
+CQED-HF response **by construction**: every displaced point re-converges
+CQED-HF from scratch. So if the analytic side dropped that response, the two
+must diverge. Measured (h2o_cav, weights 5,2,1, h = 1e-3 Å):
+
+| | worst \|analytic − numerical\| |
+|---|---|
+| $\kappa\!\cdot\!f$ included (shipped) | 1.476e-05 |
+| $\kappa\!\cdot\!f$ dropped | 1.624e-02 — **1100× worse** |
+
+The term is therefore necessary and correct, not merely present. The CP-HF
+solve only runs when `lambda_vector` is nonzero, so this is a cavity-only
+statement.
 
 ## 6. Error budget
 
@@ -258,3 +307,30 @@ unequal weights plus the h² scaling check. Null-tested: under
 **unequal-weight** leg fails and the equal-weight leg passes — so this catches
 the projection defect without reference to any external code, which matters
 because the Molpro comparisons expire with the licence on 2026/09/20.
+
+## 9. The open question, stated plainly
+
+Everything above is either derived or measured except one thing, and it is the
+thing worth arguing about.
+
+**Established.** The analytic coupling and this finite-difference reference
+agree — cavity off and cavity on, equal and unequal weights — to ~1e-05 with
+clean h² convergence, and cavity-off they both agree with Molpro to ~5e-07.
+Within that shared convention the QED-HF orbital response is required (1100×).
+
+**Not established.** Whether that shared convention is the coupling the physics
+calls for. The code works in the coherent-state-transformed frame; both sides
+therefore produce what is naturally called the *working-frame* coupling.
+Including the displaced-basis photon factor would move the numerical estimate
+toward a *lab-frame* coupling — a different quantity, larger by O(0.5) here.
+Agreement between two implementations that share a frame cannot distinguish
+
+  * both are the working-frame coupling, correctly, and that is what is
+    wanted; from
+  * both omit the same lab-frame term.
+
+Deciding that is a question about the intended use — in particular, a dynamics
+propagation must use the coupling in the same frame as the Hamiltonian that
+drives it — and not something a consistency check can settle.
+`--photon-basis-derivative` switches the alternative on without rewriting
+anything, so the comparison is one command away if it is wanted.
