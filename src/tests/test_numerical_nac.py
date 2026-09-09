@@ -233,6 +233,48 @@ def test_nac_sign_convention(tmp_path):
         f"E[state2] - E[state1].\n{r.stdout[-2000:]}")
 
 
+def test_photon_frame_term_gives_the_lab_frame_coupling(tmp_path):
+    """QED_PHOTON_FRAME=1 must reproduce the LAB-frame finite difference.
+
+    Off (the default) the analytic coupling is the working-frame one and must
+    match the finite difference computed with the photon states treated as
+    geometry-independent.  On, it must match the finite difference computed WITH
+    the displaced-coherent-state photon overlap.  Both legs are checked with no
+    sign freedom, so this pins the magnitude AND the direction of the term.
+
+    Measured (h2o_cav, 5,2,1, h = 1e-3 A, pair 0-1): off gives +0.0108873714
+    against +0.0108865795; on gives -0.8883020832 against -0.8882284376.  The
+    term is larger than the working-frame coupling itself, so a leg that
+    silently stopped contributing would be obvious here.
+    """
+    def run(env_extra, photon_fd):
+        env = dict(os.environ)
+        env.update({"OMP_NUM_THREADS": "1", "QED_SKIP_GKL": "1",
+                    "PYTHONPATH": _SRC + os.pathsep + env.get("PYTHONPATH", "")})
+        env.update(TIGHT)
+        env.update(env_extra)
+        cmd = [sys.executable,
+               os.path.join(_SRC, "validation", "numerical_nac_check.py"),
+               "--system", "h2o_cav", "--weights", "5,2,1", "--sign-check",
+               "--delta", DELTA, "--tol", str(TOL)]
+        if photon_fd:
+            cmd.append("--photon-basis-derivative")
+        return subprocess.run(cmd, capture_output=True, text=True, timeout=3600,
+                              cwd=str(tmp_path), env=env)
+
+    off = run({"QED_PHOTON_FRAME": "0"}, photon_fd=False)
+    assert off.returncode in (0, 1), off.stdout[-3000:]
+    assert _worst(off.stdout) < TOL, (
+        "with the frame term OFF the analytic coupling should be the "
+        f"working-frame one:\n{off.stdout[-2000:]}")
+
+    on = run({"QED_PHOTON_FRAME": "1"}, photon_fd=True)
+    assert on.returncode in (0, 1), on.stdout[-3000:]
+    assert _worst(on.stdout) < TOL, (
+        "with the frame term ON the analytic coupling should be the LAB-frame "
+        f"one, matching the displaced-basis finite difference:\n{on.stdout[-2000:]}")
+
+
 def test_finite_difference_error_scales_as_delta_squared(tmp_path):
     """The residual is TRUNCATION, not disagreement -- and this proves it.
 

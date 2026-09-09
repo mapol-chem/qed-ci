@@ -116,6 +116,32 @@ _QED_NO_HF_RESPONSE = os.environ.get("QED_NO_HF_RESPONSE", "0") not in ("0", "",
 # source Y_z in build_total_gradient.  Purely for testing whether keeping Y_z
 # is a sign problem or a structural one.
 _QED_YZ_SIGN = float(os.environ.get("QED_YZ_SIGN", "1"))
+
+# QED_PHOTON_FRAME: include the photon-basis (coherent-state frame) term in the
+# derivative coupling.  DEFAULT 0 = off, so nothing changes unless asked for.
+#
+# The code works in the coherent-state frame, H_CS = U H_PF U+ with
+# U = exp[z(b+ - b)] and z = -<d_HF>/sqrt(2w).  Because Psi_lab = U+ Psi_CS and
+# U depends on geometry through <d_HF>, the physical (lab-frame) coupling is
+#
+#     d_lab^{mn} = d_CS^{mn} + (1/sqrt(2w)) (d<d_HF>/dx) G^{mn},
+#     G^{mn} = <Psi^m|(b+ - b)|Psi^n>
+#
+# and everything computed from H_CS alone gives d_CS.  G^{mn} is the
+# ANTISYMMETRIC twin of the O^SA intermediate (which is <b + b+>), so
+# G^{mm} = 0 identically and this cannot touch a gradient.
+#
+# It is an OBJECTIVE term, not a constraint: it changes WHAT is differentiated
+# rather than describing how something responds.  Adding
+# (E_n - E_m) G^{mn} <d_HF> / sqrt(2w) to the objective reproduces it, with
+# G^{mn} and the gap held fixed as coefficients.  Since <d_HF> already enters
+# the objective three ways, it lands entirely in the existing scale_factor that
+# multiplies d_hf in Y^HF and one_rdm_hf in (D^pe)^eff -- no new constraint, and
+# the existing kappa / X^HF machinery supplies its orbital response.
+#
+# Derivation, conventions and the finite-difference validation:
+#   validation/NUMERICAL_NAC_METHOD.md  (appendices A and C)
+_QED_PHOTON_FRAME = os.environ.get("QED_PHOTON_FRAME", "0") not in ("0", "", "false")
 import scipy.sparse
 import ortho_script
 import gc
@@ -424,6 +450,8 @@ class nuclear_grad(PFHamiltonianGenerator):
         off_diagonal_constant_z = self.calculate_off_diagonal_photon_constant_z(z_vector, eigenvecs, -1)
         constant_hf = np.einsum("ai,ai->", kappa_matrix, self.d_hf[self.ndocc:,:self.ndocc])
         scale_factor = -self.E_d_state + self.d_exp * (state1 == state2) - self.E_d_Z - self.E_d_z + off_diagonal_constant_state + off_diagonal_constant_z - constant_hf
+        # photon-basis (frame) term -- see QED_PHOTON_FRAME.  Zero by default.
+        scale_factor += self.photon_frame_scale(state1, state2)
 
         #self.one_rdm_pe_eff_ao3 = self.one_rdm_pe_eff_ao + (off_diagonal_constant_state + off_diagonal_constant_z) * one_rdm_hf
         self.one_rdm_pe_eff_ao += scale_factor * one_rdm_hf
@@ -753,13 +781,21 @@ class nuclear_grad(PFHamiltonianGenerator):
         #print("Y_zero", Y_zero)
         Y_z = np.zeros_like(self.eigenvecs)
         if state1 != state2:
-            # QED_YZ_SIGN (diagnostic, default +1): flip the sign of the CI
-            # source term.  It exists to test whether keeping Y_z double counts
-            # because of a SIGN, as opposed to because the term does not belong
-            # in the RHS at all.  If a sign were the issue, one of the two
-            # choices would reproduce the reference; see tests.
-            Y_z[state1] = _QED_YZ_SIGN * -(self.eigenvals[state2] - self.Enuc)/self.weight[state1] * self.eigenvecs[state2]
-            Y_z[state2] = _QED_YZ_SIGN * -(self.eigenvals[state1] - self.Enuc)/self.weight[state2] * self.eigenvecs[state1]
+            # SIGN.  solve3 solves  A x + b = 0  (its docstring, and it passes
+            # b_vector = -reduced_state_gradient to a GMRES whose residual is
+            # b - A x).  The CI stationarity condition is already in that form,
+            #     y~^(n) + (H - E_n) z^(n) - x_n c^(n) + 2 H~ c^(n) = 0,
+            # so b must carry +y~, and y~^(n) = (E_m / W_n) c^(m).  This was
+            # written with a leading minus, i.e. -y~, which is why KEEPING Y_z
+            # used to give twice the coupling instead of the zero that the
+            # (identically vanishing) objective c^m+ H c^n demands.
+            #
+            # It is inert on the default path -- Y_z is projected out below --
+            # but with QED_PROJ_ALL_YZ=0 the corrected sign now yields that
+            # zero, which is the meaningful answer rather than a spurious 2x.
+            # QED_YZ_SIGN=-1 restores the previous behaviour.
+            Y_z[state1] = _QED_YZ_SIGN * (self.eigenvals[state2] - self.Enuc)/self.weight[state1] * self.eigenvecs[state2]
+            Y_z[state2] = _QED_YZ_SIGN * (self.eigenvals[state1] - self.Enuc)/self.weight[state2] * self.eigenvecs[state1]
         #print(Y_z[state1])
         #print(self.eigenvals[state2], self.Enuc)
         #print(np.dot(Y_z[state1], self.eigenvecs[state1]))
@@ -985,6 +1021,39 @@ class nuclear_grad(PFHamiltonianGenerator):
         #A_t[:,:] = 2.0 * np.dot(Z_vector.T, A_temp)
         A_t[:,:self.n_occupied] += 2.0 * np.dot(G, Z_vector[:,:self.n_occupied].flatten()).reshape((self.nmo,self.n_occupied))
     
+    def photon_ladder_antisym(self, state1, state2):
+        """G^{mn} = <Psi^m|(b+ - b)|Psi^n>, the ANTISYMMETRIC twin of O^SA.
+
+        O^SA (calculate_off_diagonal_photon_constant_z) is the state-averaged
+        <b + b+>; this is the same structure with the plus turned into a minus
+        and taken between two states.  Antisymmetric in (m, n), so G^{mm} = 0
+        identically -- which is why the frame term it multiplies is absent from
+        every gradient.
+        """
+        np1 = self.N_p + 1
+        if np1 == 1:
+            return 0.0
+        c_m = np.asarray(self.eigenvecs[state1]).reshape(np1, self.num_det)
+        c_n = np.asarray(self.eigenvecs[state2]).reshape(np1, self.num_det)
+        B = np.zeros((np1, np1))
+        for q in range(np1):
+            if q + 1 < np1:
+                B[q + 1, q] += np.sqrt(q + 1)      # <p|b^dag|q>
+            if q - 1 >= 0:
+                B[q - 1, q] -= np.sqrt(q)          # -<p|b|q>
+        return float(np.einsum("pI,pq,qI->", c_m, B, c_n, optimize=True))
+
+    def photon_frame_scale(self, state1, state2):
+        """(E_n - E_m) G^{mn} / sqrt(2w): the frame term's contribution to
+        d(objective)/d<d_HF>, hence to the scale_factor that multiplies d_hf in
+        Y^HF and one_rdm_hf in (D^pe)^eff.  Zero unless QED_PHOTON_FRAME is on,
+        the states differ, and there is a cavity.
+        """
+        if (not _QED_PHOTON_FRAME) or state1 == state2 or self.omega <= 0.0:
+            return 0.0
+        G = self.photon_ladder_antisym(state1, state2)
+        return (self.eigenvals[state2] - self.eigenvals[state1]) * G / np.sqrt(2.0 * self.omega)
+
     def calculate_off_diagonal_photon_constant_z(self, z_vector, eigenvecs, state):
         off_diagonal_constant = 0.0
         np1 = self.N_p + 1
@@ -1309,6 +1378,8 @@ class nuclear_grad(PFHamiltonianGenerator):
         #print(off_diagonal_constant_state)
         #print(off_diagonal_constant_z)
         scale_factor = -self.E_d_state + off_diagonal_constant_state + self.d_exp * (state1 == state2) - self.E_d_Z - self.E_d_z + off_diagonal_constant_z
+        # photon-basis (frame) term -- see QED_PHOTON_FRAME.  Zero by default.
+        scale_factor += self.photon_frame_scale(state1, state2)
         Y_hf[:,:self.ndocc] = 4.0 * scale_factor * self.d_hf[:,:self.ndocc]
     
     def build_sigma_hf(self, energy_diff, kappa, temp_aibj):
