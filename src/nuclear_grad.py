@@ -111,6 +111,11 @@ _QED_PROJ_ALL_YZ = os.environ.get("QED_PROJ_ALL_YZ", "1") not in ("0", "", "fals
 # term falsifiable.  The CP-HF solve only runs at all when lambda_vector is
 # nonzero, so this is a cavity-only switch.
 _QED_NO_HF_RESPONSE = os.environ.get("QED_NO_HF_RESPONSE", "0") not in ("0", "", "false")
+
+# QED_YZ_SIGN: diagnostic, default +1 (no change).  Flips the sign of the CI
+# source Y_z in build_total_gradient.  Purely for testing whether keeping Y_z
+# is a sign problem or a structural one.
+_QED_YZ_SIGN = float(os.environ.get("QED_YZ_SIGN", "1"))
 import scipy.sparse
 import ortho_script
 import gc
@@ -748,8 +753,13 @@ class nuclear_grad(PFHamiltonianGenerator):
         #print("Y_zero", Y_zero)
         Y_z = np.zeros_like(self.eigenvecs)
         if state1 != state2:
-            Y_z[state1] = -(self.eigenvals[state2] - self.Enuc)/self.weight[state1] * self.eigenvecs[state2]
-            Y_z[state2] = -(self.eigenvals[state1] - self.Enuc)/self.weight[state2] * self.eigenvecs[state1]
+            # QED_YZ_SIGN (diagnostic, default +1): flip the sign of the CI
+            # source term.  It exists to test whether keeping Y_z double counts
+            # because of a SIGN, as opposed to because the term does not belong
+            # in the RHS at all.  If a sign were the issue, one of the two
+            # choices would reproduce the reference; see tests.
+            Y_z[state1] = _QED_YZ_SIGN * -(self.eigenvals[state2] - self.Enuc)/self.weight[state1] * self.eigenvecs[state2]
+            Y_z[state2] = _QED_YZ_SIGN * -(self.eigenvals[state1] - self.Enuc)/self.weight[state2] * self.eigenvecs[state1]
         #print(Y_z[state1])
         #print(self.eigenvals[state2], self.Enuc)
         #print(np.dot(Y_z[state1], self.eigenvecs[state1]))
