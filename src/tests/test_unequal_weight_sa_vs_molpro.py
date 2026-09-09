@@ -19,24 +19,36 @@ basis, the active space or the state ordering.
 
 The runs are SUBPROCESSES because the projection knobs are read at import time.
 
-SENSITIVITY -- WHICH LEGS ACTUALLY CATCH THE DEFECT.  Measured by re-running the
-whole module under QED_PROJ_ALL=1, which restores the old projector:
+SENSITIVITY -- WHICH LEGS ACTUALLY CATCH THE DEFECT.  Measured by re-running
+the whole module under QED_PROJ_ALL=1, which restores the old projector.  Seven
+of the fourteen parameterised legs fail, i.e. actually guard something:
 
-    gradients  1,1,1     passes  -- control, (W_n - W_m) = 0, MUST pass
-    gradients  5,2,1     FAILS   -- 1.0e-01 off
-    gradients  28,2,2    passes  -- 5.3e-08 off: genuinely INSENSITIVE
-    couplings  1,1,1     passes  -- control
-    couplings  5,2,1     FAILS
-    couplings  28,2,2    FAILS
+    gradients  h2o_c1  5,2,1     FAILS        couplings  h2o_c1  5,2,1   FAILS
+    gradients  h2o_c1b 5,2,1     FAILS        couplings  h2o_c1  28,2,2  FAILS
+    gradients  ch2o_c1 5,2,1     FAILS        couplings  h2o_c1b 5,2,1   FAILS
+                                              couplings  ch2o_c1 5,2,1   FAILS
 
-So three of the six catch it.  **The 28,2,2 GRADIENT leg does not, and its
-passing proves nothing about the projector** -- at that weighting the average is
-0.875/0.0625/0.0625, close enough to state-specific that <c(m)|H~|c(n)> is tiny
-for the wide-spread pairs.  It is kept because it pins the VALUE against Molpro
-at a third weighting, and because the 28,2,2 COUPLING leg is sensitive, but do
-not read it as coverage of the defect.  If you add a weighting, re-run the null
-test above and record what it moves; a test that cannot fail for the reason it
-exists creates false confidence.
+    every 1,1,1 leg              passes -- controls, (W_n - W_m) = 0, MUST pass
+    gradients  h2o_c1  28,2,2    passes -- 5.3e-08 off: genuinely INSENSITIVE
+
+**The 28,2,2 GRADIENT leg does not catch the defect and its passing proves
+nothing about the projector.**  At 0.875/0.0625/0.0625 the average is close
+enough to state-specific that <c(m)|H~|c(n)> is tiny for the wide-spread pairs.
+It is kept because it pins the VALUE against Molpro at a third weighting, and
+because the 28,2,2 COUPLING leg IS sensitive -- but do not read it as coverage.
+
+If you add a system or a weighting, RE-RUN THE NULL TEST and record what it
+moves.  A test that cannot fail for the reason it exists creates false
+confidence, which is worse than no test.
+
+C2H4 distorted to C1 was built and measured and is deliberately NOT here: our
+SA-CASSCF cannot converge it.  With the macro energy cut disabled it floors at
+|g| ~ 9.8e-08 -- invariant across four orders of davidson_threshold, so not a
+CI-accuracy limit -- where Molpro reaches 1.3e-12.  E_SA is stationary but the
+individual E_n are not, so that residual splits the state energies by ~3e-08
+and the gradients by more than this module's tolerance.  Deck and Molpro
+reference are banked in ~/mgh_repro_20260804/unequal_weight_sa/ for when the
+optimiser is fixed.
 """
 import os
 import subprocess
@@ -51,7 +63,41 @@ from molpro_unequal_weight_reference import MOLPRO
 _HERE = os.path.dirname(os.path.abspath(__file__))
 _SRC = os.path.dirname(_HERE)
 
-WEIGHTINGS = ["1,1,1", "5,2,1", "28,2,2"]
+# Geometries must match the Molpro decks EXACTLY (frame included: no_reorient
+# /nocom here, orient,noorient there).  A rotated frame makes gradient and
+# coupling VECTORS silently incomparable.
+GEOMS = {
+    "h2o_c1": """
+0 1
+   O            0.000000000000     0.000000000000    -0.068516219320
+   H            0.000000000000    -0.790689573744     0.543701060715
+   H            0.134217000000     0.831145000000     0.601233000000
+symmetry c1
+no_reorient
+nocom
+""",
+    "h2o_c1b": """
+0 1
+   O            0.000000000000     0.000000000000    -0.068516219320
+   H            0.000000000000    -0.850000000000     0.600000000000
+   H            0.134217000000     0.831145000000     0.601233000000
+symmetry c1
+no_reorient
+nocom
+""",
+    "ch2o_c1": """
+0 1
+   C            0.000000000000     0.000000000000    -0.522500000000
+   O            0.000000000000     0.000000000000     0.677500000000
+   H            0.150000000000     0.937000000000    -1.062500000000
+   H            0.000000000000    -0.937000000000    -1.112500000000
+symmetry c1
+no_reorient
+nocom
+""",
+}
+
+CASES = [(s, w) for s in MOLPRO for w in MOLPRO[s]]
 
 # Gradients agree at ~1e-07 and couplings at ~7e-07; 5e-06 leaves room for
 # thread-count and BLAS variation without admitting the 1e-03 defect, which is
@@ -64,15 +110,7 @@ sys.path.insert(0, "{src}")
 from nuclear_grad import nuclear_grad
 
 psi4.core.be_quiet()
-geom = '''
-0 1
-   O            0.000000000000     0.000000000000    -0.068516219320
-   H            0.000000000000    -0.790689573744     0.543701060715
-   H            0.134217000000     0.831145000000     0.601233000000
-symmetry c1
-no_reorient
-nocom
-'''
+geom = '''{geom}'''
 options = dict(basis="6-31g", scf_type="pk", e_convergence=1e-12,
                d_convergence=1e-12)
 cavity = dict(omega_value=0.0, lambda_vector=np.array([0.0, 0.0, 0.0]),
@@ -96,13 +134,14 @@ for (i, j) in [(0, 1), (0, 2), (1, 2)]:
 """
 
 
-def _run(weights, proj_all, tmp_path):
+def _run(system, weights, proj_all, tmp_path):
     env = dict(os.environ)
     env.update({"OMP_NUM_THREADS": "1", "QED_SKIP_GKL": "1",
                 "PYTHONPATH": _SRC + os.pathsep + env.get("PYTHONPATH", "")})
     if proj_all is not None:
         env["QED_PROJ_ALL"] = proj_all
-    script = _DRIVER.format(src=_SRC, weights=weights.replace(",", ", "))
+    script = _DRIVER.format(src=_SRC, geom=GEOMS[system],
+                            weights=weights.replace(",", ", "))
     return subprocess.run([sys.executable, "-c", textwrap.dedent(script)],
                           capture_output=True, text=True, timeout=3600,
                           cwd=str(tmp_path), env=env)
@@ -126,13 +165,17 @@ def _blocks(stdout):
             pair is not None and t.startswith("NAC ") and not t.startswith("NAC * dE"))
         if not want:
             continue
-        rows = []
-        for j in range(i + 1, min(i + 12, len(lines))):
+        # Read every consecutive "Row" line: the atom count is NOT fixed
+        # (water has 3, formaldehyde 4), so stop at the first non-Row line
+        # after the block starts rather than at a hardcoded count.
+        rows, started = [], False
+        for j in range(i + 1, len(lines)):
             if lines[j].startswith("Row "):
+                started = True
                 rows.append([float(x) for x in num.findall(lines[j].split(":", 1)[1])[:3]])
-                if len(rows) == 3:
-                    break
-        if len(rows) != 3:
+            elif started:
+                break
+        if not rows:
             continue
         if state is not None:
             grads.setdefault(state, np.array(rows))
@@ -142,31 +185,32 @@ def _blocks(stdout):
 
 
 @pytest.fixture(scope="module")
-def results(request, tmp_path_factory):
-    """One subprocess per weighting; both gradients and couplings from each."""
+def results(tmp_path_factory):
+    """One subprocess per (system, weighting); gradients AND couplings from each."""
     out = {}
-    for w in WEIGHTINGS:
-        d = tmp_path_factory.mktemp("w" + w.replace(",", ""))
-        r = _run(w, None, d)
-        assert r.returncode == 0, f"weights {w} did not run:\n{r.stdout[-3000:]}"
-        out[w] = _blocks(r.stdout)
+    for system, w in CASES:
+        d = tmp_path_factory.mktemp(system + w.replace(",", ""))
+        r = _run(system, w, None, d)
+        assert r.returncode == 0, (
+            f"{system} weights {w} did not run:\n{r.stdout[-3000:]}")
+        out[(system, w)] = _blocks(r.stdout)
     return out
 
 
-@pytest.mark.parametrize("weights", WEIGHTINGS)
-def test_gradients_match_molpro(weights, results):
-    grads, _ = results[weights]
-    ref = MOLPRO[weights]["grad"]
+@pytest.mark.parametrize("system,weights", CASES)
+def test_gradients_match_molpro(system, weights, results):
+    grads, _ = results[(system, weights)]
+    ref = MOLPRO[system][weights]["grad"]
     for state, want in ref.items():
         got = grads.get(state)
         assert got is not None, f"no gradient printed for state {state}"
         d = np.abs(got - np.array(want)).max()
-        assert d < GTOL, (f"weights {weights} state {state}: max|diff| {d:.3e}\n"
-                          f"ours\n{got}\nmolpro\n{np.array(want)}")
+        assert d < GTOL, (f"{system} weights {weights} state {state}: "
+                          f"max|diff| {d:.3e}\nours\n{got}\nmolpro\n{np.array(want)}")
 
 
-@pytest.mark.parametrize("weights", WEIGHTINGS)
-def test_couplings_match_molpro(weights, results):
+@pytest.mark.parametrize("system,weights", CASES)
+def test_couplings_match_molpro(system, weights, results):
     """Molpro's SA-MC NACME is the NAC WITH the CSF term, NOT scaled by dE.
 
     A derivative coupling carries the arbitrary relative phase of the two CI
@@ -174,15 +218,15 @@ def test_couplings_match_molpro(weights, results):
     differ between codes and between runs.  A global flip is convention, not
     disagreement, so the comparison minimises over both signs.
     """
-    _, nacs = results[weights]
-    ref = MOLPRO[weights]["nac"]
+    _, nacs = results[(system, weights)]
+    ref = MOLPRO[system][weights]["nac"]
     for pair, want in ref.items():
         got = nacs.get(pair)
         assert got is not None, f"no coupling printed for pair {pair}"
         want = np.array(want)
-        d = min(np.abs(s * got - want).max() for s in (1, -1))
-        assert d < GTOL, (f"weights {weights} pair {pair}: max|diff| {d:.3e}\n"
-                          f"ours\n{got}\nmolpro\n{want}")
+        d = min(np.abs(sg * got - want).max() for sg in (1, -1))
+        assert d < GTOL, (f"{system} weights {weights} pair {pair}: "
+                          f"max|diff| {d:.3e}\nours\n{got}\nmolpro\n{want}")
 
 
 def test_project_out_all_reintroduces_the_defect(tmp_path):
@@ -193,10 +237,10 @@ def test_project_out_all_reintroduces_the_defect(tmp_path):
     reachable and the guard above has become untestable -- update it rather than
     deleting it.
     """
-    r = _run("5,2,1", "1", tmp_path)
+    r = _run("h2o_c1", "5,2,1", "1", tmp_path)
     assert r.returncode == 0, r.stdout[-3000:]
     grads, _ = _blocks(r.stdout)
-    ref = MOLPRO["5,2,1"]["grad"]
+    ref = MOLPRO["h2o_c1"]["5,2,1"]["grad"]
     worst = max(np.abs(grads[s] - np.array(ref[s])).max() for s in ref)
     assert worst > 1e-4, (
         f"expected the all-states projection to be visibly wrong, got {worst:.3e}")
@@ -208,9 +252,9 @@ def test_equal_weight_leg_is_insensitive_to_the_projector(tmp_path):
     This is what makes the unequal-weight disagreement attributable to the
     weights rather than to the projector being wrong in general.
     """
-    r = _run("1,1,1", "1", tmp_path)
+    r = _run("h2o_c1", "1,1,1", "1", tmp_path)
     assert r.returncode == 0, r.stdout[-3000:]
     grads, _ = _blocks(r.stdout)
-    ref = MOLPRO["1,1,1"]["grad"]
+    ref = MOLPRO["h2o_c1"]["1,1,1"]["grad"]
     worst = max(np.abs(grads[s] - np.array(ref[s])).max() for s in ref)
     assert worst < GTOL, f"equal-weight leg should be projector-independent, got {worst:.3e}"
