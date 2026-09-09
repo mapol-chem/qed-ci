@@ -63,11 +63,13 @@ TIGHT = {"QED_MACRO_ENERGY_CONV": "0", "QED_GRAD_CONV": "1e-9",
          "QED_MICRO_GRAD_FLOOR": "1e-12", "QED_MICRO_ENERGY_FLOOR": "1e-14"}
 
 
-def _run(weights, ncomp, delta, tmp_path, system="h2o_c1"):
+def _run(weights, ncomp, delta, tmp_path, system="h2o_c1", extra_env=None):
     env = dict(os.environ)
     env.update({"OMP_NUM_THREADS": "1", "QED_SKIP_GKL": "1",
                 "PYTHONPATH": _SRC + os.pathsep + env.get("PYTHONPATH", "")})
     env.update(TIGHT)
+    if extra_env:
+        env.update(extra_env)
     cmd = [sys.executable,
            os.path.join(_SRC, "validation", "numerical_nac_check.py"),
            "--system", system, "--weights", weights,
@@ -125,6 +127,36 @@ def test_cavity_on_nac_matches_analytic(weights, tmp_path):
     assert pairs, "no state pairs parsed:\n" + r.stdout[-3000:]
     for p, d in pairs.items():
         assert d < TOL, f"cavity on, weights {weights}, pair {p}: {d:.3e}"
+
+
+def test_qed_hf_orbital_response_is_required(tmp_path):
+    """The sum_ai kappa_ai f_ai term is NECESSARY, not merely present.
+
+    A term that is present and a term that is right are different claims, and
+    agreement alone only shows the analytic and numerical sides are consistent.
+    This makes it falsifiable: QED_NO_HF_RESPONSE=1 discards the solved CP-HF
+    response and leaves everything else intact, so the coupling must stop
+    matching a finite-difference reference that contains the CQED-HF response
+    BY CONSTRUCTION -- every displaced point re-converges CQED-HF from scratch.
+
+    Measured, cavity on, weights 5,2,1, h = 1e-3 A:
+        kappa.f included   1.476e-05
+        kappa.f dropped    1.624e-02      -- 1100x worse
+
+    The CP-HF solve only runs when lambda_vector is nonzero, so this is a
+    cavity-only statement; with no cavity kappa is zero anyway.
+    """
+    ok = _run("5,2,1", 1, DELTA, tmp_path, system="h2o_cav")
+    assert ok.returncode in (0, 1), ok.stdout[-3000:]
+    without = _run("5,2,1", 1, DELTA, tmp_path, system="h2o_cav",
+                   extra_env={"QED_NO_HF_RESPONSE": "1"})
+    assert without.returncode in (0, 1), without.stdout[-3000:]
+    w_ok, w_no = _worst(ok.stdout), _worst(without.stdout)
+    assert w_ok < TOL, f"cavity-on coupling should agree, got {w_ok:.3e}"
+    assert w_no > 100 * w_ok, (
+        f"dropping the QED-HF orbital response barely changed the coupling "
+        f"({w_ok:.3e} -> {w_no:.3e}); either the term stopped contributing or "
+        f"the diagnostic switch stopped working -- both worth knowing")
 
 
 def test_finite_difference_error_scales_as_delta_squared(tmp_path):

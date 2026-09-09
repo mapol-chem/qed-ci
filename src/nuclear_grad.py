@@ -104,6 +104,13 @@ _QED_PROJ_ALL = os.environ.get("QED_PROJ_ALL", "0") not in ("0", "", "false")
 # DEFAULT 1 = project_out_all = the historical behaviour, which the references
 # confirm.  Set 0 only to reproduce the A/B.
 _QED_PROJ_ALL_YZ = os.environ.get("QED_PROJ_ALL_YZ", "1") not in ("0", "", "false")
+
+# QED_NO_HF_RESPONSE: diagnostic.  Zero the solved CP-HF (QED-HF orbital)
+# response, dropping the sum_ai kappa_ai f_ai contribution to the gradient and
+# coupling.  DEFAULT OFF; it is not a physics option, it exists to make that
+# term falsifiable.  The CP-HF solve only runs at all when lambda_vector is
+# nonzero, so this is a cavity-only switch.
+_QED_NO_HF_RESPONSE = os.environ.get("QED_NO_HF_RESPONSE", "0") not in ("0", "", "false")
 import scipy.sparse
 import ortho_script
 import gc
@@ -2646,6 +2653,16 @@ class nuclear_grad(PFHamiltonianGenerator):
                 residual = solver_sym3.update_subspace_and_extrapolate(trial_c, sigma2)
                 #print("residual after linear rm")
             kappa[:] = self.cp_hf_solution
+            if _QED_NO_HF_RESPONSE:
+                # DIAGNOSTIC ONLY (default off).  Discards the solved CP-HF
+                # response, i.e. drops the sum_ai kappa_ai f_ai contribution
+                # while leaving everything else intact.  It exists so that term
+                # can be shown to MATTER rather than merely be present: with it
+                # dropped, the cavity-on coupling must stop matching a
+                # finite-difference reference that contains the CQED-HF
+                # response by construction (every displaced point re-converges
+                # CQED-HF).  See tests/test_numerical_nac.py.
+                kappa[:] = 0.0
         else:
             kappa[:] = 0.0 
         #print("kappa", kappa)        
