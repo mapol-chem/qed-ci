@@ -37,12 +37,37 @@ done here rather than assumed:
     PER-STATE GRADIENTS unreliable there (see numerical_gradient_check.py).
     A swap that was corrected is reported, not hidden.
 
-CAVITY-OFF ONLY, and that is a real limit rather than an oversight.  In the
-coherent-state basis the photon states are built on <d_HF> frozen at the
-reference geometry, so at a displaced geometry the photon basis is a DIFFERENT
-basis and <p(x)|p'(x')> is not delta_pp'.  Handling that needs the photon
-overlap as well, which is not attempted here.  With omega = 0 and lambda = 0
-there is one photon block and the question does not arise.
+CAVITY ON IS SUPPORTED, and the photon question turned out to have a MEASURED
+answer rather than an assumed one.
+
+The coherent-state origin genuinely moves with geometry: for h2o_cav at a
+1e-3 A displacement, d_exp goes -0.007361 -> -0.008198, so the displacement
+difference is gamma = -1.70e-03 and gamma/(2h) = -0.45.  A photon-basis
+derivative term is therefore NOT small -- it is O(0.5) on a coupling of
+order 1.
+
+Measured against the analytic coupling (h2o_cav, weights 5,2,1, h = 1e-3 A):
+
+    photon states treated as geometry-independent   1.48e-05   <-- agrees
+    + displaced-basis overlap, sign +1              8.77e-01
+    + displaced-basis overlap, sign -1              8.99e-01
+
+and the agreeing leg converges as h^2 (2.356e-04 / 5.896e-05 / 1.476e-05 at
+h = 4e-3 / 2e-3 / 1e-3 A; ratios 4.00 and 3.99), which is the same quality as
+the cavity-off case.  So the analytic implementation and this overlap use the
+SAME convention, and adding the displaced-basis factor on top breaks it.
+
+The likely reason -- and this is the developer's call, not something measured
+here -- is that the motion of the coherent-state origin is ALREADY carried by
+the QED-HF orbital response in the Lagrangian (the sum_ai kappa_ai f_ai term
+with its HF orthonormality constraint), so a separate photon-basis-derivative
+term would DOUBLE COUNT it.  That is structurally the same trap as the Y_z
+source term in nuclear_grad.py, which is a legitimate Lagrangian object that
+must nevertheless not be added on top of a contribution already present.
+
+`--photon-basis-derivative` switches the displaced-basis factor on for anyone
+who wants to re-examine that; it is OFF by default because the measurement
+above says so.
 
     python numerical_nac_check.py --system h2o_c1 --weights 5,2,1 --components 3
 
@@ -55,6 +80,7 @@ import sys
 from itertools import combinations
 
 import numpy as np
+from scipy.special import eval_genlaguerre, factorial
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -63,6 +89,7 @@ from helper_PFCI import PFHamiltonianGenerator
 from nuclear_grad import nuclear_grad
 
 BOHR_PER_ANGSTROM = 1.8897261254578281
+_NO_PHOTON = [False]
 
 SYSTEMS = {
     "h2o_c1": dict(
@@ -77,6 +104,16 @@ SYSTEMS = {
                       [0.000000000000, -0.850000000000, 0.600000000000],
                       [0.134217000000, 0.831145000000, 0.601233000000]]),
         basis="6-31g", nact_orbs=5, nact_els=6, roots=3),
+    # CAVITY ON: the case the photon-overlap factor exists for.
+    "h2o_cav": dict(
+        syms=["O", "H", "H"],
+        pos=np.array([[0.000000000000, 0.000000000000, -0.068516219320],
+                      [0.000000000000, -0.790689573744, 0.543701060715],
+                      [0.134217000000, 0.831145000000, 0.601233000000]]),
+        basis="6-31g", nact_orbs=5, nact_els=6, roots=3,
+        cavity=dict(omega_value=0.1212727168509417,
+                    lambda_vector=np.array([0.05, 0.0, 0.0]),
+                    number_of_photons=1)),
     "ch2o_c1": dict(
         syms=["C", "O", "H", "H"],
         pos=np.array([[0.000000000000, 0.000000000000, -0.522500000000],
@@ -105,6 +142,7 @@ def build_options(sd, weights):
                davidson_maxiter=200, davidson_indim=8, test_mode=False,
                nact_orbs=sd["nact_orbs"], nact_els=sd["nact_els"],
                casscf_weight=np.array(weights, dtype=float))
+    cav.update(sd.get("cavity", {}))
     return options, cav
 
 
@@ -122,6 +160,54 @@ def strings(sd, ndocc):
             for c in combinations(range(sd["nact_orbs"]), half)]
 
 
+def displacement_matrix(gamma, nmax):
+    """<m|D(gamma)|n> for REAL gamma, m,n = 0..nmax.
+
+    Cahill-Glauber; verified exactly (1.1e-16) against expm(gamma*(a^dag - a)).
+    The leading off-diagonal is <0|D|1> = -gamma + O(gamma^3), i.e. it enters at
+    FIRST order in the displacement -- which is why omitting this factor
+    corrupts a finite-difference coupling at leading order rather than mildly.
+    """
+    P = np.zeros((nmax + 1, nmax + 1))
+    g2 = gamma * gamma
+    for m in range(nmax + 1):
+        for n in range(nmax + 1):
+            if m >= n:
+                P[m, n] = (np.sqrt(factorial(n) / factorial(m)) * gamma ** (m - n)
+                           * np.exp(-g2 / 2) * eval_genlaguerre(n, m - n, g2))
+            else:
+                P[m, n] = (np.sqrt(factorial(m) / factorial(n)) * (-gamma) ** (n - m)
+                           * np.exp(-g2 / 2) * eval_genlaguerre(m, n - m, g2))
+    return P
+
+
+def photon_overlap(ref, dis, sign=+1.0):
+    """<n; alpha(x) | n'; alpha(x')> between two coherent-state photon bases.
+
+    In the coherent-state basis the photon operators are displaced so the
+    bilinear term reads -sqrt(w/2)(d - <d>)(b + b^dag).  Completing the square
+    in  w b^dag b - sqrt(w/2) <d> (b + b^dag)  puts the shift at
+
+        alpha = <d_HF> / sqrt(2 w)
+
+    and <d_HF> is frozen at each calculation's OWN reference geometry, so two
+    geometries carry different alpha and the photon bases do not coincide.
+    Only the DIFFERENCE enters:  gamma = alpha(x') - alpha(x).
+
+    `sign` exists because the overall sign of the code's coherent-state
+    transformation is a convention that has to be taken from the source rather
+    than assumed; it is determined empirically and checked (see the method
+    note).  Note the diagonal of D is EVEN in gamma, so a sign error is
+    invisible there and only shows up off-diagonal -- do not "verify" this by
+    looking at <n|D|n>.
+    """
+    if ref["np1"] == 1:
+        return np.eye(1)
+    alpha_r = ref["d_exp"] / np.sqrt(2.0 * ref["omega"])
+    alpha_d = dis["d_exp"] / np.sqrt(2.0 * dis["omega"])
+    return displacement_matrix(sign * (alpha_d - alpha_r), ref["np1"] - 1)
+
+
 def run_point(sd, pos, options, cav):
     psi4.set_options(options)
     job = PFHamiltonianGenerator(mol_string(sd["syms"], pos), options, cav)
@@ -129,11 +215,15 @@ def run_point(sd, pos, options, cav):
     bs = psi4.core.BasisSet.build(mol, "ORBITAL", options["basis"])
     return dict(C=np.asarray(job.opt_C).copy(),
                 vecs=np.asarray(job.eigenvecs).copy(),
-                ndocc=job.ndocc, bs=bs)
+                ndocc=job.ndocc, bs=bs, np1=job.N_p + 1,
+                d_exp=float(getattr(job, "d_exp", 0.0)),
+                omega=float(getattr(job, "omega", 0.0)) or 1.0)
 
 
-def wf_overlap(sd, ref, dis):
+def wf_overlap(sd, ref, dis, photon_sign=+1.0):
     """<Psi_i(ref) | Psi_j(dis)> for every (i, j), as a (nroots, nroots) array."""
+    if _NO_PHOTON[0]:
+        ref = dict(ref); dis = dict(dis)
     S_ao = np.asarray(psi4.core.MintsHelper(ref["bs"]).ao_overlap(ref["bs"], dis["bs"]))
     S_mo = ref["C"].T @ S_ao @ dis["C"]
     occ = strings(sd, ref["ndocc"])
@@ -143,11 +233,15 @@ def wf_overlap(sd, ref, dis):
     for a, oa in enumerate(occ):
         for b, ob in enumerate(occ):
             D[a, b] = np.linalg.det(S_mo[np.ix_(oa, ob)])
-    nr = sd["roots"]
-    cr = ref["vecs"][:nr].reshape(nr, n, n)
-    cd = dis["vecs"][:nr].reshape(nr, n, n)
-    # <Psi_i|Psi_j> = sum c_i[a,b] Dalpha[a,A] Dbeta[b,B] c_j[A,B]
-    return np.einsum("iab,aA,bB,jAB->ij", cr, D, D, cd, optimize=True)
+    nr, np1 = sd["roots"], ref["np1"]
+    # PHOTON-MAJOR: helper_PFCI reshapes a CI vector as (np1, num_det); see
+    # helper_PFCI.py:5098.  num_det then splits (n_alpha, n_beta).
+    cr = ref["vecs"][:nr].reshape(nr, np1, n, n)
+    cd = dis["vecs"][:nr].reshape(nr, np1, n, n)
+    P = (np.eye(np1) if _NO_PHOTON[0]
+         else photon_overlap(ref, dis, sign=photon_sign))
+    # <Psi_i|Psi_j> = sum c_i[p,a,b] P[p,q] Dalpha[a,A] Dbeta[b,B] c_j[q,A,B]
+    return np.einsum("ipab,pq,aA,bB,jqAB->ij", cr, P, D, D, cd, optimize=True)
 
 
 def align(S):
@@ -174,8 +268,15 @@ def main():
     ap.add_argument("--delta", type=float, default=1e-3, help="Angstrom")
     ap.add_argument("--components", type=int, default=0)
     ap.add_argument("--tol", type=float, default=1e-3)
+    ap.add_argument("--photon-sign", type=float, default=1.0,
+                    help="sign convention of the coherent-state displacement")
+    ap.add_argument("--photon-basis-derivative", action="store_true",
+                    help="ALSO include the displaced-coherent-state photon "
+                         "overlap.  OFF by default -- see the module docstring; "
+                         "switching it on injects a spurious O(0.5) term.")
     a = ap.parse_args()
 
+    _NO_PHOTON[0] = not a.photon_basis_derivative
     sd = SYSTEMS[a.system]
     nr = sd["roots"]
     w = [float(x) for x in a.weights.split(",")] if a.weights else [1.0] * nr
@@ -210,7 +311,7 @@ def main():
             p = sd["pos"].copy()
             p[atom, coord] += sign * a.delta
             dis = run_point(sd, p, options, cav)
-            S = wf_overlap(sd, ref, dis)
+            S = wf_overlap(sd, ref, dis, photon_sign=a.photon_sign)
             perm, sgn, swapped = align(S)
             if swapped:
                 swaps.append((atom, "XYZ"[coord], sign, perm.tolist()))

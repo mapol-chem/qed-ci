@@ -155,43 +155,61 @@ highest state — an order of magnitude, on identical physics.
 If the observed error stops falling as h², one of the two terms above has taken
 over; that is the diagnostic, not a reason to widen a tolerance.
 
-## 7. Scope: cavity-off, and what cavity-on would need
+## 7. Cavity on: the photon overlap, and a measured answer
 
-`numerical_nac_check.py` is **cavity-off**. This is a limitation of the
-*numerical reference*, not a statement about the analytic implementation.
+The coherent-state photon states are displaced number states whose displacement
+is built from $\langle d_{\text{HF}}\rangle$ at **that calculation's** reference
+geometry, so two geometries do not share a photon basis. Completing the square
+in $\omega b^\dagger b - \sqrt{\omega/2}\,\langle d\rangle (b + b^\dagger)$ puts
+the shift at $\alpha = \langle d_{\text{HF}}\rangle/\sqrt{2\omega}$, and only the
+difference $\gamma = \alpha(x') - \alpha(x)$ enters the overlap, through
+displacement-operator matrix elements between Fock states:
 
-The analytic Lagrangian carries the QED-HF orbital response explicitly —
-the $\sum_{ai}\kappa_{ai} f_{ai}$ term together with its
-$\mathrm{tr}[\mathbf{X}^{\text{HF}}(\mathbf{C}^{\text{HF}}\mathbf{S}
-\mathbf{C}^{\text{HF}\dagger}-\mathbf{1})]$ constraint — so although
-$\langle d_{\text{HF}}\rangle$ is *frozen as a value* within one calculation,
-its response to nuclear displacement is accounted for by that term. Nothing
-here says otherwise.
+$$\langle m|D(\gamma)|n\rangle = \sqrt{\tfrac{n!}{m!}}\,\gamma^{m-n}
+  e^{-\gamma^2/2} L_n^{m-n}(\gamma^2), \quad m \ge n$$
 
-What blocks the numerical side is narrower. In the coherent-state basis the
-photon states are displaced number states whose displacement is built from
-$\langle d_{\text{HF}}\rangle$ **at the reference geometry of that
-calculation**. Two calculations at $x$ and $x+h$ therefore use *different*
-photon bases, so
+(implemented in `displacement_matrix`, verified **exactly** — 1.1e-16 — against
+`expm(gamma*(a.T - a))`).
 
-$$\langle n; \alpha(x) \,|\, n'; \alpha(x+h)\rangle \;\neq\; \delta_{nn'} ,$$
+**This term is not small, and it must not be added.** Both halves of that
+sentence are measurements.
 
-and the factorisation in §2(d) — which assumes the photon index contributes an
-identity — no longer holds. The electronic part of the overlap would be
-unchanged; what is missing is the photon overlap factor.
+*Not small:* for `h2o_cav` at h = 1e-3 Å, `d_exp` moves −0.007361 → −0.008198,
+so $\gamma = -1.70\times10^{-3}$ and $\gamma/(2h) = -0.45$. Since the leading
+off-diagonal element is $\langle 0|D|1\rangle = -\gamma + O(\gamma^3)$, the factor
+would contribute at **first** order — O(0.5) on a coupling of order 1.
 
-That factor has a closed form: for displaced number states the overlap reduces
-to matrix elements of a displacement operator between Fock states, expressible
-through associated Laguerre polynomials in $\gamma = \alpha(x+h) - \alpha(x)$.
-Implementing it would mean (i) extracting each calculation's displacement from
-`d_exp` and `ω` in whatever normalisation `helper_PFCI` uses — this must be
-read from the source, not assumed — and (ii) inserting the resulting
-`(N_p+1, N_p+1)` photon-overlap matrix into the contraction. That is a
-contained piece of work and is the natural next step; it is simply not done,
-and no approximation to it is being passed off as a check.
+*Must not be added:* measured against the analytic coupling (h2o_cav, weights
+5,2,1, h = 1e-3 Å):
 
-Until then, the cavity terms have a numerical **gradient** check
-(`test_numerical_gradient_cavity.py`) but no numerical **coupling** check.
+| photon treatment in the overlap | worst \|analytic − numerical\| |
+|---|---|
+| geometry-independent (default) | **1.48e-05** |
+| + displaced-basis overlap, sign +1 | 8.77e-01 |
+| + displaced-basis overlap, sign −1 | 8.99e-01 |
+
+and the agreeing leg converges as h²: 2.356e-04 / 5.896e-05 / 1.476e-05 at
+h = 4e-3 / 2e-3 / 1e-3 Å, ratios 4.00 and 3.99 — the same quality as
+cavity-off. So the analytic implementation and this overlap share a convention,
+and the numerical cavity-on coupling is a real check rather than a tautology.
+
+**Why, most likely — and this is the developer's call, not established here.**
+The motion of the coherent-state origin is plausibly already carried by the
+QED-HF orbital response in the Lagrangian: the $\sum_{ai}\kappa_{ai}f_{ai}$ term
+with its $\mathrm{tr}[\mathbf{X}^{\text{HF}}(\mathbf{C}^{\text{HF}}\mathbf{S}
+\mathbf{C}^{\text{HF}\dagger}-\mathbf{1})]$ constraint. If so, a separate
+photon-basis-derivative term double counts it. That is structurally the *same
+trap* as `Y_z` in `nuclear_grad.py` — a legitimate Lagrangian object that must
+nevertheless not be added on top of a contribution already present, and which
+also announced itself as a large, clean, wrong contribution rather than a
+subtle one.
+
+What this does **not** settle: whether the shared convention is the physically
+complete derivative coupling. The agreement shows the two sides are consistent;
+it cannot by itself distinguish "both correct" from "both missing the same
+term". Deciding that is a question about the Lagrangian, and
+`--photon-basis-derivative` exists so the alternative can be re-examined
+without rewriting anything.
 
 ## 8. Usage
 

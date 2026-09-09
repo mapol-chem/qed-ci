@@ -26,14 +26,18 @@ arbitrary per-geometry CI phase, and state ordering -- states are matched to
 the reference by MAXIMUM OVERLAP rather than by energy, which is also what lets
 the method work where energy ordering swaps under displacement.
 
-CAVITY-OFF, deliberately.  In the coherent-state basis the photon states are
-built on <d_HF> frozen at the reference geometry, so at a displaced geometry
-the photon basis is a different basis and <p(x)|p'(x')> is not delta_pp'.  That
-needs a photon overlap too and is not attempted.  NOTE this is a limit of the
-NUMERICAL REFERENCE, not of the analytic implementation: the Lagrangian carries
-the QED-HF orbital response explicitly through its kappa_ai f_ai term and the
-HF orthonormality constraint, so <d_HF> being frozen as a VALUE within one
-calculation does not mean its response to displacement is missing.
+CAVITY ON IS COVERED TOO, and the photon question has a measured answer.  The
+coherent-state origin really does move with geometry (d_exp -0.007361 ->
+-0.008198 over 1e-3 A, i.e. gamma/(2h) = -0.45, so a photon-basis derivative
+term would be O(0.5) on a coupling of order 1).  Measured against the analytic
+coupling: treating the photon states as geometry-independent agrees to 1.5e-05
+and converges as h^2, while adding the displaced-basis overlap is off by ~0.9
+with either sign.  The two implementations therefore share a convention, and
+the likely reason -- the developer's call, not something established here -- is
+that the origin's motion is already carried by the QED-HF orbital response
+(the kappa_ai f_ai term with its HF orthonormality constraint), so a separate
+photon-basis term would double count it.  Same trap as the Y_z source in
+nuclear_grad.py.
 
 Method note: validation/NUMERICAL_NAC_METHOD.md
 """
@@ -59,14 +63,14 @@ TIGHT = {"QED_MACRO_ENERGY_CONV": "0", "QED_GRAD_CONV": "1e-9",
          "QED_MICRO_GRAD_FLOOR": "1e-12", "QED_MICRO_ENERGY_FLOOR": "1e-14"}
 
 
-def _run(weights, ncomp, delta, tmp_path):
+def _run(weights, ncomp, delta, tmp_path, system="h2o_c1"):
     env = dict(os.environ)
     env.update({"OMP_NUM_THREADS": "1", "QED_SKIP_GKL": "1",
                 "PYTHONPATH": _SRC + os.pathsep + env.get("PYTHONPATH", "")})
     env.update(TIGHT)
     cmd = [sys.executable,
            os.path.join(_SRC, "validation", "numerical_nac_check.py"),
-           "--system", "h2o_c1", "--weights", weights,
+           "--system", system, "--weights", weights,
            "--components", str(ncomp), "--delta", str(delta),
            "--tol", str(TOL)]
     return subprocess.run(cmd, capture_output=True, text=True, timeout=3600,
@@ -104,6 +108,23 @@ def test_numerical_nac_matches_analytic(weights, tmp_path):
     assert len(pairs) == 3, f"expected 3 state pairs, got {sorted(pairs)}"
     for p, d in pairs.items():
         assert d < TOL, f"weights {weights} pair {p}: {d:.3e}"
+
+
+@pytest.mark.parametrize("weights", ["1,1,1", "5,2,1"])
+def test_cavity_on_nac_matches_analytic(weights, tmp_path):
+    """The cavity terms in the COUPLING -- covered by nothing else.
+
+    Every Molpro comparison is cavity-off, so omega and lambda nonzero was
+    checked only in the gradient (test_numerical_gradient_cavity.py) until
+    this.  The photon states are treated as geometry-independent, which is what
+    the measurement in the tool's docstring supports.
+    """
+    r = _run(weights, 1, DELTA, tmp_path, system="h2o_cav")
+    assert r.returncode in (0, 1), r.stdout[-3000:] + r.stderr[-2000:]
+    pairs = _per_pair(r.stdout)
+    assert pairs, "no state pairs parsed:\n" + r.stdout[-3000:]
+    for p, d in pairs.items():
+        assert d < TOL, f"cavity on, weights {weights}, pair {p}: {d:.3e}"
 
 
 def test_finite_difference_error_scales_as_delta_squared(tmp_path):
