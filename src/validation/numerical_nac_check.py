@@ -284,6 +284,8 @@ def frame_decomposition(a):
     nr = sd["roots"]
     w = [float(x) for x in a.weights.split(",")] if a.weights else [1.0] * nr
     options, cav = build_options(sd, w)
+    if a.photons > 0:
+        cav["number_of_photons"] = a.photons
     psi4.core.be_quiet()
     psi4.core.set_output_file(f"{a.system}_frame.psi4.out", False)
     hb = a.delta * BOHR_PER_ANGSTROM
@@ -337,6 +339,10 @@ def main():
     ap.add_argument("--delta", type=float, default=1e-3, help="Angstrom")
     ap.add_argument("--components", type=int, default=0)
     ap.add_argument("--tol", type=float, default=1e-3)
+    ap.add_argument("--photons", type=int, default=0,
+                    help="override number_of_photons (N_p); 0 = the system default. "
+                         "Use it to check that the frame term CONVERGES with N_p "
+                         "rather than tracking the truncation.")
     ap.add_argument("--frame-decomposition", action="store_true",
                     help="report d_CS, d_lab and the predicted difference "
                          "(dz/dx)<m|b+ - b|n>, z = <d_HF>/sqrt(2w), instead of "

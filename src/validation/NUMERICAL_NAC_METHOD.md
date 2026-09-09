@@ -703,13 +703,58 @@ the first is a retraction:
    gradient at any truncation. §C.1 stands independently of this section.
 
 The frame term's *derivation* (Appendix A) also assumes exact unitarity, so it
-carries corrections of roughly the size above. The measured residual in §7 is
-7.4e-05, i.e. smaller, so either the effect partly cancels in the difference
-$d_{\text{lab}} - d_{\text{CS}}$ or $\|DD^T-\mathbb{1}\|$ overstates its impact
-on this particular matrix element.
+could in principle carry corrections of that order. **It does not -- measured,
+not argued.** Rerunning `--frame-decomposition` at increasing $N_p$
+(h2o_cav, weights 5,2,1, $h = 10^{-3}$ Å, pair 0-1):
 
-**The clean test is $N_p$ convergence.** If the frame term is physical its value
-must settle as $N_p$ increases; if it drifts, what is being measured is the
-truncation. That is worth running before the term is relied on in print, and it
-is cheap -- rerun `--frame-decomposition` at `number_of_photons` = 1, 2, 3.
+| $N_p$ | $|d_{\text{CS}}|$ | $|d_{\text{lab}}-d_{\text{CS}}|$ | residual vs theory |
+|---|---|---|---|
+| 1 | 0.01088658 | 0.89911502 | 7.43e-05 |
+| 2 | 0.00757510 | **0.89913249** | 7.43e-05 |
+| 3 | 0.00758623 | **0.89913249** | 7.43e-05 |
+| 4 | 0.00758623 | **0.89913249** | 7.43e-05 |
+
+Three things follow. The **frame term is converged to eight digits by
+$N_p = 2$**, so it is physics and not an artefact of the truncation. The
+**residual is pinned at 7.43e-05 across all $N_p$**, identifying it as the
+finite-difference $O(h^2)$ error of §5 rather than a photon-truncation effect --
+so the concern above, while correct in principle, is not what limits this
+comparison. And, incidentally, **$d_{\text{CS}}$ is the badly converged
+quantity**: 43% off at $N_p = 1$, where the frame term is already right to
+2e-05.
+
+### C.6 "So the gradient is in the CS frame and the NAC in the lab frame -- is that consistent?"
+
+It is, and the framing is what makes it look otherwise.
+
+**The gradient is not a frame choice.** Energies coincide between frames, so
+$dE_n/dx$ is the *same quantity* either way; there is nothing to decide. The
+NAC *is* a frame choice, because wavefunctions transform where eigenvalues do
+not. A decision exists only in one of the two places.
+
+The consistency is easiest to see by naming the states. The CS-truncated
+calculation produces approximate **physical** states
+$|\Phi_n(x)\rangle = U^\dagger(x)|\Psi^{\text{CS}}_n(x)\rangle$. The energies
+and gradients you compute are those of $|\Phi_n\rangle$. The physical coupling
+between the *same* states is $\langle\Phi_m|\partial_x\Phi_n\rangle
+= d_{\text{lab}}$. What $d_{\text{CS}}$ measures is the coupling between the
+**coefficient vectors** in the displaced basis, which is not the coupling
+between physical states.
+
+So the consistent pair is $(E_n,\ d_{\text{lab}})$, both referring to the same
+objects. The gradient is already there; the coupling is not yet. Adding the
+frame term does not mix frames -- it removes a mismatch.
+
+The toy model of Appendix B is the sharpest illustration: physical states
+$D(\alpha(x))|n\rangle$, energies $n\omega$, gradient zero (correct in both
+frames), coupling $-\partial_x\alpha \neq 0$. Pairing $(n\omega, d_{\text{CS}}
+= 0)$ would predict that a moving nucleus never excites the field, while the
+states themselves manifestly carry a moving displacement.
+
+**There is a second self-consistent option**, worth knowing about rather than
+adopting: keep the CS coefficient vectors as the dynamical basis and use
+$d_{\text{CS}}$ -- but then the nuclear Hamiltonian must also carry the
+$-i\dot{x}(\partial_x z)(b^\dagger - b)$ term that the time-dependent
+transformation generates. That is legitimate but nonstandard, and a dynamics
+code written for the adiabatic picture will expect $d_{\text{lab}}$.
 
