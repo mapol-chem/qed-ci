@@ -29,7 +29,13 @@ the method work where energy ordering swaps under displacement.
 CAVITY-OFF, deliberately.  In the coherent-state basis the photon states are
 built on <d_HF> frozen at the reference geometry, so at a displaced geometry
 the photon basis is a different basis and <p(x)|p'(x')> is not delta_pp'.  That
-needs a photon overlap too and is not attempted.
+needs a photon overlap too and is not attempted.  NOTE this is a limit of the
+NUMERICAL REFERENCE, not of the analytic implementation: the Lagrangian carries
+the QED-HF orbital response explicitly through its kappa_ai f_ai term and the
+HF orthonormality constraint, so <d_HF> being frozen as a VALUE within one
+calculation does not mean its response to displacement is missing.
+
+Method note: validation/NUMERICAL_NAC_METHOD.md
 """
 import os
 import re

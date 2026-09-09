@@ -45,6 +45,9 @@ overlap as well, which is not attempted here.  With omega = 0 and lambda = 0
 there is one photon block and the question does not arise.
 
     python numerical_nac_check.py --system h2o_c1 --weights 5,2,1 --components 3
+
+FULL METHOD NOTE, including the error budget, the h^2 validation and what a
+cavity-on extension would require: validation/NUMERICAL_NAC_METHOD.md
 """
 import argparse
 import os
