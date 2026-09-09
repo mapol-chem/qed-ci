@@ -620,7 +620,21 @@ $\langle d^{HF}\rangle$ already appears in the objective through
 $h'_{pq} = h_{pq} - \tfrac12 q_{pq} - \langle \hat d_e\rangle d_{pq}$, through
 $\sqrt{\omega/2}\langle d^{HF}\rangle O^{SA}$, and through
 $\tfrac12\langle d^{HF}\rangle^2$. The existing $Y^{HF}$ is exactly
-$4\,(\partial E^{(n)}/\partial\langle d^{HF}\rangle)\,d^{HF}_{rs}$ -- compare
+$4\,(\partial E^{(n)}/\partial\langle d^{HF}\rangle)\,d^{HF}_{rs}$, where the
+factor 4 is
+
+$$\frac{\partial\langle d^{HF}\rangle}{\partial U^{HF}_{rs}}
+ = \underbrace{2}_{\text{double occupancy}}\times
+   \underbrace{(d_{rs}+d_{sr})}_{U \text{ in bra AND ket}}
+ = 4\,d_{rs}\quad (s\ \text{occupied}),$$
+
+since $\langle d^{HF}\rangle = 2\sum_i (C^\dagger d C)_{ii}$ and the dipole
+integrals are symmetric. (Verified numerically: $4d_{rs}$ reproduces
+$\partial\langle d^{HF}\rangle/\partial U_{rs}$ to 6.4e-10, while $2d_{rs}$ is
+wrong by 3.5.) It is consistent with all three
+$\langle d^{HF}\rangle$-dependent pieces of the objective. **Confirm what your
+$d^{HF}_{rs}$ denotes** -- the bare integral $d_{rs}$, as assumed here, or
+something already carrying a factor; the 4 moves accordingly. Compare
 
 $$Y^{HF}_{rs} = -4\left(\mathrm{tr}(\mathbf{d}\mathbf{D}^{(n)})
  - \sqrt{\tfrac{\omega}{2}}O - \langle d\rangle\right) d^{HF}_{rs}.$$
@@ -659,4 +673,43 @@ already does for the three existing $\langle d^{HF}\rangle$-dependent pieces.
   the $P = D(\gamma)$ leg (§7) with the $h^2$ convergence of §5, while the
   $P = \mathbb{1}$ leg keeps reproducing the uncorrected $d_{CS}$ and
   $\kappa\!\cdot\!f$ (§5b).
+
+### C.5 A caveat: in a finite photon basis $U$ is not unitary
+
+$\hat U_{\text{CS}}$ is unitary on the full Fock space. Truncated at $N_p$ it is
+not, and the deviation is not always negligible:
+
+| | $\|DD^{T}-\mathbb{1}\|_{\max}$, $N_p = 1$ |
+|---|---|
+| $\gamma = 1.7\times10^{-3}$ (the finite-difference step) | 5.8e-06 |
+| $\|z\| = 0.0149$ (the actual h2o_cav displacement) | **4.5e-04** |
+
+So in a finite basis the CS and lab frames are genuinely **different variational
+ansätze** -- $\mathrm{span}\{D(z)|n\rangle\}$ versus $\mathrm{span}\{|n\rangle\}$
+-- and their energies are not formally identical. Three consequences, and only
+the first is a retraction:
+
+1. The claim made earlier in this note that "energies are unitary invariants, so
+   gradients and MECPs are unaffected" is **exact only in the complete-basis
+   limit**; at finite $N_p$ it holds to the truncation error above.
+2. That does *not* make the computed gradient wrong. The whole calculation is
+   done in one frame: $E_{\text{CS}}$ is the variational energy of the CS
+   ansatz and the Lagrangian returns its exact derivative. And the CS ansatz is
+   the *better* one at fixed $N_p$ -- which is the entire reason for the
+   transformation -- so frame dependence here means "one basis is better", not
+   "the answer is ambiguous".
+3. **The statement that matters needs no invariance argument at all.**
+   $G^{mm} = 0$ is pure algebra, so adding the frame term cannot change any
+   gradient at any truncation. §C.1 stands independently of this section.
+
+The frame term's *derivation* (Appendix A) also assumes exact unitarity, so it
+carries corrections of roughly the size above. The measured residual in §7 is
+7.4e-05, i.e. smaller, so either the effect partly cancels in the difference
+$d_{\text{lab}} - d_{\text{CS}}$ or $\|DD^T-\mathbb{1}\|$ overstates its impact
+on this particular matrix element.
+
+**The clean test is $N_p$ convergence.** If the frame term is physical its value
+must settle as $N_p$ increases; if it drifts, what is being measured is the
+truncation. That is worth running before the term is relied on in print, and it
+is cheap -- rerun `--frame-decomposition` at `number_of_photons` = 1, 2, 3.
 
