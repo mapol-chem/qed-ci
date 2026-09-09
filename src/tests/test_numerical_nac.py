@@ -198,6 +198,41 @@ def test_photon_basis_term_matches_the_frame_relation(tmp_path):
         "expected an O(0.9) frame difference on pair 0-1:\n" + r.stdout[-2000:])
 
 
+def test_nac_sign_convention(tmp_path):
+    """Pin the SIGN of the coupling -- which no other test here can see.
+
+    A NAC carries the arbitrary phase of the CI vectors, so any comparison
+    between two independent calculations must allow an overall sign, and every
+    other check in this suite does.  That makes them all blind to a systematic
+    sign error, which is how an inverted energy denominator survived: the
+    theory has d^{mn}_CI = h^{mn}/(E^n - E^m) with m = state1, n = state2, and
+    nuclear_grad computed h0/(E[state1] - E[state2]).
+
+    --sign-check removes the freedom by using ONE nuclear_grad object both for
+    the analytic coupling and as the bra of the finite-difference overlap, so
+    both routes share a set of CI vectors and their signs are comparable.
+    Measured after the fix: 1.58e-05 / 1.33e-06 / 1.58e-05 across the three
+    pairs, agreeing in sign; before it, the analytic was the exact negative.
+    """
+    env = dict(os.environ)
+    env.update({"OMP_NUM_THREADS": "1", "QED_SKIP_GKL": "1",
+                "PYTHONPATH": _SRC + os.pathsep + env.get("PYTHONPATH", "")})
+    env.update(TIGHT)
+    r = subprocess.run(
+        [sys.executable,
+         os.path.join(_SRC, "validation", "numerical_nac_check.py"),
+         "--system", "h2o_c1", "--weights", "5,2,1", "--sign-check",
+         "--delta", DELTA, "--tol", str(TOL)],
+        capture_output=True, text=True, timeout=3600, cwd=str(tmp_path), env=env)
+    assert r.returncode in (0, 1), r.stdout[-3000:] + r.stderr[-2000:]
+    worst = _worst(r.stdout)
+    assert worst < TOL, (
+        f"analytic and finite-difference couplings disagree by {worst:.3e} with "
+        f"NO sign freedom allowed.  A value near twice the coupling means the "
+        f"energy denominator has been inverted again -- it must be "
+        f"E[state2] - E[state1].\n{r.stdout[-2000:]}")
+
+
 def test_finite_difference_error_scales_as_delta_squared(tmp_path):
     """The residual is TRUNCATION, not disagreement -- and this proves it.
 

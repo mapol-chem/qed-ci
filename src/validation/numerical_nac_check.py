@@ -266,6 +266,62 @@ def align(S):
     return perm, signs, bool(np.any(perm != np.arange(nr)))
 
 
+def sign_check(a):
+    """Pin the SIGN of the NAC, which every other comparison here cannot see.
+
+    A derivative coupling carries the arbitrary phase of the CI vectors, so any
+    comparison between two independent calculations must allow an overall sign
+    -- and every other check in this file does.  That makes them blind to a
+    systematic sign error, which is exactly how an inverted energy denominator
+    survived: d^{mn}_CI = h^{mn}/(E^n - E^m), and the code had
+    E[state1] - E[state2].
+
+    The fix is to remove the freedom: use the SAME nuclear_grad object both for
+    the analytic coupling and as the bra of the finite-difference overlap, so
+    both routes refer to one set of CI vectors and the signs are comparable.
+    """
+    sd = SYSTEMS[a.system]
+    nr = sd["roots"]
+    w = [float(x) for x in a.weights.split(",")] if a.weights else [1.0] * nr
+    options, cav = build_options(sd, w)
+    if a.photons > 0:
+        cav["number_of_photons"] = a.photons
+    psi4.core.be_quiet()
+    psi4.core.set_output_file(f"{a.system}_sign.psi4.out", False)
+    psi4.set_options(options)
+    geom = mol_string(sd["syms"], sd["pos"])
+    calc = nuclear_grad(geom, options, cav)
+
+    ref = dict(C=np.asarray(calc.opt_C).copy(),
+               vecs=np.asarray(calc.eigenvecs).copy(),
+               ndocc=calc.ndocc, np1=calc.N_p + 1,
+               d_exp=float(getattr(calc, "d_exp", 0.0)),
+               omega=float(getattr(calc, "omega", 0.0)) or 1.0,
+               bs=psi4.core.BasisSet.build(psi4.geometry(geom), "ORBITAL",
+                                           options["basis"]))
+    hb = a.delta * BOHR_PER_ANGSTROM
+    S = {}
+    for sgn in (+1, -1):
+        p = sd["pos"].copy()
+        p[0, 0] += sgn * a.delta
+        Sm = wf_overlap(sd, ref, run_point(sd, p, options, cav),
+                        photon_sign=a.photon_sign)
+        perm, sg, _ = align(Sm)
+        S[sgn] = Sm[:, perm] * sg[None, :]
+
+    print(f"{'pair':>6s} {'analytic':>16s} {'finite diff':>16s} {'signed diff':>13s}")
+    worst = 0.0
+    for i in range(nr):
+        for j in range(i + 1, nr):
+            calc.compute_grad(i, j, deriv_type="full")
+            an = np.asarray(calc.h_vector).reshape(-1, 3)[0, 0]
+            fd = (S[+1][i, j] - S[-1][i, j]) / (2.0 * hb)
+            worst = max(worst, abs(an - fd))
+            print(f"{i}-{j:<4d} {an:16.10f} {fd:16.10f} {abs(an-fd):13.2e}")
+    print(f"\nWORST OVERALL {worst:.3e}   tol {a.tol:.0e}   (NO sign freedom)")
+    return 0 if worst < a.tol else 1
+
+
 def frame_decomposition(a):
     """Check d_lab - d_CS against theory, with no reference to the analytic code.
 
@@ -343,6 +399,10 @@ def main():
                     help="override number_of_photons (N_p); 0 = the system default. "
                          "Use it to check that the frame term CONVERGES with N_p "
                          "rather than tracking the truncation.")
+    ap.add_argument("--sign-check", action="store_true",
+                    help="compare the analytic NAC to the finite difference "
+                         "WITHOUT allowing a sign flip, by sharing the reference "
+                         "CI vectors between the two routes")
     ap.add_argument("--frame-decomposition", action="store_true",
                     help="report d_CS, d_lab and the predicted difference "
                          "(dz/dx)<m|b+ - b|n>, z = <d_HF>/sqrt(2w), instead of "
@@ -356,6 +416,8 @@ def main():
     a = ap.parse_args()
 
     _NO_PHOTON[0] = not a.photon_basis_derivative
+    if a.sign_check:
+        return sign_check(a)
     if a.frame_decomposition:
         return frame_decomposition(a)
     sd = SYSTEMS[a.system]

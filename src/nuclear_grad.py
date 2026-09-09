@@ -2959,7 +2959,18 @@ class nuclear_grad(PFHamiltonianGenerator):
                      if deriv_type != "full" else ""), flush = True)
             self.print_matrix_nice(self.h0.reshape(self.n_atoms, 3), precision=10, width=14, cols_per_line=6)
             print("NAC       (%s)   [pyscf %s]" % (csf, pys2), flush = True)
-            self.h_vector = self.h0/(self.eigenvals[state1]-self.eigenvals[state2])
+            # d^{mn}_CI = h^{mn} / (E^n - E^m), with m = state1 and n = state2.
+            # Differentiating H c^n = E_n c^n and left-multiplying by <c^m|
+            # gives <c^m|dH/dx|c^n> = (E_n - E_m) <c^m|dc^n/dx>, so the
+            # denominator is E[state2] - E[state1].  It was written the other
+            # way round, which flipped the sign of this block; h0 above was and
+            # is correct.  The error survived every comparison in the suite
+            # because a NAC carries an arbitrary CI phase and those tests all
+            # minimise over +-.  Pinned now by a sign-SENSITIVE test that shares
+            # the reference CI vectors between the analytic and finite-difference
+            # routes, removing the phase freedom:
+            # tests/test_numerical_nac.py::test_nac_sign_convention.
+            self.h_vector = self.h0/(self.eigenvals[state2]-self.eigenvals[state1])
             self.print_matrix_nice(self.h_vector.reshape(self.n_atoms, 3), precision=10, width=14, cols_per_line=6)
         
         #J_inv, metric_raw = self.compute_metric_and_inverse(threshold_factor=1e-12)
