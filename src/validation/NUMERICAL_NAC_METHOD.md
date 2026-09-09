@@ -383,3 +383,97 @@ the photonic counterpart of the second.
 $P=\mathbb{1}$ as the regression test for the working-frame quantity and for
 $\kappa\!\cdot\!f$ (§5b), $P = D(\gamma)$ as the test for the corrected
 lab-frame NAC. Both should show the $h^2$ convergence of §5.
+
+## Appendix A. Deriving the frame term from $\langle\Psi_m|\partial_x|\Psi_n\rangle$
+
+Written out because the result is easy to state and easy to mis-derive, and
+because the one non-obvious step is the one that decides whether it is exact.
+
+The physical (lab) state and the one the code computes are related by the
+coherent-state transformation,
+
+$$|\Psi_n^{\text{lab}}(x)\rangle = U(x)\,|\Psi_n^{\text{CS}}(x)\rangle,
+\qquad U(x) = e^{z(x)A},\quad A \equiv b^\dagger - b,\quad
+z = \frac{\langle d_{\text{HF}}\rangle(x)}{\sqrt{2\omega}} .$$
+
+**1. Product rule.**
+$\partial_x|\Psi_n^{\text{lab}}\rangle
+ = (\partial_x U)|\Psi_n^{\text{CS}}\rangle + U|\partial_x\Psi_n^{\text{CS}}\rangle$
+
+**2. The bra.** $\langle\Psi_m^{\text{lab}}| = \langle\Psi_m^{\text{CS}}|U^\dagger$
+
+**3. Combine,** using $U^\dagger U = \mathbb{1}$ on the second piece:
+
+$$d^{mn}_{\text{lab}}
+ = \langle\Psi_m^{\text{CS}}|\,U^\dagger(\partial_x U)\,|\Psi_n^{\text{CS}}\rangle
+ + \langle\Psi_m^{\text{CS}}|\partial_x\Psi_n^{\text{CS}}\rangle .$$
+
+**4. The step that matters.** $U^\dagger\partial_x U$ appears to need a
+Baker-Campbell-Hausdorff expansion, and does not. The generator $A$ is
+*x-independent* -- only the scalar $z$ moves -- so $\{U(x)\}$ is a
+one-parameter abelian family, $[A,U] = 0$, and
+
+$$\partial_x U = (\partial_x z)\,A\,U
+\qquad\Longrightarrow\qquad
+U^\dagger(\partial_x U) = (\partial_x z)\,A$$
+
+*exactly*. Were the generator itself x-dependent (a geometry-dependent mode or
+coupling vector), this would instead be an integral of nested commutators and
+the clean result below would not hold.
+
+**5. Result.**
+
+$$d^{mn}_{\text{lab}} = d^{mn}_{\text{CS}}
+ + \frac{1}{\sqrt{2\omega}}
+   \frac{\partial\langle d_{\text{HF}}\rangle}{\partial x}\,
+   \langle\Psi_m^{\text{CS}}|(b^\dagger - b)|\Psi_n^{\text{CS}}\rangle$$
+
+**Checks.** $A$ is anti-Hermitian, so the term is antisymmetric in $(m,n)$ as a
+coupling must be, and its diagonal $\langle n|A|n\rangle$ vanishes -- no
+spurious same-state contribution. As $\lambda\to0$, $\langle d_{\text{HF}}\rangle
+\to 0$ and the term disappears. In the c-number model of §7,
+$d_{\text{CS}}\equiv0$ and this leaves $d^{01}_{\text{lab}} = -\partial_x\alpha$.
+Numerically, the computed $\langle m|A|n\rangle$ is antisymmetric with
+$\langle 0|A|1\rangle = +0.99995$, and the whole relation is verified in §7.
+
+### A.1 Why it belongs in the objective, not among the constraints
+
+The constraints in the Lagrangian answer *"how does this quantity respond when
+$x$ changes?"*. $\kappa\!\cdot\!f$ and $\mathbf{X}^{\text{HF}}$ say that
+$\langle d_{\text{HF}}\rangle$ depends on $x$ through the QED-HF orbitals and
+account for it -- §5b shows they do that correctly, and nothing here changes
+them.
+
+The frame term is a different kind of statement. It does not describe a
+response; it says $d_{\text{lab}}$ and $d_{\text{CS}}$ are *different
+quantities*. So it changes **what is being differentiated**, and belongs in the
+first slot of the Lagrangian.
+
+Since $\partial_x z = (\partial_x\langle d_{\text{HF}}\rangle)/\sqrt{2\omega}$
+and $G^{mn} \equiv \langle m|(b^\dagger - b)|n\rangle$ is a fixed number from
+the CI vectors, the objective that reproduces it on differentiation is simply
+
+$$\frac{G^{mn}}{\sqrt{2\omega}}\,\langle d_{\text{HF}}\rangle(x)
+\qquad\text{for } d, \qquad
+(E_n - E_m)\,\frac{G^{mn}}{\sqrt{2\omega}}\,\langle d_{\text{HF}}\rangle(x)
+\qquad\text{for the } \times\Delta E \text{ form.}$$
+
+$G^{mn}$ and $E_n - E_m$ are held fixed -- they are coefficients, in the same
+sense that a density-matrix element multiplying a derivative integral is a
+coefficient.
+
+No new constraint follows. With
+$\langle d_{\text{HF}}\rangle = \sum_{\mu\nu} d_{\mu\nu} D^{\text{HF}}_{\mu\nu}$,
+the explicit part contracts $\partial d_{\mu\nu}/\partial x$ with
+$D^{\text{HF}}$, and the implicit orbital response is already supplied by the
+existing $\kappa$ and $\mathbf{X}^{\text{HF}}$ machinery. Structurally this is
+the photonic counterpart of the term already carried for the moving AO basis:
+$d = d_{\text{CI}} + d_{\text{det}} + d_{\text{photon}}$.
+
+### A.2 How to test an implementation of it
+
+The $P = D(\gamma)$ finite-difference leg is validated against this relation to
+7.4e-05 (§7) and is the reference. A corrected analytic $d_{\text{lab}}$ should
+reproduce it with the $h^2$ convergence of §5, while the $P = \mathbb{1}$ leg
+continues to regression-test the working-frame quantity and $\kappa\!\cdot\!f$.
+
