@@ -331,6 +331,58 @@ def test_richardson_extrapolated_coupling(frame, tmp_path):
         f"\n{r.stdout[-2000:]}")
 
 
+@pytest.mark.parametrize("frame", ["working", "lab"])
+def test_strong_coupling_resonant_polariton(frame, tmp_path):
+    """The hardest case here: resonant, strongly coupled, genuinely hybridised.
+
+    c2h4 distorted to C1, CAS(4,7)/cc-pVDZ (6 atoms, 48 basis functions, 441
+    determinants x 2 photon states), omega on its own bare S0->S1 gap and
+    lambda = 0.2 along the C=C axis.  State 1 comes out 73% photon / 27%
+    electronic -- a real polariton.  Contrast h2o_cav, where state 1 is 0.9999
+    pure one-photon and nothing actually mixes: resonance alone is not enough,
+    the transition dipole has to be large along lambda, which is why
+    formaldehyde (transition dipoles <= 0.021) shows no hybridisation at any
+    omega.
+
+    Measured at h = 1e-3 A, worst over the three pairs: 1.48e-05 working frame,
+    1.37e-05 lab frame; Richardson takes both to ~5e-06.  Roughly 30x the
+    residual of the water case, which is what a bigger, strongly mixed system
+    should cost.
+
+    STEP SIZE MATTERS HERE IN A WAY IT DOES NOT FOR WATER.  At h >= 2e-3 the -h
+    displaced CASSCF lands on a different solution and the comparison reads
+    7.1e-02.  The tool's branch check catches that by comparing
+    1 - |<Psi_i(x)|Psi_i(x+-h)>| at the two signs, which must be equal for a
+    smooth wavefunction; it prints a BRANCH WARNING and the fix is a smaller h,
+    not a wider tolerance.  Richardson cannot repair it -- it removes
+    truncation, not a wrong solution branch.
+    """
+    on = frame == "lab"
+    env = dict(os.environ)
+    env.update({"OMP_NUM_THREADS": "1", "QED_SKIP_GKL": "1",
+                "PYTHONPATH": _SRC + os.pathsep + env.get("PYTHONPATH", "")})
+    env.update(TIGHT)
+    env["QED_PHOTON_FRAME"] = "1" if on else "0"
+    cmd = [sys.executable,
+           os.path.join(_SRC, "validation", "numerical_nac_check.py"),
+           "--system", "c2h4_res", "--weights", "5,2,1", "--sign-check",
+           "--delta", "1e-3", "--tol", "1e-4"]
+    if on:
+        cmd.append("--photon-basis-derivative")
+    r = subprocess.run(cmd, capture_output=True, text=True, timeout=3600,
+                       cwd=str(tmp_path), env=env)
+    assert r.returncode in (0, 1), r.stdout[-3000:] + r.stderr[-2000:]
+    assert "BRANCH WARNING" not in r.stdout, (
+        "a displaced CASSCF went to a different solution branch at h = 1e-3; "
+        f"the comparison below is not meaningful\n{r.stdout[-2500:]}")
+    worst = _worst(r.stdout)
+    assert worst < 1e-4, (
+        f"{frame}-frame coupling on the strongly coupled resonant case: "
+        f"{worst:.3e}.  If this is ~1e-02, check for a BRANCH WARNING first -- "
+        f"that is a step-size problem, not a coupling error."
+        f"\n{r.stdout[-2000:]}")
+
+
 def test_finite_difference_error_scales_as_delta_squared(tmp_path):
     """The residual is TRUNCATION, not disagreement -- and this proves it.
 

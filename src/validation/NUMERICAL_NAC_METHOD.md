@@ -230,6 +230,60 @@ relative -- worse than the others because noise amplification, $1/(2h)$, is
 indifferent to how small the signal is. Judge each pair on the quantity's own
 scale.
 
+### 5d. A harder case, and a failure mode only it exposes
+
+Water at moderate coupling is an easy test: its state 1 is 0.9999 pure
+one-photon, so nothing actually hybridises. **Resonance alone does not fix
+that** -- formaldehyde on its own S0->S1 gap stays unmixed at any omega, because
+its low transition dipoles are all <= 0.021. Hybridisation needs a large
+transition dipole *along* lambda.
+
+`c2h4_res` supplies one: ethylene distorted to C1, CAS(4,7)/cc-pVDZ (6 atoms,
+48 basis functions, 441 determinants x 2 photon states), omega on its own bare
+S0->S1 gap (0.331337 Ha) and lambda = 0.2 along the C=C axis -- a pi->pi*
+transition, and the developer's own c2h4_fc.py value. Photon populations come
+out 0.018 / **0.735** / 0.075: state 1 is a genuine polariton.
+
+| | worst over 3 pairs, h = 1e-3 Å | Richardson |
+|---|---|---|
+| working frame $d_{\text{CS}}$ | 1.48e-05 | **5.92e-06** |
+| lab frame $d_{\text{lab}}$ | 1.37e-05 | **4.70e-06** |
+
+About 30x the water residual, which is what a larger, strongly mixed system
+should cost. The analytic coupling holds up.
+
+#### The branch check
+
+Getting there required a diagnostic that the easy cases never needed. At
+h >= 2e-3 this system reports **7.1e-02** instead of 5.9e-06, and Richardson
+barely helps (a factor of 3, not the factor of 1000 it gives elsewhere). That
+is the tell: **Richardson removes truncation, so if it does not help, the error
+is not truncation.**
+
+The cause is that the $-h$ displaced CASSCF converges to a *different solution*.
+It shows up in a quantity that costs nothing to compute: for a wavefunction
+varying smoothly with $x$,
+
+$$1 - |\langle\Psi_i(x)|\Psi_i(x \pm h)\rangle| = O(h^2)$$
+
+and is therefore **equal at $+h$ and $-h$**. Measured on `c2h4_res`:
+
+| h | $+h$ | $-h$ | ratio |
+|---|---|---|---|
+| 4e-3 | 8.74e-04 | 4.00e-03 | 4.6 |
+| 2e-3 | 2.19e-04 | 2.96e-03 | **13.5** |
+| 1e-3 | 5.49e-05 | 5.50e-05 | 1.00 |
+| 5e-4 | 1.37e-05 | 1.37e-05 | 1.00 |
+
+The $+h$ column is clean throughout and scales as $h^2$ (ratios 4.0, 4.0, 4.0);
+only $-h$ leaves the branch, and only for $h \ge 2\times10^{-3}$. The tool now
+prints a BRANCH WARNING whenever the two sides differ by more than 1.5x, and
+the remedy is a smaller $h$ -- never a wider tolerance.
+
+**This matters beyond one system.** Without the check, that run reads as a 7e-02
+disagreement and looks exactly like a defect in the analytic coupling. Any
+finite-difference validation of a strongly coupled system should carry it.
+
 ## 6. Error budget
 
 Two competing terms set the usable window for h:

@@ -119,6 +119,41 @@ SYSTEMS = {
         cavity=dict(omega_value=0.1212727168509417,
                     lambda_vector=np.array([0.05, 0.0, 0.0]),
                     number_of_photons=1)),
+    # THE HARD CASE: ethylene distorted to C1, CAS(4,7)/cc-pVDZ, with omega on
+    # its own bare S0->S1 gap (0.331337 Ha) and lambda = 0.2 along the C=C axis
+    # -- the developer's own c2h4_fc.py value and direction.  That transition is
+    # pi->pi* with a large transition dipole along x, so unlike formaldehyde
+    # (whose low transition dipoles are all <= 0.021, giving no mixing whatever
+    # omega is) this one really does hybridise.  6 atoms, 48 basis functions,
+    # 441 determinants x 2 photon states.
+    "c2h4_res": dict(
+        syms=["C", "C", "H", "H", "H", "H"],
+        pos=np.array([[-0.67874677, 0.00000002, -0.00000002],
+                      [0.67874683, -0.00000004, 0.00000001],
+                      [-1.19058330, 0.92302210, 0.13000000],
+                      [-1.24058332, -0.92302209, 0.00000001],
+                      [1.24058327, 0.92302208, -0.00000000],
+                      [1.24058328, -0.92302208, -0.00000001]]),
+        basis="cc-pvdz", nact_orbs=7, nact_els=4, roots=3,
+        cavity=dict(omega_value=0.331336628349,
+                    lambda_vector=np.array([0.2, 0.0, 0.0]),
+                    number_of_photons=1)),
+    # RESONANT + STRONGLY COUPLED, and bigger than water: formaldehyde with
+    # omega set to its own bare S0->S1 gap at this geometry (0.151415 Ha) and
+    # lambda = 0.1, four times the h2o_cav value.  On resonance |1,0> and
+    # |0,1> are degenerate and mix into two polaritons, so the states carry
+    # maximal photon character -- which is where the frame term is largest and
+    # where overlap-based state matching is most likely to be needed.
+    "ch2o_res": dict(
+        syms=["C", "O", "H", "H"],
+        pos=np.array([[0.000000000000, 0.000000000000, -0.522500000000],
+                      [0.000000000000, 0.000000000000, 0.677500000000],
+                      [0.150000000000, 0.937000000000, -1.062500000000],
+                      [0.000000000000, -0.937000000000, -1.112500000000]]),
+        basis="6-31g", nact_orbs=5, nact_els=6, roots=3,
+        cavity=dict(omega_value=0.151415261575,
+                    lambda_vector=np.array([0.1, 0.0, 0.0]),
+                    number_of_photons=1)),
     "ch2o_c1": dict(
         syms=["C", "O", "H", "H"],
         pos=np.array([[0.000000000000, 0.000000000000, -0.522500000000],
@@ -300,9 +335,12 @@ def sign_check(a):
                bs=psi4.core.BasisSet.build(psi4.geometry(geom), "ORBITAL",
                                            options["basis"]))
     def fd_at(step):
-        """Central-difference coupling matrix at displacement `step` (Angstrom)."""
+        """Central-difference coupling matrix at displacement `step` (Angstrom).
+
+        Also runs the BRANCH CHECK described below and reports any failure.
+        """
         hb = step * BOHR_PER_ANGSTROM
-        S = {}
+        S, dev = {}, {}
         for sgn in (+1, -1):
             p = sd["pos"].copy()
             p[0, 0] += sgn * step
@@ -310,6 +348,27 @@ def sign_check(a):
                             photon_sign=a.photon_sign)
             perm, sg, _ = align(Sm)
             S[sgn] = Sm[:, perm] * sg[None, :]
+            dev[sgn] = [1.0 - abs(Sm[i, perm[i]]) for i in range(nr)]
+        # BRANCH CHECK.  For a wavefunction varying smoothly with x,
+        # 1 - |<Psi_i(x)|Psi_i(x+-h)>| is O(h^2) and therefore EQUAL at +h and
+        # -h.  A large asymmetry means one displaced CASSCF converged to a
+        # DIFFERENT SOLUTION, and the finite difference then straddles two
+        # branches -- Richardson cannot repair that, because it removes
+        # truncation, not a wrong solution.
+        #
+        # This is not hypothetical: on c2h4_res (resonant, lambda = 0.2, state 1
+        # 73% photon) the -h branch diverges for h >= 2e-3, and the comparison
+        # reads 7.1e-02 instead of the 5.9e-06 obtained at h = 1e-3, where both
+        # sides are clean.  Without this check that looks like a defect in the
+        # analytic coupling.
+        for i in range(nr):
+            hi, lo = max(dev[+1][i], dev[-1][i]), min(dev[+1][i], dev[-1][i])
+            if lo > 0 and hi / lo > 1.5:
+                print(f"  !! BRANCH WARNING state {i}, h={step:.1e}: "
+                      f"1-|S_ii| is {dev[+1][i]:.2e} at +h but {dev[-1][i]:.2e} "
+                      f"at -h (x{hi/lo:.1f}).  Expected equal for a smooth "
+                      f"wavefunction -- one displaced CASSCF is on a different "
+                      f"solution.  REDUCE h.", flush=True)
         return (S[+1] - S[-1]) / (2.0 * hb)
 
     fd_h = fd_at(a.delta)
