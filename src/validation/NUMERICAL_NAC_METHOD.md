@@ -185,6 +185,51 @@ The term is therefore necessary and correct, not merely present. The CP-HF
 solve only runs when `lambda_vector` is nonzero, so this is a cavity-only
 statement.
 
+### 5c. Richardson extrapolation: removing the reference's own error
+
+Section 5 establishes that the residual is O(h^2) truncation **in the finite
+difference**, not error in the analytic coupling. That is a limit worth
+removing, because it caps the comparison at ~7e-05 relative -- two orders
+coarser than where the analytic couplings sit against Molpro.
+
+Central differences carry an $O(h^2)$ error, so
+
+$$f_{\text{Richardson}} = \frac{4f(h/2) - f(h)}{3}$$
+
+cancels it and leaves $O(h^4)$. The clean 4.00 ratios of §5 are what license
+this; without that evidence the extrapolation would be an assumption.
+`--richardson` adds it for one extra pair of displaced points.
+
+Measured, worst over the three state pairs, h = 2e-3 Å:
+
+| case | plain h | Richardson | gain |
+|---|---|---|---|
+| cavity off | 6.34e-05 | **3.44e-08** | 1800x |
+| cavity on, working frame $d_{\text{CS}}$ | 5.90e-05 | **9.51e-08** | 620x |
+| cavity on, lab frame $d_{\text{lab}}$ | 2.94e-04 | **1.48e-07** | 1990x |
+
+**Everything then lands at the same precision**, in relative terms:
+
+| comparison | relative | kind |
+|---|---|---|
+| couplings vs Molpro, cavity off | 2.5e-07 – 2.9e-07 | analytic vs analytic |
+| gradients vs Molpro, cavity off | 1.3e-07 – 4.4e-07 | analytic vs analytic |
+| couplings vs FD+Richardson, cavity off | 2.6e-08 – 1.8e-07 | FD |
+| couplings vs FD+Richardson, cavity on, $d_{\text{CS}}$ | 1.4e-07 | FD |
+| couplings vs FD+Richardson, cavity on, $d_{\text{lab}}$ | 9.4e-08 – 1.7e-07 | FD |
+
+Two things follow. The finite difference is **no longer the limiting factor** --
+before extrapolation those rows read ~7e-05. And the **lab-frame cavity-on
+coupling, which has no external reference of any kind** (Molpro has no cavity,
+and no other code computes this quantity in this frame), is now pinned at the
+same precision Molpro provides for the quantities it can check.
+
+A caveat on reading the table: a *relative* comparison flatters large numbers.
+Pair 0-1's working-frame coupling is 0.0109, so its 9.51e-08 is 8.7e-06
+relative -- worse than the others because noise amplification, $1/(2h)$, is
+indifferent to how small the signal is. Judge each pair on the quantity's own
+scale.
+
 ## 6. Error budget
 
 Two competing terms set the usable window for h:

@@ -275,6 +275,62 @@ def test_photon_frame_term_gives_the_lab_frame_coupling(tmp_path):
         f"one, matching the displaced-basis finite difference:\n{on.stdout[-2000:]}")
 
 
+# Richardson extrapolation, (4 f(h/2) - f(h))/3, removes the O(h^2) truncation
+# that otherwise dominates the finite-difference comparison.  With it the
+# reference stops being the limiting factor and the tolerance can be ~500x
+# tighter than TOL, at the cost of one extra pair of displaced points.
+RICH_DELTA = "2e-3"
+RICH_TOL = 2e-6
+
+
+def _run_rich(tmp_path, extra_env=None, photon_fd=False):
+    env = dict(os.environ)
+    env.update({"OMP_NUM_THREADS": "1", "QED_SKIP_GKL": "1",
+                "PYTHONPATH": _SRC + os.pathsep + env.get("PYTHONPATH", "")})
+    env.update(TIGHT)
+    if extra_env:
+        env.update(extra_env)
+    cmd = [sys.executable,
+           os.path.join(_SRC, "validation", "numerical_nac_check.py"),
+           "--system", "h2o_cav", "--weights", "5,2,1", "--sign-check",
+           "--richardson", "--delta", RICH_DELTA, "--tol", str(RICH_TOL)]
+    if photon_fd:
+        cmd.append("--photon-basis-derivative")
+    return subprocess.run(cmd, capture_output=True, text=True, timeout=3600,
+                          cwd=str(tmp_path), env=env)
+
+
+@pytest.mark.parametrize("frame", ["working", "lab"])
+def test_richardson_extrapolated_coupling(frame, tmp_path):
+    """The tightest check available on the cavity-on coupling.
+
+    Plain central differences limit the comparison to ~7e-05 RELATIVE, which is
+    truncation in the REFERENCE, not error in the analytic coupling -- the
+    residual falls as h^2 (see the scaling test).  Richardson removes that term
+    and the agreement drops to ~1e-07 relative, which is where the analytic
+    couplings already sit against Molpro (2.5e-07).  So after extrapolation the
+    finite difference is no longer the limiting factor.
+
+    That matters most for the LAB-frame leg, which has NO external reference at
+    all -- Molpro has no cavity, and no other code computes this quantity in
+    this frame.  Richardson is the only thing that pins it at Molpro-grade
+    precision.
+
+    Measured, worst over the three pairs (h = 2e-3 A):
+        working frame   5.90e-05 -> 9.51e-08
+        lab frame       2.94e-04 -> 1.48e-07
+    """
+    on = frame == "lab"
+    r = _run_rich(tmp_path, {"QED_PHOTON_FRAME": "1" if on else "0"}, photon_fd=on)
+    assert r.returncode in (0, 1), r.stdout[-3000:] + r.stderr[-2000:]
+    worst = _worst(r.stdout)
+    assert worst < RICH_TOL, (
+        f"{frame}-frame coupling vs Richardson-extrapolated finite difference: "
+        f"{worst:.3e}, tol {RICH_TOL:.0e}.  Plain-h agreement is ~1e-04 here, so "
+        f"a failure at this tolerance is a real discrepancy, not truncation."
+        f"\n{r.stdout[-2000:]}")
+
+
 def test_finite_difference_error_scales_as_delta_squared(tmp_path):
     """The residual is TRUNCATION, not disagreement -- and this proves it.
 

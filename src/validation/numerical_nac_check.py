@@ -299,25 +299,41 @@ def sign_check(a):
                omega=float(getattr(calc, "omega", 0.0)) or 1.0,
                bs=psi4.core.BasisSet.build(psi4.geometry(geom), "ORBITAL",
                                            options["basis"]))
-    hb = a.delta * BOHR_PER_ANGSTROM
-    S = {}
-    for sgn in (+1, -1):
-        p = sd["pos"].copy()
-        p[0, 0] += sgn * a.delta
-        Sm = wf_overlap(sd, ref, run_point(sd, p, options, cav),
-                        photon_sign=a.photon_sign)
-        perm, sg, _ = align(Sm)
-        S[sgn] = Sm[:, perm] * sg[None, :]
+    def fd_at(step):
+        """Central-difference coupling matrix at displacement `step` (Angstrom)."""
+        hb = step * BOHR_PER_ANGSTROM
+        S = {}
+        for sgn in (+1, -1):
+            p = sd["pos"].copy()
+            p[0, 0] += sgn * step
+            Sm = wf_overlap(sd, ref, run_point(sd, p, options, cav),
+                            photon_sign=a.photon_sign)
+            perm, sg, _ = align(Sm)
+            S[sgn] = Sm[:, perm] * sg[None, :]
+        return (S[+1] - S[-1]) / (2.0 * hb)
 
-    print(f"{'pair':>6s} {'analytic':>16s} {'finite diff':>16s} {'signed diff':>13s}")
+    fd_h = fd_at(a.delta)
+    if a.richardson:
+        # Central differences carry an O(h^2) error, so (4 f(h/2) - f(h))/3
+        # cancels it and leaves O(h^4).  The h^2 behaviour was verified
+        # separately (ratios 4.00 per halving), which is what licenses this.
+        fd_h2 = fd_at(a.delta / 2.0)
+        fd = (4.0 * fd_h2 - fd_h) / 3.0
+    else:
+        fd = fd_h
+
+    hdr = "  Richardson" if a.richardson else " finite diff"
+    print(f"{'pair':>6s} {'analytic':>16s} {hdr:>16s} {'signed diff':>13s}"
+          + ("   plain h" if a.richardson else ""))
     worst = 0.0
     for i in range(nr):
         for j in range(i + 1, nr):
             calc.compute_grad(i, j, deriv_type="full")
             an = np.asarray(calc.h_vector).reshape(-1, 3)[0, 0]
-            fd = (S[+1][i, j] - S[-1][i, j]) / (2.0 * hb)
-            worst = max(worst, abs(an - fd))
-            print(f"{i}-{j:<4d} {an:16.10f} {fd:16.10f} {abs(an-fd):13.2e}")
+            worst = max(worst, abs(an - fd[i, j]))
+            extra = f"   {abs(an - fd_h[i,j]):.2e}" if a.richardson else ""
+            print(f"{i}-{j:<4d} {an:16.10f} {fd[i,j]:16.10f} "
+                  f"{abs(an-fd[i,j]):13.2e}{extra}")
     print(f"\nWORST OVERALL {worst:.3e}   tol {a.tol:.0e}   (NO sign freedom)")
     return 0 if worst < a.tol else 1
 
@@ -399,6 +415,10 @@ def main():
                     help="override number_of_photons (N_p); 0 = the system default. "
                          "Use it to check that the frame term CONVERGES with N_p "
                          "rather than tracking the truncation.")
+    ap.add_argument("--richardson", action="store_true",
+                    help="with --sign-check: also evaluate at h/2 and Richardson-"
+                         "extrapolate, (4 f(h/2) - f(h))/3, removing the O(h^2) "
+                         "truncation that otherwise limits the comparison")
     ap.add_argument("--sign-check", action="store_true",
                     help="compare the analytic NAC to the finite difference "
                          "WITHOUT allowing a sign flip, by sharing the reference "
