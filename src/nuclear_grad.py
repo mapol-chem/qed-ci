@@ -152,6 +152,44 @@ _QED_CI_PROJ = os.environ.get("QED_CI_PROJ", "degen").strip().lower()
 # Legacy alias: QED_PROJ_ALL=1 still means "all" when QED_CI_PROJ is unset.
 if "QED_CI_PROJ" not in os.environ and _QED_PROJ_ALL:
     _QED_CI_PROJ = "all"
+# QED_DPHOTON_NUC: nuclear half of d_photon.  DEFAULT ON.
+#
+#   d_photon^{mn}_{A,a} = (G^{mn}/sqrt(2w)) [ d<d_e>/dR_{A,a} + lam_a Z_A ]
+#
+# U_CS = exp(z(b^dag - b)) is built from the FULL dipole, z = -(<d_e>+d_N)/sqrt(2w).
+# Inside H_CS the nuclear part cancels, because the coupling and DSE contain only
+# the DIFFERENCE d - <d> = d_e - <d_e>; that is why the code stores the
+# electronic d_exp and why H_CS is IDENTICAL under either choice of z, so it
+# cannot be used to infer the convention.  But d_photon = U_CS d(U_CS^dag)/dR
+# sees z DIRECTLY, not the difference, so the nuclear piece survives there.
+# G^{mn} = <Psi^m|(b^dag - b)|Psi^n> is antisymmetric, so this term is absent
+# from every gradient and appears only in derivative couplings.
+#
+# TWO INDEPENDENT VALIDATIONS.
+#  * Translational sum rule.  For a NEUTRAL molecule H_PF is translation
+#    invariant, so sum_A h^{mn}_{A,a} = 0 for every state pair (the electrons
+#    follow: sum_A d<d_e>/dR_{A,a} = -lam_a N_e, against sum_A lam_a Z_A =
+#    +lam_a N_e).  LiH, lam along z: frame term off 5.6e-17; on WITHOUT this
+#    term -3.64e-02 (VIOLATED); on with it 1.1e-16.  This also fixes the sign
+#    and the prefactor relative to the electronic half -- there is no freedom
+#    left once the sum vanishes.  For an ion the sum is lam_a Q G^{mn}/sqrt(2w).
+#  * Finite difference.  Against the displaced-coherent-state FD coupling
+#    (h2o_cav, 5,2,1), worst pair agreement 1.49e-05 with tol 1e-03, and the
+#    SMALL-G pair agrees best at 1.56e-07.
+#
+# A FALSE ALARM WORTH RECORDING.  The FD reference must build <d> = <d_e> + d_N
+# identically at the reference AND displaced geometries.
+# validation/numerical_nac_check.py has TWO dict builders (run_point() for the
+# displaced points, and a separate one for the reference), and adding d_N to only
+# one leaves a CONSTANT offset gamma_0 = d_N/sqrt(2w) in the displacement: then
+# gamma_+ and gamma_- are no longer equal and opposite, and since
+# D(gamma_0 +- delta) = D(gamma_0)D(+-delta) the FD picks up a spurious
+# O(gamma_0 * d_CS) term that is NOT proportional to G^{mn} -- so it hits
+# small-G pairs hardest and can flip their sign.  That produced an apparent
+# 56x/sign-flipped disagreement with this term and briefly looked like an error
+# here.  Diagnostic: QED_FD_PRINT_GAMMA=1 prints gamma; gamma_+ + gamma_- must
+# be ~0 to O(h^2) (measured -4.9e-08 after the fix).
+_QED_DPHOTON_NUC = os.environ.get("QED_DPHOTON_NUC", "1") not in ("0", "", "false")
 # Project the RHS onto the same subspace the Krylov vectors live in.  Default on.
 _QED_PROJ_B = os.environ.get("QED_PROJ_B", "1") not in ("0", "", "false")
 import scipy.sparse
@@ -3086,6 +3124,71 @@ class nuclear_grad(PFHamiltonianGenerator):
         self.print_matrix_nice(self.o_dse_gradient.reshape(self.n_atoms, 3), precision=10, width=14, cols_per_line=6)
 
         self.total_gradient += self.dipole_gradient + self.o_dse_gradient
+
+        # ------------------------------------------------------------------
+        # NUCLEAR PART OF d_photon
+        #
+        # <d> = lambda.(mu_e + mu_N) and U_CS is built from the FULL <d>, with
+        # z = -<d>/sqrt(2w).  Inside H_CS the nuclear dipole cancels -- the
+        # bilinear term becomes -sqrt(w/2)(d_e - <d_e>)(b^dag + b) and the DSE
+        # 1/2 (d_e - <d_e>)^2 -- so mu_N drops out of every energy and gradient
+        # computed within the CS frame.  But d_photon is not a property of H_CS:
+        # it is U_CS d(U_CS^dag)/dR, and mu_N cancelled out of the Hamiltonian
+        # BECAUSE it sits in the transformation.  So it survives here:
+        #
+        #   d_photon^{mn}_{A,alpha} = (G^{mn}/sqrt(2w)) [ d<d_e>/dR_{A,alpha}
+        #                                                 + lambda_alpha Z_A ]
+        #
+        # The electronic half already arrives through one_rdm_pe_eff_ao (which
+        # carries photon_frame_scale * one_rdm_hf) contracted with d_derivs.
+        # The nuclear half is a geometry-independent constant per atom, needs no
+        # orbital response -- kappa.f covers only the electronic part -- and is
+        # added directly, with the SAME scale factor.
+        #
+        # TRANSLATIONAL SUM RULE, and a free test of this term: rigidly
+        # translating a NEUTRAL molecule by delta along alpha shifts mu_e by
+        # -lambda_alpha N_e delta and mu_N by +lambda_alpha sum_A Z_A delta.
+        # These cancel, so sum_A d_photon^{A,alpha} must VANISH -- a rigid
+        # translation of a neutral molecule cannot drive the cavity mode.  Drop
+        # this term and the code predicts that it does.  For an ion of charge Q
+        # the sum is lambda_alpha Q G^{mn}/sqrt(2w), which is the Coulomb-gauge
+        # Q A.P/M coupling in its length-gauge disguise.
+        # ------------------------------------------------------------------
+        self.photon_nuclear_gradient = np.zeros(3 * n_atoms)
+        _pf_scale = self.photon_frame_scale(state1, state2)
+        if _pf_scale != 0.0 and _QED_DPHOTON_NUC:
+            for _iA in range(self.n_atoms):
+                _Z = self.mol.Z(_iA)
+                for _j in range(3):
+                    self.photon_nuclear_gradient[3 * _iA + _j] = (
+                        _pf_scale * _Z * self.lambda_vector[_j]
+                    )
+            self.total_gradient += self.photon_nuclear_gradient
+            print("d_photon nuclear gradient (scale %.6e)" % _pf_scale, flush=True)
+            self.print_matrix_nice(
+                self.photon_nuclear_gradient.reshape(self.n_atoms, 3),
+                precision=10, width=14, cols_per_line=6)
+            # SUM RULE CHECK.  The cancellation is between this nuclear half and
+            # the ELECTRONIC half, so summing the nuclear part alone does NOT
+            # vanish -- it gives scale * lambda_alpha * sum_A Z_A.  The testable
+            # statement is translational invariance of the electronic dipole
+            # derivative: sum_A d(lambda.mu_e)/dR_{A,alpha} = -lambda_alpha S_ao,
+            # which contracted with any density of trace N_e gives
+            # -lambda_alpha N_e and cancels +lambda_alpha sum_A Z_A when
+            # sum_A Z_A = N_e, i.e. for a neutral molecule.
+            _Ztot = sum(self.mol.Z(_i) for _i in range(self.n_atoms))
+            _nuc_sum = self.photon_nuclear_gradient.reshape(self.n_atoms, 3).sum(axis=0)
+            _S_ao = np.asarray(self.mints.ao_overlap())
+            _dsum = d_derivs.reshape(self.n_atoms, 3, *d_derivs.shape[1:]).sum(axis=0)
+            _resid = [float(np.abs(_dsum[_j] + self.lambda_vector[_j] * _S_ao).max())
+                      for _j in range(3)]
+            print("  nuclear sum over atoms  = %.6e %.6e %.6e" % tuple(_nuc_sum), flush=True)
+            print("  expected (scale*lam*sum Z, sum Z = %.1f) = %.6e %.6e %.6e"
+                  % (_Ztot, *[_pf_scale * _Ztot * self.lambda_vector[_j] for _j in range(3)]),
+                  flush=True)
+            print("  translational invariance of d(lam.mu_e)/dR, max|sum_A + lam*S| = "
+                  "%.3e %.3e %.3e   (this is what makes the two halves cancel)"
+                  % tuple(_resid), flush=True)
 
         #print("total_gradient 3")
         #total_gradient2 += self.dipole_gradient2 + self.o_dse_gradient

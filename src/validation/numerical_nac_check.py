@@ -243,9 +243,24 @@ def photon_overlap(ref, dis, sign=+1.0):
     """
     if ref["np1"] == 1:
         return np.eye(1)
-    alpha_r = ref["d_exp"] / np.sqrt(2.0 * ref["omega"])
-    alpha_d = dis["d_exp"] / np.sqrt(2.0 * dis["omega"])
-    return displacement_matrix(sign * (alpha_d - alpha_r), ref["np1"] - 1)
+    # NUCLEAR DIPOLE IN THE DISPLACEMENT.  U_CS is built from the FULL dipole,
+    # z = -(<d_e> + d_N)/sqrt(2w).  d_N cancels inside H_CS because the coupling
+    # and DSE contain only the DIFFERENCE d - <d> = d_e - <d_e>, which is why the
+    # code stores the electronic d_exp -- but the TRANSFORMATION still carries
+    # d_N, and the finite-difference displacement must too.  d_N is geometry
+    # dependent (lam . mu_nuc changes when a nucleus moves), so omitting it
+    # leaves out exactly  lam_a Z_A / sqrt(2w)  per displaced coordinate, which
+    # is the nuclear half of d_photon.  QED_FD_DNUC=0 restores the old form.
+    _fd_dnuc = os.environ.get("QED_FD_DNUC", "1") not in ("0", "", "false")
+    _dr = ref.get("d_nuc", 0.0) if _fd_dnuc else 0.0
+    _dd = dis.get("d_nuc", 0.0) if _fd_dnuc else 0.0
+    alpha_r = (ref["d_exp"] + _dr) / np.sqrt(2.0 * ref["omega"])
+    alpha_d = (dis["d_exp"] + _dd) / np.sqrt(2.0 * dis["omega"])
+    _gamma = sign * (alpha_d - alpha_r)
+    if os.environ.get("QED_FD_PRINT_GAMMA"):
+        print("GAMMA %+.10e   (alpha_r %+.6e  alpha_d %+.6e  d_nuc_r %+.6e "
+              "d_nuc_d %+.6e)" % (_gamma, alpha_r, alpha_d, _dr, _dd), flush=True)
+    return displacement_matrix(_gamma, ref["np1"] - 1)
 
 
 def run_point(sd, pos, options, cav):
@@ -257,6 +272,9 @@ def run_point(sd, pos, options, cav):
                 vecs=np.asarray(job.eigenvecs).copy(),
                 ndocc=job.ndocc, bs=bs, np1=job.N_p + 1,
                 d_exp=float(getattr(job, "d_exp", 0.0)),
+                d_nuc=float(np.dot(np.asarray(cav["lambda_vector"]),
+                                   np.asarray(getattr(job, "nuclear_dipole_moment",
+                                                      np.zeros(3))))),
                 omega=float(getattr(job, "omega", 0.0)) or 1.0)
 
 
@@ -331,6 +349,18 @@ def sign_check(a):
                vecs=np.asarray(calc.eigenvecs).copy(),
                ndocc=calc.ndocc, np1=calc.N_p + 1,
                d_exp=float(getattr(calc, "d_exp", 0.0)),
+               # d_nuc MUST be present here too.  There are two dict builders --
+               # this one for the reference point and run_point() for the
+               # displaced ones -- and adding d_nuc to only one leaves
+               # ref.get("d_nuc", 0.0) = 0 while dis carries the full value.
+               # That is a CONSTANT offset gamma_0 = d_N/sqrt(2w) in the
+               # displacement, so gamma_+ and gamma_- stop being equal and
+               # opposite and D(gamma_0 +- delta) = D(gamma_0) D(+-delta) leaves
+               # a spurious O(gamma_0 * d_CS) term that is NOT proportional to
+               # G^{mn} -- which is why it hit the small-G pair hardest.
+               d_nuc=float(np.dot(np.asarray(cav["lambda_vector"]),
+                                  np.asarray(getattr(calc, "nuclear_dipole_moment",
+                                                     np.zeros(3))))),
                omega=float(getattr(calc, "omega", 0.0)) or 1.0,
                bs=psi4.core.BasisSet.build(psi4.geometry(geom), "ORBITAL",
                                            options["basis"]))
@@ -427,7 +457,15 @@ def frame_decomposition(a):
         pts[lab] = run_point(sd, p, options, cav)
     ref, np1 = pts["0"], pts["0"]["np1"]
     n = len(strings(sd, ref["ndocc"]))
-    dz = ((pts["+"]["d_exp"] - pts["-"]["d_exp"]) / (2.0 * hb)
+    # dz/dx must use the FULL dipole, <d> = <d_e> + d_N, for the same reason the
+    # displacement does: U_CS is built from z = -<d>/sqrt(2w).  This is the THIRD
+    # site that needs d_nuc (the other two are run_point's dict and the reference
+    # dict); with the electronic part alone the predicted RHS came out -0.899
+    # against a measured d_lab - d_CS of -0.087 on pair 0-1.
+    _fdn = os.environ.get("QED_FD_DNUC", "1") not in ("0", "", "false")
+    _dnp = pts["+"].get("d_nuc", 0.0) if _fdn else 0.0
+    _dnm = pts["-"].get("d_nuc", 0.0) if _fdn else 0.0
+    dz = (((pts["+"]["d_exp"] + _dnp) - (pts["-"]["d_exp"] + _dnm)) / (2.0 * hb)
           / np.sqrt(2.0 * ref["omega"]))
     B = np.zeros((np1, np1))
     for q in range(np1):
