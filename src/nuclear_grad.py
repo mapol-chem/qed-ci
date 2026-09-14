@@ -143,6 +143,17 @@ _QED_YZ_SIGN = float(os.environ.get("QED_YZ_SIGN", "1"))
 #   validation/NUMERICAL_NAC_METHOD.md  (appendices A and C)
 _QED_PHOTON_FRAME = os.environ.get("QED_PHOTON_FRAME", "0") not in ("0", "", "false")
 
+# Degeneracy tolerance for the CI-response null space, Hartree.  The MECP runs
+# have root gaps of 3.8e-07..1.9e-06 Eh; the zero-weight SA-3 FC runs have
+# separations of 0.118 Eh and up.  1e-5 sits between them by three orders.
+_QED_DEGEN_TOL = float(os.environ.get("QED_DEGEN_TOL", "1e-5"))
+# CI-response projection: degen (default) | single | all
+_QED_CI_PROJ = os.environ.get("QED_CI_PROJ", "degen").strip().lower()
+# Legacy alias: QED_PROJ_ALL=1 still means "all" when QED_CI_PROJ is unset.
+if "QED_CI_PROJ" not in os.environ and _QED_PROJ_ALL:
+    _QED_CI_PROJ = "all"
+# Project the RHS onto the same subspace the Krylov vectors live in.  Default on.
+_QED_PROJ_B = os.environ.get("QED_PROJ_B", "1") not in ("0", "", "false")
 import scipy.sparse
 import ortho_script
 import gc
@@ -828,7 +839,7 @@ class nuclear_grad(PFHamiltonianGenerator):
             #temp2 = trial_0[self.index_map_size:].reshape(self.davidson_roots, self.H_dim)
             #temp2=self.project_out_all(temp2, self.eigenvecs)
             #trial_0[self.index_map_size:] = temp2.flatten()[:]
-            self.projection(trial_0[self.index_map_size:])
+            self._ci_response_projection(trial_0[self.index_map_size:])
 
             norm = np.linalg.norm(trial_0)
             if norm > 1e-12:
@@ -838,7 +849,7 @@ class nuclear_grad(PFHamiltonianGenerator):
             #temp3 = sigma[self.index_map_size:].reshape(self.davidson_roots, self.H_dim)
             #temp3=self.project_out_all(temp3, self.eigenvecs)
             #sigma[self.index_map_size:] = temp3.flatten()[:]
-            self.projection(sigma[self.index_map_size:])
+            self._ci_response_projection(sigma[self.index_map_size:])
             residual = sigma + self.reduced_state_gradient 
 
         #print("initial guess", residual)
@@ -889,7 +900,7 @@ class nuclear_grad(PFHamiltonianGenerator):
             #temp2 = trial_c[self.index_map_size:].reshape(self.davidson_roots, self.H_dim)
             #temp2=self.project_out_all(temp2, self.eigenvecs)
             #trial_c[self.index_map_size:] = temp2.flatten()[:]
-            self.projection(trial_c[self.index_map_size:])
+            self._ci_response_projection(trial_c[self.index_map_size:])
             
             #z_vector, Z_vector = self.unpack_solution(trial_c)
             #for i in range(self.davidson_roots):
@@ -915,7 +926,7 @@ class nuclear_grad(PFHamiltonianGenerator):
             #temp3 = sigma[self.index_map_size:].reshape(self.davidson_roots, self.H_dim)
             #temp3=self.project_out_all(temp3, self.eigenvecs)
             #sigma[self.index_map_size:] = temp3.flatten()[:]
-            self.projection(sigma[self.index_map_size:])
+            self._ci_response_projection(sigma[self.index_map_size:])
 
             #z_vector, Z_vector = self.unpack_solution(trial_c)
             #for i in range(self.davidson_roots):
@@ -945,7 +956,29 @@ class nuclear_grad(PFHamiltonianGenerator):
         
         # Initialize GMRES with your RHS (b vector)
         # Note: we use max_subspace=20 (standard), increase if convergence is jagged
-        gmres = GMRESSolver(b_vector=-self.reduced_state_gradient, max_subspace=100)
+        # ------------------------------------------------------------------
+        # PROJECT THE RHS.  With x0 = 0 the initial GMRES residual IS b, and every
+        # Krylov vector is confined to S = complement of the null space (that is
+        # what the preconditioner/matvec projections enforce).  So a component of
+        # b lying in the null space is UNREACHABLE: no Krylov vector can cancel
+        # it, and the residual norm floors at exactly ||P_null b|| no matter how
+        # many restarts are spent.  The diagnostic below prints that floor before
+        # the solve, so it can be compared against where the residual actually
+        # stalls.
+        _b = -self.reduced_state_gradient.copy()
+        _start = self.index_map_size
+        if len(_b) > _start:
+            _ci = _b[_start:].copy()
+            _proj = _ci.copy()
+            self._ci_response_projection(_proj)
+            _null = _ci - _proj
+            print("  |b| = %.6e   ||P_null b|| = %.6e   (predicted residual floor)"
+                  % (np.linalg.norm(_b), np.linalg.norm(_null)), flush=True)
+            if _QED_PROJ_B:
+                _b[_start:] = _proj
+                print("  RHS projected (QED_PROJ_B=1); |b| now %.6e"
+                      % np.linalg.norm(_b), flush=True)
+        gmres = GMRESSolver(b_vector=_b, max_subspace=100)
         
         # Run the solver
         # We pass the wrapper methods we defined above
@@ -1013,6 +1046,96 @@ class nuclear_grad(PFHamiltonianGenerator):
             z[start:stop] -= coeff * self.eigenvecs[i]
 
 
+
+    def project_degenerate(self, z):
+        """Project each CI-response row onto the complement of the DEGENERATE
+        SUBSPACE containing that state -- the correct null space of (H - E_n).
+
+        WHY NEITHER EXISTING OPTION IS RIGHT IN GENERAL.
+        (H - E_n) annihilates c^(n) and every c^(m) with E_m = E_n, and nothing
+        else: for a separated root, (H - E_n) c^(k) = (E_k - E_n) c^(k) != 0.  So
+
+          * `projection` removes only c^(n).  At a degeneracy the null direction
+            along c^(m) survives and the response equations are singular -- GMRES
+            stalls.  Measured at the lambda=0 ethylene MECP (gap 8.4e-07 Eh):
+            2002 restarts, residual frozen at 1.3220e-07, `Max Iterations
+            Reached`, 821 s, and |h0| came back 1.35e-06, i.e. an unconverged
+            solve masquerading as a vanishing coupling.
+
+          * `project_out_all` removes every averaged CI vector.  That is correct
+            only when all of them happen to be degenerate -- true for the 2-root
+            MECP runs, false for the 3-root zero-weight SA-3 runs whose roots sit
+            0 / ~3.2 / ~8 eV apart.  There it deletes a real component of the
+            response: the documented unequal-weight error of 1.4e-03..7.5e-03
+            against 6.5e-09 for the minimal projection (see the header block).
+
+        This routine removes exactly the degenerate block, so it reduces to
+        `projection` when the roots are separated and to `project_out_all` when
+        they are all degenerate -- which is why each of those was individually
+        correct in one of the two regimes this code is used in.
+
+        Degeneracy is judged on |E_k - E_n| < QED_DEGEN_TOL (default 1e-5 Eh,
+        comfortably above the 1.9e-06 Eh MECP gaps and far below the 0.118 Eh
+        FC separations).
+        """
+        d, n = self.davidson_roots, self.H_dim
+        ev = np.asarray(self.eigenvals).ravel()
+
+        # (1) CLUSTER BY TRANSITIVE CLOSURE, not by pairwise distance to state i.
+        # Near-degeneracy is not an equivalence relation: with tol 1e-5 and
+        # E = 0, 6e-6, 1.2e-5 the pairs (0,1) and (1,2) are within tol while
+        # (0,2) is not, so a per-row pairwise test gives row 0 the subspace
+        # {0,1}, row 1 {0,1,2} and row 2 {1,2} -- three different "null spaces"
+        # for one operator, none of them invariant.  Single-linkage clustering on
+        # the sorted energies makes the assignment consistent: every member of a
+        # cluster is projected against the SAME subspace.
+        order = np.argsort(ev)
+        cluster_of = np.zeros(d, dtype=int)
+        cid = 0
+        for j, k in enumerate(order):
+            if j > 0 and abs(ev[k] - ev[order[j - 1]]) >= _QED_DEGEN_TOL:
+                cid += 1
+            cluster_of[k] = cid
+        clusters = {c: [k for k in range(d) if cluster_of[k] == c]
+                    for c in set(cluster_of)}
+
+        # (2) ORTHONORMALISE EACH CLUSTER BEFORE PROJECTING.  Sequential
+        # Gram-Schmidt row -= <row|c_k> c_k is a projector only if the c_k are
+        # orthonormal.  Davidson roots within a degenerate cluster are arbitrary
+        # up to a rotation and need not come back orthogonal; with <c0|c1> = 0.3
+        # the sequential form leaves |<row|c0>| = 0.265 instead of 0.  An SVD of
+        # the cluster gives an orthonormal basis of the same span (and drops any
+        # linearly dependent direction), after which one pass is exact.
+        basis = {}
+        for c, ks in clusters.items():
+            B = np.asarray([self.eigenvecs[k] for k in ks])
+            U, sv, _ = np.linalg.svd(B.T, full_matrices=False)
+            basis[c] = U[:, sv > 1e-10].T
+
+        for i in range(d):
+            start, stop = i * n, (i + 1) * n
+            row = z[start:stop]
+            for v in basis[cluster_of[i]]:
+                row -= np.dot(row, v) * v
+            z[start:stop] = row
+
+    def _ci_response_projection(self, z):
+        """Dispatch for the CI-response projection.  QED_CI_PROJ selects:
+        'degen' (default) = degeneracy-aware, 'single' = legacy self.projection,
+        'all' = legacy project_out_all.  The legacy paths are kept so the
+        earlier references remain reproducible.
+        """
+        if _QED_CI_PROJ == "single":
+            self.projection(z)
+        elif _QED_CI_PROJ == "all":
+            d, n = self.davidson_roots, self.H_dim
+            tmp = z.reshape(d, n) if z.size == d * n else None
+            if tmp is not None:
+                z[:] = self.project_out_all(tmp, self.eigenvecs).flatten()
+            else:
+                self.projection(z)
+        else:
+            self.project_degenerate(z)
 
     def build_A_t(self, Z_vector, A, G, A_t):
         ##symmetrize A
@@ -1613,13 +1736,10 @@ class nuclear_grad(PFHamiltonianGenerator):
         end = start + self.davidson_roots * self.H_dim
         
         if len(trial_c) > start:
-            if _QED_PROJ_ALL:
-                temp2 = trial_c[start:].reshape(self.davidson_roots, self.H_dim)
-                temp2 = self.project_out_all(temp2, self.eigenvecs)
-                trial_c[start:] = temp2.flatten()
-            else:
-                # minimal: z^(n).c^(n) = 0 only.  In place on a view.
-                self.projection(trial_c[start:])
+            # LIVE GMRES projection site (the earlier QED_CI_PROJ patch hit the
+            # random-guess branch, which only fires when |residual| < 1e-3 and so
+            # never ran: all three settings stalled identically at 2002 restarts).
+            self._ci_response_projection(trial_c[start:])
         return trial_c
 
     def my_matvec_wrapper(self, x):
@@ -1634,12 +1754,7 @@ class nuclear_grad(PFHamiltonianGenerator):
         start = self.index_map_size
         
         if len(sigma) > start:
-            if _QED_PROJ_ALL:
-                temp3 = sigma[start:].reshape(self.davidson_roots, self.H_dim)
-                temp3 = self.project_out_all(temp3, self.eigenvecs)
-                sigma[start:] = temp3.flatten()
-            else:
-                self.projection(sigma[start:])
+            self._ci_response_projection(sigma[start:])
 
         return sigma
      
