@@ -73,7 +73,11 @@ void davidson(double* h1e, double* h2e, double* d_cmo, double* Hdiag, double* ei
 
 void build_one_rdm(double* z_vector, double* eigvec, double* D, int* table, int N_ac, int n_o_ac, int n_o_in, int num_photon, int state_p1, int state_p2, bool z_state);
 void build_two_rdm(double* z_vector, double* eigvec, double* D, int* table, int N_ac, int n_o_ac, int n_o_in, int num_photon, int state_p1, int state_p2, bool z_state);
-void build_active_rdm(double* eigvec, double* D_tu, double* D_tuvw, int* table, int N_ac, int n_o_ac, int num_photon, int state_p1, int state_p2, double weight); 
+void build_active_rdm(double* eigvec, double* D_tu, double* D_tuvw, int* table, int N_ac, int n_o_ac, int num_photon, int state_p1, int state_p2, double weight);
+/* CASSCF-only bra==ket specialisation of build_active_rdm; same signature, and
+   it defers to build_active_rdm when state_p1 != state_p2.  See the comment on
+   its definition -- do NOT route nuclear_grad.py through it. */
+void build_active_rdm_sa(double* eigvec, double* D_tu, double* D_tuvw, int* table, int N_ac, int n_o_ac, int num_photon, int state_p1, int state_p2, double weight);
 void build_active_rdm_z(double* z_vector, double* eigvec, double* D_tu, double* D_tuvw, int* table, int N_ac, int n_o_ac, int num_photon, int state_p1, int state_p2, double weight); 
 void build_active_photon_electron_one_rdm(double* eigvec, double* Dpe_tu, int* table, int N_ac, int n_o_ac, int num_photon, int state_p1, int state_p2, double weight); 
 void build_active_photon_electron_one_rdm_z(double* z_vector, double* eigvec, double* Dpe_tu, int* table, int N_ac, int n_o_ac, int num_photon, int state_p1, int state_p2, double weight); 

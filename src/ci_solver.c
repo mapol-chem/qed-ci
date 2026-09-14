@@ -675,6 +675,16 @@ void build_H_diag_cas_spin(double* h1e, double* h2e, double* H_diag, int N_p, in
     size_t num_dets = num_alpha * num_alpha;
     int np1 = N_p + 1;
     int n_occupied = n_act_orb + n_in_a;
+    /* QED_HDIAG_STRTAB (2026-08-20, item 241).  index_to_string() depends only
+       on the alpha (or beta) INDEX, of which there are num_alpha = 252 at c10h8
+       dims -- but the loop below called it twice for every one of the
+       num_alpha^2 = 63504 determinants, i.e. 127008 calls for 252 distinct
+       answers.  Tabulate it once.  Bit-identical: same function, same
+       arguments, same results. */
+    size_t* str_tab = (size_t*) malloc((size_t) num_alpha * sizeof(size_t));
+    for (int idx = 0; idx < num_alpha; idx++) {
+        str_tab[idx] = index_to_string(idx, n_act_a, n_act_orb, Y);
+    }
     #pragma omp parallel for
     for (size_t index_photon_det = 0; index_photon_det < np1*num_dets; index_photon_det++) {
     	//printf("%d\n", index_photon_det);
@@ -684,8 +694,8 @@ void build_H_diag_cas_spin(double* h1e, double* h2e, double* H_diag, int N_p, in
     
         int index_b = Idet%num_alpha;
         int index_a = (Idet-index_b)/num_alpha;
-        size_t string_a = index_to_string(index_a,n_act_a,n_act_orb,Y);
-        size_t string_b = index_to_string(index_b,n_act_a,n_act_orb,Y);
+        size_t string_a = str_tab[index_a];   /* QED_HDIAG_STRTAB */
+        size_t string_b = str_tab[index_b];
     	size_t ab = string_a & string_b;
     	int length;
     	int* double_active = string_to_obtlist(ab, nmo, &length);
@@ -783,6 +793,7 @@ void build_H_diag_cas_spin(double* h1e, double* h2e, double* H_diag, int N_p, in
     	free(single_occupation_b);
     	free(occupation_list_spin);
     }
+    free(str_tab);                               /* QED_HDIAG_STRTAB */
     
     fflush(stdout);
 }
@@ -1314,8 +1325,20 @@ void symmetric_eigenvalue_problem(double* A, int N, double* eig) {
     MKL_INT n = N, lda = N, info;	
     //double w[N];
     
-    /* Solve eigenproblem */
-    info = LAPACKE_dsyev( LAPACK_ROW_MAJOR, 'V', 'U', n, A, lda, eig);
+    /* Solve eigenproblem.
+     * dsyevd (divide & conquer) instead of dsyev (QR): same eigenpairs, 2-3.8x
+     * faster measured over N = 500..4000 at both 1 and 32 threads (MKL, this
+     * box).  It matters because all four live call sites scale as O(N^3) and
+     * N is the Davidson subspace size -- with the small warm-start subspace
+     * N is O(10) and either is free, but a large cold-start P-space guess
+     * (:2307 S^2 block, :2378 H_spin block) runs at N = 200..2000.
+     * QED_DSYEV=1 restores the QR path for A/B comparison.
+     * NOTE: not bit-identical to dsyev, so a macroiteration count measured
+     * across this change is subject to the usual FP-chaos caveat. */
+    static int use_qr = -1;
+    if (use_qr < 0) { const char* e = getenv("QED_DSYEV"); use_qr = (e && atoi(e) != 0) ? 1 : 0; }
+    if (use_qr) info = LAPACKE_dsyev ( LAPACK_ROW_MAJOR, 'V', 'U', n, A, lda, eig);
+    else        info = LAPACKE_dsyevd( LAPACK_ROW_MAJOR, 'V', 'U', n, A, lda, eig);
     /* Check for convergence */
     if( info > 0 ) {
             printf( "The algorithm failed to compute eigenvalues.\n" );
@@ -1430,6 +1453,85 @@ void first_order_spin_projection(double* s_vector, double* Sdiag, double* Sdiag_
 	free(x_vector);
 }
 
+/* ---------------------------------------------------------------------------
+ * SPIN TREATMENT SELECTION (QED_SPIN_METHOD / QED_SPIN_SCALE)
+ *
+ * Three MUTUALLY EXCLUSIVE ways to keep the spin-adapted Davidson on the target
+ * multiplicity.  Exactly one is active; they must never be combined.
+ *
+ *   penalty1 (default, scale 0.45) -- first-order spin penalty.  sigma gets
+ *       scale * S^2 c, via build_sigma_s_square with S_diag (built with
+ *       shift = 0, helper_PFCI.py:3718-3728, so it is the plain S^2 diagonal).
+ *       For a spin-pure vector this shifts the eigenvalue by scale*S(S+1).
+ *
+ *   penalty2 (scale 0.1) -- second-order spin penalty.  sigma gets
+ *       scale * (S^2 - S(S+1))^2 c, via build_sigma_s_fourth_power with
+ *       S_diag_projection (built with shift = S(S+1), helper_PFCI.py:3729-3739),
+ *       which applies the shifted operator twice.  It ANNIHILATES the target
+ *       spin, so it shifts nothing and only pushes contaminants up.
+ *
+ *   projection (no scale) -- first-order spin projection.  Nothing is added to
+ *       sigma; instead first_order_spin_projection() cleans the RESIDUAL each
+ *       iteration before preconditioning.
+ *
+ * The developer's note: penalty2 and projection sometimes work where penalty1
+ * does not, which is why all three are kept selectable rather than one being
+ * chosen here.
+ * ------------------------------------------------------------------------- */
+enum { SPIN_PENALTY1 = 1, SPIN_PENALTY2 = 2, SPIN_PROJECT = 3 };
+
+static int qed_spin_method(void) {
+    static int method = -1;
+    if (method > 0) return method;
+    method = SPIN_PENALTY1;
+    const char* e = getenv("QED_SPIN_METHOD");
+    if (e && *e) {
+        if      (!strcmp(e, "penalty1")   || !strcmp(e, "1")) method = SPIN_PENALTY1;
+        else if (!strcmp(e, "penalty2")   || !strcmp(e, "2")) method = SPIN_PENALTY2;
+        else if (!strcmp(e, "projection") || !strcmp(e, "3")) method = SPIN_PROJECT;
+        else {
+            printf("\n*** QED_SPIN_METHOD='%s' is not one of penalty1 | penalty2 | projection ***\n", e);
+            fflush(stdout);
+            exit(1);
+        }
+    }
+    return method;
+}
+
+/* Scale for the two penalties; ignored by the projection method.  Defaults are
+ * the values the code shipped with: 0.45 for penalty1, 0.1 for penalty2. */
+static double qed_spin_scale(void) {
+    static double scale = -1.0;
+    if (scale >= 0.0) return scale;
+    scale = (qed_spin_method() == SPIN_PENALTY2) ? 0.1 : 0.45;
+    const char* e = getenv("QED_SPIN_SCALE");
+    if (e && *e) scale = atof(e);
+    return scale;
+}
+
+/* The eigenvalue shift the active treatment puts on a SPIN-PURE vector:
+ * scale*S(S+1) for penalty1; zero for penalty2 (which annihilates the target
+ * spin) and for projection (which never touches sigma). */
+static double qed_spin_pure_shift(double target_spin) {
+    return (qed_spin_method() == SPIN_PENALTY1)
+         ? qed_spin_scale() * target_spin * (target_spin + 1.0) : 0.0;
+}
+
+/* Apply the active spin treatment to a block of `nvec` sigma vectors.
+ * No-op for the projection method, which acts on the residual instead. */
+static void apply_spin_penalty(double* Qb, double* Sb, int nvec,
+        double* Sdiag, double* Sdiag_projection, int* b_array, int* table,
+        int num_links0, int n_o_ac, int num_alpha, int N_p) {
+    int method = qed_spin_method();
+    double scale = qed_spin_scale();
+    if (method == SPIN_PENALTY1)
+        build_sigma_s_square(Qb, Sb, Sdiag, b_array, table, num_links0, n_o_ac,
+                             num_alpha, nvec, N_p, scale);
+    else if (method == SPIN_PENALTY2)
+        build_sigma_s_fourth_power(Qb, Sb, Sdiag_projection, b_array, table, num_links0,
+                                   n_o_ac, num_alpha, nvec, N_p, scale);
+}
+
 
 /* Diagnostic spin checkpoint: run ONCE at the end of a CI Davidson solve
  * (converged, or maxiter/"runaway" exit) rather than every iteration. The
@@ -1513,6 +1615,130 @@ static inline double sc_twoe(const double* h2e, int t, int u, int v, int w, int 
     return h2e[tu * (size_t)n_occ * n_occ + vw];
 }
 
+/* One Hamiltonian matrix element H_{bra,ket} between two determinants given in
+ * decoded (bit-string + orbital-list) form.
+ *
+ * Extracted verbatim from build_guess_blocks_scrules' inner loop so that the
+ * guess-block builder and build_sparse_init_sigma below share ONE copy of the
+ * Slater-Condon rules and cannot drift apart.  The S^2 element stays with the
+ * guess-block builder -- only that one needs S^2.
+ *
+ * Conventions preserved exactly from the original inner loop: the occupied
+ * orbital lists passed in are the BRA's, while every phase is evaluated on the
+ * KET's strings, and the photon-diagonal constant uses the BRA's photon block.
+ * `hp` is the PHYSICAL active core-Fock, not build_sigma's modified h1e (see
+ * the caller's comment where hp is built). */
+static inline double sc_h_element(
+        size_t SAi, size_t SBi, const int* Ai, int nAi, const int* Bi, int nBi, int mi,
+        size_t SAj, size_t SBj, int mj,
+        const double* hp, const double* h2e, const double* d_cmo,
+        int n_o_ac, int n_occ, int n_in,
+        double Enuc, double dc, double omega, double d_exp, double E_core) {
+    double h = 0.0;
+    int dm = mi - mj;
+    size_t xa = SAi ^ SAj;
+    size_t xb = SBi ^ SBj;
+    int da = __builtin_popcountll(xa) / 2;
+    int db = __builtin_popcountll(xb) / 2;
+
+    if (dm == 0) {
+        int diff = da + db;
+        if (diff == 0) {
+            double e = 0.0;
+            for (int x = 0; x < nAi; x++) e += hp[Ai[x] * n_o_ac + Ai[x]];
+            for (int x = 0; x < nBi; x++) e += hp[Bi[x] * n_o_ac + Bi[x]];
+            for (int x = 0; x < nAi; x++)
+                for (int y = x + 1; y < nAi; y++) {
+                    int p = Ai[x], q = Ai[y];
+                    e += sc_twoe(h2e, p, p, q, q, n_occ, n_in) - sc_twoe(h2e, p, q, q, p, n_occ, n_in);
+                }
+            for (int x = 0; x < nBi; x++)
+                for (int y = x + 1; y < nBi; y++) {
+                    int p = Bi[x], q = Bi[y];
+                    e += sc_twoe(h2e, p, p, q, q, n_occ, n_in) - sc_twoe(h2e, p, q, q, p, n_occ, n_in);
+                }
+            for (int x = 0; x < nAi; x++)
+                for (int y = 0; y < nBi; y++) {
+                    int p = Ai[x], q = Bi[y];
+                    e += sc_twoe(h2e, p, p, q, q, n_occ, n_in);
+                }
+            h = e + mi * omega + Enuc + dc + E_core;
+        } else if (diff == 1) {
+            int a, r, alpha;
+            if (da == 1) { a = __builtin_ctzll(SAj & ~SAi); r = __builtin_ctzll(SAi & ~SAj); alpha = 1; }
+            else         { a = __builtin_ctzll(SBj & ~SBi); r = __builtin_ctzll(SBi & ~SBj); alpha = 0; }
+            double e = hp[r * n_o_ac + a];
+            /* same-spin common orbitals give Coulomb - exchange; opposite spin Coulomb only */
+            int  ns  = alpha ? nAi : nBi;
+            const int* os  = alpha ? Ai : Bi;   /* same-spin occ (common, since a,r excluded by being the diff) */
+            int  nos = alpha ? nBi : nAi;
+            const int* oos = alpha ? Bi : Ai;   /* opposite-spin occ */
+            for (int x = 0; x < ns; x++) {
+                int p = os[x];
+                if (p == r || p == a) continue;
+                e += sc_twoe(h2e, r, a, p, p, n_occ, n_in) - sc_twoe(h2e, r, p, p, a, n_occ, n_in);
+            }
+            for (int x = 0; x < nos; x++) {
+                int p = oos[x];
+                e += sc_twoe(h2e, r, a, p, p, n_occ, n_in);
+            }
+            int ph = phase_single_excitation(a, r, alpha ? SAj : SBj);
+            h = ph * e;
+        } else if (diff == 2) {
+            if (da == 2) {
+                int a1 = __builtin_ctzll(SAj & ~SAi);
+                int a2 = __builtin_ctzll((SAj & ~SAi) & ~(1UL << a1));
+                int r1 = __builtin_ctzll(SAi & ~SAj);
+                int r2 = __builtin_ctzll((SAi & ~SAj) & ~(1UL << r1));
+                double val = sc_twoe(h2e, r1, a1, r2, a2, n_occ, n_in) - sc_twoe(h2e, r1, a2, r2, a1, n_occ, n_in);
+                size_t s = SAj;
+                int p1 = phase_single_excitation(a1, r1, s);
+                s = (s & ~(1UL << a1)) | (1UL << r1);
+                int p2 = phase_single_excitation(a2, r2, s);
+                h = (p1 * p2) * val;
+            } else if (db == 2) {
+                int a1 = __builtin_ctzll(SBj & ~SBi);
+                int a2 = __builtin_ctzll((SBj & ~SBi) & ~(1UL << a1));
+                int r1 = __builtin_ctzll(SBi & ~SBj);
+                int r2 = __builtin_ctzll((SBi & ~SBj) & ~(1UL << r1));
+                double val = sc_twoe(h2e, r1, a1, r2, a2, n_occ, n_in) - sc_twoe(h2e, r1, a2, r2, a1, n_occ, n_in);
+                size_t s = SBj;
+                int p1 = phase_single_excitation(a1, r1, s);
+                s = (s & ~(1UL << a1)) | (1UL << r1);
+                int p2 = phase_single_excitation(a2, r2, s);
+                h = (p1 * p2) * val;
+            } else { /* da==1, db==1 : one alpha, one beta (opposite spin, no exchange) */
+                int a = __builtin_ctzll(SAj & ~SAi);
+                int r = __builtin_ctzll(SAi & ~SAj);
+                int b = __builtin_ctzll(SBj & ~SBi);
+                int s = __builtin_ctzll(SBi & ~SBj);
+                double val = sc_twoe(h2e, r, a, s, b, n_occ, n_in);
+                int pa = phase_single_excitation(a, r, SAj);
+                int pb = phase_single_excitation(b, s, SBj);
+                h = (pa * pb) * val;
+            }
+        }
+    } else if (dm == 1 || dm == -1) {
+        /* ---- dipole coupling m <-> m+-1 (one-electron operator) ---- */
+        int mmax = mi > mj ? mi : mj;
+        double pref = -sqrt(mmax * omega / 2.0);
+        int diff = da + db;
+        if (diff == 0) {
+            double dsum = 0.0;
+            for (int x = 0; x < nAi; x++) { int p = Ai[x]; dsum += d_cmo[(p + n_in) * (size_t)n_occ + (p + n_in)]; }
+            for (int x = 0; x < nBi; x++) { int p = Bi[x]; dsum += d_cmo[(p + n_in) * (size_t)n_occ + (p + n_in)]; }
+            h = pref * (dsum - d_exp);
+        } else if (diff == 1) {
+            int a, r, alpha;
+            if (da == 1) { a = __builtin_ctzll(SAj & ~SAi); r = __builtin_ctzll(SAi & ~SAj); alpha = 1; }
+            else         { a = __builtin_ctzll(SBj & ~SBi); r = __builtin_ctzll(SBi & ~SBj); alpha = 0; }
+            int ph = phase_single_excitation(a, r, alpha ? SAj : SBj);
+            h = pref * ph * d_cmo[(r + n_in) * (size_t)n_occ + (a + n_in)];
+        }
+    }
+    return h;
+}
+
 void build_guess_blocks_scrules(double* G_out, double* Gs_out, const int* sel, int L,
         const double* h1e, const double* h2e, const double* d_cmo, const double* Sdiag,
         int N_ac, int n_o_ac, int n_o_in, int N_p, int num_alpha,
@@ -1566,18 +1792,19 @@ void build_guess_blocks_scrules(double* G_out, double* Gs_out, const int* sel, i
     #pragma omp parallel for schedule(dynamic)
     for (int i = 0; i < L; i++) {
         for (int j = 0; j < L; j++) {
-            double h = 0.0, s2 = 0.0;
-            int dm = mm[i] - mm[j];
-            size_t xa = SA[i] ^ SA[j];
-            size_t xb = SB[i] ^ SB[j];
-            int da = __builtin_popcountll(xa) / 2;
-            int db = __builtin_popcountll(xb) / 2;
-
-            if (dm == 0) {
+            /* H comes from the shared Slater-Condon helper; S^2 stays here
+             * because only the guess block needs it. */
+            double h = sc_h_element(SA[i], SB[i], AA[i], nA[i], BB[i], nB[i], mm[i],
+                                    SA[j], SB[j], mm[j],
+                                    hp, h2e, d_cmo, n_o_ac, n_occ, n_in,
+                                    Enuc, dc, omega, d_exp, E_core);
+            double s2 = 0.0;
+            if (mm[i] == mm[j]) {
                 /* ---- S^2_00 (block-diagonal in photon) ---- */
                 if (i == j) {
                     s2 = Sdiag[Idt[i]];
-                } else if (da == 1 && db == 1) {
+                } else if (__builtin_popcountll(SA[i] ^ SA[j]) / 2 == 1 &&
+                           __builtin_popcountll(SB[i] ^ SB[j]) / 2 == 1) {
                     /* spin-flip: alpha p->q must mirror beta q->p */
                     int a = __builtin_ctzll(SA[j] & ~SA[i]); /* alpha hole  (in ket) */
                     int r = __builtin_ctzll(SA[i] & ~SA[j]); /* alpha particle (bra) */
@@ -1589,101 +1816,6 @@ void build_guess_blocks_scrules(double* G_out, double* Gs_out, const int* sel, i
                         s2 = -(double)(pa * pb);
                     }
                 }
-
-                /* ---- H_00 electronic (plain determinant Slater-Condon) ---- */
-                int diff = da + db;
-                if (diff == 0) {
-                    double e = 0.0;
-                    for (int x = 0; x < nA[i]; x++) e += hp[AA[i][x] * n_o_ac + AA[i][x]];
-                    for (int x = 0; x < nB[i]; x++) e += hp[BB[i][x] * n_o_ac + BB[i][x]];
-                    for (int x = 0; x < nA[i]; x++)
-                        for (int y = x + 1; y < nA[i]; y++) {
-                            int p = AA[i][x], q = AA[i][y];
-                            e += sc_twoe(h2e, p, p, q, q, n_occ, n_in) - sc_twoe(h2e, p, q, q, p, n_occ, n_in);
-                        }
-                    for (int x = 0; x < nB[i]; x++)
-                        for (int y = x + 1; y < nB[i]; y++) {
-                            int p = BB[i][x], q = BB[i][y];
-                            e += sc_twoe(h2e, p, p, q, q, n_occ, n_in) - sc_twoe(h2e, p, q, q, p, n_occ, n_in);
-                        }
-                    for (int x = 0; x < nA[i]; x++)
-                        for (int y = 0; y < nB[i]; y++) {
-                            int p = AA[i][x], q = BB[i][y];
-                            e += sc_twoe(h2e, p, p, q, q, n_occ, n_in);
-                        }
-                    h = e + mm[i] * omega + Enuc + dc + E_core;
-                } else if (diff == 1) {
-                    int a, r, alpha;
-                    if (da == 1) { a = __builtin_ctzll(SA[j] & ~SA[i]); r = __builtin_ctzll(SA[i] & ~SA[j]); alpha = 1; }
-                    else         { a = __builtin_ctzll(SB[j] & ~SB[i]); r = __builtin_ctzll(SB[i] & ~SB[j]); alpha = 0; }
-                    double e = hp[r * n_o_ac + a];
-                    /* same-spin common orbitals give Coulomb - exchange; opposite spin Coulomb only */
-                    int  ns  = alpha ? nA[i] : nB[i];
-                    int* os  = alpha ? AA[i] : BB[i];   /* same-spin occ (common, since a,r excluded by being the diff) */
-                    int  nos = alpha ? nB[i] : nA[i];
-                    int* oos = alpha ? BB[i] : AA[i];   /* opposite-spin occ */
-                    for (int x = 0; x < ns; x++) {
-                        int p = os[x];
-                        if (p == r || p == a) continue;
-                        e += sc_twoe(h2e, r, a, p, p, n_occ, n_in) - sc_twoe(h2e, r, p, p, a, n_occ, n_in);
-                    }
-                    for (int x = 0; x < nos; x++) {
-                        int p = oos[x];
-                        e += sc_twoe(h2e, r, a, p, p, n_occ, n_in);
-                    }
-                    int ph = phase_single_excitation(a, r, alpha ? SA[j] : SB[j]);
-                    h = ph * e;
-                } else if (diff == 2) {
-                    if (da == 2) {
-                        int a1 = __builtin_ctzll(SA[j] & ~SA[i]);
-                        int a2 = __builtin_ctzll((SA[j] & ~SA[i]) & ~(1UL << a1));
-                        int r1 = __builtin_ctzll(SA[i] & ~SA[j]);
-                        int r2 = __builtin_ctzll((SA[i] & ~SA[j]) & ~(1UL << r1));
-                        double val = sc_twoe(h2e, r1, a1, r2, a2, n_occ, n_in) - sc_twoe(h2e, r1, a2, r2, a1, n_occ, n_in);
-                        size_t s = SA[j];
-                        int p1 = phase_single_excitation(a1, r1, s);
-                        s = (s & ~(1UL << a1)) | (1UL << r1);
-                        int p2 = phase_single_excitation(a2, r2, s);
-                        h = (p1 * p2) * val;
-                    } else if (db == 2) {
-                        int a1 = __builtin_ctzll(SB[j] & ~SB[i]);
-                        int a2 = __builtin_ctzll((SB[j] & ~SB[i]) & ~(1UL << a1));
-                        int r1 = __builtin_ctzll(SB[i] & ~SB[j]);
-                        int r2 = __builtin_ctzll((SB[i] & ~SB[j]) & ~(1UL << r1));
-                        double val = sc_twoe(h2e, r1, a1, r2, a2, n_occ, n_in) - sc_twoe(h2e, r1, a2, r2, a1, n_occ, n_in);
-                        size_t s = SB[j];
-                        int p1 = phase_single_excitation(a1, r1, s);
-                        s = (s & ~(1UL << a1)) | (1UL << r1);
-                        int p2 = phase_single_excitation(a2, r2, s);
-                        h = (p1 * p2) * val;
-                    } else { /* da==1, db==1 : one alpha, one beta (opposite spin, no exchange) */
-                        int a = __builtin_ctzll(SA[j] & ~SA[i]);
-                        int r = __builtin_ctzll(SA[i] & ~SA[j]);
-                        int b = __builtin_ctzll(SB[j] & ~SB[i]);
-                        int s = __builtin_ctzll(SB[i] & ~SB[j]);
-                        double val = sc_twoe(h2e, r, a, s, b, n_occ, n_in);
-                        int pa = phase_single_excitation(a, r, SA[j]);
-                        int pb = phase_single_excitation(b, s, SB[j]);
-                        h = (pa * pb) * val;
-                    }
-                }
-            } else if (dm == 1 || dm == -1) {
-                /* ---- dipole coupling m <-> m+-1 (one-electron operator) ---- */
-                int mmax = mm[i] > mm[j] ? mm[i] : mm[j];
-                double pref = -sqrt(mmax * omega / 2.0);
-                int diff = da + db;
-                if (diff == 0) {
-                    double dsum = 0.0;
-                    for (int x = 0; x < nA[i]; x++) { int p = AA[i][x]; dsum += d_cmo[(p + n_in) * (size_t)n_occ + (p + n_in)]; }
-                    for (int x = 0; x < nB[i]; x++) { int p = BB[i][x]; dsum += d_cmo[(p + n_in) * (size_t)n_occ + (p + n_in)]; }
-                    h = pref * (dsum - d_exp);
-                } else if (diff == 1) {
-                    int a, r, alpha;
-                    if (da == 1) { a = __builtin_ctzll(SA[j] & ~SA[i]); r = __builtin_ctzll(SA[i] & ~SA[j]); alpha = 1; }
-                    else         { a = __builtin_ctzll(SB[j] & ~SB[i]); r = __builtin_ctzll(SB[i] & ~SB[j]); alpha = 0; }
-                    int ph = phase_single_excitation(a, r, alpha ? SA[j] : SB[j]);
-                    h = pref * ph * d_cmo[(r + n_in) * (size_t)n_occ + (a + n_in)];
-                }
             }
 
             G_out[(size_t)i * L + j]  = h;
@@ -1694,6 +1826,358 @@ void build_guess_blocks_scrules(double* G_out, double* Gs_out, const int* sel, i
     free(mm); free(Idt); free(SA); free(SB); free(AA); free(BB); free(nA); free(nB);
     free(hp);
     free(Y);
+}
+
+/* Every string reachable from s0 by exactly `level` (1 or 2) excitations, as
+ * determinant-string indices.  Used by build_sparse_init_sigma to walk a
+ * column's connected set directly instead of testing it against all H_dim
+ * determinants.  Singles and doubles are disjoint and duplicate-free (they
+ * differ from s0 in 2 and 4 bit positions respectively), which is what lets
+ * the caller union the buckets without double counting. */
+static int enum_excited_indices(size_t s0, int level, int N_ac, int n_o_ac, int* Y, int* out) {
+    int occ[64], vir[64], no = 0, nv = 0;
+    for (int p = 0; p < n_o_ac; p++) {
+        if (s0 & (1UL << p)) occ[no++] = p; else vir[nv++] = p;
+    }
+    int c = 0;
+    if (level == 1) {
+        for (int i = 0; i < no; i++)
+            for (int a = 0; a < nv; a++) {
+                size_t s = (s0 & ~(1UL << occ[i])) | (1UL << vir[a]);
+                out[c++] = string_to_index(s, N_ac, n_o_ac, Y);
+            }
+    } else {
+        for (int i = 0; i < no; i++)
+            for (int j = i + 1; j < no; j++)
+                for (int a = 0; a < nv; a++)
+                    for (int b = a + 1; b < nv; b++) {
+                        size_t s = (s0 & ~(1UL << occ[i]) & ~(1UL << occ[j]))
+                                 | (1UL << vir[a]) | (1UL << vir[b]);
+                        out[c++] = string_to_index(s, N_ac, n_o_ac, Y);
+                    }
+    }
+    return c;
+}
+
+/* Direct Slater-Condon build of S += H*Q for trial vectors whose support is
+ * confined to a small set of determinants.  Enabled by QED_SPARSE_INIT_SIGMA.
+ *
+ * WHY THIS EXISTS.  build_sigma is STRICTLY LINEAR in the number of trial
+ * vectors -- it loops `for n in 0..num_state` doing one full, independent
+ * sigma product per vector, with no batching or amortization across them.
+ * That is the right thing for the dense vectors the Davidson iteration
+ * generates, but the FIRST iteration (and every restart) starts from the guess
+ * set, whose vectors live entirely inside the L selected determinants:
+ *   - plain davidson     : unit vectors, support 1 each;
+ *   - davidson_spin      : the spin-adapted combinations built at the end of
+ *                          the guess stage, support inside the same L.
+ * For those, H*Q is a handful of SPARSE COLUMNS of H rather than num_state
+ * dense sigma products.  On MgH+ CAS(8,12) (H_dim 245025) each column has only
+ * ~1425 nonzeros (0.58%%), and that first build measured 26.6 s of a 88 s CI
+ * solve.
+ *
+ * METHOD.  Pair testing, not excitation enumeration: for every determinant J
+ * we test it against each support column with two XOR/popcount pairs and let
+ * sc_h_element reject at >2 excitations.  That is H_dim*ncol cheap tests --
+ * more than the ~ncol*1425 an enumerating build would touch, but it reuses the
+ * already-validated Slater-Condon path verbatim and needs no excitation
+ * generator or inverse addressing.  Only the alpha/beta STRINGS are decoded
+ * (num_alpha of them, not H_dim), so the hot loop stays in cache.
+ *
+ * RETURNS 1 if it built S, 0 if it DECLINED because the vectors are not sparse
+ * enough -- the caller must then fall back to build_sigma.  The acceptance rule
+ * is ncol <= 8*num_state, which bounds the work at 8x the size of the output
+ * that has to be written anyway; dense Davidson vectors always decline.
+ *
+ * Accumulates (+=) exactly like build_sigma, so callers that memset S first
+ * get identical semantics. */
+int build_sparse_init_sigma(const double* h1e, const double* h2e, const double* d_cmo,
+        const double* Q, double* S, int num_state,
+        int N_ac, int n_o_ac, int n_o_in, int N_p, int num_alpha,
+        double Enuc, double dc, double omega, double d_exp, double E_core,
+        const double* Sdiag, double s2_scale) {
+    int n_occ = n_o_ac + n_o_in;
+    int n_in  = n_o_in;
+    int np1   = N_p + 1;
+    size_t num_dets = (size_t) num_alpha * num_alpha;
+    size_t H_dim    = (size_t) np1 * num_dets;
+    if (num_state <= 0) return 1;
+    /* s2_scale != 0 folds the S^2 SPIN PENALTY into the same operator, so the
+     * caller must then SKIP its separate build_sigma_s_square call.  This is
+     * free to do here: S^2 is nonzero only on the diagonal and on the
+     * da==1 && db==1 spin-flip pairs, both of which are already inside the
+     * <=2-excitation set enumerated below, and build_sigma_s_square is itself
+     * strictly linear in the vector count (one full S^2 pass per vector),
+     * which is what made it 2.05 s of a 2.42 s iteration 1 on CAS(8,12). */
+
+    /* ---- union support of the trial vectors ------------------------------
+     * Scanned state-major so the reads are contiguous.  Bails out as soon as
+     * the support exceeds the cap, so declining is cheap. */
+    double _t0 = omp_get_wtime();
+    size_t cap = (size_t) 8 * (size_t) num_state;
+    unsigned char* mark = (unsigned char*) calloc(H_dim, 1);
+    if (!mark) return 0;
+    size_t ncol = 0;
+    for (int v = 0; v < num_state && ncol <= cap; v++) {
+        const double* q = Q + (size_t) v * H_dim;
+        for (size_t d = 0; d < H_dim; d++)
+            if (q[d] != 0.0 && !mark[d]) { mark[d] = 1; ncol++; }
+    }
+    if (ncol > cap) { free(mark); return 0; }
+    if (ncol == 0)  { free(mark); return 1; }   /* Q is all zero: S += 0 */
+
+    int* col = (int*) malloc(ncol * sizeof(int));
+    if (!col) { free(mark); return 0; }
+    { size_t c = 0; for (size_t d = 0; d < H_dim; d++) if (mark[d]) col[c++] = (int) d; }
+    free(mark);
+
+    double _t1 = omp_get_wtime();
+    /* ---- decode the num_alpha distinct strings once (NOT H_dim of them) --- */
+    int grows = N_ac * (n_o_ac - N_ac + 1);
+    int* Y = (int*) malloc((size_t) grows * 3 * sizeof(int));
+    get_graph(N_ac, n_o_ac, Y);
+    size_t* SS = (size_t*) malloc((size_t) num_alpha * sizeof(size_t));
+    int**   OL = (int**)   malloc((size_t) num_alpha * sizeof(int*));
+    int*    NL = (int*)    malloc((size_t) num_alpha * sizeof(int));
+    for (int ia = 0; ia < num_alpha; ia++) {
+        SS[ia] = index_to_string(ia, N_ac, n_o_ac, Y);
+        OL[ia] = string_to_obtlist(SS[ia], n_o_ac, &NL[ia]);
+    }
+
+    /* Physical active core-Fock from build_sigma's modified h1e -- identical
+     * to build_guess_blocks_scrules, and required for the same reason (else
+     * the exchange term is double counted). */
+    double* hp = (double*) malloc((size_t) n_o_ac * n_o_ac * sizeof(double));
+    for (int p = 0; p < n_o_ac; p++)
+        for (int s = 0; s < n_o_ac; s++) {
+            double v = h1e[p * n_o_ac + s];
+            for (int r = 0; r < n_o_ac; r++) v += 0.5 * sc_twoe(h2e, p, r, r, s, n_occ, n_in);
+            hp[p * n_o_ac + s] = v;
+        }
+
+    /* ---- decode the support columns and gather their coefficients --------- */
+    int* mk  = (int*) malloc(ncol * sizeof(int));
+    int* iak = (int*) malloc(ncol * sizeof(int));
+    int* ibk = (int*) malloc(ncol * sizeof(int));
+    double* Cmat = (double*) malloc(ncol * (size_t) num_state * sizeof(double));
+    for (size_t c = 0; c < ncol; c++) {
+        size_t d = (size_t) col[c];
+        size_t Idet = d % num_dets;
+        mk[c]  = (int) (d / num_dets);
+        ibk[c] = (int) (Idet % num_alpha);
+        iak[c] = (int) (Idet / num_alpha);
+        for (int v = 0; v < num_state; v++)
+            Cmat[c * (size_t) num_state + v] = Q[(size_t) v * H_dim + d];
+    }
+
+    double _t2 = omp_get_wtime();
+    /* ---- phase 1: enumerate each column's connected determinants ---------
+     * For column K only the determinants within 2 excitations can contribute,
+     * so walk them directly rather than testing K against all H_dim.  On
+     * CAS(8,12) that is 1425 per column instead of 245025 -- the whole point
+     * of enumeration over pair testing.
+     *
+     * The (da, db) buckets below partition the connected set: every J has one
+     * definite alpha and beta excitation level, so each is generated EXACTLY
+     * ONCE and the contributions must not be de-duplicated.  dm = +-1 (the
+     * dipole coupling) is restricted to da+db <= 1 because the dipole is a
+     * one-electron operator; sc_h_element returns 0 beyond that anyway. */
+    int nsa_max = N_ac * (n_o_ac - N_ac);
+    int nda_max = (N_ac * (N_ac - 1) / 2) * ((n_o_ac - N_ac) * (n_o_ac - N_ac - 1) / 2);
+    size_t nconn = (size_t) (1 + nsa_max + nda_max)
+                 + (size_t) nsa_max * (1 + nsa_max)
+                 + (size_t) nda_max;
+    size_t maxper = (size_t) (np1 < 3 ? np1 : 3) * nconn;
+
+    size_t* eJ = (size_t*) malloc(ncol * maxper * sizeof(size_t));
+    double* eH = (double*) malloc(ncol * maxper * sizeof(double));
+    int*    en = (int*)    malloc(ncol * sizeof(int));
+    if (!eJ || !eH || !en) {
+        free(eJ); free(eH); free(en);
+        for (int ia = 0; ia < num_alpha; ia++) free(OL[ia]);
+        free(SS); free(OL); free(NL); free(Y); free(hp);
+        free(mk); free(iak); free(ibk); free(Cmat); free(col);
+        return 0;   /* let the caller fall back rather than die on a big case */
+    }
+
+    #pragma omp parallel
+    {
+        int* a1 = (int*) malloc((nsa_max ? nsa_max : 1) * sizeof(int));
+        int* a2 = (int*) malloc((nda_max ? nda_max : 1) * sizeof(int));
+        int* b1 = (int*) malloc((nsa_max ? nsa_max : 1) * sizeof(int));
+        int* b2 = (int*) malloc((nda_max ? nda_max : 1) * sizeof(int));
+        #pragma omp for schedule(dynamic)
+        for (long long cc = 0; cc < (long long) ncol; cc++) {
+            size_t c = (size_t) cc;
+            int iaK = iak[c], ibK = ibk[c], mK = mk[c];
+            int na1 = enum_excited_indices(SS[iaK], 1, N_ac, n_o_ac, Y, a1);
+            int na2 = enum_excited_indices(SS[iaK], 2, N_ac, n_o_ac, Y, a2);
+            int nb1 = enum_excited_indices(SS[ibK], 1, N_ac, n_o_ac, Y, b1);
+            int nb2 = enum_excited_indices(SS[ibK], 2, N_ac, n_o_ac, Y, b2);
+            size_t* Jout = eJ + c * maxper;
+            double* Hout = eH + c * maxper;
+            int cnt = 0;
+            for (int da = 0; da <= 2; da++) {
+                int nia = (da == 0) ? 1 : ((da == 1) ? na1 : na2);
+                for (int x = 0; x < nia; x++) {
+                    int iaJ = (da == 0) ? iaK : ((da == 1) ? a1[x] : a2[x]);
+                    for (int db = 0; db <= 2 - da; db++) {
+                        int nib = (db == 0) ? 1 : ((db == 1) ? nb1 : nb2);
+                        for (int y = 0; y < nib; y++) {
+                            int ibJ = (db == 0) ? ibK : ((db == 1) ? b1[y] : b2[y]);
+                            for (int dmv = -1; dmv <= 1; dmv++) {
+                                if (dmv != 0 && da + db > 1) continue;
+                                int mJ = mK + dmv;
+                                if (mJ < 0 || mJ > N_p) continue;
+                                size_t Jd = (size_t) mJ * num_dets
+                                          + (size_t) iaJ * num_alpha + (size_t) ibJ;
+                                double h = sc_h_element(SS[iaJ], SS[ibJ], OL[iaJ], NL[iaJ],
+                                                        OL[ibJ], NL[ibJ], mJ,
+                                                        SS[iaK], SS[ibK], mK,
+                                                        hp, h2e, d_cmo, n_o_ac, n_occ, n_in,
+                                                        Enuc, dc, omega, d_exp, E_core);
+                                /* S^2 penalty, same element convention as
+                                 * build_guess_blocks_scrules (bra = J, ket = K;
+                                 * phases evaluated on the ket's strings).
+                                 * Block diagonal in the photon index. */
+                                if (s2_scale != 0.0 && dmv == 0) {
+                                    if (da == 0 && db == 0) {
+                                        h += s2_scale * Sdiag[(size_t) iaJ * num_alpha + ibJ];
+                                    } else if (da == 1 && db == 1) {
+                                        size_t SAk = SS[iaK], SBk = SS[ibK];
+                                        size_t SAj = SS[iaJ], SBj = SS[ibJ];
+                                        int aa = __builtin_ctzll(SAk & ~SAj);
+                                        int rr = __builtin_ctzll(SAj & ~SAk);
+                                        int bb = __builtin_ctzll(SBk & ~SBj);
+                                        int ss = __builtin_ctzll(SBj & ~SBk);
+                                        if (rr == bb && ss == aa) {
+                                            int pa = phase_single_excitation(aa, rr, SAk);
+                                            int pb = phase_single_excitation(bb, ss, SBk);
+                                            h -= s2_scale * (double) (pa * pb);
+                                        }
+                                    }
+                                }
+                                if (h == 0.0) continue;
+                                Jout[cnt] = Jd;
+                                Hout[cnt] = h;
+                                cnt++;
+                            }
+                        }
+                    }
+                }
+            }
+            en[c] = cnt;
+        }
+        free(a1); free(a2); free(b1); free(b2);
+    }
+
+    double _t3 = omp_get_wtime();
+    /* ---- phase 2: invert to CSR keyed by J -------------------------------
+     * Scattering straight from the columns would race (several columns hit the
+     * same J).  Inverting once costs one pass over ~ncol*nconn entries and
+     * lets phase 3 stay parallel over J with no atomics. */
+    size_t* rowp = (size_t*) calloc(H_dim + 1, sizeof(size_t));
+    size_t nnz = 0;
+    for (size_t c = 0; c < ncol; c++) {
+        const size_t* Jout = eJ + c * maxper;
+        for (int k = 0; k < en[c]; k++) rowp[Jout[k] + 1]++;
+        nnz += (size_t) en[c];
+    }
+    for (size_t J = 0; J < H_dim; J++) rowp[J + 1] += rowp[J];
+    int*    ecol = (int*)    malloc((nnz ? nnz : 1) * sizeof(int));
+    double* eval = (double*) malloc((nnz ? nnz : 1) * sizeof(double));
+    size_t* pos  = (size_t*) malloc((H_dim + 1) * sizeof(size_t));
+    memcpy(pos, rowp, (H_dim + 1) * sizeof(size_t));
+    for (size_t c = 0; c < ncol; c++) {
+        const size_t* Jout = eJ + c * maxper;
+        const double* Hout = eH + c * maxper;
+        for (int k = 0; k < en[c]; k++) {
+            size_t p = pos[Jout[k]]++;
+            ecol[p] = (int) c;
+            eval[p] = Hout[k];
+        }
+    }
+    free(pos); free(eJ); free(eH); free(en);
+
+    double _t4 = omp_get_wtime();
+    /* ---- phase 3: S[v][J] += sum_c H[J, col[c]] * Q[v][col[c]] ------------
+     * Parallel over BLOCKS of J: each thread owns distinct J values and writes
+     * only S[*][J], so there is no race and no reduction.  Accumulating into a
+     * block-local T indexed [jj][v] keeps the inner v loop contiguous, and the
+     * transpose back into S is one contiguous run per state. */
+    long long Hll = (long long) H_dim;
+    const int BJ = 256;
+    #pragma omp parallel
+    {
+        double* T = (double*) malloc((size_t) BJ * num_state * sizeof(double));
+        #pragma omp for schedule(static)
+        for (long long J0 = 0; J0 < Hll; J0 += BJ) {
+            int nb = (int) ((J0 + BJ <= Hll) ? BJ : (Hll - J0));
+            memset(T, 0, (size_t) nb * num_state * sizeof(double));
+            for (int jj = 0; jj < nb; jj++) {
+                size_t Jd = (size_t) (J0 + jj);
+                double* t = T + (size_t) jj * num_state;
+                for (size_t e = rowp[Jd]; e < rowp[Jd + 1]; e++) {
+                    double h = eval[e];
+                    const double* cst = Cmat + (size_t) ecol[e] * (size_t) num_state;
+                    for (int v = 0; v < num_state; v++) t[v] += h * cst[v];
+                }
+            }
+            for (int v = 0; v < num_state; v++) {
+                double* srow = S + (size_t) v * H_dim + (size_t) J0;
+                for (int jj = 0; jj < nb; jj++) srow[jj] += T[(size_t) jj * num_state + v];
+            }
+        }
+        free(T);
+    }
+    free(rowp); free(ecol); free(eval);
+    if (get_ci_print_level() >= 3) { double _t5 = omp_get_wtime();
+      printf("[sparse-prof] ncol=%zu nnz=%zu num_state=%d H_dim=%zu | scan %.3f  decode %.3f  ph1 %.3f  ph2 %.3f  ph3 %.3f  TOTAL %.3f\n",
+        ncol, nnz, num_state, H_dim, _t1-_t0, _t2-_t1, _t3-_t2, _t4-_t3, _t5-_t4, _t5-_t0); fflush(stdout); }
+
+    for (int ia = 0; ia < num_alpha; ia++) free(OL[ia]);
+    free(SS); free(OL); free(NL); free(Y); free(hp);
+    free(mk); free(iak); free(ibk); free(Cmat); free(col);
+    return 1;
+}
+
+/* QED_SPARSE_INIT_COMPARE: rebuild the same S through build_sparse_init_sigma
+ * into scratch and report the largest disagreement with the S that build_sigma
+ * just produced.  Purely diagnostic -- the caller KEEPS build_sigma's result,
+ * so enabling the compare never changes a run's numbers (unlike enabling
+ * QED_SPARSE_INIT_SIGMA itself, which changes the summation order). */
+static void sparse_init_sigma_compare(const double* h1e, const double* h2e, const double* d_cmo,
+        const double* Q, const double* S, int num_state,
+        int N_ac, int n_o_ac, int n_o_in, int N_p, int num_alpha,
+        double Enuc, double dc, double omega, double d_exp, double E_core,
+        const double* Sdiag, double s2_scale, size_t H_dim) {
+    size_t n = (size_t) num_state * H_dim;
+    double* Sc = (double*) calloc(n, sizeof(double));
+    if (!Sc) {
+        printf("[sparse-init-sigma] compare skipped: could not allocate %.1f MiB\n", n * 8.0 / 1048576.0);
+        fflush(stdout);
+        return;
+    }
+    if (!build_sparse_init_sigma(h1e, h2e, d_cmo, Q, Sc, num_state,
+                N_ac, n_o_ac, n_o_in, N_p, num_alpha, Enuc, dc, omega, d_exp, E_core,
+                Sdiag, s2_scale)) {
+        printf("[sparse-init-sigma] compare skipped: declined (guess vectors not sparse enough)\n");
+        fflush(stdout);
+        free(Sc);
+        return;
+    }
+    /* rows 0..num_state-1 of the caller's S are contiguous (S is maxdim x H_dim) */
+    double mx = 0.0, mref = 0.0;
+    for (size_t t = 0; t < n; t++) {
+        double d = fabs(Sc[t] - S[t]);
+        if (d > mx) mx = d;
+        double a = fabs(S[t]);
+        if (a > mref) mref = a;
+    }
+    printf("[sparse-init-sigma] num_state=%d  max|dS|=%.3e  max|S|=%.3e  rel=%.3e\n",
+           num_state, mx, mref, mref > 0.0 ? mx / mref : 0.0);
+    fflush(stdout);
+    free(Sc);
 }
 
 void davidson_spin(double* h1e, double* h2e, double* d_cmo, double* Hdiag, double* Sdiag, double* Sdiag_projection, double* eigenvals, double* eigenvecs, int* table,
@@ -1726,14 +2210,137 @@ void davidson_spin(double* h1e, double* h2e, double* d_cmo, double* Hdiag, doubl
     int trace = (get_ci_print_level() >= 3);
     if (trace) printf("target_spin %20.12lf\n",target_spin);
     if (trace) printf(" indim%d", indim);
-    if (casscf == true) {
+    const int indim_requested = indim;   /* davidson_indim * nroots, before growth */
+    /* QED_SPARSE_INIT_SIGMA: build the first/restart sigma directly from the
+     * sparse guess vectors instead of one full sigma product per vector (see
+     * build_sparse_init_sigma).  QED_SPARSE_INIT_COMPARE builds it both ways
+     * and reports the discrepancy while keeping build_sigma's result. */
+    int sparse_init = 0; { const char* e = getenv("QED_SPARSE_INIT_SIGMA");   if (e && atoi(e) != 0) sparse_init = 1; }
+    int sparse_cmp  = 0; { const char* e = getenv("QED_SPARSE_INIT_COMPARE"); if (e && atoi(e) != 0) sparse_cmp  = 1; }
+
+    /* Neither subspace size can exceed the CI space itself.  helper_PFCI.py:3076
+     * checks this before calling, but the C backend is also driven directly
+     * (cpp_casscf), so enforce it here where the buffers are actually sized. */
+    if ((size_t) indim_requested > H_dim || (size_t) maxdim > H_dim) {
+        printf(
+"\n********************************************************************************\n"
+" CI Davidson cannot start: requested subspace is larger than the CI space.\n\n"
+"   davidson_indim  * nroots = %d\n"
+"   davidson_maxdim * nroots = %d\n"
+"   CI dimension H_dim       = %zu   <-- neither may exceed this\n"
+"   nroots = %d\n\n"
+" NOTE: davidson_indim and davidson_maxdim are PER-ROOT MULTIPLIERS, so the\n"
+" sizes that matter are the products above, not the values you set.\n\n"
+" FIX: set davidson_indim and davidson_maxdim to at most %zu (= H_dim / nroots),\n"
+" keeping davidson_maxdim > davidson_indim so the guess set has room to grow.\n"
+" For a CI space this small, full diagonalization is usually the better choice.\n"
+"********************************************************************************\n",
+            indim_requested, maxdim, H_dim, nroots,
+            nroots ? H_dim / (size_t) nroots : H_dim);
+        fflush(stdout);
+        exit(1);
+    }
+    /* QED_HYBRID_GUESS = N -- the developer's hybrid guess (item 218C): keep the
+     * warm CI vector(s) AND add an N-determinant P-space of unit vectors chosen
+     * from the CURRENT H_diag, spin-adapted through the same Algorithm 3 path
+     * the cold start uses, then orthonormalized against the warm vector(s).
+     * Default 0 = off, so this is a pure addition to the existing two paths.
+     *
+     * Only meaningful when a warm vector exists (casscf == true).  With
+     * casscf == false the cold path already builds exactly this P-space and
+     * there is no warm vector to add, so the knob is ignored there.
+     *
+     * NOTE ON index_Hdiag: the closure below walks the current Hdiag in
+     * index_Hdiag's order, and on the micro path index_Hdiag is the SETUP
+     * argsort unless QED_FRESH_HDIAG_SORT=1 (helper_PFCI.py).  The hybrid
+     * therefore wants that knob on; see the warning printed below. */
+    int hybrid_n = 0; { const char* e = getenv("QED_HYBRID_GUESS"); if (e) hybrid_n = atoi(e); }
+    int hybrid = (hybrid_n > 0) && (casscf == true);
+    int hybrid_check = 0; { const char* e = getenv("QED_HYBRID_CHECK"); if (e && atoi(e) != 0) hybrid_check = 1; }
+    /* Number of trailing rows of the assembled guess that are DENSE (the warm
+     * vectors).  0 on both non-hybrid paths.  Read by the sparse/dense split at
+     * the first sigma build. */
+    int hybrid_dense_tail = 0;
+    if (casscf == true && !hybrid) {
         //maxiter = 3;
         indim = nroots;
     }
     else {
     //getting all configurations in the spin coupling set
-        while((Hdiag[index_Hdiag[indim]] - Hdiag[index_Hdiag[indim-1]] < 1e-10) && (indim < H_dim)) {
+        if (hybrid) {
+            /* Hazard 4 of item 218C: `indim = nroots` is set in the OTHER
+             * branch, so the hybrid has to establish its own P-space size here
+             * before the shared closure runs. */
+            indim = hybrid_n;
+            if (indim > (int) H_dim) indim = (int) H_dim;
+        }
+        /* The bound test MUST come first: at indim == H_dim the other operand
+         * evaluates Hdiag[index_Hdiag[H_dim]], one element past the end of
+         * index_Hdiag.  && short-circuits left to right, so ordering it this
+         * way is what makes the read safe. */
+        while((indim < H_dim) && (Hdiag[index_Hdiag[indim]] - Hdiag[index_Hdiag[indim-1]] < 1e-10)) {
             indim += 1;
+        }
+        if (hybrid && indim + nroots > maxdim) {
+            /* Hazard 2 of item 218C, with the hybrid's extra nroots rows: the
+             * warm vectors sit in Q alongside the closed P-space, so the buffer
+             * has to hold both.  Same reasoning as the cold-path check below --
+             * refuse rather than overflow the heap, and do not truncate (a cut
+             * spin-coupling set contaminates the spin-filtered guess). */
+            printf(
+"\n********************************************************************************\n"
+" CI Davidson (hybrid guess) cannot start: warm vectors + P-space do not fit.\n\n"
+"   QED_HYBRID_GUESS (requested P-space)        = %d\n"
+"   after closing the spin-coupling set         = %d\n"
+"   plus warm vectors (nroots)                  = %d\n"
+"   total needed                                = %d   <-- must fit below\n"
+"   davidson_maxdim * nroots (buffer capacity)  = %d\n\n"
+" FIX: raise davidson_maxdim, or lower QED_HYBRID_GUESS.\n"
+"********************************************************************************\n",
+                hybrid_n, indim, nroots, indim + nroots, maxdim);
+            fflush(stdout);
+            exit(1);
+        }
+        /* The growth above is data dependent (it follows the H_diag degeneracy
+         * pattern, which moves as the orbitals move), so the selection set can
+         * end up larger than the davidson_indim*nroots that was asked for.
+         * Q, S and theta are all sized by maxdim (= davidson_maxdim*nroots) but
+         * are written with `indim` entries below, so indim > maxdim is a heap
+         * overflow.  It corrupts memory silently and surfaces much later and
+         * far away as an all-NaN CI vector, so refuse here instead.
+         * Truncating is NOT an alternative: a partial spin-coupling set leaves
+         * S^2 non-block-diagonal in the selected space and the spin-filtered
+         * guess is then contaminated. */
+        if (indim > maxdim) {
+            printf(
+"\n********************************************************************************\n"
+" CI Davidson (spin-adapted) cannot start: the initial determinant set does not\n"
+" fit inside the subspace buffers.\n\n"
+"   davidson_indim * nroots  (requested)        = %d\n"
+"   after closing the spin-coupling set         = %d   <-- must fit below\n"
+"   davidson_maxdim * nroots (buffer capacity)  = %d\n"
+"   CI dimension H_dim                          = %zu\n"
+"   nroots = %d, target spin S = %.1f\n\n"
+" WHAT HAPPENED.  The guess is built from the lowest-energy determinants.  That\n"
+" set is then GROWN until it no longer splits a group of degenerate\n"
+" determinants, so that every spin-coupling set it touches is complete -- if it\n"
+" were cut, S^2 would not be block diagonal over the selected determinants and\n"
+" the spin-filtered guess would be contaminated.  How far it has to grow depends\n"
+" on the orbitals, so it changes from one macroiteration to the next and can\n"
+" exceed the size you asked for.\n\n"
+" NOTE: davidson_indim and davidson_maxdim are PER-ROOT MULTIPLIERS.  With\n"
+" nroots = %d, davidson_indim = %d selects %d determinants, not %d.\n\n"
+" FIX: raise davidson_maxdim (or lower davidson_indim) so the grown set fits.\n"
+" davidson_maxdim >= davidson_indim + 2 is usually enough headroom.  Setting\n"
+" davidson_indim == davidson_maxdim leaves NO room for the growth and will hit\n"
+" this every time the guess set touches a degeneracy.  For a CI space this\n"
+" small, full diagonalization is also a reasonable option.\n"
+"********************************************************************************\n",
+                indim_requested, indim, maxdim, H_dim, nroots, target_spin,
+                nroots, indim_requested / (nroots ? nroots : 1),
+                indim_requested, indim_requested / (nroots ? nroots : 1));
+            fflush(stdout);
+            exit(1);
         }
     }
     if (trace) printf(" maxiter%d", maxiter);
@@ -1750,7 +2357,15 @@ void davidson_spin(double* h1e, double* h2e, double* d_cmo, double* Hdiag, doubl
     double* Hdiag2 = (double*)malloc(H_dim*sizeof(double));
     cblas_dcopy(H_dim,Hdiag,1,Hdiag2,1);
     double* Q = (double*) malloc(maxdim*H_dim*sizeof(double));
-    memset(Q, 0, maxdim*H_dim*sizeof(double));
+    /* Only the rows that are actually part of the subspace need zeroing.
+    * Rows beyond it are always FULLY overwritten by cblas_dcopy before they
+    * enter the space (the expansion at 'Q+(i+L)*H_dim' and the restart at
+    * 'Q+i*H_dim'/'Q+(i+nroots)*H_dim'), and every consumer dgemm reads only L
+    * rows -- so the zeros out there were never read.  Zeroing all maxdim rows
+    * first-touches the whole buffer: 600 x 245025 x 8 = 1.18 GiB on CAS(8,12)
+    * where L is 181.
+    * Here: L == indim here; the unit-vector guess below writes ONE element per row, so those rows do need the zeros. */
+    memset(Q, 0, (size_t) L*H_dim*sizeof(double));
     double* S = (double*) malloc(maxdim*H_dim*sizeof(double));
 
     double* w = (double*) malloc(nroots*H_dim*sizeof(double));
@@ -1758,10 +2373,20 @@ void davidson_spin(double* h1e, double* h2e, double* d_cmo, double* Hdiag, doubl
     bool* convergence_check = (bool*) malloc(nroots*sizeof(bool));
     double* theta = (double*) malloc(maxdim*sizeof(double));
     memset(theta, 0, maxdim*sizeof(double));
+    /* [step7] snapshot of the CSF-basis eigenvalues e from Algorithm 3 step 6,
+     * kept so iteration 1 can check that the projected subspace Hamiltonian is
+     * diag(e) -- which it is if and only if step 7 is transposed correctly.
+     * NULL on the warm (casscf == true) path, which has no guess block. */
+    double* guess_theta = NULL;
+    int guess_theta_n = 0;
         
     double minimum = 0.0;
     int min_pos;
-    if (casscf == false) {
+    if (casscf == false || hybrid) {
+        /* The hybrid runs this whole P-space build unchanged -- selection,
+         * Algorithm 3 guess blocks, S^2 filter, steps 7 and 8 -- and differs
+         * only in what is done with the result at the end of the block, where
+         * the warm vector(s) are prepended and the set is re-orthonormalized. */
         //use unit vectors as guess
         int* sel = (int*) malloc(indim * sizeof(int)); /* selected determinant indices (Algorithm 3 direct block) */
         for (int i = 0; i < indim; i++) {
@@ -1796,7 +2421,15 @@ void davidson_spin(double* h1e, double* h2e, double* d_cmo, double* Hdiag, doubl
 
         if (guess_sigma || guess_cmp) {
             /* legacy: L full-space sigma-vector products, projected to the L x L block */
-            memset(S, 0, maxdim*H_dim*sizeof(double));
+            /* Only the rows that are actually part of the subspace need zeroing.
+            * Rows beyond it are always FULLY overwritten by cblas_dcopy before they
+            * enter the space (the expansion at 'Q+(i+L)*H_dim' and the restart at
+            * 'Q+i*H_dim'/'Q+(i+nroots)*H_dim'), and every consumer dgemm reads only L
+            * rows -- so the zeros out there were never read.  Zeroing all maxdim rows
+            * first-touches the whole buffer: 600 x 245025 x 8 = 1.18 GiB on CAS(8,12)
+            * where L is 181.
+            * Here: legacy QED_GUESS_SIGMA build accumulates into rows 0..L-1 only. */
+            memset(S, 0, (size_t) L*H_dim*sizeof(double));
             double itime = omp_get_wtime();
             build_sigma(h1e, h2e, d_cmo, Q, S, table, table_creation, table_annihilation,
                             N_ac, n_o_ac, n_o_in, nmo, L, N_p, Enuc, dc, omega, d_exp, E_core, break_degeneracy);
@@ -1831,7 +2464,13 @@ void davidson_spin(double* h1e, double* h2e, double* d_cmo, double* Hdiag, doubl
             }
         }
 
+		/* [guess-cost] instrumentation: which term of a large cold-start
+		 * P-space guess actually costs.  Synthetic MKL timings do not
+		 * transfer here (the S^2 block spectrum is massively degenerate),
+		 * so time the real calls. */
+		{ double _t0 = omp_get_wtime();
 		symmetric_eigenvalue_problem(Gs, L, theta);
+		if (trace) printf("[guess-cost] S2 diag N=%d took %f seconds\n", L, omp_get_wtime() - _t0); }
         //for (int i = 0; i < L; i++) {
         //    printf("%20.12lf\n", theta[i]);
 	//}
@@ -1854,8 +2493,33 @@ void davidson_spin(double* h1e, double* h2e, double* d_cmo, double* Hdiag, doubl
 	    //}	    
 	}
         if (count < nroots) {
-           printf("need bigger initial dim to get enough roots");
-           exit(1);
+            printf(
+"\n********************************************************************************\n"
+" CI Davidson (spin-adapted) cannot start: not enough spin-pure guess vectors.\n\n"
+"   determinants in the guess set               = %d\n"
+"   vectors found with S = %.1f  (S(S+1) = %.3f) = %d\n"
+"   roots requested                             = %d   <-- need at least this many\n"
+"   CI dimension H_dim                          = %zu\n\n"
+" WHAT HAPPENED.  S^2 is built and diagonalized over the %d selected\n"
+" determinants, and only the eigenvectors whose eigenvalue matches the requested\n"
+" S(S+1) to 1e-9 can seed the iteration.  Only %d of the %d came back with the\n"
+" requested multiplicity -- the rest belong to other spin states, which this run\n"
+" is not solving for.\n\n"
+" NOTE: davidson_indim is a PER-ROOT MULTIPLIER.  With nroots = %d,\n"
+" davidson_indim = %d selects %d determinants, not %d.\n\n"
+" FIX: raise davidson_indim so the guess set spans more determinants, and raise\n"
+" davidson_maxdim along with it -- the set is grown to close its spin-coupling\n"
+" sets and the grown result must still fit in davidson_maxdim * nroots.\n"
+" If this active space genuinely does not hold %d states of this multiplicity,\n"
+" request fewer roots or change spin_adaptation instead.\n"
+"********************************************************************************\n",
+                L, target_spin, target_spin * (target_spin + 1.0), count,
+                nroots, H_dim, L, count, L,
+                nroots, indim_requested / (nroots ? nroots : 1),
+                indim_requested, indim_requested / (nroots ? nroots : 1),
+                nroots);
+            fflush(stdout);
+            exit(1);
 	}
 	indim = count;
         double* Svec = (double*) malloc(indim *L*sizeof(double));
@@ -1877,11 +2541,67 @@ void davidson_spin(double* h1e, double* h2e, double* d_cmo, double* Hdiag, doubl
         cblas_dgemm(CblasRowMajor, CblasNoTrans, CblasNoTrans, indim , indim , L, 1.0, Svec, L, sigma_spin, indim , 0.0, Hspin, indim );
 
         memset(theta, 0, maxdim*sizeof(double));
+	{ double _t0 = omp_get_wtime();   /* [guess-cost] */
 	symmetric_eigenvalue_problem(Hspin, indim , theta);
+	if (trace) printf("[guess-cost] Hspin diag N=%d took %f seconds\n", indim, omp_get_wtime() - _t0); }
         memset(sigma_spin, 0, L*indim *sizeof(double));
-        cblas_dgemm(CblasRowMajor, CblasNoTrans, CblasNoTrans, indim , L, indim , 1.0, Hspin, indim , Svec, L, 0.0, sigma_spin, L);
+        /* [step7] Algorithm 3 step 7, c_subspace = D_tar,00 b_tar^dagger.
+         *
+         * LAPACKE_dsyev(LAPACK_ROW_MAJOR,'V',...) returns eigenvectors in the
+         * COLUMNS of the row-major array (verified by residual against the
+         * pristine matrix), so after the step-6 diagonalization above
+         *     Hspin[k*indim + r] = d_r(k),
+         * i.e. Hspin IS D_tar,00 with columns = d vectors, matching the
+         * algorithm's definition.  Svec[i*L + j] = b_i(j), i.e. Svec = b_tar^dagger.
+         * The guess vector wanted for root r is
+         *     c_r = sum_k d_r(k) b_k = row r of (D^dagger b^dagger),
+         * so the product needs Hspin TRANSPOSED.  The plain D b^dagger written
+         * here before (and in the printed algorithm, which omits the dagger on
+         * D) puts sum_k d_k(r) b_k in row r instead.
+         *
+         * WHY THIS WAS INVISIBLE: D is orthogonal, so D b^dagger and
+         * D^dagger b^dagger have the SAME ROW SPAN and both have orthonormal
+         * rows.  Every one of the `count` vectors is handed to Davidson, whose
+         * first subspace diagonalization recovers the same Ritz pairs either
+         * way -- identical energies, which is what the A/B below confirms.
+         * IT STOPS BEING INVISIBLE the moment only the lowest few roots are
+         * kept (a collapsed / hybrid guess): rows 0..nroots-1 of D b^dagger are
+         * arbitrary mixtures, not the lowest CSF roots.  Fixing it also makes
+         * the iteration-1 subspace Hamiltonian exactly diag(e) (see the
+         * [step7] check in the Davidson loop).
+         * QED_STEP7_LEGACY=1 restores the untransposed product. */
+        int step7_legacy = 0; { const char* e = getenv("QED_STEP7_LEGACY"); if (e && atoi(e) != 0) step7_legacy = 1; }
+        cblas_dgemm(CblasRowMajor, step7_legacy ? CblasNoTrans : CblasTrans, CblasNoTrans,
+                    indim , L, indim , 1.0, Hspin, indim , Svec, L, 0.0, sigma_spin, L);
+        guess_theta_n = indim;
+        guess_theta = (double*) malloc((size_t)indim * sizeof(double));
+        for (int i = 0; i < indim; i++) guess_theta[i] = theta[i];
         memset(newS, 0, L*H_dim*sizeof(double));
-        cblas_dgemm(CblasRowMajor, CblasNoTrans, CblasNoTrans, indim , H_dim, L, 1.0, sigma_spin, L, Q, H_dim, 0.0, newS, H_dim);
+        /* Algorithm 3 step 8, c = P c_subspace: expand the spin-pure P-space
+         * roots to full CI length.
+         *
+         * Q's rows here are still the UNTOUCHED unit-vector guess set -- memset
+         * above, then Q[i*H_dim + sel[i]] = 1.0 in the selection loop, and
+         * nothing writes Q again until the copy-back below.  So
+         *     newS = sigma_spin * Q   =>   newS[r][sel[j]] = sigma_spin[r][j],
+         * i.e. the projector P is a SCATTER of indim*L elements, not a dense
+         * (indim x L) x (L x H_dim) product.  Measured on c10h8 at indim=4000
+         * (L=4014, 1364 spin-pure roots, H_dim=63504) the dgemm was 8.8 s of a
+         * 38 s excess; the scatter is O(indim*L).
+         * newS was memset to zero immediately above, so untouched entries stay 0.
+         * QED_STEP8_DGEMM=1 restores the dense product for A/B. */
+        { double _t0 = omp_get_wtime();
+        int step8_dgemm = 0; { const char* e = getenv("QED_STEP8_DGEMM"); if (e && atoi(e) != 0) step8_dgemm = 1; }
+        if (step8_dgemm) {
+            cblas_dgemm(CblasRowMajor, CblasNoTrans, CblasNoTrans, indim , H_dim, L, 1.0, sigma_spin, L, Q, H_dim, 0.0, newS, H_dim);
+        } else {
+            #pragma omp parallel for schedule(static)
+            for (int r = 0; r < indim; r++)
+                for (int j = 0; j < L; j++)
+                    newS[(size_t)r*H_dim + (size_t)sel[j]] = sigma_spin[(size_t)r*L + j];
+        }
+        if (trace) printf("[guess-cost] step 8 expansion (%s, %d x %d -> %zu) took %f seconds\n",
+                          step8_dgemm ? "dgemm" : "scatter", indim, L, H_dim, omp_get_wtime() - _t0); }
 	//for (int i = 0; i < indim ; i++) {
 	//    printf("%d\n",i);
         //    for (int j = 0; j < H_dim ; j++) {
@@ -1890,15 +2610,63 @@ void davidson_spin(double* h1e, double* h2e, double* d_cmo, double* Hdiag, doubl
 	//    printf("\n");
         //}
 	
-        memset(Q, 0, maxdim*H_dim*sizeof(double));
+        /* Only the rows that are actually part of the subspace need zeroing.
+        * Rows beyond it are always FULLY overwritten by cblas_dcopy before they
+        * enter the space (the expansion at 'Q+(i+L)*H_dim' and the restart at
+        * 'Q+i*H_dim'/'Q+(i+nroots)*H_dim'), and every consumer dgemm reads only L
+        * rows -- so the zeros out there were never read.  Zeroing all maxdim rows
+        * first-touches the whole buffer: 600 x 245025 x 8 = 1.18 GiB on CAS(8,12)
+        * where L is 181.
+        * Here: the loop below overwrites rows 0..indim-1 wholesale from newS; L becomes indim. */
+        memset(Q, 0, (size_t) (hybrid ? indim + nroots : indim)*H_dim*sizeof(double));
+        if (hybrid) {
+            /* HYBRID ASSEMBLY.  Q = [ spin-pure P-space | warm CI vector(s) ].
+             *
+             * THE ORDER IS P-SPACE FIRST, AND THAT IS A PERFORMANCE DECISION,
+             * NOT A QUALITY ONE.  Gram-Schmidt does not change the SPAN, only
+             * the basis, and Davidson only sees the span -- so either order
+             * gives the same subspace.  What the order does change is sparsity:
+             * the P-space vectors are supported entirely inside the L selected
+             * determinants, the warm vector is dense over all H_dim, and
+             * whichever set is orthogonalized SECOND picks up the other's
+             * support.  Warm-first would smear the dense warm vector through
+             * all `count` P-space rows and make every one of them dense.
+             * That matters because build_sparse_init_sigma (:1883) declines
+             * when the union of supports exceeds 8*num_state and the caller
+             * then falls back to build_sigma -- one full sigma product PER
+             * VECTOR.  Item 219C measured that fallback at 5.34 s vs 0.164 s
+             * for 388 guess vectors, per CI solve; across ~89 microiterations
+             * that alone would cost more than the entire baseline run.
+             * P-space-first keeps `count` rows sparse and makes only the
+             * `nroots` warm rows dense.
+             *
+             * `eigenvecs` still holds the warm vectors at this point: the
+             * P-space build above writes Q, G, Gs, newS, sel and friends, and
+             * never touches eigenvecs (which is only written at the exits of
+             * this routine).  So no separate stash is needed.
+             *
+             * Hazard 1 of item 218C (spin contamination) is handled by
+             * construction: the P-space vectors are S^2 eigenvectors filtered
+             * to the target S, the warm vector is a converged CI vector of that
+             * same S, and any linear combination of same-S vectors is still an
+             * S eigenvector -- so orthogonalization cannot contaminate the set.
+             * Hazard 3 (the warm vector is NOT orthogonal to the unit vectors)
+             * is what the Gram-Schmidt below exists for. */
+            for (int i = 0; i < indim; i++)
+                cblas_dcopy((MKL_INT) H_dim, newS + (size_t)i*H_dim, 1, Q + (size_t)i*H_dim, 1);
+            for (int i = 0; i < nroots; i++)
+                cblas_dcopy((MKL_INT) H_dim, eigenvecs + (size_t)i*H_dim, 1,
+                            Q + (size_t)(indim + i)*H_dim, 1);
+        } else {
         for (int i = 0; i < indim ; i++) {
 	    //double total_spin = check_total_spin(newS +i*H_dim, Sdiag, table, b_array, num_links0, n_o_ac, num_alpha, N_p);
-            //printf("%20.12lf\n", total_spin);	    
-            //printf("%20.12lf\n", theta[i]);	    
+            //printf("%20.12lf\n", total_spin);
+            //printf("%20.12lf\n", theta[i]);
             for (int j = 0; j < H_dim ; j++) {
-		Q[i * H_dim + j] = newS[i * H_dim + j];    
+		Q[i * H_dim + j] = newS[i * H_dim + j];
             }
 	    //printf("\n");
+        }
         }
         //for (int i = 0; i < indim ; i++) {
         //    for (int j = 0; j < indim ; j++) {
@@ -1908,6 +2676,71 @@ void davidson_spin(double* h1e, double* h2e, double* d_cmo, double* Hdiag, doubl
 	//    printf("\n");
 	//}
 	L = indim;
+        if (hybrid) {
+            /* Orthonormalize the warm vector(s) against the P-space.
+             *
+             * The P-space rows are ALREADY orthonormal -- they are the rows of
+             * D^dagger b^dagger (D orthogonal, b^dagger orthonormal rows; see
+             * the [step7] note above), scattered onto the selected determinants
+             * by step 8.  So only the trailing nroots warm rows need work, and
+             * doing just those keeps this O(nroots * L * H_dim) instead of the
+             * O(L^2 * H_dim) a full re-orthogonalization of the whole set would
+             * cost.  QED_HYBRID_CHECK=1 verifies the orthonormality assumption
+             * rather than trusting it.
+             *
+             * The pre-normalization norm printed below is a direct measure of
+             * HOW MUCH OF THE WARM VECTOR THE P-SPACE DOES NOT ALREADY CONTAIN
+             * -- i.e. the redundancy question item 222D raised, read off the
+             * geometry instead of inferred from counts. */
+            int L_hyb = indim;
+            for (int k = 0; k < nroots; k++) {
+                double* v = Q + (size_t)(indim + k)*H_dim;
+                for (int pass = 0; pass < 2; pass++)   /* MGS + reorthogonalization */
+                    for (int i = 0; i < L_hyb; i++) {
+                        double dot = cblas_ddot((MKL_INT) H_dim, Q + (size_t)i*H_dim, 1, v, 1);
+                        cblas_daxpy((MKL_INT) H_dim, -dot, Q + (size_t)i*H_dim, 1, v, 1);
+                    }
+                double nrm = sqrt(cblas_ddot((MKL_INT) H_dim, v, 1, v, 1));
+                if (trace)
+                    printf("[hybrid] warm root %d: component outside the P-space = %.6f\n", k, nrm);
+                if (nrm > 1e-6) {
+                    cblas_dscal((MKL_INT) H_dim, 1.0/nrm, v, 1);
+                    if (L_hyb != indim + k)
+                        cblas_dcopy((MKL_INT) H_dim, v, 1, Q + (size_t)L_hyb*H_dim, 1);
+                    L_hyb++;
+                } else if (trace) {
+                    printf("[hybrid] warm root %d DROPPED -- already inside the P-space span\n", k);
+                }
+            }
+            if (hybrid_check) {
+                double maxdev = 0.0;
+                for (int i = 0; i < L_hyb; i++)
+                    for (int j = 0; j <= i; j++) {
+                        double d = cblas_ddot((MKL_INT) H_dim, Q + (size_t)i*H_dim, 1, Q + (size_t)j*H_dim, 1);
+                        if (i == j) d -= 1.0;
+                        if (fabs(d) > maxdev) maxdev = fabs(d);
+                    }
+                printf("[hybrid] orthonormality of the assembled subspace: max|QQ^T - I| = %.3e\n", maxdev);
+                fflush(stdout);
+            }
+            /* the warm rows are dense; the P-space rows are not.  The sigma
+             * build needs to know how many trailing rows to route to the dense
+             * path -- see the split at the QED_SPARSE_INIT_SIGMA call. */
+            hybrid_dense_tail = L_hyb - indim;
+            if (trace)
+                printf("[hybrid] P-space %d (requested %d) + warm %d -> subspace %d\n",
+                       indim, hybrid_n, nroots, L_hyb);
+            L = L_hyb;
+            /* The iteration-1 analytic-subspace-H shortcut (item 220A fix 2) is
+             * EXACT ONLY for a pure cold guess, where the subspace is precisely
+             * the P-space CSF basis and Q(H+penalty)Q^T = diag(e) + shift.  The
+             * hybrid mixes in the warm vector and then re-orthogonalizes, so
+             * that identity no longer holds.  Drop the snapshot: the guard in
+             * the Davidson loop keys off guess_theta being non-NULL. */
+            free(guess_theta);
+            guess_theta = NULL;
+            guess_theta_n = 0;
+        }
         free(sel);
         free(G);
         free(Gs);
@@ -1938,6 +2771,17 @@ void davidson_spin(double* h1e, double* h2e, double* d_cmo, double* Hdiag, doubl
     //maxiter = 5; 
     int L_prev = 0;
     bool restarted = true;
+    /* Persistent copy of the subspace Hamiltonian Q(H + penalty)Q^T.  The `G`
+     * handed to the eigensolver is DESTROYED by it (it comes back holding the
+     * eigenvectors), so the accumulated block has to live somewhere else if
+     * later iterations are to reuse it.  Leading dimension is maxdim; only the
+     * leading L x L block is ever live.  QED_INCREMENTAL_G=0 disables the reuse
+     * and rebuilds the whole block every iteration (the old behaviour). */
+    int incremental_g = 1; { const char* e = getenv("QED_INCREMENTAL_G"); if (e && atoi(e) == 0) incremental_g = 0; }
+    int guess_g_shortcut = 1; { const char* e = getenv("QED_NO_GUESS_G_SHORTCUT"); if (e && atoi(e) != 0) guess_g_shortcut = 0; }
+    int guess_g_compare = 0; { const char* e = getenv("QED_GUESS_G_COMPARE"); if (e && atoi(e) != 0) guess_g_compare = 1; }
+    double* Gkeep = (double*) malloc((size_t)maxdim*maxdim*sizeof(double));
+    memset(Gkeep, 0, (size_t)maxdim*maxdim*sizeof(double));
     //memset(S, 0, maxdim*H_dim*sizeof(double));
     for (int a = 0; a < maxiter; a++) {
         if (trace) {
@@ -1966,11 +2810,11 @@ void davidson_spin(double* h1e, double* h2e, double* d_cmo, double* Hdiag, doubl
             build_sigma(h1e, h2e, d_cmo, Q_new, S_new, table, table_creation, table_annihilation, 
                         N_ac, n_o_ac, n_o_in, nmo, L_new, N_p, Enuc, dc, omega, d_exp, E_core, break_degeneracy);
             
-            // Apply spin penalty for new vectors only
-            build_sigma_s_square(Q_new, S_new, Sdiag, b_array, table, num_links0, n_o_ac, num_alpha, 
-                                L_new, N_p, 0.45);
-            
-            //build_sigma_s_fourth_power(Q_new, S_new, Sdiag_projection, b_array, table, num_links0, n_o_ac, num_alpha, L_new, N_p, 0.1);
+            // Apply the active spin treatment for new vectors only
+            // (QED_SPIN_METHOD / QED_SPIN_SCALE -- see qed_spin_method above;
+            //  no-op when the projection method is selected)
+            apply_spin_penalty(Q_new, S_new, L_new, Sdiag, Sdiag_projection,
+                               b_array, table, num_links0, n_o_ac, num_alpha, N_p);
             // Copy new sigma vectors to S (starting at position L_prev)
             for (int i = 0; i < L_new; i++) {
                 cblas_dcopy(H_dim, S_new + i * H_dim, 1, S + (L_prev + i) * H_dim, 1);
@@ -1982,14 +2826,77 @@ void davidson_spin(double* h1e, double* h2e, double* d_cmo, double* Hdiag, doubl
         } else {
             // First iteration or after restart - compute all sigma vectors
             // Only NOW do we clear S
-            memset(S, 0, maxdim*H_dim*sizeof(double));
+            /* Only the rows that are actually part of the subspace need zeroing.
+            * Rows beyond it are always FULLY overwritten by cblas_dcopy before they
+            * enter the space (the expansion at 'Q+(i+L)*H_dim' and the restart at
+            * 'Q+i*H_dim'/'Q+(i+nroots)*H_dim'), and every consumer dgemm reads only L
+            * rows -- so the zeros out there were never read.  Zeroing all maxdim rows
+            * first-touches the whole buffer: 600 x 245025 x 8 = 1.18 GiB on CAS(8,12)
+            * where L is 181.
+            * Here: build_sigma / the sparse build accumulate into rows 0..L-1 only. */
+            memset(S, 0, (size_t) L*H_dim*sizeof(double));
             
-            build_sigma(h1e, h2e, d_cmo, Q, S, table, table_creation, table_annihilation, 
-                        N_ac, n_o_ac, n_o_in, nmo, L, N_p, Enuc, dc, omega, d_exp, E_core, break_degeneracy);
-            
-            build_sigma_s_square(Q, S, Sdiag, b_array, table, num_links0, n_o_ac, num_alpha, 
-                                L, N_p, 0.45);
-            //build_sigma_s_fourth_power(Q, S, Sdiag_projection, b_array, table, num_links0, n_o_ac, num_alpha, L, N_p, 0.1);
+            /* QED_SPARSE_INIT_SIGMA: on this branch Q is the guess set -- vectors
+             * supported only on the L selected determinants -- so H*Q can be
+             * built from sparse columns of H instead of L full sigma products.
+             * The spin penalty below is unaffected and still applied. */
+            /* The sparse build can carry the FIRST-ORDER penalty itself, so when
+             * it succeeds the separate build_sigma_s_square below is SKIPPED --
+             * that call is another full pass per vector and was the dominant
+             * cost of this branch.  It only knows how to apply scale*S^2, so
+             * under penalty2 / projection it is asked for NO penalty (NULL, 0.0)
+             * and apply_spin_penalty adds whatever the active method needs. */
+            int spin_method_here = qed_spin_method();
+            int sparse_does_penalty = (spin_method_here == SPIN_PENALTY1);
+            int used_sparse = 0;
+            /* HYBRID SPLIT.  The hybrid guess is [sparse P-space | dense warm],
+             * and build_sparse_init_sigma judges sparsity over the WHOLE batch
+             * it is handed -- one dense row makes the support union ~H_dim, the
+             * acceptance rule ncol <= 8*num_state fails, and it declines for
+             * ALL L vectors.  That would drop the entire guess onto build_sigma
+             * (one full sigma product per vector: 5.34 s vs 0.164 s for 388
+             * vectors, item 219C) and make the hybrid unusable at any P-space
+             * worth having.  So route the two parts to the two builders.
+             * Only the initial guess has this layout; a restart's vectors are
+             * all dense and decline anyway. */
+            int tail = (a == 0) ? hybrid_dense_tail : 0;
+            int Lp = L - tail;
+            if (sparse_init && !sparse_cmp) {
+                used_sparse = build_sparse_init_sigma(h1e, h2e, d_cmo, Q, S, Lp,
+                        N_ac, n_o_ac, n_o_in, N_p, num_alpha, Enuc, dc, omega, d_exp, E_core,
+                        sparse_does_penalty ? Sdiag : NULL,
+                        sparse_does_penalty ? qed_spin_scale() : 0.0);
+                if (used_sparse && tail > 0) {
+                    /* the dense warm rows, through the ordinary builder */
+                    build_sigma(h1e, h2e, d_cmo, Q + (size_t)Lp*H_dim, S + (size_t)Lp*H_dim,
+                                table, table_creation, table_annihilation,
+                                N_ac, n_o_ac, n_o_in, nmo, tail, N_p, Enuc, dc, omega,
+                                d_exp, E_core, break_degeneracy);
+                    /* When the sparse build carried the penalty it did so only
+                     * for rows 0..Lp-1, so the tail still needs it.  When it did
+                     * not, the `else if (!sparse_does_penalty)` branch below
+                     * applies the penalty across all L rows, tail included. */
+                    if (sparse_does_penalty)
+                        apply_spin_penalty(Q + (size_t)Lp*H_dim, S + (size_t)Lp*H_dim, tail,
+                                           Sdiag, Sdiag_projection, b_array, table,
+                                           num_links0, n_o_ac, num_alpha, N_p);
+                }
+            }
+            if (!used_sparse) {
+                build_sigma(h1e, h2e, d_cmo, Q, S, table, table_creation, table_annihilation,
+                            N_ac, n_o_ac, n_o_in, nmo, L, N_p, Enuc, dc, omega, d_exp, E_core, break_degeneracy);
+                apply_spin_penalty(Q, S, L, Sdiag, Sdiag_projection,
+                                   b_array, table, num_links0, n_o_ac, num_alpha, N_p);
+                /* compared against H + scale*S^2, i.e. after the penalty */
+                if (sparse_cmp) sparse_init_sigma_compare(h1e, h2e, d_cmo, Q, S, L,
+                        N_ac, n_o_ac, n_o_in, N_p, num_alpha, Enuc, dc, omega, d_exp, E_core,
+                        sparse_does_penalty ? Sdiag : NULL,
+                        sparse_does_penalty ? qed_spin_scale() : 0.0, H_dim);
+            } else if (!sparse_does_penalty) {
+                /* sparse build gave H*Q only; add penalty2 if that is the method */
+                apply_spin_penalty(Q, S, L, Sdiag, Sdiag_projection,
+                                   b_array, table, num_links0, n_o_ac, num_alpha, N_p);
+            }
         }
         ////////////build_sigma(h1e, h2e, d_cmo, Q, S, table, table_creation, table_annihilation, 
         ////////////                N_ac, n_o_ac, n_o_in, nmo, L, N_p, Enuc, dc, omega, d_exp, E_core, break_degeneracy); 
@@ -2012,10 +2919,90 @@ void davidson_spin(double* h1e, double* h2e, double* d_cmo, double* Hdiag, doubl
     //}
         //print_matrix(S, maxdim, H_dim, 5);
     	//fflush(stdout);
-        
 
-        cblas_dgemm(CblasRowMajor, CblasNoTrans, CblasTrans, L, L, H_dim, 1.0, S, H_dim, Q, H_dim, 0.0, G, L);
+
+        { double _t0 = omp_get_wtime();
+        const char* how = "full";
+        /* --- how the subspace Hamiltonian Gkeep(L x L, ld maxdim) is obtained ---
+         *
+         * (a) COLD-GUESS SHORTCUT, iteration 1 only.  Every guess vector is
+         *     supported on the L selected determinants, so Q(H+penalty)Q^T is
+         *     the P-space block alone = D^dagger H_tar,00 D + (spin-pure shift) I
+         *     = diag(e) + shift, with e the CSF eigenvalues already computed in
+         *     Algorithm 3 step 6.  Nothing to compute.  This is only exact
+         *     because step 7 is transposed correctly (verified: max|offdiag|
+         *     ~1e-13 fixed vs 2.5e-1 legacy) -- see the [step7] note above.
+         *     The shift is scale*S(S+1) for penalty1 and 0 for penalty2 /
+         *     projection, which do not shift the target spin.
+         *
+         * (b) INCREMENTAL, whenever the subspace only GREW since last iteration.
+         *     Q's and S's first L_prev rows are untouched by gram_schmidt_add
+         *     (it writes rows >= L only), so the old block of Gkeep is still
+         *     valid and only the L_new new rows need the O(L_new*L*H_dim)
+         *     product; the symmetric counterpart columns are copied.  This is
+         *     exactly the caching the sigma build above already does.
+         *     Measured: 6 x 2.98 s -> ~3 s total at L=1364.
+         *
+         * (c) FULL rebuild -- first iteration, or after a restart, when the old
+         *     rows are gone. */
+        if (guess_g_shortcut && guess_theta && a == 0 && L == guess_theta_n) {
+            how = "guess-shortcut";
+            double shift = qed_spin_pure_shift(target_spin);
+            for (int i = 0; i < L; i++) {
+                memset(Gkeep + (size_t)i*maxdim, 0, (size_t)L*sizeof(double));
+                Gkeep[(size_t)i*maxdim + i] = guess_theta[i] + shift;
+            }
+            if (guess_g_compare) {
+                double* Gchk = (double*) malloc((size_t)L*L*sizeof(double));
+                cblas_dgemm(CblasRowMajor, CblasNoTrans, CblasTrans, L, L, H_dim, 1.0, S, H_dim, Q, H_dim, 0.0, Gchk, L);
+                double maxd = 0.0;
+                for (int i = 0; i < L; i++)
+                    for (int j = 0; j < L; j++) {
+                        double d = fabs(Gchk[(size_t)i*L+j] - Gkeep[(size_t)i*maxdim+j]);
+                        if (d > maxd) maxd = d;
+                    }
+                printf("[guess-G] analytic vs computed subspace H: max|diff| = %.3e\n", maxd);
+                fflush(stdout);
+                free(Gchk);
+            }
+        } else if (incremental_g && !restarted && L_prev > 0 && L > L_prev) {
+            how = "incremental";
+            int L_new = L - L_prev;
+            cblas_dgemm(CblasRowMajor, CblasNoTrans, CblasTrans, L_new, L, H_dim, 1.0,
+                        S + (size_t)L_prev*H_dim, H_dim, Q, H_dim, 0.0,
+                        Gkeep + (size_t)L_prev*maxdim, maxdim);
+            for (int i = L_prev; i < L; i++)
+                for (int j = 0; j < L_prev; j++)
+                    Gkeep[(size_t)j*maxdim + i] = Gkeep[(size_t)i*maxdim + j];
+        } else {
+            cblas_dgemm(CblasRowMajor, CblasNoTrans, CblasTrans, L, L, H_dim, 1.0,
+                        S, H_dim, Q, H_dim, 0.0, Gkeep, maxdim);
+        }
+        /* hand the eigensolver its own copy -- it overwrites G with eigenvectors */
+        for (int i = 0; i < L; i++)
+            cblas_dcopy(L, Gkeep + (size_t)i*maxdim, 1, G + (size_t)i*L, 1);
+        double _t1 = omp_get_wtime();
+        /* [step7] diagnostic: with the shortcut off this reports how close the
+         * computed iteration-1 block is to diag(e) + shift, which is the test
+         * that separates a correct step 7 from the legacy one (the energies
+         * cannot -- the two guesses span the same space). */
+        if (guess_theta && a == 0 && L == guess_theta_n && !(guess_g_shortcut)) {
+            double maxoff = 0.0, maxdiag = 0.0;
+            double shift = qed_spin_pure_shift(target_spin);
+            for (int i = 0; i < L; i++)
+                for (int j = 0; j < L; j++) {
+                    double v = fabs(G[(size_t)i*L + j]);
+                    if (i == j) { double d = fabs(G[(size_t)i*L+i] - (guess_theta[i] + shift));
+                                  if (d > maxdiag) maxdiag = d; }
+                    else if (v > maxoff) maxoff = v;
+                }
+            printf("[step7] iteration-1 subspace H: max|offdiag| = %.3e   max|diag - (e + penalty)| = %.3e\n",
+                   maxoff, maxdiag);
+            fflush(stdout);
+        }
         symmetric_eigenvalue_problem(G, L, theta);
+        if (trace) printf("[guess-cost] projection L=%d (%s) took %f seconds, subspace diag took %f seconds\n",
+                          L, how, _t1 - _t0, omp_get_wtime() - _t1); }
         
         memset(w, 0, nroots*H_dim*sizeof(double));
      
@@ -2110,10 +3097,15 @@ void davidson_spin(double* h1e, double* h2e, double* d_cmo, double* Hdiag, doubl
 	    printf("\n");
 	}
 
-        //for (int i = 0; i < nroots; i++) {
-	//    first_order_spin_projection(w+i*H_dim, Sdiag, Sdiag_projection, table, b_array, num_links0, n_o_ac, num_alpha,
-        //       N_p, target_spin);
-	//}
+        /* Third spin treatment: clean the RESIDUAL instead of penalising sigma.
+         * Active only under QED_SPIN_METHOD=projection, which leaves sigma
+         * untouched -- the three methods are mutually exclusive. */
+        if (qed_spin_method() == SPIN_PROJECT) {
+            for (int i = 0; i < nroots; i++) {
+                first_order_spin_projection(w+i*H_dim, Sdiag, Sdiag_projection, table, b_array, num_links0, n_o_ac, num_alpha,
+                    N_p, target_spin);
+            }
+        }
 
 
 
@@ -2141,7 +3133,15 @@ void davidson_spin(double* h1e, double* h2e, double* d_cmo, double* Hdiag, doubl
             if (trace) printf("maximum subspace reaches, restart!\n");
             memset(w, 0, nroots*H_dim*sizeof(double));
             cblas_dgemm(CblasRowMajor, CblasTrans, CblasNoTrans, nroots, H_dim, L, 1.0, G, L, Q, H_dim, 0.0, w, H_dim);
-            memset(Q, 0, maxdim*H_dim*sizeof(double));
+            /* Only the rows that are actually part of the subspace need zeroing.
+            * Rows beyond it are always FULLY overwritten by cblas_dcopy before they
+            * enter the space (the expansion at 'Q+(i+L)*H_dim' and the restart at
+            * 'Q+i*H_dim'/'Q+(i+nroots)*H_dim'), and every consumer dgemm reads only L
+            * rows -- so the zeros out there were never read.  Zeroing all maxdim rows
+            * first-touches the whole buffer: 600 x 245025 x 8 = 1.18 GiB on CAS(8,12)
+            * where L is 181.
+            * Here: restart rewrites exactly nroots+unconv rows below, and L becomes nroots+unconv. */
+            memset(Q, 0, (size_t) (nroots + unconv)*H_dim*sizeof(double));
 
             for (int i = 0; i < nroots; i++) {
                 cblas_dcopy(H_dim, w+i*H_dim, 1, Q+i*H_dim, 1);
@@ -2208,6 +3208,8 @@ void davidson_spin(double* h1e, double* h2e, double* d_cmo, double* Hdiag, doubl
     free(unconverged_idx);
     free(convergence_check);
     
+    free(guess_theta);   /* [step7] NULL on the warm path; free(NULL) is a no-op */
+    free(Gkeep);
 
 
 }
@@ -2237,20 +3239,67 @@ void davidson(double* h1e, double* h2e, double* d_cmo, double* Hdiag, double* ei
     double d_exp = constdouble[3];
     double threshold = constdouble[4];
     double E_core = constdouble[5];
-    //printf("fafaaavd %s",casscf?"true":"false"); 
+    //printf("fafaaavd %s",casscf?"true":"false");
+    const int indim_requested = indim;   /* davidson_indim * nroots, before the casscf override */
+    /* QED_SPARSE_INIT_SIGMA: build the first/restart sigma directly from the
+     * sparse guess vectors instead of one full sigma product per vector (see
+     * build_sparse_init_sigma).  QED_SPARSE_INIT_COMPARE builds it both ways
+     * and reports the discrepancy while keeping build_sigma's result. */
+    int sparse_init = 0; { const char* e = getenv("QED_SPARSE_INIT_SIGMA");   if (e && atoi(e) != 0) sparse_init = 1; }
+    int sparse_cmp  = 0; { const char* e = getenv("QED_SPARSE_INIT_COMPARE"); if (e && atoi(e) != 0) sparse_cmp  = 1; }
+
     if (casscf == true) {
         //maxiter = 3;
 	indim = nroots;
     }
-    //printf(" maxiter%d", maxiter); 
+    //printf(" maxiter%d", maxiter);
 
     int num_alpha = binomialCoeff(n_o_ac, N_ac);
     size_t H_dim = (N_p + 1) * num_alpha * num_alpha;
-    
+
+    /* Same buffer-overflow guard as davidson_spin, minus the spin part.  Q, S
+     * and theta below are sized by maxdim but the guess loop writes `indim`
+     * vectors into Q, so indim > maxdim is a heap overflow -- it corrupts
+     * memory silently and surfaces much later as an all-NaN CI vector.
+     * Unlike davidson_spin this routine has no spin-coupling growth loop, so
+     * indim cannot creep past what was asked for: reaching here means
+     * davidson_indim > davidson_maxdim was set directly.  helper_PFCI.py:3076
+     * checks the H_dim bound before calling, but the C backend is also driven
+     * directly (cpp_casscf), so enforce both here where the buffers are sized. */
+    if ((size_t) indim > H_dim || (size_t) maxdim > H_dim || indim > maxdim) {
+        printf(
+"\n********************************************************************************\n"
+" CI Davidson cannot start: the requested subspace does not fit.\n\n"
+"   davidson_indim  * nroots = %d%s\n"
+"   davidson_maxdim * nroots = %d   <-- must be >= the initial subspace\n"
+"   CI dimension H_dim       = %zu   <-- neither may exceed this\n"
+"   nroots = %d\n\n"
+" NOTE: davidson_indim and davidson_maxdim are PER-ROOT MULTIPLIERS, so the\n"
+" sizes that matter are the products above, not the values you set.\n\n"
+" FIX: set davidson_indim and davidson_maxdim to at most %zu (= H_dim / nroots),\n"
+" keeping davidson_maxdim > davidson_indim so the subspace has room to expand.\n"
+" For a CI space this small, full diagonalization is usually the better choice.\n"
+"********************************************************************************\n",
+            indim, (casscf && indim != indim_requested) ? " (overridden to nroots for casscf)" : "",
+            maxdim, H_dim, nroots,
+            nroots ? H_dim / (size_t) nroots : H_dim);
+        fflush(stdout);
+        exit(1);
+    }
+
+
     double* Hdiag2 = (double*)malloc(H_dim*sizeof(double));
     cblas_dcopy(H_dim,Hdiag,1,Hdiag2,1);
     double* Q = (double*) malloc(maxdim*H_dim*sizeof(double));
-    memset(Q, 0, maxdim*H_dim*sizeof(double));
+    /* Only the rows that are actually part of the subspace need zeroing.
+    * Rows beyond it are always FULLY overwritten by cblas_dcopy before they
+    * enter the space (the expansion at 'Q+(i+L)*H_dim' and the restart at
+    * 'Q+i*H_dim'/'Q+(i+nroots)*H_dim'), and every consumer dgemm reads only L
+    * rows -- so the zeros out there were never read.  Zeroing all maxdim rows
+    * first-touches the whole buffer: 600 x 245025 x 8 = 1.18 GiB on CAS(8,12)
+    * where L is 181.
+    * Here: L is not in scope yet; the guess fills rows 0..indim-1 (unit vectors write one element per row). */
+    memset(Q, 0, (size_t) indim*H_dim*sizeof(double));
     double* S = (double*) malloc(maxdim*H_dim*sizeof(double));
 
     double* w = (double*) malloc(nroots*H_dim*sizeof(double));
@@ -2332,10 +3381,32 @@ void davidson(double* h1e, double* h2e, double* d_cmo, double* Hdiag, double* ei
         } else {
             // First iteration or after restart - compute all sigma vectors
             // Only NOW do we clear S
-            memset(S, 0, maxdim*H_dim*sizeof(double));
+            /* Only the rows that are actually part of the subspace need zeroing.
+            * Rows beyond it are always FULLY overwritten by cblas_dcopy before they
+            * enter the space (the expansion at 'Q+(i+L)*H_dim' and the restart at
+            * 'Q+i*H_dim'/'Q+(i+nroots)*H_dim'), and every consumer dgemm reads only L
+            * rows -- so the zeros out there were never read.  Zeroing all maxdim rows
+            * first-touches the whole buffer: 600 x 245025 x 8 = 1.18 GiB on CAS(8,12)
+            * where L is 181.
+            * Here: build_sigma / the sparse build accumulate into rows 0..L-1 only. */
+            memset(S, 0, (size_t) L*H_dim*sizeof(double));
             
-            build_sigma(h1e, h2e, d_cmo, Q, S, table, table_creation, table_annihilation, 
-                        N_ac, n_o_ac, n_o_in, nmo, L, N_p, Enuc, dc, omega, d_exp, E_core, break_degeneracy);
+            /* QED_SPARSE_INIT_SIGMA -- see the davidson_spin call site.  Here the
+             * guess vectors are plain unit vectors, so each is literally one
+             * column of H. */
+            int used_sparse = 0;
+            if (sparse_init && !sparse_cmp) {
+                used_sparse = build_sparse_init_sigma(h1e, h2e, d_cmo, Q, S, L,
+                        N_ac, n_o_ac, n_o_in, N_p, num_alpha, Enuc, dc, omega, d_exp, E_core,
+                        NULL, 0.0);   /* no spin penalty on the non-spin-adapted path */
+            }
+            if (!used_sparse) {
+                build_sigma(h1e, h2e, d_cmo, Q, S, table, table_creation, table_annihilation, 
+                            N_ac, n_o_ac, n_o_in, nmo, L, N_p, Enuc, dc, omega, d_exp, E_core, break_degeneracy);
+                if (sparse_cmp) sparse_init_sigma_compare(h1e, h2e, d_cmo, Q, S, L,
+                        N_ac, n_o_ac, n_o_in, N_p, num_alpha, Enuc, dc, omega, d_exp, E_core,
+                        NULL, 0.0, H_dim);
+            }
             
         }
         //build_sigma(h1e, h2e, d_cmo, Q, S, table, table_creation, table_annihilation, 
@@ -2455,7 +3526,15 @@ void davidson(double* h1e, double* h2e, double* d_cmo, double* Hdiag, double* ei
             printf("maximum subspace reaches, restart!\n");		
             memset(w, 0, nroots*H_dim*sizeof(double));
             cblas_dgemm(CblasRowMajor, CblasTrans, CblasNoTrans, nroots, H_dim, L, 1.0, G, L, Q, H_dim, 0.0, w, H_dim);
-            memset(Q, 0, maxdim*H_dim*sizeof(double));
+            /* Only the rows that are actually part of the subspace need zeroing.
+            * Rows beyond it are always FULLY overwritten by cblas_dcopy before they
+            * enter the space (the expansion at 'Q+(i+L)*H_dim' and the restart at
+            * 'Q+i*H_dim'/'Q+(i+nroots)*H_dim'), and every consumer dgemm reads only L
+            * rows -- so the zeros out there were never read.  Zeroing all maxdim rows
+            * first-touches the whole buffer: 600 x 245025 x 8 = 1.18 GiB on CAS(8,12)
+            * where L is 181.
+            * Here: restart rewrites exactly nroots+unconv rows below, and L becomes nroots+unconv. */
+            memset(Q, 0, (size_t) (nroots + unconv)*H_dim*sizeof(double));
 
             for (int i = 0; i < nroots; i++) {
                 cblas_dcopy(H_dim, w+i*H_dim, 1, Q+i*H_dim, 1);
@@ -2522,6 +3601,40 @@ void davidson(double* h1e, double* h2e, double* d_cmo, double* Hdiag, double* ei
     
 
 
+}
+
+/* --- QED_RDM_HOIST ----------------------------------------------------------
+   build_active_rdm used to malloc+memset, and then free, two num_dets *
+   num_photon * n_o_ac^2 buffers on EVERY call (2 x 282 MB at MgH+ CAS(8,12),
+   x ~550 calls per optimization).  icx folds malloc+memset(0) into calloc, so
+   the pages are lazy and the ~69k first-touch page faults per buffer are
+   charged to whichever loop writes first -- which is why loops A and C (the
+   first writers of temp1/temp2) measured 2-3x their B/D counterparts despite
+   moving exactly the same 282 MB (see the QED_RDM_PROFILE breakdown).
+
+   These buffers are pure scratch: nothing in them survives the call.  So keep
+   them across calls and re-zero instead of re-faulting.  The pool is never
+   freed -- it is bounded by the largest CAS the process ever runs, and the
+   transient peak was already paying for it.  Serial-region only: this routine
+   opens its own `omp parallel for` regions, so it is never itself called from
+   inside one.  Set QED_RDM_HOIST=0 to restore the per-call malloc/free. */
+static int rdm_hoist_enabled(void) {
+    static int v = -1;
+    if (v < 0) {                       /* called from the serial region only */
+        const char* e = getenv("QED_RDM_HOIST");
+        v = (e && *e == '0') ? 0 : 1;                       /* default ON */
+    }
+    return v;
+}
+static double* rdm_scratch(int slot, size_t nbytes) {
+    static double* buf[2] = {NULL, NULL};
+    static size_t  cap[2] = {0, 0};
+    if (cap[slot] < nbytes) {
+        free(buf[slot]);
+        buf[slot] = (double*) malloc(nbytes);
+        cap[slot] = buf[slot] ? nbytes : 0;
+    }
+    return buf[slot];
 }
 
 void build_one_rdm(double* z_vector, double* eigvec, double* D, int* table, int N_ac, int n_o_ac, int n_o_in, int num_photon, int state_p1, int state_p2, bool z_state) {
@@ -2736,8 +3849,15 @@ void build_two_rdm(double* z_vector, double* eigvec, double* D, int* table, int 
 
 
 
-    double* temp1 = (double*) malloc(num_dets*num_photon*n_o_ac*n_o_ac*sizeof(double));
-    memset(temp1, 0.0, num_dets*num_photon*n_o_ac*n_o_ac*sizeof(double));
+    /* QED_RDM_HOIST: same process-lifetime scratch pool as
+       build_active_rdm -- see the comment above build_one_rdm.  Slots are
+       shared across all three RDM builders, which is safe because each is a
+       separate serial ctypes call from Python and none nests inside another. */
+    size_t scratch_bytes = num_dets*num_photon*n_o_ac*n_o_ac*sizeof(double);
+    int hoist = rdm_hoist_enabled();
+    double* temp1 = hoist ? rdm_scratch(0, scratch_bytes)
+                          : (double*) malloc(scratch_bytes);
+    memset(temp1, 0, scratch_bytes);
     double* D_tu = (double*) malloc(n_o_ac*n_o_ac*sizeof(double));
     memset(D_tu, 0.0, n_o_ac*n_o_ac*sizeof(double));
     double* D_tuvw = (double*) malloc(n_o_ac*n_o_ac*n_o_ac*n_o_ac*sizeof(double));
@@ -2786,8 +3906,9 @@ void build_two_rdm(double* z_vector, double* eigvec, double* D, int* table, int 
     cblas_dgemm(CblasRowMajor, CblasNoTrans, CblasNoTrans, 1 , n_o_ac*n_o_ac, num_photon*num_dets, 1.0, 
         	    z_vector + state_p1*num_photon*num_dets, num_photon*num_dets,
         	    temp1, n_o_ac*n_o_ac, 0.0, D_tu, n_o_ac*n_o_ac);
-    double* temp2 = (double*) malloc(num_dets*num_photon*n_o_ac*n_o_ac*sizeof(double));
-    memset(temp2, 0.0, num_dets*num_photon*n_o_ac*n_o_ac*sizeof(double));
+    double* temp2 = hoist ? rdm_scratch(1, scratch_bytes)
+                          : (double*) malloc(scratch_bytes);
+    memset(temp2, 0, scratch_bytes);
     #pragma omp parallel for
     for (int index_ka = 0; index_ka < num_alpha; index_ka++) {
         int stride = index_ka * num_links;
@@ -2851,8 +3972,10 @@ void build_two_rdm(double* z_vector, double* eigvec, double* D, int* table, int 
             }
         }
     }
-    free(temp1);
-    free(temp2);
+    if (!hoist) {                  /* hoisted buffers live for the process */
+        free(temp1);
+        free(temp2);
+    }
     free(D_tuvw);
 
 
@@ -3078,15 +4201,47 @@ void build_two_rdm(double* z_vector, double* eigvec, double* D, int* table, int 
     
 }
 
+
+/* --- QED_RDM_PROFILE --------------------------------------------------------
+   Env-gated per-section wall-clock breakdown of build_active_rdm -- the C side
+   of `building RDM` in the Python log (helper_PFCI.py:11067,
+   build_state_average_rdms, which calls this once per root).  OFF unless
+   QED_RDM_PROFILE is set to something other than 0/empty.  Purely diagnostic;
+   it changes no arithmetic. */
+static int rdm_prof_enabled(void) {
+    static int v = -1;
+    if (v < 0) {                       /* called from the serial region only */
+        const char* e = getenv("QED_RDM_PROFILE");
+        v = (e && *e && *e != '0') ? 1 : 0;
+    }
+    return v;
+}
+#define RDMP(label)                                                           \
+    do {                                                                      \
+        if (rdmp) {                                                           \
+            double _r1 = omp_get_wtime();                                     \
+            printf("  [RDMP] %-26s %9.4f\n", (label), _r1 - _r0);             \
+            fflush(stdout);                                                   \
+            _r0 = _r1;                                                        \
+        }                                                                     \
+    } while (0)
+
 void build_active_rdm(double* eigvec, double* D_tu, double* D_tuvw, int* table, int N_ac, int n_o_ac, int num_photon, int state_p1, int state_p2, double weight) {
     int num_alpha = binomialCoeff(n_o_ac, N_ac);
     int num_links = N_ac * (n_o_ac-N_ac) + N_ac;
     size_t num_dets = num_alpha * num_alpha;
+    int rdmp = rdm_prof_enabled();
+    double _r0 = rdmp ? omp_get_wtime() : 0.0;
    
-    double* temp1 = (double*) malloc(num_dets*num_photon*n_o_ac*n_o_ac*sizeof(double));
-    memset(temp1, 0.0, num_dets*num_photon*n_o_ac*n_o_ac*sizeof(double));
+    size_t scratch_bytes = num_dets*num_photon*n_o_ac*n_o_ac*sizeof(double);
+    int hoist = rdm_hoist_enabled();
+    double* temp1 = hoist ? rdm_scratch(0, scratch_bytes)
+                          : (double*) malloc(scratch_bytes);
     double* temp0 = (double*) malloc(n_o_ac*n_o_ac*sizeof(double));
     memset(temp0, 0.0, n_o_ac*n_o_ac*sizeof(double));
+    RDMP("alloc temp1 (282MB)");
+    memset(temp1, 0, scratch_bytes);
+    RDMP("memset temp1 (282MB)");
    
 
     #pragma omp parallel for
@@ -3108,6 +4263,7 @@ void build_active_rdm(double* eigvec, double* D_tu, double* D_tuvw, int* table, 
             }
         }
     }
+    RDMP("loop A: alpha -> temp1");
     #pragma omp parallel for
     for (int index_kb = 0; index_kb < num_alpha; index_kb++) {
         int stride = index_kb * num_links;
@@ -3127,6 +4283,7 @@ void build_active_rdm(double* eigvec, double* D_tu, double* D_tuvw, int* table, 
             }
         }
     }
+    RDMP("loop B: beta -> temp1");
     cblas_dgemm(CblasRowMajor, CblasNoTrans, CblasNoTrans, 1 , n_o_ac*n_o_ac, num_photon*num_dets, weight, 
         	    eigvec + state_p1*num_photon*num_dets, num_photon*num_dets,
         	    temp1, n_o_ac*n_o_ac, 0.0, temp0, n_o_ac*n_o_ac);
@@ -3134,8 +4291,12 @@ void build_active_rdm(double* eigvec, double* D_tu, double* D_tuvw, int* table, 
     cblas_dgemm(CblasRowMajor, CblasNoTrans, CblasNoTrans, 1 , n_o_ac*n_o_ac, num_photon*num_dets, weight, 
         	    eigvec + state_p1*num_photon*num_dets, num_photon*num_dets,
         	    temp1, n_o_ac*n_o_ac, 1.0, D_tu, n_o_ac*n_o_ac);
-    double* temp2 = (double*) malloc(num_dets*num_photon*n_o_ac*n_o_ac*sizeof(double));
-    memset(temp2, 0.0, num_dets*num_photon*n_o_ac*n_o_ac*sizeof(double));
+    RDMP("1-RDM dgemms (x2)");
+    double* temp2 = hoist ? rdm_scratch(1, scratch_bytes)
+                          : (double*) malloc(scratch_bytes);
+    RDMP("alloc temp2 (282MB)");
+    memset(temp2, 0, scratch_bytes);
+    RDMP("memset temp2 (282MB)");
     #pragma omp parallel for
     for (int index_ka = 0; index_ka < num_alpha; index_ka++) {
         int stride = index_ka * num_links;
@@ -3155,6 +4316,7 @@ void build_active_rdm(double* eigvec, double* D_tu, double* D_tuvw, int* table, 
             }
         }
     }
+    RDMP("loop C: alpha -> temp2");
     #pragma omp parallel for
     for (int index_kb = 0; index_kb < num_alpha; index_kb++) {
         int stride = index_kb * num_links;
@@ -3174,10 +4336,12 @@ void build_active_rdm(double* eigvec, double* D_tu, double* D_tuvw, int* table, 
             }
         }
     }
+    RDMP("loop D: beta -> temp2");
     cblas_dgemm(CblasRowMajor, CblasTrans, CblasNoTrans, n_o_ac*n_o_ac , n_o_ac*n_o_ac, num_photon*num_dets, weight, 
         	    temp2, n_o_ac*n_o_ac,
         	    temp1, n_o_ac*n_o_ac, 1.0, D_tuvw, n_o_ac*n_o_ac);
 
+    RDMP("2-RDM dgemm (10.2 GFlop)");
     for (int q = 0; q < n_o_ac; q++) {
         for (int p = 0; p < n_o_ac; p++) {
             for (int s = 0; s < n_o_ac; s++) {
@@ -3185,9 +4349,13 @@ void build_active_rdm(double* eigvec, double* D_tu, double* D_tuvw, int* table, 
             }
         }
     }
+    RDMP("trace correction");
     free(temp0);
-    free(temp1);
-    free(temp2);
+    if (!hoist) {                      /* hoisted buffers live for the process */
+        free(temp1);
+        free(temp2);
+    }
+    RDMP("free (564MB)");
     ////////for (int index_jb = 0; index_jb < num_alpha; index_jb++) {
     ////////    int stride = index_jb * num_links;
     ////////    for (int excitation = 0; excitation < num_links; excitation++) {
@@ -3388,13 +4556,335 @@ void build_active_rdm(double* eigvec, double* D_tu, double* D_tuvw, int* table, 
     
 }
 
+
+/* --- build_active_rdm_sa -----------------------------------------------------
+   CASSCF-ONLY specialisation of build_active_rdm for the case bra == ket.
+
+   A SEPARATE FUNCTION RATHER THAN A FLAG INSIDE build_active_rdm, deliberately:
+   the general routine keeps serving nuclear_grad.py byte-for-byte unchanged, so
+   nothing on the analytic-gradient path has to be revalidated when this one is
+   tuned.  Only the two CASSCF call sites move over.
+
+   THE IDENTITY THIS EXPLOITS.  In build_active_rdm, loops C/D build temp2 with
+   *exactly* the loop nest of loops A/B up to renaming
+   (index_ja, index_jb, q, s) -> (index_ia, index_ib, p, r): same `table`, same
+   sign, same packing (qs = q*n_o_ac + s against pr = p*n_o_ac + r), same
+   traversal order, same OpenMP partition.  The ONLY difference is the source
+   slice -- temp1 reads eigvec[state_p2], temp2 reads eigvec[state_p1].  So when
+   the bra and ket slices are the same memory, temp2 == temp1 BIT-FOR-BIT, and
+   loops C/D, the second 282 MB buffer and its memset are all redundant.  What
+   is left, temp1^T * temp1, is SYMMETRIC -- a rank-k update (dsyrk, half the
+   flops of the dgemm it replaces).  Set QED_RDM_VERIFY=1 to build temp2 the
+   general way and print max|temp1 - temp2|; it must be exactly 0.
+
+   *** THE CONDITION IS ON THE SOURCE SLICES, NOT ON THE STATE INDICES. ***
+   nuclear_grad.py:1024-1045 calls the _z variant with state indices (i, i) --
+   both 0 -- but TWO DIFFERENT ARRAYS (eigenvec1 / eigenvec2) for a derivative
+   coupling.  So `state_p1 == state_p2` does NOT imply bra == ket in general,
+   and a guard written that way inside the shared routine would be silently
+   wrong there.  Here there is a single eigvec, where the two do coincide, and
+   the routine still DEFERS to the general one if the states differ, so it
+   cannot be misused into a wrong answer.
+
+   Call sites: helper_PFCI.py:11075 (build_state_average_rdms) and :4575, both
+   of which pass (i, i) with one eigvec. */
+void build_active_rdm_sa(double* eigvec, double* D_tu, double* D_tuvw, int* table, int N_ac, int n_o_ac, int num_photon, int state_p1, int state_p2, double weight) {
+    static int sa_on = -1;
+    if (sa_on < 0) {                   /* called from the serial region only */
+        const char* e = getenv("QED_RDM_SA");
+        sa_on = (e && *e == '0') ? 0 : 1;                    /* default ON */
+    }
+    if (state_p1 != state_p2 || !sa_on) {   /* not the specialised case -- defer */
+        build_active_rdm(eigvec, D_tu, D_tuvw, table, N_ac, n_o_ac, num_photon,
+                         state_p1, state_p2, weight);
+        return;
+    }
+    int num_alpha = binomialCoeff(n_o_ac, N_ac);
+    int num_links = N_ac * (n_o_ac-N_ac) + N_ac;
+    size_t num_dets = num_alpha * num_alpha;
+    int rdmp = rdm_prof_enabled();
+    double _r0 = rdmp ? omp_get_wtime() : 0.0;
+
+    size_t scratch_bytes = num_dets*num_photon*n_o_ac*n_o_ac*sizeof(double);
+    int hoist = rdm_hoist_enabled();
+    double* temp1 = hoist ? rdm_scratch(0, scratch_bytes)
+                          : (double*) malloc(scratch_bytes);
+    double* temp0 = (double*) malloc(n_o_ac*n_o_ac*sizeof(double));
+    memset(temp0, 0.0, n_o_ac*n_o_ac*sizeof(double));
+    RDMP("alloc temp1 (282MB)");
+    /* --- QED_RDM_FUSE --------------------------------------------------------
+       Loops A and B interchanged from (k, excitation, j) to (k, j, excitation).
+
+       WHY.  The write index is index_K = <one loop var>*num_alpha + <the other>,
+       and with `excitation` in the middle the j loop walks temp1 at a stride of
+       n_o_ac^2 doubles (1152 B at MgH+) writing ONE double per row, then the
+       next excitation walks the SAME rows again -- 36 scattered revisits of every
+       row.  With `excitation` innermost each row is visited ONCE, its 1152 B sit
+       in L1 for all 36 accumulations, and in loop A index_K becomes MONOTONIC so
+       temp1's 282 MB is written sequentially.
+
+       Loop A then covers every (photon_p, index_K) exactly once, so it can
+       INITIALISE its row instead of accumulating onto a pre-zeroed buffer -- the
+       separate 282 MB memset disappears.  Loop B still accumulates on top, as
+       before; it is unchanged in that respect.
+
+       BIT-IDENTICAL, not merely equivalent: for a given (index_K, qs) the
+       contributing excitations are the same set in the same ascending order in
+       both forms, and loop A still runs entirely before loop B.  Verified by
+       QED_RDM_FUSE=0/1 legs.  Set QED_RDM_FUSE=0 to restore the original nests
+       (and with them the memset). */
+    static int fuse_on = -1;
+    if (fuse_on < 0) {                 /* called from the serial region only */
+        const char* e = getenv("QED_RDM_FUSE");
+        fuse_on = (e && *e == '0') ? 0 : 1;                  /* default ON */
+    }
+    const int nn2 = n_o_ac * n_o_ac;
+    if (!fuse_on) memset(temp1, 0, scratch_bytes);
+    RDMP("memset temp1 (282MB)");
+    if (fuse_on) {
+        #pragma omp parallel for
+        for (int index_ka = 0; index_ka < num_alpha; index_ka++) {
+            int stride = index_ka * num_links;
+            for (int index_jb = 0; index_jb < num_alpha; index_jb++) {
+                int index_K = index_ka * num_alpha + index_jb;
+                for (int photon_p = 0; photon_p < num_photon; photon_p++) {
+                    double* row = temp1
+                        + ((size_t)photon_p * num_dets + index_K) * nn2;
+                    const double* c = eigvec
+                        + ((size_t)state_p2 * num_photon + photon_p) * num_dets;
+                    for (int t = 0; t < nn2; t++) row[t] = 0.0;
+                    for (int excitation = 0; excitation < num_links; excitation++) {
+                        int index_ja = table[(stride + excitation)*4+0];
+                        int sign     = table[(stride + excitation)*4+1];
+                        int s        = table[(stride + excitation)*4+2];
+                        int q        = table[(stride + excitation)*4+3];
+                        row[q * n_o_ac + s] +=
+                            sign * c[(size_t)index_ja * num_alpha + index_jb];
+                    }
+                }
+            }
+        }
+    } else {
+    #pragma omp parallel for
+    for (int index_ka = 0; index_ka < num_alpha; index_ka++) {
+        int stride = index_ka * num_links;
+        for (int excitation = 0; excitation < num_links; excitation++) {
+            int index_ja = table[(stride + excitation)*4+0];
+            int sign = table[(stride + excitation)*4+1];
+            int s = table[(stride + excitation)*4+2]; 
+            int q = table[(stride + excitation)*4+3]; 
+            int qs = q * n_o_ac + s;
+            for (int index_jb = 0; index_jb < num_alpha; index_jb++) {
+                for (int photon_p = 0; photon_p < num_photon; photon_p++) {
+                    int index_K = index_ka * num_alpha + index_jb;
+                    int index_J = index_ja * num_alpha + index_jb;
+        	    temp1[(photon_p * num_dets + index_K) * n_o_ac * n_o_ac + qs] += sign * eigvec[(state_p2 * num_photon + photon_p) * num_dets + index_J];
+            
+                }
+            }
+        }
+    }
+    }
+    RDMP("loop A: alpha -> temp1");
+    if (fuse_on) {
+        #pragma omp parallel for
+        for (int index_kb = 0; index_kb < num_alpha; index_kb++) {
+            int stride = index_kb * num_links;
+            for (int index_ja = 0; index_ja < num_alpha; index_ja++) {
+                int index_K = index_ja * num_alpha + index_kb;
+                for (int photon_p = 0; photon_p < num_photon; photon_p++) {
+                    double* row = temp1
+                        + ((size_t)photon_p * num_dets + index_K) * nn2;
+                    const double* c = eigvec
+                        + ((size_t)state_p2 * num_photon + photon_p) * num_dets;
+                    for (int excitation = 0; excitation < num_links; excitation++) {
+                        int index_jb = table[(stride + excitation)*4+0];
+                        int sign     = table[(stride + excitation)*4+1];
+                        int s        = table[(stride + excitation)*4+2];
+                        int q        = table[(stride + excitation)*4+3];
+                        row[q * n_o_ac + s] +=
+                            sign * c[(size_t)index_ja * num_alpha + index_jb];
+                    }
+                }
+            }
+        }
+    } else {
+    #pragma omp parallel for
+    for (int index_kb = 0; index_kb < num_alpha; index_kb++) {
+        int stride = index_kb * num_links;
+        for (int excitation = 0; excitation < num_links; excitation++) {
+            int index_jb = table[(stride + excitation)*4+0];
+            int sign = table[(stride + excitation)*4+1];
+            int s = table[(stride + excitation)*4+2]; 
+            int q = table[(stride + excitation)*4+3]; 
+            int qs = q * n_o_ac + s;
+            for (int index_ja = 0; index_ja < num_alpha; index_ja++) {
+                for (int photon_p = 0; photon_p < num_photon; photon_p++) {
+                    int index_K = index_ja * num_alpha + index_kb;
+                    int index_J = index_ja * num_alpha + index_jb;
+        	    temp1[(photon_p * num_dets + index_K) * n_o_ac * n_o_ac + qs] += sign * eigvec[(state_p2 * num_photon + photon_p) * num_dets + index_J];
+            
+                }
+            }
+        }
+    }
+    }
+    RDMP("loop B: beta -> temp1");
+    cblas_dgemm(CblasRowMajor, CblasNoTrans, CblasNoTrans, 1 , n_o_ac*n_o_ac, num_photon*num_dets, weight, 
+        	    eigvec + state_p1*num_photon*num_dets, num_photon*num_dets,
+        	    temp1, n_o_ac*n_o_ac, 0.0, temp0, n_o_ac*n_o_ac);
+
+    cblas_dgemm(CblasRowMajor, CblasNoTrans, CblasNoTrans, 1 , n_o_ac*n_o_ac, num_photon*num_dets, weight, 
+        	    eigvec + state_p1*num_photon*num_dets, num_photon*num_dets,
+        	    temp1, n_o_ac*n_o_ac, 1.0, D_tu, n_o_ac*n_o_ac);
+    RDMP("1-RDM dgemms (x2)");
+
+    /* QED_RDM_VERIFY -- diagnostic, off by default.  Rebuilds temp2 with the
+       general loops C/D and proves the identity above at the REAL problem
+       dimensions (standing rule 15: do not settle a kernel question on a
+       synthetic shape).  Costs a full second buffer and two extra loops. */
+    {
+        const char* _v = getenv("QED_RDM_VERIFY");
+        if (_v && *_v && *_v != '0') {
+            double* temp2 = (double*) malloc(scratch_bytes);
+            memset(temp2, 0, scratch_bytes);
+    #pragma omp parallel for
+    for (int index_ka = 0; index_ka < num_alpha; index_ka++) {
+        int stride = index_ka * num_links;
+        for (int excitation = 0; excitation < num_links; excitation++) {
+            int index_ia = table[(stride + excitation)*4+0];
+            int sign = table[(stride + excitation)*4+1];
+            int p = table[(stride + excitation)*4+2]; 
+            int r = table[(stride + excitation)*4+3]; 
+            int pr = p * n_o_ac + r;
+            for (int index_ib = 0; index_ib < num_alpha; index_ib++) {
+                for (int photon_p = 0; photon_p < num_photon; photon_p++) {
+                    int index_I = index_ia * num_alpha + index_ib;
+                    int index_K = index_ka * num_alpha + index_ib;
+        	    temp2[(photon_p * num_dets + index_K) * n_o_ac * n_o_ac + pr] += sign * eigvec[(state_p1 * num_photon + photon_p) * num_dets + index_I];
+            
+                }
+            }
+        }
+    }
+    
+    #pragma omp parallel for
+    for (int index_kb = 0; index_kb < num_alpha; index_kb++) {
+        int stride = index_kb * num_links;
+        for (int excitation = 0; excitation < num_links; excitation++) {
+            int index_ib = table[(stride + excitation)*4+0];
+            int sign = table[(stride + excitation)*4+1];
+            int p = table[(stride + excitation)*4+2]; 
+            int r = table[(stride + excitation)*4+3]; 
+            int pr = p * n_o_ac + r;
+            for (int index_ia = 0; index_ia < num_alpha; index_ia++) {
+                for (int photon_p = 0; photon_p < num_photon; photon_p++) {
+                    int index_I = index_ia * num_alpha + index_ib;
+                    int index_K = index_ia * num_alpha + index_kb;
+        	    temp2[(photon_p * num_dets + index_K) * n_o_ac * n_o_ac + pr] += sign * eigvec[(state_p1 * num_photon + photon_p) * num_dets + index_I];
+            
+                }
+            }
+        }
+    }
+    
+            /* Two candidate relations.  Loops A/B pack qs = table[3]*n + table[2]
+               while loops C/D pack pr = table[2]*n + table[3], so the nests write
+               the SAME values at TRANSPOSED orbital positions -- the identity to
+               expect is temp2[K][x*n+y] == temp1[K][y*n+x], not plain equality.
+               Both are measured so the log records which one holds. */
+            double maxdiff_id = 0.0, maxdiff_tr = 0.0;
+            size_t nrow = num_dets * num_photon;
+            for (size_t K = 0; K < nrow; K++) {
+                const double* t1 = temp1 + K*n_o_ac*n_o_ac;
+                const double* t2 = temp2 + K*n_o_ac*n_o_ac;
+                for (int x = 0; x < n_o_ac; x++) {
+                    for (int y = 0; y < n_o_ac; y++) {
+                        double a = fabs(t2[x*n_o_ac+y] - t1[x*n_o_ac+y]);
+                        double b = fabs(t2[x*n_o_ac+y] - t1[y*n_o_ac+x]);
+                        if (a > maxdiff_id) maxdiff_id = a;
+                        if (b > maxdiff_tr) maxdiff_tr = b;
+                    }
+                }
+            }
+            printf("  [RDMV] state %d/%d  max|t2-t1| %.3e   max|t2-t1^T| %.3e\n",
+                   state_p1, state_p2, maxdiff_id, maxdiff_tr);
+            fflush(stdout);
+            free(temp2);
+            _r0 = omp_get_wtime();     /* do not charge the check to a section */
+        }
+    }
+
+    /* THE 2-RDM CONTRACTION, WITHOUT temp2.
+       The replaced dgemm was
+           D_tuvw[i][j] += weight * sum_K temp2[K][i] * temp1[K][j].
+       Loops C/D differ from loops A/B ONLY in the orbital packing -- A/B use
+       qs = table[3]*n_o_ac + table[2], C/D use pr = table[2]*n_o_ac + table[3] --
+       so with the bra and ket slices identical,
+           temp2[K][x*n_o_ac + y] == temp1[K][y*n_o_ac + x]   (verified exactly
+       at MgH+ dimensions by QED_RDM_VERIFY; it is NOT plain equality, which is
+       what a first reading of the two nests suggests).  Substituting,
+           D_tuvw[p*n+r][j] += weight * M[r*n+p][j],  M = temp1^T * temp1.
+       M is SYMMETRIC, so it comes from a rank-k update at half the flops of the
+       dgemm, and the transpose is absorbed into a row permutation of a 144x144
+       block -- free.  temp2, its memset and its 282 MB never exist.
+       QED_RDM_SYRK=0 keeps M's build as a dgemm so the two can be timed against
+       each other at this same call site (standing rule 15). */
+    {
+        int n2 = n_o_ac * n_o_ac;
+        const char* _s = getenv("QED_RDM_SYRK");
+        int use_syrk = !(_s && *_s == '0');
+        double* M = (double*) malloc((size_t)n2*n2*sizeof(double));
+        if (use_syrk) {
+            cblas_dsyrk(CblasRowMajor, CblasUpper, CblasTrans, n2,
+                        num_photon*num_dets, weight, temp1, n2, 0.0, M, n2);
+            for (int i = 0; i < n2; i++)          /* mirror upper -> lower */
+                for (int j = i+1; j < n2; j++)
+                    M[(size_t)j*n2+i] = M[(size_t)i*n2+j];
+        } else {
+            cblas_dgemm(CblasRowMajor, CblasTrans, CblasNoTrans, n2, n2,
+                        num_photon*num_dets, weight, temp1, n2, temp1, n2,
+                        0.0, M, n2);
+        }
+        for (int pp = 0; pp < n_o_ac; pp++) {
+            for (int rr = 0; rr < n_o_ac; rr++) {
+                const double* srcrow = M + (size_t)(rr*n_o_ac + pp)*n2;
+                double* dstrow = D_tuvw + (size_t)(pp*n_o_ac + rr)*n2;
+                for (int c = 0; c < n2; c++) dstrow[c] += srcrow[c];
+            }
+        }
+        free(M);
+    }
+    RDMP("2-RDM syrk (5.1 GFlop)");
+    for (int q = 0; q < n_o_ac; q++) {
+        for (int p = 0; p < n_o_ac; p++) {
+            for (int s = 0; s < n_o_ac; s++) {
+        	D_tuvw[(q*n_o_ac+p)*n_o_ac*n_o_ac + p*n_o_ac + s] -= temp0[q*n_o_ac+s];    
+            }
+        }
+    }
+    RDMP("trace correction");
+    free(temp0);
+    if (!hoist) {                  /* hoisted buffers live for the process */
+        free(temp1);
+    }
+    RDMP("free (282MB)");
+}
+
 void build_active_rdm_z(double* z_vector, double* eigvec, double* D_tu, double* D_tuvw, int* table, int N_ac, int n_o_ac, int num_photon, int state_p1, int state_p2, double weight) {
     int num_alpha = binomialCoeff(n_o_ac, N_ac);
     int num_links = N_ac * (n_o_ac-N_ac) + N_ac;
     size_t num_dets = num_alpha * num_alpha;
    
-    double* temp1 = (double*) malloc(num_dets*num_photon*n_o_ac*n_o_ac*sizeof(double));
-    memset(temp1, 0.0, num_dets*num_photon*n_o_ac*n_o_ac*sizeof(double));
+    /* QED_RDM_HOIST: same process-lifetime scratch pool as
+       build_active_rdm -- see the comment above build_one_rdm.  Slots are
+       shared across all three RDM builders, which is safe because each is a
+       separate serial ctypes call from Python and none nests inside another. */
+    size_t scratch_bytes = num_dets*num_photon*n_o_ac*n_o_ac*sizeof(double);
+    int hoist = rdm_hoist_enabled();
+    double* temp1 = hoist ? rdm_scratch(0, scratch_bytes)
+                          : (double*) malloc(scratch_bytes);
+    memset(temp1, 0, scratch_bytes);
     double* temp0 = (double*) malloc(n_o_ac*n_o_ac*sizeof(double));
     memset(temp0, 0.0, n_o_ac*n_o_ac*sizeof(double));
    
@@ -3444,8 +4934,9 @@ void build_active_rdm_z(double* z_vector, double* eigvec, double* D_tu, double* 
     cblas_dgemm(CblasRowMajor, CblasNoTrans, CblasNoTrans, 1 , n_o_ac*n_o_ac, num_photon*num_dets, weight, 
         	    z_vector + state_p1*num_photon*num_dets, num_photon*num_dets,
         	    temp1, n_o_ac*n_o_ac, 1.0, D_tu, n_o_ac*n_o_ac);
-    double* temp2 = (double*) malloc(num_dets*num_photon*n_o_ac*n_o_ac*sizeof(double));
-    memset(temp2, 0.0, num_dets*num_photon*n_o_ac*n_o_ac*sizeof(double));
+    double* temp2 = hoist ? rdm_scratch(1, scratch_bytes)
+                          : (double*) malloc(scratch_bytes);
+    memset(temp2, 0, scratch_bytes);
     #pragma omp parallel for
     for (int index_ka = 0; index_ka < num_alpha; index_ka++) {
         int stride = index_ka * num_links;
@@ -3496,8 +4987,10 @@ void build_active_rdm_z(double* z_vector, double* eigvec, double* D_tu, double* 
         }
     }
     free(temp0);
-    free(temp1);
-    free(temp2);
+    if (!hoist) {                  /* hoisted buffers live for the process */
+        free(temp1);
+        free(temp2);
+    }
 }
 
 
