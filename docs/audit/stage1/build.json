@@ -1,0 +1,63 @@
+{
+  "platform": "macOS-26.6.2-arm64-arm-64bit-Mach-O",
+  "architecture": "arm64",
+  "python": "3.13.13 | packaged by conda-forge | (main, Apr  8 2026, 02:29:07) [Clang 19.1.7 ]",
+  "prefix": "/Users/jfoley19/miniforge3/envs/p4dev",
+  "backend": "OpenBLAS LP64",
+  "compiler": "Apple clang version 21.0.0 (clang-2100.3.34.2)\nTarget: arm64-apple-darwin25.6.0\nThread model: posix\nInstalledDir: /Library/Developer/CommandLineTools/usr/bin\n",
+  "commands": [
+    [
+      "/usr/bin/clang",
+      "-O2",
+      "-fPIC",
+      "-std=gnu11",
+      "-Wall",
+      "-Wextra",
+      "-DQED_USE_OPENBLAS",
+      "-I/Users/jfoley19/miniforge3/envs/p4dev/include",
+      "-Xpreprocessor",
+      "-fopenmp",
+      "-c",
+      "/Users/jfoley19/Code/qed-ci/src/ci_solver.c",
+      "-o",
+      "/Users/jfoley19/Code/qed-ci/build/backend/compile-gggv_8y6/ci_solver.o"
+    ],
+    [
+      "/usr/bin/clang",
+      "-O2",
+      "-fPIC",
+      "-std=gnu11",
+      "-Wall",
+      "-Wextra",
+      "-DQED_USE_OPENBLAS",
+      "-I/Users/jfoley19/miniforge3/envs/p4dev/include",
+      "-Xpreprocessor",
+      "-fopenmp",
+      "-c",
+      "/Users/jfoley19/Code/qed-ci/src/orbital.c",
+      "-o",
+      "/Users/jfoley19/Code/qed-ci/build/backend/compile-gggv_8y6/orbital.o"
+    ],
+    [
+      "/usr/bin/clang",
+      "/Users/jfoley19/Code/qed-ci/build/backend/compile-gggv_8y6/ci_solver.o",
+      "/Users/jfoley19/Code/qed-ci/build/backend/compile-gggv_8y6/orbital.o",
+      "-dynamiclib",
+      "-Wl,-install_name,@rpath/cfunctions.so",
+      "-L/Users/jfoley19/miniforge3/envs/p4dev/lib",
+      "-Wl,-rpath,/Users/jfoley19/miniforge3/envs/p4dev/lib",
+      "-lopenblas",
+      "-lomp",
+      "-o",
+      "/Users/jfoley19/Code/qed-ci/build/backend/compile-gggv_8y6/cfunctions.so"
+    ]
+  ],
+  "source_sha256": {
+    "src/ci_solver.c": "1f1c1261cd612cf2cdc1fde053e8b35c4ccd4a4dae969ff817b10785f3ae29ac",
+    "src/ci_solver.h": "49de3393c82c9eab564eec9ffec139564181f7c1aa4439376a1eaec6aa5ff01e",
+    "src/orbital.c": "8c49d695e4af2d7e4cf6023eb3176cd51db8f9561e17bbc554be2adc4eb05fa3",
+    "src/orbital.h": "e0dd88c6bf97a23a62f4c04011f76c1a1a2122bb88afc68ac0f3d2e8c37dc49d",
+    "src/qed_blas.h": "afa8b028fd412b06dc42d50ad072e43ddddb2dd55d1741b4d29c38a1b60c2c4f"
+  },
+  "library_sha256": "98084925a3375c3cde93371925ed7786485b27b1f83ffe852d8a290c4430c9a4"
+}

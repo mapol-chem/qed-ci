@@ -14,6 +14,12 @@ QED-CI simulates strongly correlated molecules coupled to quantized cavity modes
 ## Python codebase (`src/`)
 
 ### Build the C backend
+For the repeatable Python-backend build, run `python tools/build_backend.py`
+from the repository root using the calculation environment's Python. It supports
+native macOS/Apple Clang + LP64 OpenBLAS and Linux/icx + MKL. See `README.md`
+for dependencies and `docs/audit/stage1/README.md` for the local baseline.
+The manual instructions below describe the historical **Linux/Intel** workflow.
+
 `cfunctions.so` is a binary artifact loaded via `ctypes.cdll.LoadLibrary` from `helper_PFCI.py`. It is **not** tracked by git (`git status` shows it as untracked), so back it up before rebuilding — there is nothing to `git checkout` if the rebuild goes wrong. After editing `ci_solver.c`/`orbital.c`, rebuild it (from `src/`):
 ```sh
 cp -a cfunctions.so cfunctions.so.bak

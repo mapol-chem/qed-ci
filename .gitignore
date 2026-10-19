@@ -6,3 +6,7 @@ src/*.swp
 src/output.dat
 src/timer.dat
 src/.ipynb*
+/build/
+/src/cfunctions.so
+**/__pycache__/
+.pytest_cache/

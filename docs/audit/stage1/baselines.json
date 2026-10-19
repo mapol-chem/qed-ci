@@ -1,0 +1,916 @@
+{
+  "casci_cavity": {
+    "input": {
+      "molecule": "0 1\nLi\nH 1 1.4\nsymmetry c1\nno_reorient\nno_com\nunits angstrom\n",
+      "psi4_options": {
+        "basis": "sto-3g",
+        "scf_type": "pk",
+        "e_convergence": 1e-10,
+        "d_convergence": 1e-10
+      },
+      "cavity_options": {
+        "ci_level": "cas",
+        "casscf_optimization": false,
+        "omega_value": 0.12,
+        "lambda_vector": [
+          0.0,
+          0.0,
+          0.05
+        ],
+        "number_of_photons": 1,
+        "davidson_roots": 2,
+        "davidson_threshold": 1e-09,
+        "coherent_state_basis": true,
+        "rdm_root": 0,
+        "nact_els": 2,
+        "nact_orbs": 2,
+        "casscf_weight": [
+          1,
+          1
+        ]
+      }
+    },
+    "result": {
+      "versions": {
+        "python": "3.13.13 | packaged by conda-forge | (main, Apr  8 2026, 02:29:07) [Clang 19.1.7 ]",
+        "psi4": "1.10",
+        "numpy": "2.4.3",
+        "scipy": "1.16.0",
+        "numba": "0.65.1"
+      },
+      "shapes": {
+        "CIeigs": [
+          2
+        ],
+        "CIvecs": [
+          2,
+          8
+        ],
+        "eigenvecs": [
+          2,
+          8
+        ],
+        "D_tu_avg": [
+          4
+        ],
+        "D_tuvw_avg": [
+          16
+        ],
+        "Dpe_tu_avg": [
+          4
+        ],
+        "C": [
+          6,
+          6
+        ],
+        "weight": [
+          2
+        ]
+      },
+      "energies": {
+        "CIeigs": [
+          -7.856988751848194,
+          -7.737549183007682
+        ]
+      },
+      "resolved": {
+        "ci_level": "cas",
+        "casscf_optimization": false,
+        "canonical_mos": false,
+        "photon_number_basis": false,
+        "coherent_state_basis": true,
+        "N_p": 1,
+        "n_act_orb": 2,
+        "n_act_el": 2
+      },
+      "finite_arrays": true
+    },
+    "repeat_energy_max_abs": {
+      "CIeigs": 0.0
+    },
+    "repeat_array_max_abs": {
+      "CIeigs": 0.0,
+      "CIvecs": 0.0,
+      "eigenvecs": 0.0,
+      "D_tu_avg": 0.0,
+      "D_tuvw_avg": 0.0,
+      "Dpe_tu_avg": 0.0,
+      "C": 0.0,
+      "weight": 0.0
+    },
+    "reference_arrays": "reference/casci_cavity.npz",
+    "emitted_files": [
+      "arrays.npz",
+      "input.json",
+      "orbital2.out",
+      "result.json",
+      "stderr.log",
+      "stdout.log",
+      "timer.dat"
+    ]
+  },
+  "casci_zero": {
+    "input": {
+      "molecule": "0 1\nLi\nH 1 1.4\nsymmetry c1\nno_reorient\nno_com\nunits angstrom\n",
+      "psi4_options": {
+        "basis": "sto-3g",
+        "scf_type": "pk",
+        "e_convergence": 1e-10,
+        "d_convergence": 1e-10
+      },
+      "cavity_options": {
+        "ci_level": "cas",
+        "casscf_optimization": false,
+        "omega_value": 0.0,
+        "lambda_vector": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "number_of_photons": 0,
+        "davidson_roots": 2,
+        "davidson_threshold": 1e-09,
+        "coherent_state_basis": true,
+        "rdm_root": 0,
+        "nact_els": 2,
+        "nact_orbs": 2,
+        "casscf_weight": [
+          1,
+          1
+        ]
+      }
+    },
+    "result": {
+      "versions": {
+        "python": "3.13.13 | packaged by conda-forge | (main, Apr  8 2026, 02:29:07) [Clang 19.1.7 ]",
+        "psi4": "1.10",
+        "numpy": "2.4.3",
+        "scipy": "1.16.0",
+        "numba": "0.65.1"
+      },
+      "shapes": {
+        "CIeigs": [
+          2
+        ],
+        "CIvecs": [
+          2,
+          4
+        ],
+        "eigenvecs": [
+          2,
+          4
+        ],
+        "D_tu_avg": [
+          4
+        ],
+        "D_tuvw_avg": [
+          16
+        ],
+        "Dpe_tu_avg": [
+          4
+        ],
+        "C": [
+          6,
+          6
+        ],
+        "weight": [
+          2
+        ]
+      },
+      "energies": {
+        "CIeigs": [
+          -7.86072950659262,
+          -7.709806666794086
+        ]
+      },
+      "resolved": {
+        "ci_level": "cas",
+        "casscf_optimization": false,
+        "canonical_mos": false,
+        "photon_number_basis": false,
+        "coherent_state_basis": true,
+        "N_p": 0,
+        "n_act_orb": 2,
+        "n_act_el": 2
+      },
+      "finite_arrays": true
+    },
+    "repeat_energy_max_abs": {
+      "CIeigs": 0.0
+    },
+    "repeat_array_max_abs": {
+      "CIeigs": 0.0,
+      "CIvecs": 0.0,
+      "eigenvecs": 0.0,
+      "D_tu_avg": 0.0,
+      "D_tuvw_avg": 0.0,
+      "Dpe_tu_avg": 0.0,
+      "C": 0.0,
+      "weight": 0.0
+    },
+    "reference_arrays": "reference/casci_zero.npz",
+    "emitted_files": [
+      "arrays.npz",
+      "input.json",
+      "orbital2.out",
+      "result.json",
+      "stderr.log",
+      "stdout.log",
+      "timer.dat"
+    ]
+  },
+  "casscf_cavity": {
+    "input": {
+      "molecule": "0 1\nLi\nH 1 1.4\nsymmetry c1\nno_reorient\nno_com\nunits angstrom\n",
+      "psi4_options": {
+        "basis": "sto-3g",
+        "scf_type": "pk",
+        "e_convergence": 1e-10,
+        "d_convergence": 1e-10
+      },
+      "cavity_options": {
+        "ci_level": "cas",
+        "casscf_optimization": true,
+        "omega_value": 0.12,
+        "lambda_vector": [
+          0.0,
+          0.0,
+          0.05
+        ],
+        "number_of_photons": 1,
+        "davidson_roots": 2,
+        "davidson_threshold": 1e-09,
+        "coherent_state_basis": true,
+        "rdm_root": 0,
+        "nact_els": 2,
+        "nact_orbs": 2,
+        "casscf_weight": [
+          1,
+          1
+        ]
+      }
+    },
+    "result": {
+      "versions": {
+        "python": "3.13.13 | packaged by conda-forge | (main, Apr  8 2026, 02:29:07) [Clang 19.1.7 ]",
+        "psi4": "1.10",
+        "numpy": "2.4.3",
+        "scipy": "1.16.0",
+        "numba": "0.65.1"
+      },
+      "shapes": {
+        "CIeigs": [
+          2
+        ],
+        "CIvecs": [
+          2,
+          8
+        ],
+        "eigenvals": [
+          2
+        ],
+        "eigenvecs": [
+          2,
+          8
+        ],
+        "D_tu_avg": [
+          4
+        ],
+        "D_tuvw_avg": [
+          16
+        ],
+        "Dpe_tu_avg": [
+          4
+        ],
+        "C": [
+          6,
+          6
+        ],
+        "opt_C": [
+          6,
+          6
+        ],
+        "weight": [
+          2
+        ]
+      },
+      "energies": {
+        "CIeigs": [
+          -7.856988751848194,
+          -7.737549183007682
+        ],
+        "eigenvals": [
+          -7.87340272769393,
+          -7.7534588426476025
+        ]
+      },
+      "resolved": {
+        "ci_level": "cas",
+        "casscf_optimization": true,
+        "canonical_mos": false,
+        "photon_number_basis": false,
+        "coherent_state_basis": true,
+        "N_p": 1,
+        "n_act_orb": 2,
+        "n_act_el": 2
+      },
+      "finite_arrays": true
+    },
+    "repeat_energy_max_abs": {
+      "CIeigs": 0.0,
+      "eigenvals": 1.7763568394002505e-14
+    },
+    "repeat_array_max_abs": {
+      "CIeigs": 0.0,
+      "CIvecs": 1.3559039932498074e-09,
+      "eigenvals": 1.7763568394002505e-14,
+      "eigenvecs": 1.3559039932498074e-09,
+      "D_tu_avg": 2.336350682363708e-09,
+      "D_tuvw_avg": 2.679793636994887e-09,
+      "Dpe_tu_avg": 4.788880533443396e-11,
+      "C": 0.0,
+      "opt_C": 1.538666407798435e-07,
+      "weight": 0.0
+    },
+    "reference_arrays": "reference/casscf_cavity.npz",
+    "emitted_files": [
+      "arrays.npz",
+      "input.json",
+      "orbital2.out",
+      "result.json",
+      "stderr.log",
+      "stdout.log",
+      "timer.dat"
+    ]
+  },
+  "casscf_zero": {
+    "input": {
+      "molecule": "0 1\nLi\nH 1 1.4\nsymmetry c1\nno_reorient\nno_com\nunits angstrom\n",
+      "psi4_options": {
+        "basis": "sto-3g",
+        "scf_type": "pk",
+        "e_convergence": 1e-10,
+        "d_convergence": 1e-10
+      },
+      "cavity_options": {
+        "ci_level": "cas",
+        "casscf_optimization": true,
+        "omega_value": 0.0,
+        "lambda_vector": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "number_of_photons": 0,
+        "davidson_roots": 2,
+        "davidson_threshold": 1e-09,
+        "coherent_state_basis": true,
+        "rdm_root": 0,
+        "nact_els": 2,
+        "nact_orbs": 2,
+        "casscf_weight": [
+          1,
+          1
+        ]
+      }
+    },
+    "result": {
+      "versions": {
+        "python": "3.13.13 | packaged by conda-forge | (main, Apr  8 2026, 02:29:07) [Clang 19.1.7 ]",
+        "psi4": "1.10",
+        "numpy": "2.4.3",
+        "scipy": "1.16.0",
+        "numba": "0.65.1"
+      },
+      "shapes": {
+        "CIeigs": [
+          2
+        ],
+        "CIvecs": [
+          2,
+          4
+        ],
+        "eigenvals": [
+          2
+        ],
+        "eigenvecs": [
+          2,
+          4
+        ],
+        "D_tu_avg": [
+          4
+        ],
+        "D_tuvw_avg": [
+          16
+        ],
+        "Dpe_tu_avg": [
+          4
+        ],
+        "C": [
+          6,
+          6
+        ],
+        "opt_C": [
+          6,
+          6
+        ],
+        "weight": [
+          2
+        ]
+      },
+      "energies": {
+        "CIeigs": [
+          -7.86072950659262,
+          -7.709806666794086
+        ],
+        "eigenvals": [
+          -7.8549267560591876,
+          -7.738647527130786
+        ]
+      },
+      "resolved": {
+        "ci_level": "cas",
+        "casscf_optimization": true,
+        "canonical_mos": false,
+        "photon_number_basis": false,
+        "coherent_state_basis": true,
+        "N_p": 0,
+        "n_act_orb": 2,
+        "n_act_el": 2
+      },
+      "finite_arrays": true
+    },
+    "repeat_energy_max_abs": {
+      "CIeigs": 0.0,
+      "eigenvals": 2.4202861936828413e-12
+    },
+    "repeat_array_max_abs": {
+      "CIeigs": 0.0,
+      "CIvecs": 1.955078554986569,
+      "eigenvals": 2.4202861936828413e-12,
+      "eigenvecs": 1.955078554986569,
+      "D_tu_avg": 1.8703245341367136e-09,
+      "D_tuvw_avg": 1.9741698276121156e-09,
+      "Dpe_tu_avg": 0.0,
+      "C": 0.0,
+      "opt_C": 1.1454527653458543e-08,
+      "weight": 0.0
+    },
+    "reference_arrays": "reference/casscf_zero.npz",
+    "emitted_files": [
+      "arrays.npz",
+      "input.json",
+      "orbital2.out",
+      "result.json",
+      "stderr.log",
+      "stdout.log",
+      "timer.dat"
+    ]
+  },
+  "cis_cavity": {
+    "input": {
+      "molecule": "0 1\nLi\nH 1 1.4\nsymmetry c1\nno_reorient\nno_com\nunits angstrom\n",
+      "psi4_options": {
+        "basis": "sto-3g",
+        "scf_type": "pk",
+        "e_convergence": 1e-10,
+        "d_convergence": 1e-10
+      },
+      "cavity_options": {
+        "ci_level": "cis",
+        "casscf_optimization": false,
+        "omega_value": 0.12,
+        "lambda_vector": [
+          0.0,
+          0.0,
+          0.05
+        ],
+        "number_of_photons": 1,
+        "davidson_roots": 2,
+        "davidson_threshold": 1e-09,
+        "coherent_state_basis": true,
+        "rdm_root": 0
+      }
+    },
+    "result": {
+      "versions": {
+        "python": "3.13.13 | packaged by conda-forge | (main, Apr  8 2026, 02:29:07) [Clang 19.1.7 ]",
+        "psi4": "1.10",
+        "numpy": "2.4.3",
+        "scipy": "1.16.0",
+        "numba": "0.65.1"
+      },
+      "shapes": {
+        "CIeigs": [
+          34
+        ],
+        "CIvecs": [
+          34,
+          34
+        ],
+        "C": [
+          6,
+          6
+        ],
+        "weight": [
+          2
+        ]
+      },
+      "energies": {
+        "CIeigs": [
+          -7.856886042809566,
+          -7.73730812347763,
+          -7.711850385918232,
+          -7.680082287247831,
+          -7.67136041178524,
+          -7.671360411785238,
+          -7.622646404755934,
+          -7.622646404755932,
+          -7.566405904489383,
+          -7.539053729681446,
+          -7.539053729681443,
+          -7.526178850878468,
+          -7.4903637137122,
+          -7.490363713712199,
+          -7.403526061057664,
+          -7.281736359198888,
+          -7.169412869393457,
+          -7.048813551736218,
+          -5.825209864301902,
+          -5.782480854824451,
+          -5.740801528211542,
+          -5.740801528211539,
+          -5.720954283826518,
+          -5.72095428382651,
+          -5.698171894455916,
+          -5.655440979139702,
+          -5.620801701134293,
+          -5.620801701134289,
+          -5.600954511452701,
+          -5.600954511452696,
+          -5.2698890110307195,
+          -5.258412375807212,
+          -5.142588433383477,
+          -5.1311107179723665
+        ]
+      },
+      "resolved": {
+        "ci_level": "cis",
+        "casscf_optimization": false,
+        "canonical_mos": false,
+        "photon_number_basis": false,
+        "coherent_state_basis": true,
+        "N_p": 1,
+        "n_act_orb": 0,
+        "n_act_el": 0
+      },
+      "finite_arrays": true
+    },
+    "repeat_energy_max_abs": {
+      "CIeigs": 0.0
+    },
+    "repeat_array_max_abs": {
+      "CIeigs": 0.0,
+      "CIvecs": 0.0,
+      "C": 0.0,
+      "weight": 0.0
+    },
+    "reference_arrays": "reference/cis_cavity.npz",
+    "emitted_files": [
+      "arrays.npz",
+      "input.json",
+      "orbital2.out",
+      "result.json",
+      "stderr.log",
+      "stdout.log",
+      "timer.dat"
+    ]
+  },
+  "cis_zero": {
+    "input": {
+      "molecule": "0 1\nLi\nH 1 1.4\nsymmetry c1\nno_reorient\nno_com\nunits angstrom\n",
+      "psi4_options": {
+        "basis": "sto-3g",
+        "scf_type": "pk",
+        "e_convergence": 1e-10,
+        "d_convergence": 1e-10
+      },
+      "cavity_options": {
+        "ci_level": "cis",
+        "casscf_optimization": false,
+        "omega_value": 0.0,
+        "lambda_vector": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "number_of_photons": 0,
+        "davidson_roots": 2,
+        "davidson_threshold": 1e-09,
+        "coherent_state_basis": true,
+        "rdm_root": 0
+      }
+    },
+    "result": {
+      "versions": {
+        "python": "3.13.13 | packaged by conda-forge | (main, Apr  8 2026, 02:29:07) [Clang 19.1.7 ]",
+        "psi4": "1.10",
+        "numpy": "2.4.3",
+        "scipy": "1.16.0",
+        "numba": "0.65.1"
+      },
+      "shapes": {
+        "CIeigs": [
+          34
+        ],
+        "CIvecs": [
+          34,
+          34
+        ],
+        "C": [
+          6,
+          6
+        ],
+        "weight": [
+          2
+        ]
+      },
+      "energies": {
+        "CIeigs": [
+          -7.860538661057051,
+          -7.860538661057051,
+          -7.718552364204825,
+          -7.718552364204821,
+          -7.687600188862515,
+          -7.68760018886251,
+          -7.676261425519159,
+          -7.676261425519159,
+          -7.6762614255191535,
+          -7.6762614255191535,
+          -7.6273088311434964,
+          -7.627308831143496,
+          -7.627308831143492,
+          -7.627308831143489,
+          -7.4136693822579,
+          -7.413669382257899,
+          -7.17737939724196,
+          -7.177379397241956,
+          -5.831638889780988,
+          -5.831638889780983,
+          -5.789025513775413,
+          -5.789025513775413,
+          -5.747568647631974,
+          -5.747568647631973,
+          -5.747568647631971,
+          -5.747568647631968,
+          -5.727722273089942,
+          -5.727722273089935,
+          -5.727722273089935,
+          -5.727722273089931,
+          -5.27836990789133,
+          -5.278369907891325,
+          -5.266981192240323,
+          -5.266981192240321
+        ]
+      },
+      "resolved": {
+        "ci_level": "cis",
+        "casscf_optimization": false,
+        "canonical_mos": false,
+        "photon_number_basis": false,
+        "coherent_state_basis": true,
+        "N_p": 0,
+        "n_act_orb": 0,
+        "n_act_el": 0
+      },
+      "finite_arrays": true
+    },
+    "repeat_energy_max_abs": {
+      "CIeigs": 0.0
+    },
+    "repeat_array_max_abs": {
+      "CIeigs": 0.0,
+      "CIvecs": 0.0,
+      "C": 0.0,
+      "weight": 0.0
+    },
+    "reference_arrays": "reference/cis_zero.npz",
+    "emitted_files": [
+      "arrays.npz",
+      "input.json",
+      "orbital2.out",
+      "result.json",
+      "stderr.log",
+      "stdout.log",
+      "timer.dat"
+    ]
+  },
+  "fci_cavity": {
+    "input": {
+      "molecule": "0 1\nLi\nH 1 1.4\nsymmetry c1\nno_reorient\nno_com\nunits angstrom\n",
+      "psi4_options": {
+        "basis": "sto-3g",
+        "scf_type": "pk",
+        "e_convergence": 1e-10,
+        "d_convergence": 1e-10
+      },
+      "cavity_options": {
+        "ci_level": "fci",
+        "casscf_optimization": false,
+        "omega_value": 0.12,
+        "lambda_vector": [
+          0.0,
+          0.0,
+          0.05
+        ],
+        "number_of_photons": 1,
+        "davidson_roots": 2,
+        "davidson_threshold": 1e-09,
+        "coherent_state_basis": true,
+        "rdm_root": 0
+      }
+    },
+    "result": {
+      "versions": {
+        "python": "3.13.13 | packaged by conda-forge | (main, Apr  8 2026, 02:29:07) [Clang 19.1.7 ]",
+        "psi4": "1.10",
+        "numpy": "2.4.3",
+        "scipy": "1.16.0",
+        "numba": "0.65.1"
+      },
+      "shapes": {
+        "CIeigs": [
+          2
+        ],
+        "CIvecs": [
+          2,
+          450
+        ],
+        "eigenvecs": [
+          2,
+          450
+        ],
+        "D_tu_avg": [
+          36
+        ],
+        "D_tuvw_avg": [
+          1296
+        ],
+        "Dpe_tu_avg": [
+          36
+        ],
+        "C": [
+          6,
+          6
+        ],
+        "weight": [
+          2
+        ]
+      },
+      "energies": {
+        "CIeigs": [
+          -7.874946784710181,
+          -7.756482840444545
+        ]
+      },
+      "resolved": {
+        "ci_level": "fci",
+        "casscf_optimization": false,
+        "canonical_mos": false,
+        "photon_number_basis": false,
+        "coherent_state_basis": true,
+        "N_p": 1,
+        "n_act_orb": 6,
+        "n_act_el": 0
+      },
+      "finite_arrays": true
+    },
+    "repeat_energy_max_abs": {
+      "CIeigs": 0.0
+    },
+    "repeat_array_max_abs": {
+      "CIeigs": 0.0,
+      "CIvecs": 0.0,
+      "eigenvecs": 0.0,
+      "D_tu_avg": 0.0,
+      "D_tuvw_avg": 0.0,
+      "Dpe_tu_avg": 0.0,
+      "C": 0.0,
+      "weight": 0.0
+    },
+    "reference_arrays": "reference/fci_cavity.npz",
+    "emitted_files": [
+      "arrays.npz",
+      "input.json",
+      "orbital2.out",
+      "result.json",
+      "stderr.log",
+      "stdout.log",
+      "timer.dat"
+    ]
+  },
+  "fci_zero": {
+    "input": {
+      "molecule": "0 1\nLi\nH 1 1.4\nsymmetry c1\nno_reorient\nno_com\nunits angstrom\n",
+      "psi4_options": {
+        "basis": "sto-3g",
+        "scf_type": "pk",
+        "e_convergence": 1e-10,
+        "d_convergence": 1e-10
+      },
+      "cavity_options": {
+        "ci_level": "fci",
+        "casscf_optimization": false,
+        "omega_value": 0.0,
+        "lambda_vector": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "number_of_photons": 0,
+        "davidson_roots": 2,
+        "davidson_threshold": 1e-09,
+        "coherent_state_basis": true,
+        "rdm_root": 0
+      }
+    },
+    "result": {
+      "versions": {
+        "python": "3.13.13 | packaged by conda-forge | (main, Apr  8 2026, 02:29:07) [Clang 19.1.7 ]",
+        "psi4": "1.10",
+        "numpy": "2.4.3",
+        "scipy": "1.16.0",
+        "numba": "0.65.1"
+      },
+      "shapes": {
+        "CIeigs": [
+          2
+        ],
+        "CIvecs": [
+          2,
+          225
+        ],
+        "eigenvecs": [
+          2,
+          225
+        ],
+        "D_tu_avg": [
+          36
+        ],
+        "D_tuvw_avg": [
+          1296
+        ],
+        "Dpe_tu_avg": [
+          36
+        ],
+        "C": [
+          6,
+          6
+        ],
+        "weight": [
+          2
+        ]
+      },
+      "energies": {
+        "CIeigs": [
+          -7.878453652319021,
+          -7.751795788824708
+        ]
+      },
+      "resolved": {
+        "ci_level": "fci",
+        "casscf_optimization": false,
+        "canonical_mos": false,
+        "photon_number_basis": false,
+        "coherent_state_basis": true,
+        "N_p": 0,
+        "n_act_orb": 6,
+        "n_act_el": 0
+      },
+      "finite_arrays": true
+    },
+    "repeat_energy_max_abs": {
+      "CIeigs": 0.0
+    },
+    "repeat_array_max_abs": {
+      "CIeigs": 0.0,
+      "CIvecs": 0.0,
+      "eigenvecs": 0.0,
+      "D_tu_avg": 0.0,
+      "D_tuvw_avg": 0.0,
+      "Dpe_tu_avg": 0.0,
+      "C": 0.0,
+      "weight": 0.0
+    },
+    "reference_arrays": "reference/fci_zero.npz",
+    "emitted_files": [
+      "arrays.npz",
+      "input.json",
+      "orbital2.out",
+      "result.json",
+      "stderr.log",
+      "stdout.log",
+      "timer.dat"
+    ]
+  }
+}

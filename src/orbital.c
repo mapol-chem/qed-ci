@@ -3,7 +3,7 @@
 #include "orbital.h"
 #include <string.h>
 #include <math.h>
-#include <mkl.h>
+#include "qed_blas.h"
 #include<omp.h>
 #include<time.h>
 #include <unistd.h>
@@ -1802,5 +1802,4 @@ free(A3);
 
 
 }
-
 

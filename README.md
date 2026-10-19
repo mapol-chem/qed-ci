@@ -15,30 +15,65 @@ Within the src/ directory:
 
 
 
-## Getting Started
-**0.  Clone repo** 
+## Getting started
 
-**1.  Install psi4** 
+Clone the repository and run these commands from its root. Use the same Python
+environment to build and run calculations. The Python package currently uses
+`PYTHONPATH`; a packaging/API redesign is not part of this build change.
 
-Using Conda (easy option):
-- conda install psi4 python=3.10 -c conda-forge
+### macOS (native Apple Silicon)
 
-or
+Install Apple's Command Line Tools (`xcode-select --install`) and Miniforge,
+then create an environment:
 
-From source (harder option):
-- Follow directions [here](https://psicode.org/installs/v191/)
+```sh
+conda create -n qed-ci -c conda-forge python psi4 numpy scipy numba psutil pytest openblas liblapacke llvm-openmp
+conda activate qed-ci
+python tools/build_backend.py
+export PYTHONPATH="$PWD/src${PYTHONPATH:+:$PYTHONPATH}"
+```
 
-**2. Install numba and pytest:**
-- pip install numba pytest
+For an existing Psi4 environment, install the missing packages there instead.
+The build uses Apple Clang, LP64 OpenBLAS/LAPACKE, and LLVM OpenMP from that
+environment. Intel MKL is not required on macOS. All components must match the
+Python architecture; do not mix Rosetta/x86 libraries with arm64 Python.
 
-Note other python dependencies should be installed if you used the Conda option.  Other dependencies include numpy and scipy.
+### Linux (Intel oneAPI)
 
-**3. Install intel oneapi**
+Install Intel oneAPI with the C compiler, MKL, and OpenMP runtime (the oneAPI
+and HPC kits used by the existing Linux workflow). Activate your Psi4 Python
+environment, then initialize oneAPI using your installation's `setvars.sh`:
 
-**4. Compile the code with intel compiler:**
-- icx -fPIC -Wall -Wextra -qopenmp -c ci_solver.c orbital.c 
-- icx -shared -o cfunctions.so ci_solver.o orbital.o
+```sh
+conda create -n qed-ci -c conda-forge python psi4 numpy scipy numba psutil pytest
+conda activate qed-ci
+source /opt/intel/oneapi/setvars.sh
+python tools/build_backend.py
+export PYTHONPATH="$PWD/src${PYTHONPATH:+:$PYTHONPATH}"
+```
 
-**5. Run tests** 
-- From the main repository directory (qed-ci), move into the source directory with `cd src/`
-- run tests with `pytest -v`
+The Linux build uses `icx`, LP64 MKL, and Intel OpenMP. Keep the matching Intel
+runtime available when running calculations. The script uses the system linker
+ahead of conda's binutils. Existing manual MKL builds remain supported.
+
+### Build checks and tests
+
+The build creates `src/cfunctions.so` (also named `.so` on macOS for the existing
+ctypes loader). It compiles in a temporary build directory, checks that the
+library loads, backs up any previous library, and only then replaces it.
+`build/backend/manifest.json` records compiler, source hashes, and library hash.
+Use `--prefix PATH` to select dependency locations or `--compiler PATH` to select
+the compiler. Rebuild after changing numerical-library environments; the macOS
+library records the environment's library search path.
+
+```sh
+mkdir -p build/test-run
+cd build/test-run
+OMP_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 MKL_NUM_THREADS=1 python -m pytest ../../src/tests -v
+```
+
+Tests and calculations currently write some files in their working directory;
+use a separate directory for each run. Known baseline failures and reproducible
+Stage 1 audit commands are recorded in [the Stage 1 report](docs/audit/stage1/README.md).
+The separate `src/cpp_casscf` CMake project and optional Psi4 DPD shim retain
+their existing build instructions; this script builds the Python C backend.

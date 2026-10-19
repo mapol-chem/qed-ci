@@ -1,0 +1,65 @@
+{
+  "date": "2026-10-19",
+  "platform": "macOS-26.6.2-arm64-arm-64bit-Mach-O",
+  "stage2_started": false,
+  "original_suite": {
+    "collected": 177,
+    "passed": 175,
+    "failures": [
+      {
+        "name": "test_lih_fci_sto3g_rdm_builds_no_cavity",
+        "message": "FileNotFoundError: [Errno 2] No such file or directory: '/home/jfoley19/UPDATED_QEDCI/qed-ci/src/tests/LiH_sto3g_fci_d1.npy'"
+      },
+      {
+        "name": "test_lih_fci_sto3g_rdm_builds_with_cavity",
+        "message": "AttributeError: 'PFHamiltonianGenerator' object has no attribute 'total_energy_from_rdms'"
+      }
+    ],
+    "seconds": 409.78,
+    "library_sha256": "77d7dd3f100bc6c85c4efd4cf18d3f87f0dae4b38e35d87c2fcc7635364a4ffd",
+    "note": "Suite began before final install-name metadata fix; no numerical source changes afterward.",
+    "raw_log": "build/tests.log",
+    "junit": "build/tests.xml"
+  },
+  "backend_checks": {
+    "passed": 4,
+    "failed": 0,
+    "raw_log": "build/backend-tests.log"
+  },
+  "baseline": {
+    "cases": 8,
+    "runs": 16,
+    "successful": 16,
+    "all_arrays_finite": true,
+    "max_repeat_energy_difference": 2.4202861936828413e-12,
+    "library_sha256": "98084925a3375c3cde93371925ed7786485b27b1f83ffe852d8a290c4430c9a4",
+    "raw_directory": "build/stage1/final-baselines"
+  },
+  "build": {
+    "manifest": "build.json",
+    "library_matches_baselines": true,
+    "compiler_warnings": {
+      "ci_solver": 25,
+      "orbital": 14
+    },
+    "linux_execution_verified": false,
+    "cpp_port_built": false,
+    "optional_dpd_shim_built": false
+  },
+  "remaining_work": [
+    "Approve Stage 2 before configuration implementation",
+    "Resolve the two recorded legacy test/interface issues in a separately approved change",
+    "Execute Linux oneAPI build on Linux before claiming cross-platform validation"
+  ],
+  "environment_changes": {
+    "installed": [
+      "openblas 0.3.30 (headers; existing runtime retained)",
+      "liblapacke 3.11.0"
+    ],
+    "conda_also_updated": [
+      "ca-certificates",
+      "certifi",
+      "openssl"
+    ]
+  }
+}

@@ -3,10 +3,13 @@
 #include "ci_solver.h"
 #include <string.h>
 #include <math.h>
-#include <mkl.h>
+#include "qed_blas.h"
 #include<omp.h>
 #include<time.h>
-#include "mkl_lapacke.h"
+#ifdef __APPLE__
+#include <mach/mach.h>
+#include <sys/resource.h>
+#endif
 #include <unistd.h>
 #define MIN(x, y) (((x) < (y)) ? (x) : (y))
 #define BIGNUM 1E100
@@ -983,8 +986,8 @@ void sigma3(double* h2e, double* c_vectors, double* c1_vectors, int* table,  int
     // safe to call standalone regardless of caller).
     int mkl_threads_saved = 0;
     if (parallel_inner) {
-        mkl_threads_saved = mkl_get_max_threads();
-        mkl_set_num_threads(1);
+        mkl_threads_saved = qed_blas_get_max_threads();
+        qed_blas_set_num_threads(1);
     }
     #pragma omp parallel for if(parallel_inner)
     for (int index_ib = 0; index_ib < num_alpha; index_ib++) {
@@ -1012,7 +1015,7 @@ void sigma3(double* h2e, double* c_vectors, double* c1_vectors, int* table,  int
         }
     }
     if (parallel_inner) {
-        mkl_set_num_threads(mkl_threads_saved);
+        qed_blas_set_num_threads(mkl_threads_saved);
     }
 
 
@@ -1113,8 +1116,8 @@ void sigma12(double* h1e, double* h2e, double* c_vectors, double* c1_vectors, in
     // just applies it locally too so sigma12 is safe to call standalone).
     int mkl_threads_saved = 0;
     if (parallel_inner) {
-        mkl_threads_saved = mkl_get_max_threads();
-        mkl_set_num_threads(1);
+        mkl_threads_saved = qed_blas_get_max_threads();
+        qed_blas_set_num_threads(1);
     }
 
     // First loop: each index_ib computes its own local F (read-only inputs:
@@ -1222,7 +1225,7 @@ void sigma12(double* h1e, double* h2e, double* c_vectors, double* c1_vectors, in
     }
 
     if (parallel_inner) {
-        mkl_set_num_threads(mkl_threads_saved);
+        qed_blas_set_num_threads(mkl_threads_saved);
     }
     free(c_resize);
 
@@ -1235,8 +1238,8 @@ void sigma_dipole(double* h1e, double* c_vectors,double* c1_vectors,int num_alph
      // Same shape/reasoning as sigma12 -- see that function's comments.
      int mkl_threads_saved = 0;
      if (parallel_inner) {
-         mkl_threads_saved = mkl_get_max_threads();
-         mkl_set_num_threads(1);
+         mkl_threads_saved = qed_blas_get_max_threads();
+         qed_blas_set_num_threads(1);
      }
 
      #pragma omp parallel if(parallel_inner)
@@ -1309,7 +1312,7 @@ void sigma_dipole(double* h1e, double* c_vectors,double* c1_vectors,int num_alph
      }
 
      if (parallel_inner) {
-         mkl_set_num_threads(mkl_threads_saved);
+         qed_blas_set_num_threads(mkl_threads_saved);
      }
      free(c_resize);
 
@@ -1322,7 +1325,7 @@ void constant_terms_contraction(double* c_vectors,double* c1_vectors,int num_alp
 }
 
 void symmetric_eigenvalue_problem(double* A, int N, double* eig) {
-    MKL_INT n = N, lda = N, info;	
+    lapack_int n = N, lda = N, info;
     //double w[N];
     
     /* Solve eigenproblem.
@@ -2458,8 +2461,8 @@ void davidson_spin(double* h1e, double* h2e, double* d_cmo, double* Hdiag, doubl
                     }
                 printf("[guess-direct] L=%d  Gdiag_max=%.3e  Goff_max=%.3e  Gs_max=%.3e\n", L, maxDiag, maxOff, maxS);
                 fflush(stdout);
-                cblas_dcopy((MKL_INT)((size_t)L*L), Gd, 1, G, 1);
-                cblas_dcopy((MKL_INT)((size_t)L*L), Gsd, 1, Gs, 1);
+                cblas_dcopy((lapack_int)((size_t)L*L), Gd, 1, G, 1);
+                cblas_dcopy((lapack_int)((size_t)L*L), Gsd, 1, Gs, 1);
                 free(Gd); free(Gsd);
             }
         }
@@ -2653,9 +2656,9 @@ void davidson_spin(double* h1e, double* h2e, double* d_cmo, double* Hdiag, doubl
              * Hazard 3 (the warm vector is NOT orthogonal to the unit vectors)
              * is what the Gram-Schmidt below exists for. */
             for (int i = 0; i < indim; i++)
-                cblas_dcopy((MKL_INT) H_dim, newS + (size_t)i*H_dim, 1, Q + (size_t)i*H_dim, 1);
+                cblas_dcopy((lapack_int) H_dim, newS + (size_t)i*H_dim, 1, Q + (size_t)i*H_dim, 1);
             for (int i = 0; i < nroots; i++)
-                cblas_dcopy((MKL_INT) H_dim, eigenvecs + (size_t)i*H_dim, 1,
+                cblas_dcopy((lapack_int) H_dim, eigenvecs + (size_t)i*H_dim, 1,
                             Q + (size_t)(indim + i)*H_dim, 1);
         } else {
         for (int i = 0; i < indim ; i++) {
@@ -2697,16 +2700,16 @@ void davidson_spin(double* h1e, double* h2e, double* d_cmo, double* Hdiag, doubl
                 double* v = Q + (size_t)(indim + k)*H_dim;
                 for (int pass = 0; pass < 2; pass++)   /* MGS + reorthogonalization */
                     for (int i = 0; i < L_hyb; i++) {
-                        double dot = cblas_ddot((MKL_INT) H_dim, Q + (size_t)i*H_dim, 1, v, 1);
-                        cblas_daxpy((MKL_INT) H_dim, -dot, Q + (size_t)i*H_dim, 1, v, 1);
+                        double dot = cblas_ddot((lapack_int) H_dim, Q + (size_t)i*H_dim, 1, v, 1);
+                        cblas_daxpy((lapack_int) H_dim, -dot, Q + (size_t)i*H_dim, 1, v, 1);
                     }
-                double nrm = sqrt(cblas_ddot((MKL_INT) H_dim, v, 1, v, 1));
+                double nrm = sqrt(cblas_ddot((lapack_int) H_dim, v, 1, v, 1));
                 if (trace)
                     printf("[hybrid] warm root %d: component outside the P-space = %.6f\n", k, nrm);
                 if (nrm > 1e-6) {
-                    cblas_dscal((MKL_INT) H_dim, 1.0/nrm, v, 1);
+                    cblas_dscal((lapack_int) H_dim, 1.0/nrm, v, 1);
                     if (L_hyb != indim + k)
-                        cblas_dcopy((MKL_INT) H_dim, v, 1, Q + (size_t)L_hyb*H_dim, 1);
+                        cblas_dcopy((lapack_int) H_dim, v, 1, Q + (size_t)L_hyb*H_dim, 1);
                     L_hyb++;
                 } else if (trace) {
                     printf("[hybrid] warm root %d DROPPED -- already inside the P-space span\n", k);
@@ -2716,7 +2719,7 @@ void davidson_spin(double* h1e, double* h2e, double* d_cmo, double* Hdiag, doubl
                 double maxdev = 0.0;
                 for (int i = 0; i < L_hyb; i++)
                     for (int j = 0; j <= i; j++) {
-                        double d = cblas_ddot((MKL_INT) H_dim, Q + (size_t)i*H_dim, 1, Q + (size_t)j*H_dim, 1);
+                        double d = cblas_ddot((lapack_int) H_dim, Q + (size_t)i*H_dim, 1, Q + (size_t)j*H_dim, 1);
                         if (i == j) d -= 1.0;
                         if (fabs(d) > maxdev) maxdev = fabs(d);
                     }
@@ -5512,29 +5515,33 @@ void getMemory2(
    unsigned long* currRealMem, unsigned long*  peakRealMem,
    unsigned long* currVirtMem, unsigned long*  peakVirtMem) {
 
-    // stores each word in status file
-    char buffer[1024] = "";
-
-    // linux file contains this-process info
-    FILE* file = fopen("/proc/self/status", "r");
-
-    // read the entire file
-    while (fscanf(file, " %1023s", buffer) == 1) {
-
-        if (strcmp(buffer, "VmRSS:") == 0) {
-            fscanf(file, " %ld", currRealMem);
-        }
-        if (strcmp(buffer, "VmHWM:") == 0) {
-            fscanf(file, " %ld", peakRealMem);
-        }
-        if (strcmp(buffer, "VmSize:") == 0) {
-            fscanf(file, " %ld", currVirtMem);
-        }
-        if (strcmp(buffer, "VmPeak:") == 0) {
-            fscanf(file, " %ld", peakVirtMem);
-        }
+    /* Units match Linux /proc: KiB. Unavailable quantities remain zero.
+     * macOS has no peak virtual-size equivalent in these APIs. */
+    *currRealMem = *peakRealMem = *currVirtMem = *peakVirtMem = 0;
+#ifdef __APPLE__
+    mach_task_basic_info_data_t info;
+    mach_msg_type_number_t count = MACH_TASK_BASIC_INFO_COUNT;
+    if (task_info(mach_task_self(), MACH_TASK_BASIC_INFO,
+                  (task_info_t)&info, &count) == KERN_SUCCESS) {
+        *currRealMem = (unsigned long)(info.resident_size / 1024);
+        *currVirtMem = (unsigned long)(info.virtual_size / 1024);
     }
-    fclose(file);
+    struct rusage usage;
+    if (getrusage(RUSAGE_SELF, &usage) == 0)
+        *peakRealMem = (unsigned long)(usage.ru_maxrss / 1024);
+#else
+    FILE* file = fopen("/proc/self/status", "r");
+    if (file != NULL) {
+        char line[1024];
+        while (fgets(line, sizeof(line), file)) {
+            if (sscanf(line, "VmRSS: %lu", currRealMem) == 1) continue;
+            if (sscanf(line, "VmHWM: %lu", peakRealMem) == 1) continue;
+            if (sscanf(line, "VmSize: %lu", currVirtMem) == 1) continue;
+            (void)sscanf(line, "VmPeak: %lu", peakVirtMem);
+        }
+        fclose(file);
+    }
+#endif
     /* Per-iteration memory readout: diagnostic only (callers still get the
      * values through the out-pointers above), so print it only at the highest
      * level. */
@@ -5542,4 +5549,3 @@ void getMemory2(
         printf("resident%20.12lf peak resident%20.12lf\n",(double)*currRealMem/1024.0/1024.0,(double)*peakRealMem/1024.0/1024.0);
     }
 }
-
