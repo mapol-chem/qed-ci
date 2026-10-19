@@ -844,8 +844,25 @@ class nuclear_grad(PFHamiltonianGenerator):
             # but with QED_PROJ_ALL_YZ=0 the corrected sign now yields that
             # zero, which is the meaningful answer rather than a spurious 2x.
             # QED_YZ_SIGN=-1 restores the previous behaviour.
-            Y_z[state1] = _QED_YZ_SIGN * (self.eigenvals[state2] - self.Enuc)/self.weight[state1] * self.eigenvecs[state2]
-            Y_z[state2] = _QED_YZ_SIGN * (self.eigenvals[state1] - self.Enuc)/self.weight[state2] * self.eigenvecs[state1]
+            #
+            # ZERO WEIGHT.  Each row set here is a PURE CI eigenvector, and
+            # project_out_all below subtracts the component along every CI
+            # eigenvector -- so on the default path (QED_PROJ_ALL_YZ=1) these
+            # rows are annihilated exactly, whatever the prefactor.  A root
+            # carrying W_n = 0 (the zero-weight SA-3 scheme, casscf_weight
+            # [1,0,1]) therefore has a well-defined coupling of zero here, but
+            # 1/W_n forms inf first and the projection then evaluates
+            # inf - inf = nan, which propagates into CP-QED-HF and surfaces far
+            # downstream as a missing cp_hf_solution.  Skip the term instead:
+            # zero IS the projected answer.  Verified flat over weights
+            # (1, eps, 1) for eps = 1e-1 .. 1e-4 -- see
+            # docs/reports/numerical_validation_inventory.md.
+            w1 = self.weight[state1]
+            w2 = self.weight[state2]
+            if w1 > 0.0:
+                Y_z[state1] = _QED_YZ_SIGN * (self.eigenvals[state2] - self.Enuc)/w1 * self.eigenvecs[state2]
+            if w2 > 0.0:
+                Y_z[state2] = _QED_YZ_SIGN * (self.eigenvals[state1] - self.Enuc)/w2 * self.eigenvecs[state1]
         #print(Y_z[state1])
         #print(self.eigenvals[state2], self.Enuc)
         #print(np.dot(Y_z[state1], self.eigenvecs[state1]))

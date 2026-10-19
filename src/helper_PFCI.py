@@ -128,6 +128,64 @@ _QED_CI_COUPLED_MAXITER = int(os.environ.get("QED_CI_COUPLED_MAXITER", "5"))
 # enumerated.  See orbital_symmetry.py.
 _QED_ORBITAL_SYMMETRY = int(os.environ.get("QED_ORBITAL_SYMMETRY", "0"))
 #
+#   QED_RANDOM_SEED : seed numpy's global RNG once, at import, so a run is
+#                     REPRODUCIBLE.  Several solver sites draw random numbers
+#                     with no seed -- `solve_gltr_trust_region`'s noise
+#                     (trust_region_solvers.py:673,965), its `trial_0` vectors
+#                     (:1439,1590) and the sigma/Davidson starts below -- so two
+#                     runs of the same input do NOT agree to all digits.  That is
+#                     noise in the reference, not in the theory: a numerical
+#                     gradient/NAC check repeats with ~1.7x scatter (gradients)
+#                     and ~13x (couplings), which is enough to make a validation
+#                     figure unreproducible for a referee.  Seeding the GLOBAL
+#                     legacy RNG covers every `np.random.*` call in the package
+#                     with one knob, rather than threading a generator through
+#                     four modules.
+#                     NECESSARY BUT NOT SUFFICIENT.  Measured 2026-09-17 on
+#                     numerical_gradient_check.py (h2o_cav, 3 components):
+#                       8 threads + fixed seed -> 5.95e-07 vs 1.00e-06  (differs)
+#                       1 thread  + no seed    -> 3.15e-07 vs 4.64e-07  (differs)
+#                       1 thread  + fixed seed -> BITWISE identical
+#                     There are TWO independent sources: this RNG, and
+#                     non-deterministic reduction order in the threaded C/MKL
+#                     backend (floating-point addition is not associative, and a
+#                     CASSCF amplifies the last bit).  A reproducible run needs
+#                     BOTH this seed AND OMP_NUM_THREADS=1 / MKL_NUM_THREADS=1.
+#                     DEFAULT OFF (empty): behaviour is bit-for-bit unchanged
+#                     unless the variable is set.
+_QED_RANDOM_SEED = os.environ.get("QED_RANDOM_SEED", "")
+#   QED_D2H_PROJECT : group-average the orbital rotation generator over D2h at
+#                     every step, so a symmetric solution STAYS symmetric.
+#                     Default OFF -- a no-op on every existing run.  Only
+#                     meaningful at a D2h geometry; the projector validates the
+#                     geometry itself and disables if it does not hold.
+_QED_D2H_PROJECT = os.environ.get("QED_D2H_PROJECT", "0") == "1"
+#
+#   QED_MACRO_MAXITER : hard cap on CASSCF macroiterations (default 1000, i.e.
+#                       the previous hardcoded bound, so behaviour is unchanged
+#                       unless set).  A run that lands on a DISFAVOURED solution
+#                       is not merely worse in energy, it is far more expensive:
+#                       at lambda = 0.15 CAS(4,7) the three seeds on the good
+#                       branch finished in ~6 min with 8 MB logs, while the one
+#                       on a branch 0.109 eV higher was still going at 41 min
+#                       with a 59 MB log.  Capping lets a multiplicity SCAN --
+#                       where only the converged SA is needed to identify which
+#                       family a guess found -- skip the expensive branches
+#                       instead of paying full convergence for solutions that
+#                       will be rejected anyway.  Energies from a capped run are
+#                       NOT converged: use them to classify, never to quote.
+#                       HAZARD, measured 2026-09-19: capping BREAKS any run
+#                       that subsequently asks for a GRADIENT.  `opt_C` is
+#                       assigned only on the converged branch, so a capped
+#                       CASSCF leaves it unset and nuclear_grad.py:2746
+#                       dies with "AttributeError: 'nuclear_grad' object
+#                       has no attribute 'opt_C'".  Energy-only paths are
+#                       untested.  To cap an OPTIMIZATION scan, put a
+#                       wall-clock timeout on the process instead.
+_QED_MACRO_MAXITER = int(os.environ.get("QED_MACRO_MAXITER", "1000"))
+if _QED_RANDOM_SEED != "":
+    np.random.seed(int(_QED_RANDOM_SEED))
+#
 #   QED_CI_INTERNAL_FACTOR : scale the internal-optimization CI threshold to the
 #                            current internal-internal orbital gradient
 #                            (default 0 = off => the fixed 1e-5 as before)
@@ -529,6 +587,10 @@ _QED_LSTRS_HARD_DUMP = os.environ.get("QED_LSTRS_HARD_DUMP", "")
 # has no hard-case branch, so the step is a descent step rather than the
 # optimum -- reported, not hidden.
 _QED_TRS_HARD_FALLBACK = int(os.environ.get("QED_TRS_HARD_FALLBACK", "1"))
+# QED_LSTRS_MAX_ITER (2026-09-26): the LSTRS beta-bisection's iteration cap, a literal 50 until now (default unchanged).  The
+# cap exit used to leave `step` unbound (lstrs_trust_region.py); it now takes the exact trust-region step.  A knob so that
+# tests/test_trs_hard_case.py can force the cap path (value 1) on a small deck.
+_QED_LSTRS_MAX_ITER = int(os.environ.get("QED_LSTRS_MAX_ITER", "50"))
 # Cost of the dense route is n = index_map_size Hessian-vector products, so the
 # cap is a wall-time guard, not a correctness one.
 _QED_TRS_FALLBACK_DENSE_MAX = int(
@@ -5374,7 +5436,7 @@ class PFHamiltonianGenerator:
                                 ]
                             ),
                         )
-                        while macroiteration < 1000:
+                        while macroiteration < _QED_MACRO_MAXITER:
                             if macroiteration > 0:
                                 # print("U total")
                                 # self.printA(self.U_total)
@@ -9076,6 +9138,65 @@ class PFHamiltonianGenerator:
 
         return off_diagonal_constant
 
+    def _d2h_ao_operations(self):
+        """Signed AO matrices for the 8 D2h operations, built once and cached.
+
+        Centre permutation from the overlap between the original basis and one
+        placed at the transformed geometry, times the angular sign factor per
+        AO component.  Validated on construction (R^T S R = S); returns None if
+        the geometry is not D2h at 1e-6, so the projector silently disables
+        itself on a geometry where it does not apply.
+        """
+        if getattr(self, "_d2h_cache", "miss") != "miss":
+            return self._d2h_cache
+        self._d2h_cache = None
+        try:
+            mol = self.wfn.molecule()
+            bohr = 0.52917721067
+            P = np.array(mol.geometry()) * bohr
+            sym = [mol.symbol(i) for i in range(mol.natom())]
+            ci = [i for i, t in enumerate(sym) if t.upper() == "C"]
+            P = P - (P[ci].mean(axis=0) if ci else P.mean(axis=0))
+            bs = self.wfn.basisset()
+            S = np.asarray(psi4.core.MintsHelper(bs).ao_overlap())
+            Sinv = np.linalg.inv(S)
+            PAR = {0: [(0, 0, 0)],
+                   1: [(0, 0, 1), (1, 0, 0), (0, 1, 0)],
+                   2: [(0, 0, 0), (1, 0, 1), (0, 1, 1), (0, 0, 0), (1, 1, 0)]}
+            expo = np.zeros((S.shape[0], 3), int)
+            for si in range(bs.nshell()):
+                sh = bs.shell(si)
+                if sh.am not in PAR:
+                    return self._d2h_cache
+                off = bs.shell_to_basis_function(si)
+                for k, e in enumerate(PAR[sh.am]):
+                    expo[off + k] = e
+            ops = []
+            for sx, sy, sz in ((1, 1, 1), (-1, -1, 1), (-1, 1, -1), (1, -1, -1),
+                               (-1, -1, -1), (1, 1, -1), (1, -1, 1), (-1, 1, 1)):
+                g = "\n".join("%s %.12f %.12f %.12f"
+                               % (t, q[0] * sx, q[1] * sy, q[2] * sz)
+                               for t, q in zip(sym, P))
+                mt = psi4.geometry(g + "\nunits angstrom\nsymmetry c1"
+                                       "\nno_reorient\nnocom")
+                wt = psi4.core.Wavefunction.build(mt, bs.name())
+                perm = Sinv @ np.asarray(
+                    psi4.core.MintsHelper(bs).ao_overlap(bs, wt.basisset()))
+                sgn = np.array([(sx ** e[0]) * (sy ** e[1]) * (sz ** e[2])
+                                for e in expo], float)
+                Rg = perm * sgn[None, :]
+                if np.abs(Rg.T @ S @ Rg - S).max() > 1e-6:
+                    print("QED_D2H_PROJECT: geometry is not D2h; projector OFF",
+                          flush=True)
+                    return self._d2h_cache
+                ops.append(Rg)
+            self._d2h_cache = (ops, S)
+        except Exception as _e:                       # never break a normal run
+            print("QED_D2H_PROJECT: setup failed (%s); projector OFF" % _e,
+                  flush=True)
+            self._d2h_cache = None
+        return self._d2h_cache
+
     def build_unitary_matrix(self, Rai, Rvi, Rva):
         R = np.zeros((self.nmo, self.nmo))
         self.U_delta = np.zeros((self.nmo, self.nmo))
@@ -9087,7 +9208,28 @@ class PFHamiltonianGenerator:
         R[self.n_occupied :, self.n_in_a : self.n_occupied] = Rva
         R[self.n_in_a : self.n_occupied, self.n_occupied :] = -Rva.T
         np.set_printoptions(precision=5)
-        
+
+        # QED_D2H_PROJECT: group-average the rotation GENERATOR over D2h so the
+        # step stays inside the symmetric manifold.  R is the antisymmetric
+        # kappa; exp of a group-invariant kappa preserves the symmetry of the
+        # orbitals it acts on, which is why the projection belongs HERE and not
+        # on U_total -- by the time U_total is updated the integrals have
+        # already been transformed by the same step and would desynchronise.
+        #
+        # WHY IT IS NEEDED (measured 2026-09-21): purifying only the starting
+        # orbitals and re-converging leaves the x-flipping partition leak at
+        # 0.795 from the first lambda > 0 step.  Alternating purify/converge
+        # from outside oscillates instead of converging -- the optimiser
+        # recreates the same core/active mixing (eigenvalue 0.648) each pass.
+        if _QED_D2H_PROJECT:
+            _cache = self._d2h_ao_operations()
+            if _cache is not None:
+                _ops, _S = _cache
+                _Ccur = np.dot(self.C, self.U_total)
+                _M = [_Ccur.T @ _S @ _g @ _Ccur for _g in _ops]
+                R = sum(_m @ R @ _m.T for _m in _M) / len(_M)
+                R = 0.5 * (R - R.T)            # re-antisymmetrise against drift
+
         R1 = np.dot(-R, R)
         tau_square, W = np.linalg.eigh(R1)
         sine_product_array = np.zeros(self.nmo)

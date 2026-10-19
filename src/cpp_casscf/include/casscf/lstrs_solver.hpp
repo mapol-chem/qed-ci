@@ -16,7 +16,9 @@ namespace casscf {
 // NOTE ON NAMING: earlier versions of this scaffold called this
 // "DavidsonLstrsSolver" and cited a "Davidson_augmented_hessian_solve3" as
 // the port target. That function is dead code -- it is called only from
-// `ah_orbital_optimization`, which is never invoked outside a commented-out
+// `ah_orbital_optimization` (REMOVED from helper_PFCI.py 2026-09-04; it was a
+// prototype for the reactive true-energy strategy, since absorbed into
+// microiteration_optimization6), which was never invoked outside a commented-out
 // line in the macroiteration driver (helper_PFCI.py:2377). The real active
 // solver for the small block is the inline LSTRS loop ported here. The
 // large-dimension counterpart used inside microiteration_optimization6 is a

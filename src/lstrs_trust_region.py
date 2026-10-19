@@ -164,7 +164,7 @@ def solve_lstrs_microiteration(
         _QED_LSTRS_EPS_HC, _QED_LSTRS_HARD_DUMP, _QED_LSTRS_HARD_PATIENCE,
         _QED_LSTRS_NORM_TOL, _QED_MINRES_TRACE, _QED_NEWTON_MAXITER,
         _QED_NEWTON_SCIPY, _QED_TRS_HARD_FALLBACK, _QED_USE_MINRES,
-        _mp_start, _mp_end, _stats_begin, _stats_end,
+        _mp_start, _mp_end, _stats_begin, _stats_end, _QED_LSTRS_MAX_ITER,
     )
 
     mu9 = np.zeros(dim00)
@@ -680,7 +680,16 @@ def solve_lstrs_microiteration(
         #        hard_case = 1
 
         #    break
-        if count10 == 50:
+        if count10 == _QED_LSTRS_MAX_ITER:
+            # 2026-09-26: the beta bisection hit its iteration cap (QED_LSTRS_MAX_ITER, default 50).  Nothing bound `step` on this exit: the inline
+            # original (helper_PFCI microiteration_optimization6 / internal_optimization3, before d0c7dee) silently reused
+            # the previous iteration's step; the extracted function raised UnboundLocalError (seen once, in the
+            # composition search, c006).  Take the exact trust-region step, as for the both-roots-unnormalizable case.
+            if not _QED_TRS_HARD_FALLBACK:
+                exit()
+            x_hard_fallback = ctx._trs_hard_case_fallback(ctx.U2, A_tilde2, G_blocks, reduced_gradient, trust_radius,
+                                                          site=" [microiteration, iteration cap]")
+            hard_case = 5
             break
     print("check hard case", hard_case)
     _stats_end(
@@ -850,7 +859,7 @@ def solve_lstrs_internal(ctx, dim00, gradient_tilde_ai, hessian_tilde_ai, hessia
     """
     from helper_PFCI import (
         _QED_LSTRS_EPS_HC, _QED_LSTRS_HARD_PATIENCE, _QED_LSTRS_NORM_TOL,
-        _QED_TRS_HARD_FALLBACK, _stats_begin, _stats_end,
+        _QED_TRS_HARD_FALLBACK, _stats_begin, _stats_end, _QED_LSTRS_MAX_ITER,
     )
     _more_sorensen_dense = more_sorensen_dense
 
@@ -1285,7 +1294,17 @@ def solve_lstrs_internal(ctx, dim00, gradient_tilde_ai, hessian_tilde_ai, hessia
         #        hard_case = 1
 
         #    break
-        if count10 == 50:
+        if count10 == _QED_LSTRS_MAX_ITER:
+            # 2026-09-26: the beta bisection hit its iteration cap (QED_LSTRS_MAX_ITER, default 50).  Nothing bound `step` on this exit: the inline
+            # original (helper_PFCI microiteration_optimization6 / internal_optimization3, before d0c7dee) silently reused
+            # the previous iteration's step; the extracted function raised UnboundLocalError (seen once, in the
+            # composition search, c006).  Take the exact trust-region step, as for the both-roots-unnormalizable case.
+            if not _QED_TRS_HARD_FALLBACK:
+                exit()
+            step, _lam_hc, _kind_hc = _more_sorensen_dense(hessian_tilde_ai, gradient_tilde_ai, trust_radius)
+            print("QED_TRS_HARD_FALLBACK [internal, iteration cap] -> dense More-Sorensen [%s]; |step| = %.6e, radius = %.6e"
+                  % (_kind_hc, np.linalg.norm(step), trust_radius), flush=True)
+            hard_case = 5
             break
     print("check hard case", hard_case)
     _stats_end(

@@ -165,7 +165,8 @@ struct FullBlockIntermediates {
 // rot_dim hardcoded to nmo (full_space == True): that's the only value ever
 // used -- every active call site (microiteration_optimization6) passes
 // full_space=True, and the other call sites that pass full_space are all
-// unreachable dead code (microiteration_optimization5 / ah_orbital_optimization,
+// unreachable dead code (microiteration_optimization5 / ah_orbital_optimization
+// -- both REMOVED from helper_PFCI.py on 2026-09-04; see git history,
 // neither has any caller -- confirmed by grep).
 //
 // IMPORTANT: J and K here are (n_occupied, n_occupied, nmo, nmo), NOT

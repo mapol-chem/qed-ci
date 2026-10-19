@@ -51,12 +51,12 @@ HARTREE2EV = 27.211386245988
 
 # Only the elements these decks use; extend as needed.
 ATOMIC_MASSES = {
-    "H": 1.00782503207, "C": 12.0, "N": 14.0030740048, "O": 15.9949146196,
+    "H": 1.00782503207, "Li": 7.016003437, "C": 12.0, "N": 14.0030740048, "O": 15.9949146196,
     "F": 18.99840322, "S": 31.97207100, "Cl": 34.96885268,
 }
 
 
-def transrot_projector_mw(coords_bohr, masses):
+def transrot_projector_mw(coords_bohr, masses, rot_axes=None, extra_modes=None):
     """Symmetric orthogonal projector onto the internal subspace, in MASS-WEIGHTED
     Cartesians. Annihilates exactly the six zero modes of an isolated molecule.
 
@@ -68,6 +68,12 @@ def transrot_projector_mw(coords_bohr, masses):
     idempotent and still kills translations, so it passes the obvious checks
     while quietly mixing modes. Working in mass-weighted coordinates throughout
     removes the trap: there is one symmetric projector and one metric.
+
+    rot_axes: None (default) removes all three rotations -- an isolated molecule,
+    or one whose orientation is locked by the caller.  A list of axis vectors
+    removes ONLY rotations about those axes.  A molecule free to turn in a cavity
+    polarized along e keeps the rotations that change its angle to e, which are
+    energy-active there; only rotation about e is a symmetry.  Pass rot_axes=[e].
     """
     natom = len(masses)
     sqrtm = np.sqrt(masses)
@@ -79,11 +85,13 @@ def transrot_projector_mw(coords_bohr, masses):
         m = np.zeros((natom, 3))
         m[:, axis] = sqrtm
         modes.append(m.ravel())
-    for axis in range(3):                       # infinitesimal rotations
-        e = np.eye(3)[axis]
-        m = np.cross(x, e[None, :]) * sqrtm[:, None]
+    axes = np.eye(3) if rot_axes is None else [np.asarray(a, float) / np.linalg.norm(a) for a in rot_axes]
+    for e in axes:                              # infinitesimal rotations
+        m = np.cross(x, np.asarray(e)[None, :]) * sqrtm[:, None]
         modes.append(m.ravel())
 
+    if extra_modes:                             # e.g. bond-length constraints (MECPOptimizer fixed_bonds); none by default
+        modes.extend(np.asarray(v, float).ravel() for v in extra_modes)
     B = np.array(modes).T
     Q, R = np.linalg.qr(B)
     keep = np.abs(np.diag(R)) > 1e-8            # drops a redundant mode if linear
@@ -105,11 +113,28 @@ class MECPOptimizer:
     seam_tol : convergence threshold on the projected seam gradient, Hartree/Bohr
     gap_weight : multiplier on the BRS gap-closing term. 2.0 is the textbook
         value; raise it if the gap closes too slowly relative to the seam.
+    cone_step : False (default) closes the gap with a Newton step along g
+        alone.  True uses BOTH branching vectors: the local two-state model
+        [[E_p + grad_p.d, h.d], [h.d, E_q + grad_q.d]] is degenerate when
+        g.d = -(E_q - E_p) and h.d = 0, and the step is the minimum-norm
+        (mass-weighted) solution of those two equations -- a Newton step on the
+        two intersection conditions (Manaa & Yarkony).  For an exactly linear
+        cone it reaches the apex in one step however anisotropic the cone; the
+        g-only step zig-zags across an anisotropic cone and converges linearly.
+        When the seam space is empty (e.g. a diatomic free to rotate in a
+        cavity: the branching plane is the whole internal space) the trust
+        radius is then driven by |dE| rather than by the noise-level seam norm.
+        Pass the coupling as the gap-divided vector (h_vector); only its
+        direction enters.
+    rot_axes : None (default) projects out all rotations.  For a molecule free
+        to rotate in a cavity polarized along e, pass [e] so that only rotation
+        about e is removed (see transrot_projector_mw).
     """
 
     def __init__(self, symbols, positions_ang, trust=0.30, max_trust=1.0,
                  min_trust=1.0e-3, gap_tol=3.7e-6, seam_tol=5.0e-4,
-                 gap_weight=2.0, verbose=True):
+                 gap_weight=2.0, verbose=True, rot_axes=None, cone_step=False,
+                 merit="seam", far_gap=1.0e-3, fixed_bonds=None):
         self.symbols = list(symbols)
         self.natom = len(self.symbols)
         self.ndim = 3 * self.natom
@@ -123,6 +148,24 @@ class MECPOptimizer:
         self.seam_tol = float(seam_tol)
         self.gap_weight = float(gap_weight)
         self.verbose = verbose
+        self.rot_axes = rot_axes   # None: project all rotations (default, unchanged)
+        self.cone_step = bool(cone_step)   # False: gap step along g only (default, unchanged)
+        # merit="seam" (default, unchanged): the trust radius follows the seam-gradient norm.
+        # merit="two_phase": while |dE| > far_gap (Eh) follow |dE| instead -- far from the seam the seam norm does
+        # not decrease, so the default halves the radius every step and truncates the Newton gap step to nothing
+        # (seen starting ethylene from a generic twisted-pyramidalized guess, 2026-09-23).  Near the seam both
+        # merits are identical.  The converged point obeys the same gap_tol / seam_tol either way.
+        if merit not in ("seam", "two_phase"):
+            raise ValueError(f"merit must be 'seam' or 'two_phase', not {merit!r}")
+        self.merit = merit
+        self.far_gap = float(far_gap)
+        self._phase = "seam"
+        # fixed_bonds=None (default, unchanged).  A list of (i, j, r_angstrom) holds those bond lengths fixed: the
+        # mass-weighted gradient of each bond length is projected out of every step (as translations/rotations are),
+        # and the length is reset exactly after each step (atom j moved along the bond) to remove the second-order drift.
+        # Used for constrained MECP scans along a soft seam coordinate (2026-09-24).
+        self.fixed_bonds = [(int(i), int(j), float(r) * ANG2BOHR) for i, j, r in fixed_bonds] if fixed_bonds else None
+        self._enforce_bonds()
 
         self.B = None            # approximate Hessian, internal subspace
         self._prev_g = None      # previous effective gradient
@@ -133,6 +176,50 @@ class MECPOptimizer:
         self._last_u_h = None    # branching-plane continuation (see below)
         self._x_prev = None      # geometry before the most recent accepted step
         self.n_reject = 0
+
+    def rotate_frame(self, R, center_bohr=None):
+        """The caller rigidly rotated the molecule by the 3x3 matrix R (about center_bohr; default the centroid): rotate the
+        quasi-Newton history with it, so the next BFGS update compares vectors written in the same axes.
+
+        WHY: without this, y = g_seam(new frame) - g_seam(old frame) carries a spurious (R - I) g term, and B is a matrix in
+        the old axes applied to vectors in the new ones.  The trans/rot projector does not remove this: it removes rigid
+        MOTIONS of the molecule, not a change of the axes the vectors are written in.  Mass weighting commutes with the
+        per-atom rotation (the three components of an atom share one mass), so T = I_N (x) R acts directly on the
+        mass-weighted vectors.  Opt-in: nothing calls this unless the driver asks (MECP_ROTATE_HISTORY=1); 2026-09-24.
+        """
+        R = np.asarray(R, dtype=float)
+        T = np.kron(np.eye(self.natom), R)
+        c = self.x.mean(0) if center_bohr is None else np.asarray(center_bohr, float)
+        self.x = (self.x - c) @ R.T + c
+        if self._x_prev is not None:
+            self._x_prev = (self._x_prev - c) @ R.T + c
+        if self.B is not None:
+            self.B = T @ self.B @ T.T
+        if self._prev_s is not None:
+            self._prev_s = T @ self._prev_s
+        if self._prev_g is not None:
+            self._prev_g = T @ self._prev_g
+        if self._last_u_h is not None:
+            u = np.asarray(self._last_u_h); self._last_u_h = (T @ u.ravel()).reshape(u.shape)
+        self._enforce_bonds()
+
+    def _constraint_modes(self):
+        if not self.fixed_bonds:
+            return None
+        out = []
+        for i, j, _ in self.fixed_bonds:
+            u = self.x[j] - self.x[i]; u = u / np.linalg.norm(u)
+            v = np.zeros_like(self.x)
+            v[i] = -u / np.sqrt(self.masses[i]); v[j] = u / np.sqrt(self.masses[j])   # d r_ij in mass-weighted coordinates
+            out.append(v.ravel())
+        return out
+
+    def _enforce_bonds(self):
+        if not self.fixed_bonds:
+            return
+        for i, j, r in self.fixed_bonds:
+            d = self.x[j] - self.x[i]
+            self.x[j] = self.x[i] + d * (r / np.linalg.norm(d))
 
     def reject(self):
         """Undo the last step: the electronic structure failed at the new
@@ -238,7 +325,7 @@ class MECPOptimizer:
             e_p, e_q, grad_p, grad_q, h)
 
         w = np.repeat(np.sqrt(self.masses), 3)
-        P = transrot_projector_mw(self.x, self.masses)
+        P = transrot_projector_mw(self.x, self.masses, self.rot_axes, self._constraint_modes())
         dE = e_q - e_p
         gp = np.asarray(grad_p, dtype=float).ravel()
         gq = np.asarray(grad_q, dtype=float).ravel()
@@ -279,10 +366,26 @@ class MECPOptimizer:
         seam_cart = w * (P @ (f_seam.ravel() / w))     # gradient trans/rot projector
         seam_norm = float(np.linalg.norm(seam_cart))
         converged = (abs(dE) < self.gap_tol) and (seam_norm < self.seam_tol)
+        if self.fixed_bonds:
+            # With a fixed bond the Lagrange reaction force mu*grad(r) survives the CARTESIAN branching-plane projection of
+            # f_seam (a different metric from the mass-weighted constraint mode), so seam_norm cannot reach seam_tol at a
+            # constrained stationary point (measured: 5.4e-3 with seam_norm_mw 1e-8).  Constrained runs therefore test the
+            # mass-weighted seam norm, which is consistent with the constraint.  Unconstrained runs are unchanged.
+            converged = (abs(dE) < self.gap_tol) and (seam_norm_mw < self.seam_tol)
 
-        # trust radius on the seam gradient -- the part BFGS actually models
+        # trust radius on the seam gradient -- the part BFGS actually models.
+        # cone_step with an EMPTY seam space: the seam norm is numerical noise, so
+        # steer the radius by |dE| instead (the quantity actually being reduced).
+        seam_dim = int(round(float(np.trace(Q))))
+        merit = abs(dE) if (self.cone_step and seam_dim == 0) else seam_norm_mw
+        phase = "seam"
+        if self.merit == "two_phase" and abs(dE) > self.far_gap:
+            merit, phase = abs(dE), "gap"
+        if phase != self._phase:          # a different quantity: never compare |dE| with a gradient norm
+            self._prev_norm = None
+        self._phase = phase
         if self._prev_norm is not None:
-            if seam_norm_mw < self._prev_norm:
+            if merit < self._prev_norm:
                 self.trust = min(self.trust * 1.25, self.max_trust)
             else:
                 self.trust = max(self.trust * 0.5, self.min_trust)
@@ -314,6 +417,12 @@ class MECPOptimizer:
 
         gdiff_mw = np.linalg.norm(P @ ((gq - gp) / w))
         s_gap = -(dE / gdiff_mw) * ug if gdiff_mw > 1e-12 else np.zeros_like(s_seam)
+        if self.cone_step and gdiff_mw > 1e-12:
+            gm = P @ ((gq - gp) / w)
+            hm = P @ (np.asarray(h, dtype=float).ravel() / w)
+            if np.linalg.norm(hm) > 1e-8 * gdiff_mw:
+                A = np.vstack([gm, hm])                       # rows: the two conditions
+                s_gap = np.linalg.pinv(A) @ np.array([-dE, 0.0])   # minimum-norm solution
 
         s_int = s_gap + s_seam
         snorm = np.linalg.norm(s_int)
@@ -322,12 +431,13 @@ class MECPOptimizer:
 
         self._prev_s = (Q @ s_int).copy()
         self._prev_g = g_seam.copy()
-        self._prev_norm = seam_norm_mw
+        self._prev_norm = merit
         self.nstep += 1
 
         if not converged:
             self._x_prev = self.x.copy()
             self.x = self.x + (s_int / w).reshape(-1, 3)
+            self._enforce_bonds()
 
         return {
             "converged": converged, "gap_eV": dE * HARTREE2EV, "gap_hartree": dE,
