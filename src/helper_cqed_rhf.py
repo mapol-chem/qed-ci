@@ -516,6 +516,7 @@ def cqed_rhf(lambda_vector, molecule_string, psi4_options_dict, canonical_basis=
     }
 
     if canonical_basis:
+        cqed_rhf_dict['SCF DIAGNOSTICS'] = dict(converged=None, reason='psi4_diagnostics_unavailable', iterations=None)
         return cqed_rhf_dict
 
     else:
@@ -703,6 +704,9 @@ def cqed_rhf(lambda_vector, molecule_string, psi4_options_dict, canonical_basis=
         d_el_mo = np.dot(C.T, d_el_ao).dot(C)
 
         # update the entries of the dictionary now that the cqed-rhf iterations have converged
+        cqed_rhf_dict['SCF DIAGNOSTICS'] = dict(converged=True, reason='energy_and_density',
+            iterations=SCF_ITER, energy_change=float(SCF_E-Eold), density_rms=float(dRMS),
+            thresholds={'energy_Eh': E_conv, 'density_rms': D_conv})
         cqed_rhf_dict["CQED-RHF ENERGY"] = SCF_E
         cqed_rhf_dict["CQED-RHF ONE-ENERGY"] = SCF_1E
         cqed_rhf_dict["CQED-RHF C"] = C

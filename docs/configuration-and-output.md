@@ -1,8 +1,9 @@
-# Configuration and output (Stages 2 and 3)
+# Configuration, results and output (Stages 2–4)
 
 The numerical methods and existing result attributes are unchanged. This adds a
 validated configuration and output/file routing. It does not add a Calculator,
-replace the mean-field provider, or redesign report formatting (Stage 4).
+replace the mean-field provider, or replace the established calculation object. Stage 4 results and report behavior
+are documented below.
 
 ## New entry point
 
@@ -140,7 +141,7 @@ are not intended as user-controlled escape hatches.
 
 | Setting | Behavior |
 |---|---|
-| Defaults | Existing Python report on stdout; normal C verbosity |
+| Defaults | Conventional report on stdout; detailed engine diagnostics at debug/trace |
 | `quiet=True` | No routine Python/C/Psi4 stdout or stderr during the calculation |
 | `output_file="job.out"` | All calculation output goes to the file, with no console duplication |
 | `quiet=True, output_file="job.out"` | Silent console, report retained |
@@ -151,8 +152,7 @@ are not intended as user-controlled escape hatches.
 Exceptions are still raised to the caller. Python and native descriptors are
 routed together. Psi4 output is captured separately and included as a labelled
 section at the end of the scope, avoiding multiple writers overwriting a shared
-file. Report text itself remains largely unchanged; Python diagnostic lines have
-not yet all been assigned severity levels. C verbosity supports normal/debug/trace.
+file. Normal output uses the Stage 4 report; debug/trace also retain engine diagnostics.
 
 Every scope restores stdout/stderr, Psi4's output destination (without truncating
 the caller's file), C verbosity, working directory, and scoped solver settings.
@@ -186,7 +186,7 @@ use `calculate()` for silent lazy engine initialization, or wrap a gradient impo
 and construction in `qed_ci.output.calculation_output(config)`.
 
 Result attributes retain their meanings: `CIeigs` contains the initial CI solve;
-CASSCF's optimized energies are in `eigenvals`. A unified result API is deferred.
+CASSCF's optimized energies are in `eigenvals`. Both are exposed explicitly by the Stage 4 result API described below.
 
 ## Verification
 
@@ -205,3 +205,106 @@ Local validation: 41 new tests passed; the original suite remains at 175 passed
 and the same two Stage 1 failures. All 16 replay runs passed, with maximum energy
 difference `8.76e-13` Eh and maximum saved RDM/weight difference `6.17e-9`.
 See [the machine-readable validation record](audit/stage23/results.json).
+
+## Stage 4: structured scientific results
+
+`calculate()` and the legacy constructor still return the existing calculation
+object. Its new `result` attribute is a `qed_ci.CalculationResult`. No numerical
+algorithm, convergence default, CI/RDM attribute, or gradient return value changes.
+
+```python
+import json
+calculation = calculate(molecule, config)
+r = calculation.result
+print(r.energies['final'])
+print(r.converged)                 # True, False, or None (unknown)
+record = r.summary()
+json.dumps(record, allow_nan=False)
+```
+
+Schema version **1** uses zero-based state indices throughout. Treat the result
+as read-only; subsequent `compute_grad` calls add properties and timings to it.
+`summary()` returns a detached JSON-compatible dictionary. Unavailable values are
+`None` / JSON `null`; nonfinite diagnostic values serialize as null. Timings are
+seconds. The schema is independent of report formatting.
+
+| Field | Contract |
+|---|---|
+| `requested` | Configuration as supplied through the validated/legacy adapter; includes output settings and adapter diagnostics. |
+| `effective` | Resolved configuration, scoped CASSCF controls with their origins, environment snapshot, and `engine` flags/dimensions. `method` records the route actually taken; `state_weights` holds normalized weights. |
+| `geometry` | `symbols` (natom), `coordinates` (natom, 3) in bohr in the Psi4 input frame, charge and multiplicity. |
+| `energies.reference`, `rhf_reference` | Selected orbital-reference energy and canonical RHF energy, in Eh. |
+| `energies.initial_ci` | Snapshot of `CIeigs`, shape (number of returned states,). Dense paths retain their full spectrum here. |
+| `energies.final`, `final_source` | Snapshot of optimized `eigenvals` when present; otherwise `CIeigs`. On an iteration cap these are the last available CI energies, **not converged energies**. |
+| `energies.excitation` | `final[i] - final[0]`, in Eh, same shape as final energies. |
+| `energies.state_average` | Dot product of normalized weights with the corresponding final roots, in Eh; null when not applicable. It does not reuse a potentially stale optimizer `avg_energy` attribute. |
+| `convergence` | Separate `scf`, `ci_initial`, `ci_final`, and `casscf` records, with `converged`, `reason`, and available iteration counts, residuals and thresholds. |
+| `properties` | Computed dipole matrix and subsequently requested gradients/NACs, with explicit units and state labels. No unrequested gradient calculations are performed. |
+| `warnings`, `timings`, `provenance`, `files` | Adapter notices, captured Python warnings and nonconvergence notices; elapsed calculation/property times; Python/NumPy/Psi4 versions and backend path/SHA256; paths actually written by package export operations and the report path. Package release version is currently unavailable. |
+
+`r.converged` combines the applicable SCF, **final** CI, and orbital-optimization
+statuses: any false means false, otherwise any unknown means unknown. The initial
+CI status is separately retained and warned about, but does not invalidate a
+subsequently converged final solve. Exceptions still propagate; a failed
+constructor does not return a fabricated result.
+
+The CQED-RHF loop records its actual energy-and-density stopping test. For a
+canonical reference, detailed Psi4 convergence diagnostics are not exposed by
+this adapter and are explicitly unknown. Davidson diagnostics are captured
+immediately after each relevant native solve, using its packed return flag,
+mean residual, and existing iteration/residual getters. Per-root residuals are unavailable for unadapted Davidson, which does not
+publish the getter storage; stale values from another solve are never reused.
+Individual spin-adapted residuals beyond the backend's 64-root diagnostic capacity are null. Dense diagonalization
+records successful eigensolver completion, with iteration counts and residuals
+unavailable. No additional numerical solve is performed to manufacture diagnostics.
+
+CASSCF records each macroiteration's state-average energy, energy change, and
+lagged gradient norm (the existing criterion uses the previous macro's gradient).
+The stopping reason distinguishes `energy`, `gradient`, `energy_and_gradient`,
+`iteration_limit`,
+and skipped/not-requested optimization. Iterations count macro loop entries,
+including entry zero; `trigger_iteration` identifies the criterion that set the
+existing stopping flag (including a flag latched on an earlier entry). History labels retain the engine's zero-based numbering.
+This instrumentation preserves the existing energy **or** gradient stopping logic.
+A skipped optimization is reported as such, rather than claimed converged.
+
+The result never owns or serializes CI vectors or RDM tensors. These remain on
+the calculation under their existing names/layouts. Small energy/geometry lists
+and property arrays are copied. Gradients are (natom, 3) in Eh/bohr under
+`gradient_state_<i>`; NACs are (natom, 3) in 1/bohr under
+`nac_<i>_<j>_<full|etf>`, with the existing phase and derivative conventions.
+Each property survives subsequent calls for other states. Dipoles are
+(nroot, nroot, 3) in e bohr, indexed by bra, ket, xyz; their `energy_source`
+identifies initial versus optimized states. A capped CASSCF can still have only
+initial-state dipoles, which are labelled accordingly. Repeating the same property
+request replaces that property's entry. RDM and CI-vector ownership is unchanged.
+
+## Stage 4: report and verbosity
+
+Normal verbosity now emits a compact report with `==> section <==` headings,
+aligned tables, explicit units and zero-based state labels. It includes the
+molecule/reference/cavity/CI setup, convergence diagnostics and macro history,
+final requested-root energies and excitations, state-average energy, available
+dipoles, warnings, total timing and generated files. Additional gradient calls
+append a labelled property table to the same destination. The headings and `@`
+energy markers follow CQED-SCF's formatting conventions without importing its
+output module or adopting its global verbosity state.
+
+Normal mode suppresses the legacy engine's array dumps, internal timing chatter,
+raw Psi4 summary and debug labels inside the existing serialized output scope.
+Debug retains Python engine diagnostics and native level 2; trace retains those
+plus native level 3 iteration detail. Both also include the structured report.
+Legacy calls still default to trace. To get the conventional report from legacy
+dictionaries, set `verbosity='normal'`. No scientific consumer should parse these
+human-readable reports; use `result.summary()` instead. Standalone validation
+scripts' own `ROOT`, `AVGE`, comparison and `WORST OVERALL` interfaces are unchanged.
+
+Quiet mode, file-only output, append/exclusive modes, gradient append behavior,
+and exception restoration continue to use the Stage 3 scope. No new output
+configuration or logger is introduced. Python warnings raised inside the main
+calculation are retained in the result. Legacy diagnostics printed as free text
+remain available at debug/trace, but are not parsed into warnings. Direct imports
+can still print before a configuration exists; `calculate()` also suppresses
+import chatter at normal verbosity. Process-global routing and Psi4 shutdown
+file limitations described above still apply. The files field inventories package
+exports, not arbitrary Psi4 scratch files or developer dump trees.

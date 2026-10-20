@@ -35,7 +35,13 @@ mkdir -p "$DIR"
 # Timing, RSS, and anything carrying a SOURCE LINE NUMBER are noise, not
 # trajectory: moving a function shifts every line number after it, and a
 # gate that fails on that is a gate that cannot pass.
-strip () { grep -vaE "seconds|took [0-9]|resident|wall |Percent of CPU|[0-9]\.[0-9]+ s(,|$| )|QED_LIBTRANS:|SyntaxWarning|helper_PFCI\.py:[0-9]|^[0-9]+\.[0-9]+$" "$1"; }
+# Stage 4 adds a presentation block after the unchanged trace. Exclude that
+# bounded block from the trajectory comparison; retain standalone driver records.
+strip () {
+    awk '/^  ==> QED-CI calculation <==$/ {report=1}
+         /^  ==> End QED-CI report <==$/ {report=0; next}
+         !report {print}' "$1" | grep -vaE "seconds|took [0-9]|resident|wall |Percent of CPU|[0-9]\.[0-9]+ s(,|$| )|QED_LIBTRANS:|SyntaxWarning|helper_PFCI\.py:[0-9]|^[0-9]+\.[0-9]+$"
+}
 
 run () {  # $1 tag, $2 lambda_z, $3 omega, $4 patience, $5 driver (default h2e_disk_case)
     # PYTHONWARNINGS: helper_PFCI has two invalid-escape SyntaxWarnings, and

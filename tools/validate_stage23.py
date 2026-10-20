@@ -25,6 +25,12 @@ def child(name, api):
         config=config.copy_with(legacy=False,_legacy_options=None,quiet=True,verbosity='trace',
                                 max_photons=1 if config.method=='cis' else config.max_photons)
         obj=calculate(inputs['molecule'],config)
+    result = obj.result.summary()
+    np.testing.assert_array_equal(result['energies']['initial_ci'], obj.CIeigs)
+    np.testing.assert_array_equal(result['energies']['final'], getattr(obj, 'eigenvals', obj.CIeigs))
+    if inputs['cavity_options'].get('casscf_optimization'):
+        assert result['energies']['final_source'] == 'eigenvals'
+        assert not np.allclose(result['energies']['initial_ci'], result['energies']['final'], rtol=0, atol=1e-6)
     differences={}
     for attr,expected in data['result']['energies'].items():
         actual=np.asarray(getattr(obj,attr))
@@ -41,7 +47,7 @@ def child(name, api):
                 rdm_differences[key]=float(np.max(np.abs(actual-reference[key])))
     Path('comparison.json').write_text(json.dumps(dict(case=name,api=api,energy_max_abs=differences,
                                                         rdm_max_abs=rdm_differences,
-                                                        resolved_options=obj.resolved_options),indent=2)+'\n')
+                                                        resolved_options=obj.resolved_options, result=result),indent=2)+'\n')
 
 
 def main():

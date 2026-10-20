@@ -4239,16 +4239,35 @@ class PFHamiltonianGenerator:
         else:
             self.config = CQEDConfig.from_legacy(psi4_options_dict or {}, cavity_options or {})
         self.diagnostics = list(self.config.diagnostics)
+        self._generated_files = {}
+        from qed_ci.output import engine_output
+        from qed_ci.results import build_result
+        from qed_ci.report import report
+        self._macro_diagnostics = dict(applicable=False, converged=None,
+                                       reason='not_requested', iterations=0, history=[])
+        self._initial_ci_diagnostics = dict(converged=None, reason='unavailable')
+        self._final_ci_diagnostics = dict(converged=None, reason='unavailable')
         with calculation_scope(self, cfunctions):
-            for message in self.diagnostics:
-                print("QED-CI input notice:", message)
+            if self.config.verbosity != "normal":
+                for message in self.diagnostics:
+                    print("QED-CI input notice:", message)
             molecule = psi4.geometry(molecule_string)
             if molecule.multiplicity() != self.config.multiplicity:
                 raise ValueError("Geometry multiplicity conflicts with the restricted reference configuration")
             if self.config.charge is not None and molecule.molecular_charge() != self.config.charge:
                 raise ValueError("Geometry charge conflicts with CQEDConfig.charge")
-            self._run_calculation(molecule_string, self.config.psi4_options,
-                                  self.config.to_legacy_options())
+            molecule.update_geometry()
+            self._result_geometry = dict(symbols=[molecule.symbol(i) for i in range(molecule.natom())],
+                                         coordinates=np.asarray(molecule.geometry()).tolist(),
+                                         charge=molecule.molecular_charge(), multiplicity=molecule.multiplicity())
+            started = time.perf_counter()
+            import warnings
+            with warnings.catch_warnings(record=True) as caught, engine_output(self.config, cfunctions):
+                self._run_calculation(molecule_string, self.config.psi4_options,
+                                      self.config.to_legacy_options())
+            self.diagnostics.extend(str(w.message) for w in caught)
+            self.result = build_result(self, time.perf_counter() - started)
+            report(self.result)
 
     def output_context(self):
         """Route additional property/helper calls to this calculation's output.
@@ -4826,6 +4845,9 @@ class PFHamiltonianGenerator:
         if self.full_diagonalization or self.ci_level == "cis":
             # call full diagonalization
             self.CIeigs, self.CIvecs = np.linalg.eigh(self.H_PF)
+            self._initial_ci_diagnostics = dict(converged=True, reason='dense_eigensolver',
+                                                iterations=None, residuals=None)
+            self._final_ci_diagnostics = dict(self._initial_ci_diagnostics)
 
         # if doing direct method, call Davidson routine
         else:
@@ -4943,6 +4965,10 @@ class PFHamiltonianGenerator:
                     self.target_spin,
                 )
 
+                from qed_ci.results import ci_diagnostics
+                self._initial_ci_diagnostics = ci_diagnostics(cfunctions, self.constint, self.constdouble, self.target_spin)
+                self._initial_ci_diagnostics['threshold'] = self.davidson_threshold
+                self._final_ci_diagnostics = dict(self._initial_ci_diagnostics)
                 self.CIeigs = eigenvals
                 self.CIvecs = eigenvecs
 
@@ -5472,6 +5498,9 @@ class PFHamiltonianGenerator:
                                 ]
                             ),
                         )
+                        self._macro_diagnostics.update(applicable=True, converged=False, reason='iteration_limit',
+                                                       thresholds={'energy_Eh': _QED_MACRO_ENERGY_CONV,
+                                                                   'gradient': _QED_GRAD_CONV})
                         while macroiteration < _QED_MACRO_MAXITER:
                             if macroiteration > 0:
                                 # print("U total")
@@ -5603,6 +5632,8 @@ class PFHamiltonianGenerator:
                                     (not _cold),
                                     self.target_spin,
                                 )
+                                self._final_ci_diagnostics = ci_diagnostics(cfunctions, self.constint, self.constdouble, self.target_spin)
+                                self._final_ci_diagnostics['threshold'] = self.davidson_threshold
                                 if _cold:
                                     self.constint[5] = _sv_indim
                                     self.constint[6] = _sv_maxdim
@@ -5642,6 +5673,7 @@ class PFHamiltonianGenerator:
                                     and np.abs(new_avg_energy - old_avg_energy)
                                         < _QED_MACRO_ENERGY_CONV):
                                 convergence = 1
+                                self._macro_trigger = dict(reason='energy', iteration=macroiteration)
                             # QED_GRAD_CONV (item 244): OR-ed gradient criterion.
                             # _macro_entry_gnorm is the gradient at the start of
                             # the PREVIOUS macro's orbital work, so the test lags
@@ -5652,6 +5684,10 @@ class PFHamiltonianGenerator:
                                       "threshold", _QED_GRAD_CONV, flush=True)
                                 if _gn < _QED_GRAD_CONV:
                                     convergence = 1
+                                    _trigger = getattr(self, '_macro_trigger', {})
+                                    _both = (_trigger.get('iteration') == macroiteration and _trigger.get('reason') == 'energy')
+                                    self._macro_trigger = dict(reason='energy_and_gradient' if _both else 'gradient',
+                                                               iteration=macroiteration)
                                     print("CONVERGED ON GRADIENT CRITERION", flush=True)
                             # Re-arm the capture AFTER the test: the value the test
                             # reads must be the first gradient of the PREVIOUS
@@ -5659,6 +5695,17 @@ class PFHamiltonianGenerator:
                             # is calibrated for).  Resetting at the TOP of the loop
                             # instead leaves _gn None at every test and the
                             # criterion silently never fires -- measured, item 245.
+                            self._macro_diagnostics['history'].append(dict(
+                                iteration=macroiteration, energy=float(new_avg_energy),
+                                energy_change=float(new_avg_energy-old_avg_energy),
+                                gradient_norm=None if _gn is None else float(_gn)))
+                            self._macro_diagnostics.update(iterations=macroiteration+1,
+                                energy_change=float(new_avg_energy-old_avg_energy),
+                                gradient_norm=None if _gn is None else float(_gn))
+                            if macroiteration > 0 and convergence == 1:
+                                self._macro_diagnostics.update(converged=True,
+                                    reason=self._macro_trigger['reason'],
+                                    trigger_iteration=self._macro_trigger['iteration'])
                             self._macro_entry_gnorm = None   # QED_GRAD_CONV
                             if macroiteration >= 1000:
                                 self.casscf_converged = False
@@ -5820,6 +5867,7 @@ class PFHamiltonianGenerator:
                                     # print(new_C)
                                     if self.config.orbital_output_file:
                                         np.savetxt(self.config.orbital_output_file, self.opt_C)
+                                        self._generated_files["orbital_output_file"] = self.config.orbital_output_file
                                     self.build_state_average_rdms(eigenvecs)
                                     active_rdm = self.D_tu_avg.reshape(self.n_act_orb, self.n_act_orb)
 
@@ -5842,8 +5890,10 @@ class PFHamiltonianGenerator:
 
                                     if self.config.occupation_output_file:
                                         np.savetxt(self.config.occupation_output_file, self.noocs)
+                                        self._generated_files["occupation_output_file"] = self.config.occupation_output_file
                                     if self.config.natural_orbital_output_file:
                                         np.savetxt(self.config.natural_orbital_output_file, self.nat_orbs)
+                                        self._generated_files["natural_orbital_output_file"] = self.config.natural_orbital_output_file
  
                               
                                 _mu_x_spin = np.einsum(
@@ -6438,6 +6488,7 @@ class PFHamiltonianGenerator:
 
     def parseArrays(self, cqed_rhf_dict):
         # grab quantities from cqed_rhf_dict that apply to both number state and coherent state bases
+        self._scf_diagnostics = cqed_rhf_dict.get('SCF DIAGNOSTICS', dict(converged=None, reason='unavailable'))
         wfn = cqed_rhf_dict["PSI4 WFN"]
         self.resolved_options["dimensions"] = self.config.validate_dimensions(wfn.nmo(), wfn.nalpha(), wfn.nbeta())
         self.rhf_reference_energy = cqed_rhf_dict["RHF ENERGY"]
@@ -6574,8 +6625,10 @@ class PFHamiltonianGenerator:
 
         if self.config.initial_orbital_output_file:
             np.savetxt(self.config.initial_orbital_output_file, self.C)
+            self._generated_files["initial_orbital_output_file"] = self.config.initial_orbital_output_file
         elif self.config.legacy:
             np.savetxt("orbital2.out", self.C)
+            self._generated_files["orbital2.out"] = os.path.abspath("orbital2.out")
         # print("Unitary matrix")
         # print(U)
         # update wfn_dict with orbitals from CQED-RHF

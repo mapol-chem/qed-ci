@@ -1,7 +1,8 @@
 """Lightweight configuration and lazy entry points for QED-CI."""
+from .results import CalculationResult
 from .config import CQEDConfig, CISolverOptions, CASSCFOptions
 
-__all__ = ['CQEDConfig', 'CISolverOptions', 'CASSCFOptions', 'calculate', 'PFHamiltonianGenerator']
+__all__ = ['CalculationResult', 'CQEDConfig', 'CISolverOptions', 'CASSCFOptions', 'calculate', 'PFHamiltonianGenerator']
 
 
 def calculate(molecule, config):
@@ -12,9 +13,10 @@ def calculate(molecule, config):
     """
     if not isinstance(config, CQEDConfig):
         raise TypeError('config must be a CQEDConfig')
-    from .output import calculation_output
+    from .output import calculation_output, engine_output
     with calculation_output(config):
-        from helper_PFCI import PFHamiltonianGenerator
+        with engine_output(config):
+            from helper_PFCI import PFHamiltonianGenerator
         return PFHamiltonianGenerator(molecule, config=config)
 
 

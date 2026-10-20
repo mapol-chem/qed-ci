@@ -98,7 +98,7 @@ before=Path('gradient.out').read_text()
 obj.compute_grad(0,0)
 after=Path('gradient.out').read_text()
 assert after.startswith(before)
-assert 'Begin computing the analytical gradient' in after[len(before):]
+assert 'gradient_state_0 (Eh/bohr)' in after[len(before):]
 assert not Path('orbital2.out').exists()
 '''
     env=dict(os.environ,OMP_NUM_THREADS='1',OPENBLAS_NUM_THREADS='1',MKL_NUM_THREADS='1')

@@ -69,6 +69,11 @@ Use `--prefix PATH` to select dependency locations or `--compiler PATH` to selec
 the compiler. Rebuild after changing numerical-library environments; the macOS
 library records the environment's library search path.
 
+From the repository root, `pytest -v` runs the maintained suites in `tests/`
+and `src/tests/`. `pytest.ini` adds `src` to the import path and excludes examples
+and standalone validation scripts from default discovery; some of those scripts
+execute calculations at import time. They can still be run explicitly.
+
 ```sh
 mkdir -p build/test-run
 cd build/test-run

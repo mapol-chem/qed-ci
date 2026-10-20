@@ -3,7 +3,7 @@
 The engine uses process-global state. Scopes serialize package calculations and
 restore descriptors, streams and Psi4 settings even after exceptions. Other
 application threads writing stdout during a scope are also redirected; use
-separate processes for concurrent calculations. Text formatting is unchanged.
+separate processes for concurrent calculations.
 """
 from contextlib import contextmanager, redirect_stdout, redirect_stderr
 import ctypes
@@ -136,3 +136,40 @@ def workspace(owner):
         yield
     finally:
         os.chdir(previous)
+
+
+@contextmanager
+def engine_output(config, backend=None):
+    """Route legacy diagnostics inside the existing serialized output scope.
+
+    Normal presentation is emitted after this scope; debug/trace preserve engine
+    detail. No buffering of potentially huge tensor dumps.
+    """
+    if config.verbosity != 'normal':
+        yield
+        return
+    psi = sys.modules.get('psi4')
+    previous = psi.core.get_output_file() if psi is not None else None
+    saved = []
+    level = backend.get_ci_print_level() if backend is not None else None
+    with open(os.devnull, 'w') as sink:
+        try:
+            flush()
+            saved = [os.dup(1), os.dup(2)]
+            for fd in (1, 2):
+                os.dup2(sink.fileno(), fd)
+            if psi is not None:
+                psi.core.set_output_file(os.devnull, True)
+            if backend is not None:
+                backend.set_ci_print_level(0)
+            with redirect_stdout(sink), redirect_stderr(sink):
+                yield
+        finally:
+            flush()
+            if backend is not None:
+                backend.set_ci_print_level(level)
+            if previous is not None:
+                psi.core.set_output_file(previous, True)
+            for fd, original in zip((1, 2), saved):
+                os.dup2(original, fd)
+                os.close(original)

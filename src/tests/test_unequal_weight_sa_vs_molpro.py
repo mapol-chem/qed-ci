@@ -161,6 +161,8 @@ for i in range({roots}):
 for (i, j) in [(a, b) for a in range({roots}) for b in range(a + 1, {roots})]:
     print("### COUPLING STATES %d-%d" % (i, j), flush=True)
     calc.compute_grad(i, j, deriv_type="full")
+import json
+print("STRUCTURED_PROPERTIES " + json.dumps(calc.result.summary()["properties"]))
 """
 
 
@@ -184,38 +186,19 @@ def _run(system, weights, proj_all, tmp_path):
 
 def _blocks(stdout):
     """-> ({state: grad}, {(i,j): nac}); both (natom, 3), Hartree/Bohr."""
-    import re
-    num = re.compile(r"-?\d+\.\d+")
-    lines = stdout.splitlines()
-    grads, nacs, state, pair = {}, {}, None, None
-    for i, l in enumerate(lines):
-        m = re.match(r"### GRADIENT OF STATE (\d)", l)
-        if m:
-            state, pair = int(m.group(1)), None
-        m = re.match(r"### COUPLING STATES (\d)-(\d)", l)
-        if m:
-            pair, state = (int(m.group(1)), int(m.group(2))), None
-        t = l.strip()
-        want = (state is not None and t == "Total gradient") or (
-            pair is not None and t.startswith("NAC ") and not t.startswith("NAC * dE"))
-        if not want:
+    import json
+    properties = json.loads(next(line.removeprefix("STRUCTURED_PROPERTIES ")
+                                 for line in stdout.splitlines()
+                                 if line.startswith("STRUCTURED_PROPERTIES ")))
+    grads, nacs = {}, {}
+    for prop in properties.values():
+        if 'states' not in prop:
             continue
-        # Read every consecutive "Row" line: the atom count is NOT fixed
-        # (water has 3, formaldehyde 4), so stop at the first non-Row line
-        # after the block starts rather than at a hardcoded count.
-        rows, started = [], False
-        for j in range(i + 1, len(lines)):
-            if lines[j].startswith("Row "):
-                started = True
-                rows.append([float(x) for x in num.findall(lines[j].split(":", 1)[1])[:3]])
-            elif started:
-                break
-        if not rows:
-            continue
-        if state is not None:
-            grads.setdefault(state, np.array(rows))
+        i, j = prop['states']
+        if i == j:
+            grads[i] = np.asarray(prop['value'])
         else:
-            nacs.setdefault(pair, np.array(rows))
+            nacs[i, j] = np.asarray(prop['value'])
     return grads, nacs
 
 

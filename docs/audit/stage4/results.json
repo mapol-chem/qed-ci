@@ -1,0 +1,299 @@
+{
+  "date": "2026-10-20",
+  "scope": "Stage 4 only; Stages 5 and 6 not started",
+  "backend_rebuilt": false,
+  "provenance": {
+    "package": "qed-ci",
+    "package_version": null,
+    "python": "3.12.13",
+    "numpy": "2.4.6",
+    "psi4": "1.10.1",
+    "backend": "/Users/jfoley19/Code/qed-ci/src/cfunctions.so",
+    "backend_sha256": "63deb238c8a641e91195a72de1870a8a0b451decdf692763f29bc35eabc4a4ef"
+  },
+  "focused_tests": {
+    "tests": 54,
+    "passed": 54,
+    "failures": [],
+    "skipped": 0,
+    "raw_xml": "build/stage4/focused-complete.xml"
+  },
+  "scientific_suite": {
+    "tests": 177,
+    "passed": 174,
+    "failures": [
+      {
+        "name": "test_lih_fci_sto3g_rdm_builds_no_cavity",
+        "message": "FileNotFoundError: hardcoded /home/jfoley19/UPDATED_QEDCI/.../LiH_sto3g_fci_d1.npy"
+      },
+      {
+        "name": "test_lih_fci_sto3g_rdm_builds_with_cavity",
+        "message": "AttributeError: PFHamiltonianGenerator has no attribute total_energy_from_rdms"
+      },
+      {
+        "name": "test_finite_difference_error_scales_as_delta_squared",
+        "message": "No WORST OVERALL record: calculation stopped with GLTR: Tridiagonal solver failed. Unchanged isolated rerun passed."
+      }
+    ],
+    "skipped": 0,
+    "raw_xml": "build/stage4/final.xml"
+  },
+  "nac_scaling_rerun": {
+    "tests": 1,
+    "passed": 1,
+    "failures": [],
+    "skipped": 0,
+    "raw_xml": "build/stage4/nac-scaling.xml"
+  },
+  "unequal_weight_module": {
+    "tests": 20,
+    "passed": 20,
+    "failures": [],
+    "skipped": 0,
+    "raw_xml": "build/stage4/unequal-weight.xml"
+  },
+  "replay": {
+    "runs": [
+      {
+        "case": "casci_cavity",
+        "api": "config",
+        "energy_max_abs": {
+          "CIeigs": 2.6645352591003757e-15
+        },
+        "rdm_max_abs": {
+          "D_tu_avg": 6.29704621779581e-15,
+          "D_tuvw_avg": 6.189493362285248e-15,
+          "Dpe_tu_avg": 4.468647674116255e-15,
+          "weight": 0.0
+        }
+      },
+      {
+        "case": "casci_cavity",
+        "api": "legacy",
+        "energy_max_abs": {
+          "CIeigs": 2.6645352591003757e-15
+        },
+        "rdm_max_abs": {
+          "D_tu_avg": 6.29704621779581e-15,
+          "D_tuvw_avg": 6.189493362285248e-15,
+          "Dpe_tu_avg": 4.468647674116255e-15,
+          "weight": 0.0
+        }
+      },
+      {
+        "case": "casci_zero",
+        "api": "config",
+        "energy_max_abs": {
+          "CIeigs": 2.6645352591003757e-15
+        },
+        "rdm_max_abs": {
+          "D_tu_avg": 2.65672900345848e-15,
+          "D_tuvw_avg": 2.7053012607858307e-15,
+          "Dpe_tu_avg": 0.0,
+          "weight": 0.0
+        }
+      },
+      {
+        "case": "casci_zero",
+        "api": "legacy",
+        "energy_max_abs": {
+          "CIeigs": 2.6645352591003757e-15
+        },
+        "rdm_max_abs": {
+          "D_tu_avg": 2.65672900345848e-15,
+          "D_tuvw_avg": 2.7053012607858307e-15,
+          "Dpe_tu_avg": 0.0,
+          "weight": 0.0
+        }
+      },
+      {
+        "case": "casscf_cavity",
+        "api": "config",
+        "energy_max_abs": {
+          "CIeigs": 2.6645352591003757e-15,
+          "eigenvals": 6.217248937900877e-15
+        },
+        "rdm_max_abs": {
+          "D_tu_avg": 1.891048435898046e-09,
+          "D_tuvw_avg": 2.1690933493800912e-09,
+          "Dpe_tu_avg": 3.8876235564089257e-11,
+          "weight": 0.0
+        }
+      },
+      {
+        "case": "casscf_cavity",
+        "api": "legacy",
+        "energy_max_abs": {
+          "CIeigs": 2.6645352591003757e-15,
+          "eigenvals": 4.440892098500626e-14
+        },
+        "rdm_max_abs": {
+          "D_tu_avg": 2.555275255278211e-09,
+          "D_tuvw_avg": 2.930890738439551e-09,
+          "Dpe_tu_avg": 5.2386306664126137e-11,
+          "weight": 0.0
+        }
+      },
+      {
+        "case": "casscf_zero",
+        "api": "config",
+        "energy_max_abs": {
+          "CIeigs": 2.6645352591003757e-15,
+          "eigenvals": 6.057376822354854e-13
+        },
+        "rdm_max_abs": {
+          "D_tu_avg": 1.6497715416008418e-09,
+          "D_tuvw_avg": 1.7457548184829363e-09,
+          "Dpe_tu_avg": 0.0,
+          "weight": 0.0
+        }
+      },
+      {
+        "case": "casscf_zero",
+        "api": "legacy",
+        "energy_max_abs": {
+          "CIeigs": 2.6645352591003757e-15,
+          "eigenvals": 6.359357485052897e-13
+        },
+        "rdm_max_abs": {
+          "D_tu_avg": 1.4929622815795796e-09,
+          "D_tuvw_avg": 1.5775288297881218e-09,
+          "Dpe_tu_avg": 0.0,
+          "weight": 0.0
+        }
+      },
+      {
+        "case": "cis_cavity",
+        "api": "config",
+        "energy_max_abs": {
+          "CIeigs": 1.4210854715202004e-14
+        },
+        "rdm_max_abs": {
+          "weight": 0.0
+        }
+      },
+      {
+        "case": "cis_cavity",
+        "api": "legacy",
+        "energy_max_abs": {
+          "CIeigs": 1.4210854715202004e-14
+        },
+        "rdm_max_abs": {
+          "weight": 0.0
+        }
+      },
+      {
+        "case": "cis_zero",
+        "api": "config",
+        "energy_max_abs": {
+          "CIeigs": 8.881784197001252e-15
+        },
+        "rdm_max_abs": {
+          "weight": 0.0
+        }
+      },
+      {
+        "case": "cis_zero",
+        "api": "legacy",
+        "energy_max_abs": {
+          "CIeigs": 8.881784197001252e-15
+        },
+        "rdm_max_abs": {
+          "weight": 0.0
+        }
+      },
+      {
+        "case": "fci_cavity",
+        "api": "config",
+        "energy_max_abs": {
+          "CIeigs": 9.769962616701378e-15
+        },
+        "rdm_max_abs": {
+          "D_tu_avg": 2.6645352591003757e-15,
+          "D_tuvw_avg": 5.329070518200751e-15,
+          "Dpe_tu_avg": 3.3584246494910985e-15,
+          "weight": 0.0
+        }
+      },
+      {
+        "case": "fci_cavity",
+        "api": "legacy",
+        "energy_max_abs": {
+          "CIeigs": 9.769962616701378e-15
+        },
+        "rdm_max_abs": {
+          "D_tu_avg": 2.6645352591003757e-15,
+          "D_tuvw_avg": 5.329070518200751e-15,
+          "Dpe_tu_avg": 3.3584246494910985e-15,
+          "weight": 0.0
+        }
+      },
+      {
+        "case": "fci_zero",
+        "api": "config",
+        "energy_max_abs": {
+          "CIeigs": 4.440892098500626e-15
+        },
+        "rdm_max_abs": {
+          "D_tu_avg": 1.2588111842194216e-14,
+          "D_tuvw_avg": 2.5172193105221042e-14,
+          "Dpe_tu_avg": 0.0,
+          "weight": 0.0
+        }
+      },
+      {
+        "case": "fci_zero",
+        "api": "legacy",
+        "energy_max_abs": {
+          "CIeigs": 4.440892098500626e-15
+        },
+        "rdm_max_abs": {
+          "D_tu_avg": 1.2588111842194216e-14,
+          "D_tuvw_avg": 2.5172193105221042e-14,
+          "Dpe_tu_avg": 0.0,
+          "weight": 0.0
+        }
+      }
+    ],
+    "energy_tolerance": 1e-08,
+    "rdm_tolerance": 1e-07,
+    "max_energy_difference": 6.359357485052897e-13,
+    "max_rdm_difference": 2.930890738439551e-09,
+    "initial_and_final_casscf_distinction_checked": true
+  },
+  "other_checks": [
+    "git diff --check passed",
+    "bash -n trajectory gate passed",
+    "Trajectory filter retains numerical trace and standalone ROOT0 record while excluding only report block"
+  ],
+  "notes": [
+    "Same p4dev path as Stage 1, but installed Python/Psi4/NumPy and backend hash have changed; saved baselines and tolerances retained.",
+    "Full scientific suite had two known failures plus a GLTR tridiagonal-solver failure in NAC finite-difference scaling. The latter passed an unchanged isolated rerun; no solver or assertion was modified.",
+    "Focused tests and replay were rerun after correcting unadapted Davidson residual availability; the backend only publishes individual residuals for spin-adapted solves.",
+    "Earlier development runs under build/stage4 were superseded; concurrent source edits caused stale module/consumer versions in some preliminary subprocesses.",
+    "Existing user timer.dat changes preserved."
+  ],
+  "limitations": [
+    "Canonical Psi4 SCF convergence diagnostics and dense eigensolver residuals/iterations unavailable",
+    "Unadapted Davidson per-root residuals unavailable; mean residual and status are recorded",
+    "No microiteration event schema or parsing of legacy free-text notices",
+    "CI/RDM arrays remain on the existing calculation, not serialized",
+    "Process-global output/Psi4/CWD routing; separate processes required for concurrent calculations",
+    "Linux trajectory chemistry gate not executed; filter checked separately",
+    "Observed intermittent GLTR failure remains unresolved within this I/O-only scope"
+  ],
+  "source_sha256": {
+    "src/helper_PFCI.py": "82f2ae53694bcd7efb7c411ee194fba21c509693236375b50e5dce06be281092",
+    "src/helper_cqed_rhf.py": "8bb2c98b55c0abf9377ea0e4a89b41e181d39b08a9e04e7adb5db329f90e657b",
+    "src/nuclear_grad.py": "23852d8190de0a4621df6ba4a9dc5352eceab344f766fa59433d8828e18772ef",
+    "src/qed_ci/__init__.py": "c037440e8d8c35c9a9dc647d0e6bce79b2b49c8b00b6c5dc4992b824d87a5fbd",
+    "src/qed_ci/output.py": "30d449517e5459739f3e5dd1321f14f1c9e6d4d1dd7d7640ee27c5b2e8d8a020",
+    "src/qed_ci/results.py": "c103d767529f8517af6ab75ba472129da3490eddb8e0ad1336415493498eca2b",
+    "src/qed_ci/report.py": "7ad39a8cb139b5c03876c5a6904921043f322f9bf829b8d51277b84283ee806c",
+    "src/tests/test_unequal_weight_sa_vs_molpro.py": "d76fc66cc0ba1b3bd2583d0826379bce5e569b7ad345264461c6279771d7ab77",
+    "src/validation/lstrs_refactor_gate.sh": "3e10674dd6f634207ea5f714438a12e604f7a0b59a2b76f723a9a4a221a7460f",
+    "tests/test_results.py": "9d894287e67c35ee3bda22886f196458c8cb1e34d0d991ec1ed666a43ea00469",
+    "tests/test_output.py": "2ff5cb0271f0ed75411335586addd179aa21219f27eadc2854e816820d842618",
+    "tools/validate_stage23.py": "f623bf2b4f5fe49a4bc15e749e93922d8cc9f00655961cd1ba796fac7f2982fd"
+  }
+}

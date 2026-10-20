@@ -2403,7 +2403,20 @@ class nuclear_grad(PFHamiltonianGenerator):
         if self.config.method != "casscf":
             raise ValueError("Analytic gradients require a CASSCF calculation")
         with calculation_scope(self, cfunctions, append=True):
-            return self._compute_grad(state1, state2, deriv_type)
+            from qed_ci.output import engine_output
+            from qed_ci.report import property_report
+            import time
+            started = time.perf_counter()
+            with engine_output(self.config, cfunctions):
+                value = self._compute_grad(state1, state2, deriv_type)
+            key = f'gradient_state_{state1}' if state1 == state2 else f'nac_{state1}_{state2}_{deriv_type or "etf"}'
+            array = self.total_gradient if state1 == state2 else self.h_vector
+            prop = dict(states=[state1, state2], units='Eh/bohr' if state1 == state2 else '1/bohr',
+                        value=array.reshape(self.n_atoms, 3).copy(), deriv_type=deriv_type)
+            self.result.properties[key] = prop
+            self.result.timings[key] = time.perf_counter()-started
+            property_report(key, prop)
+            return value
 
     def _compute_grad(self, state1, state2, deriv_type=None):
         if state1 == state2:
