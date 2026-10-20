@@ -102,7 +102,8 @@ def build_result(owner, seconds):
     files = dict(owner._generated_files)
     if owner.config.output_file:
         files['output_file'] = owner.config.output_file
-    backend = Path(sys.modules['helper_PFCI'].__file__).with_name('cfunctions.so')
+    backend = Path(sys.modules['helper_PFCI'].lib_path)
+    from . import __version__
     warnings = list(owner.diagnostics)
     if owner.config.method == 'casscf' and not macro['applicable']:
         warnings.append('Orbital optimization was skipped by the effective engine route.')
@@ -118,7 +119,7 @@ def build_result(owner, seconds):
                       state_average=float(np.dot(weights, final[:len(weights)]))
                       if weights is not None and owner.ci_level != 'cis' else None),
         convergence=convergence,
-        provenance=dict(package='qed-ci', package_version=None, python=sys.version.split()[0],
+        provenance=dict(package='qed-ci', package_version=__version__, python=sys.version.split()[0],
                         numpy=np.__version__, psi4=psi4.__version__, backend=str(backend),
                         backend_sha256=hashlib.sha256(backend.read_bytes()).hexdigest()),
         warnings=warnings, timings={'calculation': seconds}, files=files)

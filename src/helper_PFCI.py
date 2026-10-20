@@ -2869,10 +2869,11 @@ def _exit_control_radius(trust_radius, exit_history, damp=None, lo=None,
 
 
 script_dir = os.path.abspath(os.path.dirname(__file__))
-lib_path = os.path.join(script_dir, "cfunctions.so")
+from qed_ci.backend import backend_path, load_backend
+lib_path = str(backend_path())
 
 # import shared lib
-cfunctions = cdll.LoadLibrary(lib_path)
+cfunctions = load_backend()
 
 
 cfunctions.get_graph.argtypes = [

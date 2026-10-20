@@ -60,15 +60,15 @@ g++ -O2 -fPIC -shared -std=c++17 -fopenmp \
 It links nothing — psi4's symbols are resolved at `dlopen` time out of the already-loaded `core.cpython-*.so`, which `helper_PFCI.py` first promotes to `RTLD_GLOBAL`. That makes the `.so` **ABI-coupled to the psi4 build it was compiled against**: rebuild it after changing psi4 versions or conda envs. Validate with `python validation/dpd_readback_check.py` (compares `twoeint` and the CI roots against the `mo_eri` path).
 
 ### Python environment
-`conda install psi4 python=3.10 -c conda-forge` then `pip install numba pytest` (numpy/scipy come with the psi4 conda install). Locally, the `p4dev` conda env has psi4 installed; a separate `pyscf` env exists but does *not* have psi4 (only relevant if it's ever used for the C++ validation scripts below, which need psi4).
+`conda install psi4 python=3.12 -c conda-forge` then `pip install numba pytest` (numpy/scipy come with the psi4 conda install). Locally, the `p4dev` conda env has psi4 installed; a separate `pyscf` env exists but does *not* have psi4 (only relevant if it's ever used for the C++ validation scripts below, which need psi4).
 
 ### Tests
 ```sh
-cd src && pytest -v
+python -m pytest -v
 ```
 Single test: `pytest -v tests/test_helperPFCI.py::test_name`. Note: `test_lih_fci_sto3g_rdm_builds_no_cavity` loads reference `.npy` files via a hardcoded absolute path (`/home/jfoley19/UPDATED_QEDCI/qed-ci/src/tests/...`) rather than a relative one — it will fail with `FileNotFoundError` unless that exact path exists.
 
-`PYTHONPATH` must include `src/` to import the helpers from outside this directory (see `src/README.md`).
+Install the package (`python -m pip install --no-build-isolation --no-deps -e .`) for imports from any directory; the public API and documented legacy helpers no longer need `PYTHONPATH`. The historical source-checkout build (`python tools/build_backend.py`, `PYTHONPATH=src`) remains supported for compatibility. See `docs/installation.md` and `src/README.md`.
 
 ### Architecture
 - **`helper_PFCI.py`** (~15k lines) is the core of the package: `ctypes` bindings to the C backend (the `c_*`-prefixed wrapper functions near the top, e.g. `c_get_roots`, `c_build_sigma_reduced`, `c_full_transformation_macroiteration`), a `Determinant` class, and the large `PFHamiltonianGenerator` class (from line ~1360 to the end of the file): RHF/CQED-RHF setup, CI string/graph construction, RDM builds, and the SA-QED-CASSCF macro/microiteration skeleton. It is meant to be the SKELETON — the solvers it dispatches to live in the modules below.

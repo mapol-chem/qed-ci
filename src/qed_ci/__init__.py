@@ -1,4 +1,6 @@
 """Lightweight configuration and lazy entry points for QED-CI."""
+__version__ = "0.1.0"
+
 from .results import CalculationResult
 from .config import CQEDConfig, CISolverOptions, CASSCFOptions
 

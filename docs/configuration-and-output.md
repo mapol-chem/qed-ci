@@ -1,14 +1,14 @@
-# Configuration, results and output (Stages 2–4)
+# Configuration, results and output (Stages 2–5)
 
-The numerical methods and existing result attributes are unchanged. This adds a
-validated configuration and output/file routing. It does not add a Calculator,
-replace the mean-field provider, or replace the established calculation object. Stage 4 results and report behavior
-are documented below.
+This is the authoritative option reference for the validated `CQEDConfig` API and
+the version-1 result schema. The numerical methods and existing result attributes
+are unchanged. It does not add a Calculator, replace the mean-field provider, or
+replace the established calculation object. Install the package as described in
+[installation](installation.md); no manual `PYTHONPATH` is needed. Configuration
+imports do not import Psi4, NumPy, or the native library. The engine loads when
+requested.
 
 ## New entry point
-
-Keep `src` on `PYTHONPATH` as described in the root README. Configuration imports
-do not import Psi4, NumPy, or the native library. The engine loads when requested.
 
 ```python
 from qed_ci import CQEDConfig, CISolverOptions, CASSCFOptions, calculate
@@ -57,6 +57,31 @@ Do not mutate nested mappings while a calculation is running.
 | Developer | `test_mode=False` retains the established additional dense allocations |
 | Output | `quiet=False`, `verbosity="normal"`, `output_file=None`, `output_mode="w"` |
 | Files | `scratch_directory=None`, `initial_orbital_output_file=None`, `orbital_output_file=None`, `natural_orbital_output_file=None`, `occupation_output_file=None` |
+
+Units, allowed values, and precedence:
+
+- `omega` is the cavity frequency in atomic units (Eh); `lambda_vector` is a
+  three-component coupling in atomic units. Neither is converted from SI.
+- `active_electrons` and `active_orbitals` are integer counts. Active electrons
+  must be even. `n_roots`, `rdm_root`, and `max_photons` are integer counts;
+  `max_photons` is the maximum occupation, so `N_p + 1` photon sectors.
+- `state_weights` are dimensionless relative weights, normalized by the engine.
+  `CASSCFOptions` thresholds/floors and `CISolverOptions.threshold` retain their
+  established units: energies in Eh, orbital-gradient quantities in atomic units,
+  and the CI residual in the engine's normalized residual convention.
+- Allowed values are checked for `method` (`cis`, `fci`, `casci`, `casscf`),
+  `reference` (`rhf` only), `photon_basis` (`coherent`, `number`),
+  `reference_orbitals` (`qed_rhf`, `canonical`), `spin` (`no`, `singlet`,
+  `triplet`, `quintet`), `verbosity` (`normal`, `debug`, `trace`), and
+  `output_mode` (`w`, `a`, `x`).
+- Option precedence is: explicit `CQEDConfig` value, then the current
+  `QED_*` environment setting for the nine registered CASSCF controls, then the
+  established module/default value. Legacy dictionaries are converted first, so
+  their historical defaults and flags remain the baseline. Conflicting or ignored
+  legacy flags are recorded in `diagnostics` rather than silently reapplied.
+- Unknown keys are rejected by the new config and by the legacy adapter (with a
+  spelling suggestion). Type errors, nonfinite values, invalid weights, impossible
+  root bounds, and contradictory options are rejected before CI work.
 
 UHF/KS references are rejected until the correlation kernels support them. The
 reference multiplicity is separate from selecting singlet/triplet/quintet excited
@@ -191,8 +216,10 @@ CASSCF's optimized energies are in `eigenvals`. Both are exposed explicitly by t
 ## Verification
 
 ```sh
-PYTHONPATH=src python -m pytest tests/test_config.py tests/test_output.py -q
+python -m pytest tests/test_config.py tests/test_output.py tests/test_results.py -q
 python tools/validate_stage23.py --output build/stage23/replay-new
+python tools/check_docs.py
+python -m pytest tests/test_packaging.py -q
 ```
 
 The replay checks both APIs against all eight saved Stage 1 cases: energy tolerance
@@ -201,10 +228,14 @@ Each case runs in its own process with one thread. These tolerances allow the
 already measured unseeded CASSCF variation; CI-vector signs are not compared.
 The original scientific suite remains the gradient/reference correctness check.
 
-Local validation: 41 new tests passed; the original suite remains at 175 passed
-and the same two Stage 1 failures. All 16 replay runs passed, with maximum energy
-difference `8.76e-13` Eh and maximum saved RDM/weight difference `6.17e-9`.
-See [the machine-readable validation record](audit/stage23/results.json).
+Stages 2–3 validation: 41 new tests passed; the original suite remained at 175
+passed with the same two Stage 1 failures. All 16 replay runs passed, with maximum
+energy difference `8.76e-13` Eh and maximum saved RDM/weight difference `6.17e-9`.
+See [the Stage 2–3 validation record](audit/stage23/results.json). Stage 4
+extended the focused set to 54 tests and replayed all 16 cases with a maximum
+energy difference of `6.36e-13` Eh; see
+[the Stage 4 record](audit/stage4/README.md). Stage 5 packaging/install results
+are in [the Stage 5 record](audit/stage5/README.md).
 
 ## Stage 4: structured scientific results
 
@@ -240,7 +271,7 @@ seconds. The schema is independent of report formatting.
 | `energies.state_average` | Dot product of normalized weights with the corresponding final roots, in Eh; null when not applicable. It does not reuse a potentially stale optimizer `avg_energy` attribute. |
 | `convergence` | Separate `scf`, `ci_initial`, `ci_final`, and `casscf` records, with `converged`, `reason`, and available iteration counts, residuals and thresholds. |
 | `properties` | Computed dipole matrix and subsequently requested gradients/NACs, with explicit units and state labels. No unrequested gradient calculations are performed. |
-| `warnings`, `timings`, `provenance`, `files` | Adapter notices, captured Python warnings and nonconvergence notices; elapsed calculation/property times; Python/NumPy/Psi4 versions and backend path/SHA256; paths actually written by package export operations and the report path. Package release version is currently unavailable. |
+| `warnings`, `timings`, `provenance`, `files` | Adapter notices, captured Python warnings and nonconvergence notices; elapsed calculation/property times; package version, Python/NumPy/Psi4 versions, and backend path/SHA256; paths actually written by package export operations and the report path. |
 
 `r.converged` combines the applicable SCF, **final** CI, and orbital-optimization
 statuses: any false means false, otherwise any unknown means unknown. The initial

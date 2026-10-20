@@ -10,3 +10,7 @@ src/.ipynb*
 /src/cfunctions.so
 **/__pycache__/
 .pytest_cache/
+
+/dist/
+/src/*.egg-info/
+/src/qed_ci/_native/

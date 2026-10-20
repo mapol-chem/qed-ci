@@ -26,6 +26,8 @@ def main():
                         help='dependency prefix (default: this Python environment)')
     parser.add_argument('--compiler', help='C compiler executable')
     parser.add_argument('--dry-run', action='store_true')
+    parser.add_argument('--output', type=Path, default=ROOT / 'src' / 'cfunctions.so',
+                        help='destination library (default: legacy source-checkout location)')
     args = parser.parse_args()
     system = platform.system()
     prefix = args.prefix.resolve()
@@ -84,7 +86,8 @@ def main():
                         '[getattr(lib,n) for n in ("get_roots","get_graph",'
                         '"getMemory2","full_transformation_macroiteration")]',
                         str(library)], check=True, env=env)
-        target = ROOT / 'src' / 'cfunctions.so'
+        target = args.output.resolve()
+        target.parent.mkdir(parents=True, exist_ok=True)
         if target.exists():
             stamp = datetime.datetime.now().strftime('%Y%m%dT%H%M%S%f')
             shutil.copy2(target, build_dir / ('cfunctions-' + stamp + '.so.bak'))
