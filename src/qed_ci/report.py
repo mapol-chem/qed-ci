@@ -1,4 +1,16 @@
 """Human presentation of the versioned scientific result interface."""
+def start_report(config, geometry):
+    """Emit identity before expensive work, including for failed calculations."""
+    if config.verbosity != 'normal':
+        return  # Debug/trace already provide live engine output.
+    print('  ==> Starting QED-CI calculation <==', flush=True)
+    print(f'  Method: {config.method.upper()}   Reference: {config.reference.upper()}   '
+          f'Atoms: {len(geometry["symbols"])}', flush=True)
+    print(f'  Basis: {config.psi4_options.get("basis", config.psi4_options.get("BASIS", "Psi4 default"))}   '
+          f'Roots: {config.n_roots}', flush=True)
+    print(f'  Cavity frequency: {config.omega} Eh   Coupling: {config.lambda_vector}', flush=True)
+
+
 def heading(title):
     print(f'\n  ==> {title} <==\n')
 

@@ -4243,7 +4243,7 @@ class PFHamiltonianGenerator:
         self._generated_files = {}
         from qed_ci.output import engine_output
         from qed_ci.results import build_result
-        from qed_ci.report import report
+        from qed_ci.report import report, start_report
         self._macro_diagnostics = dict(applicable=False, converged=None,
                                        reason='not_requested', iterations=0, history=[])
         self._initial_ci_diagnostics = dict(converged=None, reason='unavailable')
@@ -4262,11 +4262,21 @@ class PFHamiltonianGenerator:
                                          coordinates=np.asarray(molecule.geometry()).tolist(),
                                          charge=molecule.molecular_charge(), multiplicity=molecule.multiplicity())
             started = time.perf_counter()
+            start_report(self.config, self._result_geometry)
             import warnings
-            with warnings.catch_warnings(record=True) as caught, engine_output(self.config, cfunctions):
-                self._run_calculation(molecule_string, self.config.psi4_options,
-                                      self.config.to_legacy_options())
-            self.diagnostics.extend(str(w.message) for w in caught)
+            try:
+                with warnings.catch_warnings(record=True) as caught, engine_output(
+                        self.config, cfunctions, self.diagnostics):
+                    self._run_calculation(molecule_string, self.config.psi4_options,
+                                          self.config.to_legacy_options())
+            except Exception as exc:
+                print(f"  Calculation failed: {type(exc).__name__}: {exc}", flush=True)
+                print(f"  Elapsed time: {time.perf_counter()-started:.3f} s", flush=True)
+                raise
+            finally:
+                for warning in caught:
+                    self.diagnostics.append(str(warning.message))
+                    print(f"  WARNING: {warning.message}", flush=True)
             self.result = build_result(self, time.perf_counter() - started)
             report(self.result)
 
@@ -4843,6 +4853,8 @@ class PFHamiltonianGenerator:
         # self.full_diagonalization True: the same idiom already guards :6546,
         # :6978, :7806 and :8058, and this way the attribute keeps reporting
         # what the user actually set.
+        from qed_ci.output import progress
+        progress("Starting initial CI solve")
         if self.full_diagonalization or self.ci_level == "cis":
             # call full diagonalization
             self.CIeigs, self.CIvecs = np.linalg.eigh(self.H_PF)
@@ -5696,6 +5708,9 @@ class PFHamiltonianGenerator:
                             # is calibrated for).  Resetting at the TOP of the loop
                             # instead leaves _gn None at every test and the
                             # criterion silently never fires -- measured, item 245.
+                            progress(f"CASSCF macro {macroiteration:4d}  Eavg={new_avg_energy:.12f} Eh  "
+                                     f"dE={new_avg_energy-old_avg_energy:.3e} Eh  "
+                                     f"lagged gradient={_gn}")
                             self._macro_diagnostics['history'].append(dict(
                                 iteration=macroiteration, energy=float(new_avg_energy),
                                 energy_change=float(new_avg_energy-old_avg_energy),
@@ -7907,6 +7922,8 @@ class PFHamiltonianGenerator:
             5. Dot original MO coefficients into vectors NO = C @ U
         """
 
+        from qed_ci.output import progress
+        progress("Starting reference SCF")
         t_hf_start = time.time()
         if self.canonical_mos:
             cqed_rhf_dict = cqed_rhf(
@@ -7920,6 +7937,7 @@ class PFHamiltonianGenerator:
                 self.lambda_vector, molecule_string, psi4_options_dict
             )
         t_hf_end = time.time()
+        progress("Reference SCF complete; preparing CI")
         print(f" Completed QED-RHF in {t_hf_end - t_hf_start} seconds")
         #grab the number of atoms and nuclear gradient 
         mol = psi4.geometry(molecule_string)

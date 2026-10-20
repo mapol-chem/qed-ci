@@ -631,6 +631,9 @@ def cqed_rhf(lambda_vector, molecule_string, psi4_options_dict, canonical_basis=
                 % (SCF_ITER, SCF_E, (SCF_E - Eold), dRMS)
             )
             _t = _tick("  DIIS error + energy", _t)
+            from qed_ci.output import progress
+            progress(f'SCF {SCF_ITER:3d}  E={SCF_E:.12f} Eh  '
+                     f'dE={SCF_E-Eold:.3e} Eh  density RMS={dRMS:.3e}')
             if (abs(SCF_E - Eold) < E_conv) and (dRMS < D_conv):
                 break
 

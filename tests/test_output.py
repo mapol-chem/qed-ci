@@ -105,3 +105,36 @@ assert not Path('orbital2.out').exists()
     r=subprocess.run([sys.executable,'-B','-c',code],cwd=tmp_path,env=env,capture_output=True,text=True,timeout=180)
     assert r.returncode==0,r.stdout+r.stderr+(tmp_path/'gradient.out').read_text()[-1500:]
     assert r.stdout==r.stderr==''
+
+
+def test_normal_engine_retains_native_warnings_and_live_progress(tmp_path, capfd):
+    from qed_ci.output import engine_output, progress
+    path = tmp_path / 'report.out'
+    config = CQEDConfig(output_file=str(path))
+    diagnostics = []
+
+    class Backend:
+        level = 3
+        def get_ci_print_level(self):
+            return self.level
+        def set_ci_print_level(self, value):
+            self.level = value
+
+    backend = Backend()
+    with calculation_output(config):
+        with pytest.raises(RuntimeError), engine_output(config, backend, diagnostics):
+            assert backend.level == 1  # Native spin warnings must remain enabled.
+            print('large routine diagnostic hidden')
+            print('state      eigenvalues      total energies       error')
+            ctypes.CDLL(None).puts(b'*** WARNING: CI root 0 spin contamination')
+            progress('CASSCF macro 0')
+            # Read before leaving the engine: this must be live, not replayed.
+            assert 'CASSCF macro 0' in path.read_text()
+            raise RuntimeError('deliberate')
+    assert backend.level == 3
+    assert diagnostics == ['*** WARNING: CI root 0 spin contamination']
+    text = path.read_text()
+    assert 'spin contamination' in text
+    assert 'large routine' not in text
+    assert 'total energies' not in text
+    assert capfd.readouterr().out == ''

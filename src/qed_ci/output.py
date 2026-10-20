@@ -8,6 +8,7 @@ separate processes for concurrent calculations.
 from contextlib import contextmanager, redirect_stdout, redirect_stderr
 import ctypes
 import os
+import re
 from pathlib import Path
 import sys
 import tempfile
@@ -138,12 +139,20 @@ def workspace(owner):
         os.chdir(previous)
 
 
-@contextmanager
-def engine_output(config, backend=None):
-    """Route legacy diagnostics inside the existing serialized output scope.
+def progress(message):
+    """Write a compact event through the report destination, even inside the engine."""
+    stream = getattr(_LOCAL, 'progress_stream', None)
+    if stream is not None:
+        print('  ' + message, file=stream, flush=True)
 
-    Normal presentation is emitted after this scope; debug/trace preserve engine
-    detail. No buffering of potentially huge tensor dumps.
+
+@contextmanager
+def engine_output(config, backend=None, diagnostics=None):
+    """Hide routine legacy text while retaining warning/error lines.
+
+    Normal engine text is spooled to temporary files, never accumulated in
+    memory. Native verbosity stays at Normal so spin warnings are computed.
+    Scientific results still come directly from engine arrays, not this text.
     """
     if config.verbosity != 'normal':
         yield
@@ -152,16 +161,22 @@ def engine_output(config, backend=None):
     previous = psi.core.get_output_file() if psi is not None else None
     saved = []
     level = backend.get_ci_print_level() if backend is not None else None
-    with open(os.devnull, 'w') as sink:
+    previous_progress = getattr(_LOCAL, 'progress_stream', None)
+    # A numerical table's "error" column is not an error diagnostic.
+    marker = re.compile(r'\b(warning|failed|failure|fallback)\b|\berror\s*[:!]|^error\b', re.I)
+    with tempfile.TemporaryFile(mode='w+', encoding='utf-8', errors='replace') as sink, \
+            tempfile.NamedTemporaryFile(mode='w+', suffix='.out', encoding='utf-8',
+                                        errors='replace') as psi_sink:
         try:
             flush()
             saved = [os.dup(1), os.dup(2)]
+            _LOCAL.progress_stream = os.fdopen(os.dup(1), 'w', buffering=1)
             for fd in (1, 2):
                 os.dup2(sink.fileno(), fd)
             if psi is not None:
-                psi.core.set_output_file(os.devnull, True)
+                psi.core.set_output_file(psi_sink.name, False)
             if backend is not None:
-                backend.set_ci_print_level(0)
+                backend.set_ci_print_level(1)
             with redirect_stdout(sink), redirect_stderr(sink):
                 yield
         finally:
@@ -173,3 +188,17 @@ def engine_output(config, backend=None):
             for fd, original in zip((1, 2), saved):
                 os.dup2(original, fd)
                 os.close(original)
+            stream = getattr(_LOCAL, 'progress_stream', None)
+            _LOCAL.progress_stream = previous_progress
+            if stream is not None and stream is not previous_progress:
+                stream.close()
+            seen = set()
+            for captured in (sink, psi_sink):
+                captured.seek(0)
+                for line in captured:
+                    message = line.strip()
+                    if marker.search(message) and message not in seen:
+                        seen.add(message)
+                        if diagnostics is not None and message not in diagnostics:
+                            diagnostics.append(message)
+                        print('  Engine diagnostic: ' + message, flush=True)

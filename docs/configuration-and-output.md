@@ -323,6 +323,13 @@ output module or adopting its global verbosity state.
 
 Normal mode suppresses the legacy engine's array dumps, internal timing chatter,
 raw Psi4 summary and debug labels inside the existing serialized output scope.
+It writes a starting summary before the engine runs, live CQED-RHF iteration
+rows, CI stage notices, and CASSCF macroiteration rows as they become available.
+Canonical Psi4 SCF and native CI solves currently provide stage notices rather
+than per-iteration progress. If the engine raises an exception, a failure record
+is written to the same destination and the original exception is re-raised;
+no successful final report is produced. Quiet operation still suppresses console
+output, and file-only output retains these records.
 Debug retains Python engine diagnostics and native level 2; trace retains those
 plus native level 3 iteration detail. Both also include the structured report.
 Legacy calls still default to trace. To get the conventional report from legacy
@@ -333,8 +340,14 @@ scripts' own `ROOT`, `AVGE`, comparison and `WORST OVERALL` interfaces are uncha
 Quiet mode, file-only output, append/exclusive modes, gradient append behavior,
 and exception restoration continue to use the Stage 3 scope. No new output
 configuration or logger is introduced. Python warnings raised inside the main
-calculation are retained in the result. Legacy diagnostics printed as free text
-remain available at debug/trace, but are not parsed into warnings. Direct imports
+calculation are retained in the result. In normal mode, engine output is spooled
+to temporary files and lines marked warning, error, failed, failure, or fallback
+are retained in `result.warnings` and printed after the engine scope, including
+on failure. Native Normal verbosity remains enabled so spin-contamination warnings
+are computed. Routine text is discarded and temporary logs are removed. This is
+a compatibility bridge for free-text diagnostics, not a structured scientific
+data parser; unmarked or multiline diagnostic context is not reconstructed.
+Debug/trace retain their existing engine logs. Direct imports
 can still print before a configuration exists; `calculate()` also suppresses
 import chatter at normal verbosity. Process-global routing and Psi4 shutdown
 file limitations described above still apply. The files field inventories package

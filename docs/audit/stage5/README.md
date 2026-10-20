@@ -128,3 +128,36 @@ against the authoritative option reference. It checked 36 links and 48 fields.
   write `timer.dat` at process finalization outside the calculation scope.
 - Stage 6, a Calculator dispatcher, cqed-scf reference-wavefunction integration,
   and TAMM work remain out of scope and have not begun.
+
+## Focused Stage 4–5 follow-up
+
+Normal output now writes the starting calculation identity and compact reference
+SCF, initial CI, and CASSCF macroiteration progress before completion. Progress
+uses the selected report destination, including quiet/file-only modes. Engine
+exceptions leave a failure record and propagate unchanged; derivative failures
+are also recorded before propagation.
+
+Normal engine text is temporarily spooled to disk, with marked diagnostic lines
+retained in results and reports. Native verbosity remains at Normal to preserve
+spin-contamination checks. This compatibility layer does not parse scientific
+results from text and does not reconstruct unmarked multiline context. Debug and
+trace retain their engine output. Temporary logs are deleted after the scope.
+
+Source distributions now include the earlier audit Markdown/JSON referenced by
+the guides. The packaging test extracts the source distribution and checks its
+actual documentation links. Numerical fixtures and compiled artifacts remain
+excluded. Validation details are in `followup-results.json`.
+
+Follow-up validation: 57 focused tests passed; the two final native/Psi4 warning
+checks also passed after the diagnostic-filter refinement. All 16 baseline
+replays passed (maximum energy difference `2.24e-12` Eh and RDM/weight difference
+`1.04e-8`). Packaging checks from an unpacked distribution passed for wheel and
+editable installs; the source archive contract and its 36 documentation links
+passed through the supported setuptools fallback. The active environment was
+not modified to add the optional frontend's missing `wheel` dependency.
+
+The scientific suite recorded 174 passes and three failures: the two established
+fixture/API failures and the unequal-weight NAC comparison returning no state
+pairs. That additional failure also reproduced on untouched HEAD with the same
+backend; an unchanged isolated rerun of the follow-up passed. The suite is not
+claimed fully green, and no numerical tolerance or scientific assertion changed.

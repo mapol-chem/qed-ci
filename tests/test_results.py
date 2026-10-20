@@ -181,3 +181,52 @@ np.testing.assert_allclose(np.mean(d['residuals']),d['mean_residual'],rtol=1e-12
 plain=calculate(geom,config.copy_with(quiet=True))
 assert plain.result.convergence['ci_final']['residuals'] is None
 ''', tmp_path)
+
+
+def test_failure_has_partial_report_and_preserves_exception(tmp_path):
+    proc = run('''
+from helper_PFCI import PFHamiltonianGenerator
+from qed_ci.output import progress
+original = PFHamiltonianGenerator._run_calculation
+report_path = pathlib.Path('failed.out').resolve()
+def fail(self, *args):
+    progress('Starting initial CI solve')
+    assert 'Starting initial CI solve' in report_path.read_text()
+    raise RuntimeError('deliberate engine failure')
+PFHamiltonianGenerator._run_calculation = fail
+try:
+    calculate(geom, config.copy_with(output_file=str(pathlib.Path('failed.out').resolve())))
+except RuntimeError as exc:
+    assert str(exc) == 'deliberate engine failure'
+else:
+    raise AssertionError('engine exception swallowed')
+finally:
+    PFHamiltonianGenerator._run_calculation = original
+text = pathlib.Path('failed.out').read_text()
+assert 'Starting QED-CI calculation' in text
+assert 'Calculation failed: RuntimeError: deliberate engine failure' in text
+assert 'Final state energies' not in text
+''', tmp_path)
+    # Direct legacy imports can print before the calculation scope.
+    assert 'Calculation failed' not in proc.stdout
+
+
+def test_native_warning_survives_quiet_in_results(tmp_path):
+    proc = run('''
+import os
+# Load inside a quiet scope before installing the diagnostic injection.
+from qed_ci.output import calculation_output
+with calculation_output(config.copy_with(quiet=True)):
+    from helper_PFCI import PFHamiltonianGenerator
+original = PFHamiltonianGenerator._run_calculation
+def with_diagnostic(self, *args):
+    os.write(2, b'WARNING: injected native scientific diagnostic\\n')
+    import psi4
+    psi4.core.print_out('WARNING: injected Psi4 diagnostic\\n')
+    return original(self, *args)
+PFHamiltonianGenerator._run_calculation = with_diagnostic
+obj = calculate(geom, config.copy_with(method='casci', quiet=True))
+assert 'WARNING: injected native scientific diagnostic' in obj.result.warnings
+assert 'WARNING: injected Psi4 diagnostic' in obj.result.warnings
+''', tmp_path)
+    assert proc.stdout == proc.stderr == ''

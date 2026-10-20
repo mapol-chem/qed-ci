@@ -2407,8 +2407,13 @@ class nuclear_grad(PFHamiltonianGenerator):
             from qed_ci.report import property_report
             import time
             started = time.perf_counter()
-            with engine_output(self.config, cfunctions):
-                value = self._compute_grad(state1, state2, deriv_type)
+            print(f'  Starting derivative for states {state1}, {state2}', flush=True)
+            try:
+                with engine_output(self.config, cfunctions, self.result.warnings):
+                    value = self._compute_grad(state1, state2, deriv_type)
+            except Exception as exc:
+                print(f'  Derivative failed: {type(exc).__name__}: {exc}', flush=True)
+                raise
             key = f'gradient_state_{state1}' if state1 == state2 else f'nac_{state1}_{state2}_{deriv_type or "etf"}'
             array = self.total_gradient if state1 == state2 else self.h_vector
             prop = dict(states=[state1, state2], units='Eh/bohr' if state1 == state2 else '1/bohr',
