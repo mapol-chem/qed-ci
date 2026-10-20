@@ -100,9 +100,9 @@ from collections import deque
 # that (the penalty is flat in the budget: base needs ~21-25 iterations on those
 # seeds), while both gave back win on the hard seeds.  So the cost is WASTED TIME
 # ON EASY CASES, never a wrong answer.  Set 10000 to restore the old behaviour.
-_QED_CI_UNCOUPLED_MAXITER = int(os.environ.get("QED_CI_UNCOUPLED_MAXITER", "5"))
-_QED_CI_COUPLED_FACTOR = float(os.environ.get("QED_CI_COUPLED_FACTOR", "0.1"))
-_QED_CI_COUPLED_MAXITER = int(os.environ.get("QED_CI_COUPLED_MAXITER", "5"))
+_QED_CI_UNCOUPLED_MAXITER = 5  # resolved per calculation by qed_ci.runtime
+_QED_CI_COUPLED_FACTOR = 0.1  # resolved per calculation by qed_ci.runtime
+_QED_CI_COUPLED_MAXITER = 5  # resolved per calculation by qed_ci.runtime
 #
 #   QED_ORBITAL_SYMMETRY : constrain the orbital optimization to preserve the
 #                          AXIAL symmetry of a linear molecule (default 0 = off,
@@ -1313,7 +1313,7 @@ def _mp_end(label, t0):
 #                           Smallest norm the whole run sees is 4.45e-06, at the
 #                           FINAL macro; the margin against the last macro that
 #                           still had work to do (9.5e-04) is 949x.
-_QED_GRAD_CONV = float(os.environ.get("QED_GRAD_CONV", "1e-6"))
+_QED_GRAD_CONV = 1e-06  # resolved per calculation by qed_ci.runtime
 
 # QED_MACRO_ENERGY_CONV: the macroiteration ENERGY convergence cut, which was
 # hardcoded at 1e-10.  DEFAULT 1e-10 = exactly the previous behaviour; 0
@@ -1334,7 +1334,7 @@ _QED_GRAD_CONV = float(os.environ.get("QED_GRAD_CONV", "1e-6"))
 # +-5.3e-07 (equal and opposite, average still exact to 1e-12) and moves the
 # state gradients by 3e-06 -- which is what made that system unusable as a
 # regression test against Molpro.
-_QED_MACRO_ENERGY_CONV = float(os.environ.get("QED_MACRO_ENERGY_CONV", "1e-10"))
+_QED_MACRO_ENERGY_CONV = 1e-10  # resolved per calculation by qed_ci.runtime
 
 # QED_MICRO_GRAD_FLOOR / QED_MICRO_ENERGY_FLOOR: the two ABSOLUTE backstops
 # inside microiteration_optimization6.  Defaults 1e-7 and 1e-10 reproduce the
@@ -1352,8 +1352,8 @@ _QED_MACRO_ENERGY_CONV = float(os.environ.get("QED_MACRO_ENERGY_CONV", "1e-10"))
 # (9.58e-08 at davidson_threshold 1e-9, 9.89e-08 at 1e-11, 9.83e-08 at 1e-13 --
 # invariant in the CI accuracy, and every value sitting just under this cutoff),
 # against Molpro's 1.3e-12 on the same system.
-_QED_MICRO_GRAD_FLOOR = float(os.environ.get("QED_MICRO_GRAD_FLOOR", "1e-7"))
-_QED_MICRO_ENERGY_FLOOR = float(os.environ.get("QED_MICRO_ENERGY_FLOOR", "1e-10"))
+_QED_MICRO_GRAD_FLOOR = 1e-07  # resolved per calculation by qed_ci.runtime
+_QED_MICRO_ENERGY_FLOOR = 1e-10  # resolved per calculation by qed_ci.runtime
 
 # QED_MICRO_GRAD_SCALE / QED_MICRO_ENERGY_SCALE: the Kreplin-style RELATIVE part
 # of the same two microiteration tests -- the criterion is a fraction of the
@@ -1370,8 +1370,8 @@ _QED_MICRO_ENERGY_FLOOR = float(os.environ.get("QED_MICRO_ENERGY_FLOOR", "1e-10"
 # constraint is weaker now that the small-gradient case takes a Newton step --
 # so how tightly the microiteration should be driven is a choice worth being
 # able to make per run rather than one baked into the source.
-_QED_MICRO_GRAD_SCALE = float(os.environ.get("QED_MICRO_GRAD_SCALE", "0.1"))
-_QED_MICRO_ENERGY_SCALE = float(os.environ.get("QED_MICRO_ENERGY_SCALE", "0.01"))
+_QED_MICRO_GRAD_SCALE = 0.1  # resolved per calculation by qed_ci.runtime
+_QED_MICRO_ENERGY_SCALE = 0.01  # resolved per calculation by qed_ci.runtime
 
 
 #
@@ -4223,7 +4223,43 @@ class PFHamiltonianGenerator:
     _oo_Ca_ref = None
 
 
-    def __init__(self, molecule_string, psi4_options_dict, cavity_options):
+    def __init__(self, molecule_string, psi4_options_dict=None, cavity_options=None, *, config=None):
+        from qed_ci.config import CQEDConfig
+        from qed_ci.runtime import calculation_scope
+        if isinstance(psi4_options_dict, CQEDConfig):
+            if config is not None or cavity_options is not None:
+                raise ValueError("Pass either a configuration or legacy dictionaries, not both")
+            config, psi4_options_dict = psi4_options_dict, None
+        if config is not None:
+            if psi4_options_dict is not None or cavity_options is not None:
+                raise ValueError("Pass config= or legacy dictionaries, not both")
+            if not isinstance(config, CQEDConfig):
+                raise TypeError("config must be a CQEDConfig")
+            self.config = config
+        else:
+            self.config = CQEDConfig.from_legacy(psi4_options_dict or {}, cavity_options or {})
+        self.diagnostics = list(self.config.diagnostics)
+        with calculation_scope(self, cfunctions):
+            for message in self.diagnostics:
+                print("QED-CI input notice:", message)
+            molecule = psi4.geometry(molecule_string)
+            if molecule.multiplicity() != self.config.multiplicity:
+                raise ValueError("Geometry multiplicity conflicts with the restricted reference configuration")
+            if self.config.charge is not None and molecule.molecular_charge() != self.config.charge:
+                raise ValueError("Geometry charge conflicts with CQEDConfig.charge")
+            self._run_calculation(molecule_string, self.config.psi4_options,
+                                  self.config.to_legacy_options())
+
+    def output_context(self):
+        """Route additional property/helper calls to this calculation's output.
+
+        Subsequent calls append to an output file instead of truncating it.
+        The constructor and nuclear_grad.compute_grad enter this automatically.
+        """
+        from qed_ci.runtime import calculation_scope
+        return calculation_scope(self, cfunctions, append=True)
+
+    def _run_calculation(self, molecule_string, psi4_options_dict, cavity_options):
         """
         Constructor for matrix elements of the PF Hamiltonian
         """
@@ -5782,7 +5818,8 @@ class PFHamiltonianGenerator:
                                 self.opt_C = np.einsum("pq,qr->pr", self.C, self.U_total)
                                 if self.save_orbital == True:
                                     # print(new_C)
-                                    np.savetxt("orbital.out", self.opt_C)
+                                    if self.config.orbital_output_file:
+                                        np.savetxt(self.config.orbital_output_file, self.opt_C)
                                     self.build_state_average_rdms(eigenvecs)
                                     active_rdm = self.D_tu_avg.reshape(self.n_act_orb, self.n_act_orb)
 
@@ -5803,8 +5840,10 @@ class PFHamiltonianGenerator:
                                         np.zeros(self.nmo - self.n_occupied)
                                     ])
 
-                                    np.savetxt("occupation_number.out", self.noocs)
-                                    np.savetxt("natural_orbital.out", self.nat_orbs)
+                                    if self.config.occupation_output_file:
+                                        np.savetxt(self.config.occupation_output_file, self.noocs)
+                                    if self.config.natural_orbital_output_file:
+                                        np.savetxt(self.config.natural_orbital_output_file, self.nat_orbs)
  
                               
                                 _mu_x_spin = np.einsum(
@@ -6400,6 +6439,7 @@ class PFHamiltonianGenerator:
     def parseArrays(self, cqed_rhf_dict):
         # grab quantities from cqed_rhf_dict that apply to both number state and coherent state bases
         wfn = cqed_rhf_dict["PSI4 WFN"]
+        self.resolved_options["dimensions"] = self.config.validate_dimensions(wfn.nmo(), wfn.nalpha(), wfn.nbeta())
         self.rhf_reference_energy = cqed_rhf_dict["RHF ENERGY"]
         self.Enuc = cqed_rhf_dict["NUCLEAR REPULSION ENERGY"]
         self.nuclear_dipole_moment = cqed_rhf_dict["NUCLEAR DIPOLE MOMENT"]
@@ -6532,7 +6572,10 @@ class PFHamiltonianGenerator:
                 # random-rotation branch above does the same after it rotates.
                 self.d_cmo = np.dot(self.C.T, self.d_ao).dot(self.C)
 
-        np.savetxt("orbital2.out", self.C)
+        if self.config.initial_orbital_output_file:
+            np.savetxt(self.config.initial_orbital_output_file, self.C)
+        elif self.config.legacy:
+            np.savetxt("orbital2.out", self.C)
         # print("Unitary matrix")
         # print(U)
         # update wfn_dict with orbitals from CQED-RHF
@@ -6551,8 +6594,12 @@ class PFHamiltonianGenerator:
                 wfn_dict["matrix"]["Fa"] = self.fock_alpha
                 wfn_dict["matrix"]["Fb"] = self.fock_alpha
             print("load file")
-            wfn_dict["matrix"]["Ca"] = np.loadtxt("orbital.out")
-            wfn_dict["matrix"]["Cb"] = np.loadtxt("orbital.out")
+            guess = np.loadtxt(self.config.orbital_guess_file)
+            expected_shape = np.asarray(wfn.Ca()).shape
+            if guess.shape != expected_shape or not np.isfinite(guess).all():
+                raise ValueError(f"Orbital guess must be finite with shape {expected_shape}; got {guess.shape}")
+            wfn_dict["matrix"]["Ca"] = guess
+            wfn_dict["matrix"]["Cb"] = guess.copy()
             # update wfn object
             wfn = psi4.core.Wavefunction.from_file(wfn_dict)
             wfn.Ca().copy(ortho_orbs(wfn, wfn))

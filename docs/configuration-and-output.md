@@ -1,0 +1,207 @@
+# Configuration and output (Stages 2 and 3)
+
+The numerical methods and existing result attributes are unchanged. This adds a
+validated configuration and output/file routing. It does not add a Calculator,
+replace the mean-field provider, or redesign report formatting (Stage 4).
+
+## New entry point
+
+Keep `src` on `PYTHONPATH` as described in the root README. Configuration imports
+do not import Psi4, NumPy, or the native library. The engine loads when requested.
+
+```python
+from qed_ci import CQEDConfig, CISolverOptions, CASSCFOptions, calculate
+
+config = CQEDConfig(
+    method="casscf",             # cis, fci, casci, casscf
+    reference="rhf",            # only restricted HF references are supported
+    psi4_options={"basis": "sto-3g", "scf_type": "pk",
+                  "e_convergence": 1e-10, "d_convergence": 1e-10},
+    lambda_vector=(0.0, 0.0, 0.05),
+    omega=0.12,                  # atomic units
+    max_photons=1,              # occupations 0 through 1
+    active_electrons=2,
+    active_orbitals=2,
+    n_roots=2,
+    state_weights=(1.0, 1.0),   # relative weights, normalized by the engine
+    ci_solver=CISolverOptions(threshold=1e-9),
+    output_file="lih.out",      # no duplicate stdout
+)
+calculation = calculate("Li\nH 1 1.4\nsymmetry c1", config)
+print(calculation.eigenvals)    # optimized CASSCF energies
+print(calculation.resolved_options)
+```
+
+`PFHamiltonianGenerator(molecule, config=config)` and
+`PFHamiltonianGenerator(molecule, config)` also work. Do not mix a config with
+the old dictionaries. `calculate()` additionally routes output during the initial
+lazy import of the engine. Treat configurations as immutable; use
+`config.copy_with(quiet=True)` for changes. Mappings are defensively copied when
+the config is constructed/copied. `to_dict()` and `CQEDConfig.from_dict(mapping)`
+support JSON-compatible configuration records, including nested solver options.
+Do not mutate nested mappings while a calculation is running.
+
+## Options and validation
+
+| Group | Options and defaults |
+|---|---|
+| Method/reference | `method="cis"`, `reference="rhf"`, `charge=None` (take geometry), `multiplicity=1` |
+| Quantum chemistry | `psi4_options={}` passes standard options to Psi4. A conflicting `REFERENCE` is rejected. |
+| Cavity | `omega=0.0`, `lambda_vector=(0,0,0)`, `max_photons=1` |
+| Representation | `reference_orbitals="qed_rhf"`, `photon_basis="coherent"`; alternative pairing is `"canonical"`/`"number"` |
+| Active space | `active_electrons`, `active_orbitals` required for CASCI/CASSCF; even active electron count |
+| States | `n_roots=3`, `state_weights=None` (equal weights), `spin="no"`, `rdm_root=0` |
+| Starting orbitals | `natural_orbitals=False`, `natural_orbital_weights=(1,1)`, or `orbital_guess_file=...` |
+| Expert physics | `ignore_coupling=False`, `ignore_dse_terms=False`; DSE omission requires number basis in the new API |
+| Developer | `test_mode=False` retains the established additional dense allocations |
+| Output | `quiet=False`, `verbosity="normal"`, `output_file=None`, `output_mode="w"` |
+| Files | `scratch_directory=None`, `initial_orbital_output_file=None`, `orbital_output_file=None`, `natural_orbital_output_file=None`, `occupation_output_file=None` |
+
+UHF/KS references are rejected until the correlation kernels support them. The
+reference multiplicity is separate from selecting singlet/triplet/quintet excited
+states using `spin`. The current dense CIS implementation always has two photon
+sectors; the new API therefore requires `max_photons=1`. CASSCF requires the
+iterative solver. The optional dense CASCI/FCI Hamiltonian builder likewise
+requires `max_photons=1`. For CASSCF, requesting dense diagonalization would skip
+orbital optimization and is rejected. `natural_orbitals` and an external orbital
+guess are alternatives.
+Optimized/natural orbital exports currently require CASSCF; starting orbitals can
+be exported for every method using `initial_orbital_output_file`.
+
+Types, finite values, option conflicts, weight lengths/signs, and supported methods
+are checked before SCF. Geometry charge/multiplicity is checked before SCF too.
+Electron/orbital capacity and root bounds are checked once the reference dimensions
+exist, before CI allocation. Orbital guesses are checked for shape and finite
+values before use. `resolved_options["dimensions"]` records the CI dimension and
+requested root-vector storage; this is **not** a total memory prediction.
+
+`CISolverOptions` has `algorithm="auto"` (`dense`/`davidson` alternatives),
+`threshold=1e-5`, `initial_subspace=4`, `max_subspace=20`,
+`max_iterations=100`, `guess="unit guess"`. Subspace controls retain the existing
+backend interpretation and clamping. Alternative guess labels have no implementation
+in the current Python dispatch and are rejected in new configs.
+
+## Per-calculation CASSCF controls
+
+All fields of `CASSCFOptions` default to `None`, meaning inherit. The nine controls
+below now resolve for each calculation, instead of at module import:
+
+| Field | Legacy environment name | Default |
+|---|---|---|
+| `energy_threshold` | `QED_MACRO_ENERGY_CONV` | `1e-10` |
+| `gradient_threshold` | `QED_GRAD_CONV` | `1e-6` |
+| `micro_gradient_floor` | `QED_MICRO_GRAD_FLOOR` | `1e-7` |
+| `micro_energy_floor` | `QED_MICRO_ENERGY_FLOOR` | `1e-10` |
+| `micro_gradient_scale` | `QED_MICRO_GRAD_SCALE` | `0.1` |
+| `micro_energy_scale` | `QED_MICRO_ENERGY_SCALE` | `0.01` |
+| `uncoupled_ci_iterations` | `QED_CI_UNCOUPLED_MAXITER` | `5` |
+| `coupled_ci_iterations` | `QED_CI_COUPLED_MAXITER` | `5` |
+| `coupled_ci_factor` | `QED_CI_COUPLED_FACTOR` | `0.1` |
+
+Precedence: explicit config, current environment, established module/default
+value. Settings are applied only inside a calculation scope and restored even
+on exceptions. `resolved_options["effective_casscf"]` records values and origins.
+The existing energy **or** gradient convergence semantics are preserved; zero
+disables that macro criterion, but both cannot be disabled simultaneously.
+
+Other experimental settings retain their existing import-time/runtime/cache
+semantics. They are not silently migrated or overridden. Their environment
+snapshot and available module values are recorded under `legacy_environment` and
+`import_time_controls`. Use a fresh process when changing those controls, as before.
+This staged boundary avoids changing unrelated solver experiments during I/O work.
+
+## Legacy compatibility
+
+The three-positional-argument constructor continues to work. Its two dictionaries
+go through `CQEDConfig.from_legacy(psi4_options, cavity_options)`. Method spelling
+is normalized and valid historical defaults are retained, including CAS's default
+orbital optimization, short-weight zero-padding, and the old basis-flag precedence.
+Conflicts/ignored settings are recorded in `calculation.diagnostics` and printed
+inside the selected output scope. Unknown cavity keys now raise with a spelling
+suggestion rather than being silently ignored. Invalid inputs raise exceptions.
+
+`quiet`, `verbosity`, `output_file`, `output_mode`, `scratch_directory`, and all
+explicit file paths can also be placed in the legacy cavity dictionary:
+
+```python
+cavity_options["quiet"] = True
+cavity_options["output_file"] = "calculation.out"
+calculation = PFHamiltonianGenerator(molecule, psi4_options, cavity_options)
+```
+
+Legacy calls retain trace verbosity and fixed orbital exports unless redirected
+explicitly, preserving existing scripts. In particular, they still write
+`orbital2.out`; use the new config for the clean file policy. The legacy adapter
+diagnoses dense CIS photon truncation and dense-CASSCF inconsistencies without
+changing the existing numerical route. Private compatibility fields on CQEDConfig
+are not intended as user-controlled escape hatches.
+
+## Output and file policy
+
+| Setting | Behavior |
+|---|---|
+| Defaults | Existing Python report on stdout; normal C verbosity |
+| `quiet=True` | No routine Python/C/Psi4 stdout or stderr during the calculation |
+| `output_file="job.out"` | All calculation output goes to the file, with no console duplication |
+| `quiet=True, output_file="job.out"` | Silent console, report retained |
+| `output_mode="w"` | Replace the report when starting a calculation (default) |
+| `output_mode="a"` | Append a new calculation |
+| `output_mode="x"` | Fail if the report already exists |
+
+Exceptions are still raised to the caller. Python and native descriptors are
+routed together. Psi4 output is captured separately and included as a labelled
+section at the end of the scope, avoiding multiple writers overwriting a shared
+file. Report text itself remains largely unchanged; Python diagnostic lines have
+not yet all been assigned severity levels. C verbosity supports normal/debug/trace.
+
+Every scope restores stdout/stderr, Psi4's output destination (without truncating
+the caller's file), C verbosity, working directory, and scoped solver settings.
+The engine and descriptor redirection use process-global state: package scopes
+are serialized, but unrelated threads' prints can also be redirected. Run concurrent
+calculations in separate processes. This is an explicit transitional limitation.
+
+New-config calculations keep unsolicited engine files in a private temporary
+working directory retained while the result object is alive. Supply a dedicated
+`scratch_directory` to retain it explicitly. Export/guess/report paths are resolved
+relative to the caller's directory when the config is created. No orbital export
+is requested by default. Do not use the report path as an orbital input/output
+path. Scratch isolation covers execution; Psi4's process-finalization `timer.dat`
+can still appear in the process's exit directory, outside a calculation scope.
+The package does not replace Psi4's global shutdown hooks.
+
+## Gradients and additional property calls
+
+The existing gradient subclass accepts the same config:
+
+```python
+from nuclear_grad import nuclear_grad
+g = nuclear_grad(molecule, config=config)  # config.method must be casscf
+g.compute_grad(0, 0)                     # automatically appends to the same report
+```
+
+State indices are checked before gradient work. For other legacy helper/property
+methods, use `with calculation.output_context(): ...` to apply the same routing
+and settings. Direct imports occur before a constructor can know its options;
+use `calculate()` for silent lazy engine initialization, or wrap a gradient import
+and construction in `qed_ci.output.calculation_output(config)`.
+
+Result attributes retain their meanings: `CIeigs` contains the initial CI solve;
+CASSCF's optimized energies are in `eigenvals`. A unified result API is deferred.
+
+## Verification
+
+```sh
+PYTHONPATH=src python -m pytest tests/test_config.py tests/test_output.py -q
+python tools/validate_stage23.py --output build/stage23/replay-new
+```
+
+The replay checks both APIs against all eight saved Stage 1 cases: energy tolerance
+`1e-8` Eh, RDM/weight tolerance `1e-7`, unchanged array shapes and finite values.
+Each case runs in its own process with one thread. These tolerances allow the
+already measured unseeded CASSCF variation; CI-vector signs are not compared.
+The original scientific suite remains the gradient/reference correctness check.
+
+Local validation: 41 new tests passed; the original suite remains at 175 passed
+and the same two Stage 1 failures. All 16 replay runs passed, with maximum energy
+difference `8.76e-13` Eh and maximum saved RDM/weight difference `6.17e-9`.
+See [the machine-readable validation record](audit/stage23/results.json).

@@ -2393,7 +2393,19 @@ class nuclear_grad(PFHamiltonianGenerator):
         one_rdm_pe += -0.5 * np.einsum('sv,su->uv', tem4, one_rdm_kappa)
         return one_rdm_pe
 
-    def compute_grad(self, state1, state2,deriv_type=None):
+    def compute_grad(self, state1, state2, deriv_type=None):
+        from qed_ci.runtime import calculation_scope
+        from qed_ci.config import integer
+        for state in (state1, state2):
+            integer(state, "gradient state")
+            if state >= self.config.n_roots:
+                raise ValueError("Gradient state must be less than n_roots")
+        if self.config.method != "casscf":
+            raise ValueError("Analytic gradients require a CASSCF calculation")
+        with calculation_scope(self, cfunctions, append=True):
+            return self._compute_grad(state1, state2, deriv_type)
+
+    def _compute_grad(self, state1, state2, deriv_type=None):
         if state1 == state2:
             derivative_coupling = False
             state = state1

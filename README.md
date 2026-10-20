@@ -17,6 +17,9 @@ Within the src/ directory:
 
 ## Getting started
 
+For the validated `CQEDConfig` API, quiet/file output, and legacy migration, see
+[Configuration and output](docs/configuration-and-output.md).
+
 Clone the repository and run these commands from its root. Use the same Python
 environment to build and run calculations. The Python package currently uses
 `PYTHONPATH`; a packaging/API redesign is not part of this build change.
