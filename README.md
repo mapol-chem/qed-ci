@@ -21,6 +21,12 @@ Not implemented in this stage: a `Calculator` dispatcher, cqed-scf reference
 wavefunctions, a TAMM/distributed backend, and unrestricted references. The
 separate C++/TAMM work under `src/cpp_casscf/` is not part of the Python package.
 
+## Canonical examples
+
+Start with the [canonical Python examples](examples/canonical/README.md) for
+QED-CIS, QED-FCI, QED-CASCI, ground-state and state-averaged QED-CASSCF, and
+analytic gradients. Each script sets up one calculation and prints its key results.
+
 ## Requirements
 
 - Python 3.12 or 3.13. Stage 5 packaging validation used Python 3.12.13 on native

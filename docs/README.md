@@ -8,6 +8,7 @@ authoritative option table; other pages link to it rather than repeating it.
 | Set up an environment, install, or fix a build/load problem | [Installation and troubleshooting](installation.md) |
 | Understand what can be calculated and what is restricted | [Supported methods and limitations](methods.md) |
 | Configure a calculation, route output, read results, or migrate legacy dictionaries | [Configuration, output, and results](configuration-and-output.md) |
+| Run a standalone example for each method | [Canonical examples](../examples/canonical/README.md) |
 | Run a small calculation | [Runnable examples](../examples/quickstart/README.md) |
 | Develop, rebuild the native library, add options/results, or run tests | [Developer setup and testing](development.md) |
 | Review the staged validation record | [Stage 5 audit](audit/stage5/README.md), [Stage 4 audit](audit/stage4/README.md), [Stage 1 audit](audit/stage1/README.md) |

@@ -9,7 +9,9 @@ QED-CI simulates strongly correlated molecules coupled to quantized cavity modes
 1. **`src/` (Python, primary)** — the original, actively-used package. A performance-critical CI/CASSCF backend is written in C (`ci_solver.c`/`orbital.c`) and called from Python via `ctypes`.
 2. **`src/cpp_casscf/` (C++/Eigen, in progress)** — a standalone port of just the SA-QED-CASSCF orbital-optimization trust-region solvers from `helper_PFCI.py`, intended as a mechanically-portable intermediate step before a collaborator retargets this onto TAMM's distributed tensor API. It links against the *same* `ci_solver.c`/`orbital.c` sources (compiled from tracked source, not the prebuilt `cfunctions.so`).
 
-`origin_invariant_cqed_rhf/` at the repo root holds two standalone demo scripts (not imported by `src/`).
+The unused `origin_invariant_cqed_rhf/` demos were retired from the working tree;
+their recovery reference is in `docs/audit/retired-origin-demos.md`. Current
+standalone calculation examples live in `examples/canonical/`.
 
 ## Python codebase (`src/`)
 

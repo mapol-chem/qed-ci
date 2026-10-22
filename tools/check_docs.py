@@ -21,6 +21,7 @@ DOC_FILES = [
     ROOT / 'docs/development.md',
     ROOT / 'docs/configuration-and-output.md',
     ROOT / 'examples/quickstart/README.md',
+    ROOT / 'examples/canonical/README.md',
     ROOT / 'docs/audit/stage5/README.md',
 ]
 OPTION_REFERENCE = ROOT / 'docs/configuration-and-output.md'

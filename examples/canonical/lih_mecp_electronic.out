@@ -1,0 +1,610 @@
+OMP: Info #276: omp_set_nested routine deprecated, please use omp_set_max_active_levels instead.
+  ==> Starting QED-CI calculation <==
+  Method: CASSCF   Reference: RHF   Atoms: 2
+  Basis: 6-311g   Roots: 3
+  Cavity frequency: 0.11340840823407129 Eh   Coupling: (0.0, 0.0, 0.05)
+  Starting reference SCF
+  SCF   1  E=-7.972527120572 Eh  dE=-7.973e+00 Eh  density RMS=3.056e-04
+  SCF   2  E=-7.972600983354 Eh  dE=-7.386e-05 Eh  density RMS=9.574e-05
+  SCF   3  E=-7.972608402942 Eh  dE=-7.420e-06 Eh  density RMS=2.314e-05
+  SCF   4  E=-7.972608840579 Eh  dE=-4.376e-07 Eh  density RMS=3.070e-06
+  SCF   5  E=-7.972608851157 Eh  dE=-1.058e-08 Eh  density RMS=5.750e-07
+  SCF   6  E=-7.972608851414 Eh  dE=-2.578e-10 Eh  density RMS=6.276e-08
+  SCF   7  E=-7.972608851417 Eh  dE=-3.146e-12 Eh  density RMS=9.559e-09
+  SCF   8  E=-7.972608851418 Eh  dE=-8.704e-14 Eh  density RMS=1.985e-09
+  SCF   9  E=-7.972608851418 Eh  dE=1.599e-14 Eh  density RMS=2.101e-10
+  SCF  10  E=-7.972608851418 Eh  dE=5.329e-15 Eh  density RMS=2.585e-11
+  Reference SCF complete; preparing CI
+  Starting initial CI solve
+  CASSCF macro    0  Eavg=-7.898731643342 Eh  dE=-7.899e+00 Eh  lagged gradient=None
+  CASSCF macro    1  Eavg=-7.937817890270 Eh  dE=-3.909e-02 Eh  lagged gradient=0.05530112345487286
+  CASSCF macro    2  Eavg=-7.938088126443 Eh  dE=-2.702e-04 Eh  lagged gradient=0.00214289366682711
+  CASSCF macro    3  Eavg=-7.938089007619 Eh  dE=-8.812e-07 Eh  lagged gradient=8.824029730369458e-05
+  CASSCF macro    4  Eavg=-7.938089007636 Eh  dE=-1.707e-11 Eh  lagged gradient=1.2281056016026623e-06
+  CASSCF macro    5  Eavg=-7.938089007636 Eh  dE=-4.201e-13 Eh  lagged gradient=2.986323064598416e-07
+  ==> QED-CI calculation <==
+
+  Method: CASSCF   Effective: CASSCF   Reference: RHF
+  Psi4 1.10   NumPy 2.4.3   Python 3.13.13
+  Backend: /Users/jfoley19/Code/qed-ci/src/cfunctions.so
+  SHA256: 98084925a3375c3cde93371925ed7786485b27b1f83ffe852d8a290c4430c9a4
+  Basis: 6-311g
+
+  ==> Geometry (bohr) <==
+
+  Atom               X                 Y                 Z
+  LI         0.0000000000      0.0000000000      0.0000000000
+  H          3.5391660764      0.0000000000      0.3096369100
+  Charge: 0   Multiplicity: 1
+
+  ==> Cavity and CI space <==
+
+  Frequency: 0.11340840823407129 Eh   Coupling (a.u.): [0.0, 0.0, 0.05]
+  Photon basis: coherent   Maximum photon occupation: 1
+  Actual photon sectors: 2   Reference orbitals: CQED-RHF
+  Ignore coupling: False   Omit DSE: False
+  Active electrons/orbitals: 4 / 9   CI dimension: 2592
+  Requested roots: 3   Spin selection: singlet
+  Normalized state weights: [0.3333333333333333, 0.3333333333333333, 0.3333333333333333]
+
+  ==> Convergence <==
+
+  CI residuals and energy changes: Eh; orbital gradient: atomic units
+  Stage          Converged   Iterations   Stopping reason
+  scf            True        10           energy_and_density
+    density_rms: 2.585071074058484e-11
+    energy_change: 5.329070518200751e-15
+    thresholds: {'energy_Eh': 1e-10, 'density_rms': 1e-10}
+  ci_initial     True        11           residual_threshold
+    mean_residual: 3.1355454747508766e-10
+    residuals: [1.0900529318024647e-10, 5.335823431298396e-10, 2.980760061151778e-10]
+    threshold: 1e-09
+  ci_final       True        17           residual_threshold
+    mean_residual: 6.669880486351315e-10
+    residuals: [5.944091023498212e-10, 6.612676139075695e-10, 7.452874296480031e-10]
+    threshold: 1e-09
+  casscf         True        6            energy
+    energy_change: -4.2010839251815923e-13
+    gradient_norm: 2.986323064598416e-07
+    thresholds: {'energy_Eh': 1e-11, 'gradient': 1e-07}
+  Macro       Average energy (Eh)       Delta E (Eh)     Lagged gradient
+      0           -7.898731643342      -7.898732e+00                None
+      1           -7.937817890270      -3.908625e-02 0.05530112345487286
+      2           -7.938088126443      -2.702362e-04 0.00214289366682711
+      3           -7.938089007619      -8.811760e-07 8.824029730369458e-05
+      4           -7.938089007636      -1.707434e-11 1.2281056016026623e-06
+      5           -7.938089007636      -4.201084e-13 2.986323064598416e-07
+
+  ==> Final state energies (converged) <==
+
+@ Reference energy                     -7.972608851418 Eh
+  State      Total energy (Eh)       Excitation (Eh)
+      0          -8.009164199780        0.000000000000
+      1          -7.903518684407        0.105645515373
+      2          -7.901584138722        0.107580061059
+@ State-average energy                 -7.938089007636 Eh
+
+  ==> Dipole matrix (e bohr; eigenvals states) <==
+
+  Bra   Ket               X                 Y                 Z
+    0     0     -2.3841972833      0.0000004278     -0.2112637679
+    0     1      1.0612860617     -0.0000003037      0.4226595405
+    0     2     -0.6484549541      0.0000006288      0.5834455088
+    1     0      0.0000000000      0.0000000000      0.0000000000
+    1     1      0.8640429426     -0.0000007361      0.6793770961
+    1     2     -1.6193173488      0.0000009749      0.2648405908
+    2     0      0.0000000000      0.0000000000      0.0000000000
+    2     1      0.0000000000      0.0000000000      0.0000000000
+    2     2     -0.9849543171     -0.0000004541     -0.7381562492
+
+  ==> Warnings, timing and files <==
+
+  Calculation time: 1.380 s
+  orbital_output_file: /Users/jfoley19/Code/qed-ci/examples/canonical/lih_mecp_orbitals.txt
+  output_file: /Users/jfoley19/Code/qed-ci/examples/canonical/lih_mecp_electronic.out
+  ==> End QED-CI report <==
+  Starting derivative for states 1, 1
+
+  ==> gradient_state_1 (Eh/bohr) <==
+
+  Atom               X                 Y                 Z
+      0      0.0036057758     -0.0000000071      0.0024068894
+      1     -0.0036057758      0.0000000071     -0.0024068894
+  Starting derivative for states 2, 2
+
+  ==> gradient_state_2 (Eh/bohr) <==
+
+  Atom               X                 Y                 Z
+      0     -0.0079968870      0.0000000102     -0.0032430939
+      1      0.0079968870     -0.0000000102      0.0032430939
+  Starting derivative for states 1, 2
+
+  ==> nac_1_2_etf (1/bohr) <==
+
+  Atom               X                 Y                 Z
+      0     -5.0301352676      0.0000002888      0.3371080649
+      1      5.0301352676     -0.0000002888     -0.3371080649
+  ==> Starting QED-CI calculation <==
+  Method: CASSCF   Reference: RHF   Atoms: 2
+  Basis: 6-311g   Roots: 3
+  Cavity frequency: 0.11340840823407129 Eh   Coupling: (0.0, 0.0, 0.05)
+  Starting reference SCF
+  SCF   1  E=-7.972870440487 Eh  dE=-7.973e+00 Eh  density RMS=3.044e-04
+  SCF   2  E=-7.972943432726 Eh  dE=-7.299e-05 Eh  density RMS=9.497e-05
+  SCF   3  E=-7.972950680662 Eh  dE=-7.248e-06 Eh  density RMS=2.291e-05
+  SCF   4  E=-7.972951105230 Eh  dE=-4.246e-07 Eh  density RMS=2.944e-06
+  SCF   5  E=-7.972951115362 Eh  dE=-1.013e-08 Eh  density RMS=5.702e-07
+  SCF   6  E=-7.972951115607 Eh  dE=-2.445e-10 Eh  density RMS=5.281e-08
+  SCF   7  E=-7.972951115609 Eh  dE=-2.080e-12 Eh  density RMS=7.843e-09
+  SCF   8  E=-7.972951115609 Eh  dE=-4.086e-14 Eh  density RMS=1.933e-09
+  SCF   9  E=-7.972951115609 Eh  dE=-2.309e-14 Eh  density RMS=2.220e-10
+  SCF  10  E=-7.972951115609 Eh  dE=7.105e-15 Eh  density RMS=2.699e-11
+  Reference SCF complete; preparing CI
+  Starting initial CI solve
+  CASSCF macro    0  Eavg=-7.938211608196 Eh  dE=-7.938e+00 Eh  lagged gradient=None
+  CASSCF macro    1  Eavg=-7.938212404913 Eh  dE=-7.967e-07 Eh  lagged gradient=0.0004817556911469824
+  CASSCF macro    2  Eavg=-7.938212405815 Eh  dE=-9.024e-10 Eh  lagged gradient=4.9874971761668105e-06
+  CASSCF macro    3  Eavg=-7.938212405816 Eh  dE=-7.780e-13 Eh  lagged gradient=3.7137595876339573e-07
+  ==> QED-CI calculation <==
+
+  Method: CASSCF   Effective: CASSCF   Reference: RHF
+  Psi4 1.10   NumPy 2.4.3   Python 3.13.13
+  Backend: /Users/jfoley19/Code/qed-ci/src/cfunctions.so
+  SHA256: 98084925a3375c3cde93371925ed7786485b27b1f83ffe852d8a290c4430c9a4
+  Basis: 6-311g
+
+  ==> Geometry (bohr) <==
+
+  Atom               X                 Y                 Z
+  LI         0.0008946913      0.0000000000      0.0133500764
+  H          3.5329376565      0.0000000000      0.2166999628
+  Charge: 0   Multiplicity: 1
+
+  ==> Cavity and CI space <==
+
+  Frequency: 0.11340840823407129 Eh   Coupling (a.u.): [0.0, 0.0, 0.05]
+  Photon basis: coherent   Maximum photon occupation: 1
+  Actual photon sectors: 2   Reference orbitals: CQED-RHF
+  Ignore coupling: False   Omit DSE: False
+  Active electrons/orbitals: 4 / 9   CI dimension: 2592
+  Requested roots: 3   Spin selection: singlet
+  Normalized state weights: [0.3333333333333333, 0.3333333333333333, 0.3333333333333333]
+
+  ==> Convergence <==
+
+  CI residuals and energy changes: Eh; orbital gradient: atomic units
+  Stage          Converged   Iterations   Stopping reason
+  scf            True        10           energy_and_density
+    density_rms: 2.699240641842412e-11
+    energy_change: 7.105427357601002e-15
+    thresholds: {'energy_Eh': 1e-10, 'density_rms': 1e-10}
+  ci_initial     True        13           residual_threshold
+    mean_residual: 4.937523417437011e-10
+    residuals: [4.187661659404516e-10, 4.329023873643466e-10, 6.295884719263051e-10]
+    threshold: 1e-09
+  ci_final       True        7            residual_threshold
+    mean_residual: 6.695423078777684e-10
+    residuals: [4.078683216007161e-10, 7.845356617500244e-10, 8.162229402825647e-10]
+    threshold: 1e-09
+  casscf         True        4            energy
+    energy_change: -7.780442956573097e-13
+    gradient_norm: 3.7137595876339573e-07
+    thresholds: {'energy_Eh': 1e-11, 'gradient': 1e-07}
+  Macro       Average energy (Eh)       Delta E (Eh)     Lagged gradient
+      0           -7.938211608196      -7.938212e+00                None
+      1           -7.938212404913      -7.967164e-07 0.0004817556911469824
+      2           -7.938212405815      -9.024310e-10 4.9874971761668105e-06
+      3           -7.938212405816      -7.780443e-13 3.7137595876339573e-07
+
+  ==> Final state energies (converged) <==
+
+@ Reference energy                     -7.972951115609 Eh
+  State      Total energy (Eh)       Excitation (Eh)
+      0          -8.009433406742        0.000000000000
+      1          -7.903236960886        0.106196445856
+      2          -7.901966849821        0.107466556921
+@ State-average energy                 -7.938212405816 Eh
+
+  ==> Dipole matrix (e bohr; eigenvals states) <==
+
+  Bra   Ket               X                 Y                 Z
+    0     0     -2.3850681657      0.0000000005     -0.1390634076
+    0     1      1.0639818939     -0.0000000015      0.3969342570
+    0     2     -0.6344005817      0.0000000009      0.5932097724
+    1     0      0.0000000000      0.0000000000      0.0000000000
+    1     1      0.8773446103     -0.0000000044      0.6645700152
+    1     2     -1.6179070624      0.0000000026      0.3032242374
+    2     0      0.0000000000      0.0000000000      0.0000000000
+    2     1      0.0000000000      0.0000000000      0.0000000000
+    2     2     -0.9977407502     -0.0000000011     -0.7031326084
+
+  ==> Warnings, timing and files <==
+
+  Calculation time: 0.586 s
+  orbital_output_file: /Users/jfoley19/Code/qed-ci/examples/canonical/lih_mecp_orbitals.txt
+  output_file: /Users/jfoley19/Code/qed-ci/examples/canonical/lih_mecp_electronic.out
+  ==> End QED-CI report <==
+  Starting derivative for states 1, 1
+
+  ==> gradient_state_1 (Eh/bohr) <==
+
+  Atom               X                 Y                 Z
+      0      0.0038888308      0.0000000000      0.0023880260
+      1     -0.0038888308     -0.0000000000     -0.0023880260
+  Starting derivative for states 2, 2
+
+  ==> gradient_state_2 (Eh/bohr) <==
+
+  Atom               X                 Y                 Z
+      0     -0.0077443213      0.0000000000     -0.0029067000
+      1      0.0077443213     -0.0000000000      0.0029067000
+  Starting derivative for states 1, 2
+
+  ==> nac_1_2_etf (1/bohr) <==
+
+  Atom               X                 Y                 Z
+      0     -7.6810259619     -0.0000000007      0.7062427230
+      1      7.6810259619      0.0000000007     -0.7062427230
+  ==> Starting QED-CI calculation <==
+  Method: CASSCF   Reference: RHF   Atoms: 2
+  Basis: 6-311g   Roots: 3
+  Cavity frequency: 0.11340840823407129 Eh   Coupling: (0.0, 0.0, 0.05)
+  Starting reference SCF
+  SCF   1  E=-7.973264931844 Eh  dE=-7.973e+00 Eh  density RMS=3.032e-04
+  SCF   2  E=-7.973337112320 Eh  dE=-7.218e-05 Eh  density RMS=9.433e-05
+  SCF   3  E=-7.973344223721 Eh  dE=-7.111e-06 Eh  density RMS=2.271e-05
+  SCF   4  E=-7.973344637564 Eh  dE=-4.138e-07 Eh  density RMS=2.860e-06
+  SCF   5  E=-7.973344647422 Eh  dE=-9.858e-09 Eh  density RMS=5.650e-07
+  SCF   6  E=-7.973344647654 Eh  dE=-2.315e-10 Eh  density RMS=4.309e-08
+  SCF   7  E=-7.973344647655 Eh  dE=-1.307e-12 Eh  density RMS=4.540e-09
+  SCF   8  E=-7.973344647655 Eh  dE=-5.329e-15 Eh  density RMS=1.212e-09
+  SCF   9  E=-7.973344647655 Eh  dE=-3.553e-15 Eh  density RMS=2.165e-10
+  SCF  10  E=-7.973344647655 Eh  dE=-1.243e-14 Eh  density RMS=2.881e-11
+  Reference SCF complete; preparing CI
+  Starting initial CI solve
+  CASSCF macro    0  Eavg=-7.938343580577 Eh  dE=-7.938e+00 Eh  lagged gradient=None
+  CASSCF macro    1  Eavg=-7.938344786989 Eh  dE=-1.206e-06 Eh  lagged gradient=0.0005907459165562077
+  CASSCF macro    2  Eavg=-7.938344788195 Eh  dE=-1.206e-09 Eh  lagged gradient=5.865928858421194e-06
+  CASSCF macro    3  Eavg=-7.938344788196 Eh  dE=-1.187e-12 Eh  lagged gradient=4.411304461068845e-07
+  ==> QED-CI calculation <==
+
+  Method: CASSCF   Effective: CASSCF   Reference: RHF
+  Psi4 1.10   NumPy 2.4.3   Python 3.13.13
+  Backend: /Users/jfoley19/Code/qed-ci/src/cfunctions.so
+  SHA256: 98084925a3375c3cde93371925ed7786485b27b1f83ffe852d8a290c4430c9a4
+  Basis: 6-311g
+
+  ==> Geometry (bohr) <==
+
+  Atom               X                 Y                 Z
+  LI         0.0024260381      0.0000000000      0.0300048522
+  H          3.5222771413      0.0000000000      0.1007572536
+  Charge: 0   Multiplicity: 1
+
+  ==> Cavity and CI space <==
+
+  Frequency: 0.11340840823407129 Eh   Coupling (a.u.): [0.0, 0.0, 0.05]
+  Photon basis: coherent   Maximum photon occupation: 1
+  Actual photon sectors: 2   Reference orbitals: CQED-RHF
+  Ignore coupling: False   Omit DSE: False
+  Active electrons/orbitals: 4 / 9   CI dimension: 2592
+  Requested roots: 3   Spin selection: singlet
+  Normalized state weights: [0.3333333333333333, 0.3333333333333333, 0.3333333333333333]
+
+  ==> Convergence <==
+
+  CI residuals and energy changes: Eh; orbital gradient: atomic units
+  Stage          Converged   Iterations   Stopping reason
+  scf            True        10           energy_and_density
+    density_rms: 2.8813292967064886e-11
+    energy_change: -1.2434497875801753e-14
+    thresholds: {'energy_Eh': 1e-10, 'density_rms': 1e-10}
+  ci_initial     True        13           residual_threshold
+    mean_residual: 2.605595206710407e-10
+    residuals: [4.017470746851322e-10, 1.5895214992185004e-10, 2.2097933740614e-10]
+    threshold: 1e-09
+  ci_final       True        8            residual_threshold
+    mean_residual: 4.5832770682267503e-10
+    residuals: [5.335921212283031e-10, 4.470442766249707e-10, 3.943467226147513e-10]
+    threshold: 1e-09
+  casscf         True        4            energy
+    energy_change: -1.1874945471390674e-12
+    gradient_norm: 4.411304461068845e-07
+    thresholds: {'energy_Eh': 1e-11, 'gradient': 1e-07}
+  Macro       Average energy (Eh)       Delta E (Eh)     Lagged gradient
+      0           -7.938343580577      -7.938344e+00                None
+      1           -7.938344786989      -1.206412e-06 0.0005907459165562077
+      2           -7.938344788195      -1.205526e-09 5.865928858421194e-06
+      3           -7.938344788196      -1.187495e-12 4.411304461068845e-07
+
+  ==> Final state energies (converged) <==
+
+@ Reference energy                     -7.973344647655 Eh
+  State      Total energy (Eh)       Excitation (Eh)
+      0          -8.009742852601        0.000000000000
+      1          -7.902873863986        0.106868988616
+      2          -7.902417648001        0.107325204600
+@ State-average energy                 -7.938344788196 Eh
+
+  ==> Dipole matrix (e bohr; eigenvals states) <==
+
+  Bra   Ket               X                 Y                 Z
+    0     0     -2.3834628987     -0.0000000017     -0.0485148598
+    0     1     -1.0822166182     -0.0000000052     -0.3491370723
+    0     2     -0.5892152771     -0.0000000034      0.6141925997
+    1     0      0.0000000000      0.0000000000      0.0000000000
+    1     1      0.9744910594      0.0000000174      0.6260470456
+    1     2      1.5644980760      0.0000000090     -0.3842736950
+    2     0      0.0000000000      0.0000000000      0.0000000000
+    2     1      0.0000000000      0.0000000000      0.0000000000
+    2     2     -1.0937771770      0.0000000037     -0.6394509179
+
+  ==> Warnings, timing and files <==
+
+  Calculation time: 0.599 s
+  orbital_output_file: /Users/jfoley19/Code/qed-ci/examples/canonical/lih_mecp_orbitals.txt
+  output_file: /Users/jfoley19/Code/qed-ci/examples/canonical/lih_mecp_electronic.out
+  ==> End QED-CI report <==
+  Starting derivative for states 1, 1
+
+  ==> gradient_state_1 (Eh/bohr) <==
+
+  Atom               X                 Y                 Z
+      0      0.0047217869     -0.0000000000      0.0022774064
+      1     -0.0047217869      0.0000000000     -0.0022774064
+  Starting derivative for states 2, 2
+
+  ==> gradient_state_2 (Eh/bohr) <==
+
+  Atom               X                 Y                 Z
+      0     -0.0079164287      0.0000000000     -0.0024448012
+      1      0.0079164287     -0.0000000000      0.0024448012
+  Starting derivative for states 1, 2
+
+  ==> nac_1_2_etf (1/bohr) <==
+
+  Atom               X                 Y                 Z
+      0     20.7575683827     -0.0000000120     -2.9133102441
+      1    -20.7575683827      0.0000000120      2.9133102441
+  ==> Starting QED-CI calculation <==
+  Method: CASSCF   Reference: RHF   Atoms: 2
+  Basis: 6-311g   Roots: 3
+  Cavity frequency: 0.11340840823407129 Eh   Coupling: (0.0, 0.0, 0.05)
+  Starting reference SCF
+  SCF   1  E=-7.973501326163 Eh  dE=-7.974e+00 Eh  density RMS=3.026e-04
+  SCF   2  E=-7.973573138007 Eh  dE=-7.181e-05 Eh  density RMS=9.410e-05
+  SCF   3  E=-7.973580205871 Eh  dE=-7.068e-06 Eh  density RMS=2.263e-05
+  SCF   4  E=-7.973580616102 Eh  dE=-4.102e-07 Eh  density RMS=2.854e-06
+  SCF   5  E=-7.973580625953 Eh  dE=-9.851e-09 Eh  density RMS=5.621e-07
+  SCF   6  E=-7.973580626180 Eh  dE=-2.266e-10 Eh  density RMS=4.130e-08
+  SCF   7  E=-7.973580626181 Eh  dE=-1.181e-12 Eh  density RMS=4.897e-09
+  SCF   8  E=-7.973580626181 Eh  dE=-1.421e-14 Eh  density RMS=5.218e-10
+  SCF   9  E=-7.973580626181 Eh  dE=-1.066e-14 Eh  density RMS=2.145e-11
+  Reference SCF complete; preparing CI
+  Starting initial CI solve
+  CASSCF macro    0  Eavg=-7.938418031028 Eh  dE=-7.938e+00 Eh  lagged gradient=None
+  CASSCF macro    1  Eavg=-7.938418374178 Eh  dE=-3.432e-07 Eh  lagged gradient=0.0003212404238709223
+  CASSCF macro    2  Eavg=-7.938418374425 Eh  dE=-2.477e-10 Eh  lagged gradient=3.1413926873051004e-06
+  CASSCF macro    3  Eavg=-7.938418374485 Eh  dE=-5.956e-11 Eh  lagged gradient=8.00847021165736e-07
+  CASSCF macro    4  Eavg=-7.938418374500 Eh  dE=-1.556e-11 Eh  lagged gradient=2.2059362916347863e-07
+  CASSCF macro    5  Eavg=-7.938418374500 Eh  dE=1.421e-14 Eh  lagged gradient=8.95504780093277e-08
+  ==> QED-CI calculation <==
+
+  Method: CASSCF   Effective: CASSCF   Reference: RHF
+  Psi4 1.10   NumPy 2.4.3   Python 3.13.13
+  Backend: /Users/jfoley19/Code/qed-ci/src/cfunctions.so
+  SHA256: 98084925a3375c3cde93371925ed7786485b27b1f83ffe852d8a290c4430c9a4
+  Basis: 6-311g
+
+  ==> Geometry (bohr) <==
+
+  Atom               X                 Y                 Z
+  LI         0.0036640935      0.0000000000      0.0388260962
+  H          3.5136583821      0.0000000000      0.0393479057
+  Charge: 0   Multiplicity: 1
+
+  ==> Cavity and CI space <==
+
+  Frequency: 0.11340840823407129 Eh   Coupling (a.u.): [0.0, 0.0, 0.05]
+  Photon basis: coherent   Maximum photon occupation: 1
+  Actual photon sectors: 2   Reference orbitals: CQED-RHF
+  Ignore coupling: False   Omit DSE: False
+  Active electrons/orbitals: 4 / 9   CI dimension: 2592
+  Requested roots: 3   Spin selection: singlet
+  Normalized state weights: [0.3333333333333333, 0.3333333333333333, 0.3333333333333333]
+
+  ==> Convergence <==
+
+  CI residuals and energy changes: Eh; orbital gradient: atomic units
+  Stage          Converged   Iterations   Stopping reason
+  scf            True        9            energy_and_density
+    density_rms: 2.1451747531274877e-11
+    energy_change: -1.0658141036401503e-14
+    thresholds: {'energy_Eh': 1e-10, 'density_rms': 1e-10}
+  ci_initial     True        12           residual_threshold
+    mean_residual: 3.3077012408198154e-10
+    residuals: [4.122713097904042e-10, 2.5682975082958544e-10, 3.2320931162595506e-10]
+    threshold: 1e-09
+  ci_final       True        1            residual_threshold
+    mean_residual: 5.953158687867868e-10
+    residuals: [6.721202995321527e-10, 5.285822050882914e-10, 5.852451017399168e-10]
+    threshold: 1e-09
+  casscf         True        6            energy_and_gradient
+    energy_change: 1.4210854715202004e-14
+    gradient_norm: 8.95504780093277e-08
+    thresholds: {'energy_Eh': 1e-11, 'gradient': 1e-07}
+  Macro       Average energy (Eh)       Delta E (Eh)     Lagged gradient
+      0           -7.938418031028      -7.938418e+00                None
+      1           -7.938418374178      -3.431502e-07 0.0003212404238709223
+      2           -7.938418374425      -2.476650e-10 3.1413926873051004e-06
+      3           -7.938418374485      -5.955592e-11 8.00847021165736e-07
+      4           -7.938418374500      -1.555733e-11 2.2059362916347863e-07
+      5           -7.938418374500       1.421085e-14 8.95504780093277e-08
+
+  ==> Final state energies (converged) <==
+
+@ Reference energy                     -7.973580626181 Eh
+  State      Total energy (Eh)       Excitation (Eh)
+      0          -8.009928412097        0.000000000000
+      1          -7.902669542165        0.107258869932
+      2          -7.902657169240        0.107271242857
+@ State-average energy                 -7.938418374500 Eh
+
+  ==> Dipole matrix (e bohr; eigenvals states) <==
+
+  Bra   Ket               X                 Y                 Z
+    0     0     -2.3808221547      0.0000000061     -0.0003597895
+    0     1     -1.2199834096      0.0000000206     -0.0790505391
+    0     2      0.1380097239     -0.0000000018     -0.6979486109
+    1     0      0.0000000000      0.0000000000      0.0000000000
+    1     1      1.7716735866     -0.0000000734      0.1647674502
+    1     2     -0.4194455973      0.0000000078      0.7184669064
+    2     0      0.0000000000      0.0000000000      0.0000000000
+    2     1      0.0000000000      0.0000000000      0.0000000000
+    2     2     -1.8899613730      0.0000000023     -0.1648691156
+
+  ==> Warnings, timing and files <==
+
+  Calculation time: 0.638 s
+  orbital_output_file: /Users/jfoley19/Code/qed-ci/examples/canonical/lih_mecp_orbitals.txt
+  output_file: /Users/jfoley19/Code/qed-ci/examples/canonical/lih_mecp_electronic.out
+  ==> End QED-CI report <==
+  Starting derivative for states 1, 1
+
+  ==> gradient_state_1 (Eh/bohr) <==
+
+  Atom               X                 Y                 Z
+      0      0.0097211838     -0.0000000173      0.0005999617
+      1     -0.0097211838      0.0000000173     -0.0005999617
+  Starting derivative for states 2, 2
+
+  ==> gradient_state_2 (Eh/bohr) <==
+
+  Atom               X                 Y                 Z
+      0     -0.0124954399      0.0000000057     -0.0006011206
+      1      0.0124954399     -0.0000000057      0.0006011206
+  Starting derivative for states 1, 2
+
+  ==> nac_1_2_etf (1/bohr) <==
+
+  Atom               X                 Y                 Z
+      0   -205.6582652393      0.0002483134    211.3229899647
+      1    205.6582652393     -0.0002483134   -211.3229899647
+  ==> Starting QED-CI calculation <==
+  Method: CASSCF   Reference: RHF   Atoms: 2
+  Basis: 6-311g   Roots: 3
+  Cavity frequency: 0.11340840823407129 Eh   Coupling: (0.0, 0.0, 0.05)
+  Starting reference SCF
+  SCF   1  E=-7.973513079482 Eh  dE=-7.974e+00 Eh  density RMS=3.026e-04
+  SCF   2  E=-7.973584874710 Eh  dE=-7.180e-05 Eh  density RMS=9.410e-05
+  SCF   3  E=-7.973591940961 Eh  dE=-7.066e-06 Eh  density RMS=2.262e-05
+  SCF   4  E=-7.973592351050 Eh  dE=-4.101e-07 Eh  density RMS=2.854e-06
+  SCF   5  E=-7.973592360902 Eh  dE=-9.852e-09 Eh  density RMS=5.620e-07
+  SCF   6  E=-7.973592361128 Eh  dE=-2.265e-10 Eh  density RMS=4.129e-08
+  SCF   7  E=-7.973592361130 Eh  dE=-1.180e-12 Eh  density RMS=4.896e-09
+  SCF   8  E=-7.973592361130 Eh  dE=-1.954e-14 Eh  density RMS=5.217e-10
+  SCF   9  E=-7.973592361130 Eh  dE=7.105e-15 Eh  density RMS=2.272e-11
+  Reference SCF complete; preparing CI
+  Starting initial CI solve
+  CASSCF macro    0  Eavg=-7.938421936936 Eh  dE=-7.938e+00 Eh  lagged gradient=None
+  CASSCF macro    1  Eavg=-7.938421937033 Eh  dE=-9.660e-11 Eh  lagged gradient=8.045606875192642e-06
+  CASSCF macro    2  Eavg=-7.938421937039 Eh  dE=-5.802e-12 Eh  lagged gradient=1.4772736975926914e-06
+  ==> QED-CI calculation <==
+
+  Method: CASSCF   Effective: CASSCF   Reference: RHF
+  Psi4 1.10   NumPy 2.4.3   Python 3.13.13
+  Backend: /Users/jfoley19/Code/qed-ci/src/cfunctions.so
+  SHA256: 98084925a3375c3cde93371925ed7786485b27b1f83ffe852d8a290c4430c9a4
+  Basis: 6-311g
+
+  ==> Geometry (bohr) <==
+
+  Atom               X                 Y                 Z
+  LI         0.0037305487      0.0000000000      0.0388907700
+  H          3.5131957522      0.0000000000      0.0388976771
+  Charge: 0   Multiplicity: 1
+
+  ==> Cavity and CI space <==
+
+  Frequency: 0.11340840823407129 Eh   Coupling (a.u.): [0.0, 0.0, 0.05]
+  Photon basis: coherent   Maximum photon occupation: 1
+  Actual photon sectors: 2   Reference orbitals: CQED-RHF
+  Ignore coupling: False   Omit DSE: False
+  Active electrons/orbitals: 4 / 9   CI dimension: 2592
+  Requested roots: 3   Spin selection: singlet
+  Normalized state weights: [0.3333333333333333, 0.3333333333333333, 0.3333333333333333]
+
+  ==> Convergence <==
+
+  CI residuals and energy changes: Eh; orbital gradient: atomic units
+  Stage          Converged   Iterations   Stopping reason
+  scf            True        9            energy_and_density
+    density_rms: 2.271687396038114e-11
+    energy_change: 7.105427357601002e-15
+    thresholds: {'energy_Eh': 1e-10, 'density_rms': 1e-10}
+  ci_initial     True        12           residual_threshold
+    mean_residual: 3.010536394357482e-10
+    residuals: [4.081922215104905e-10, 2.3488992081013264e-10, 2.600787759866214e-10]
+    threshold: 1e-09
+  ci_final       True        8            residual_threshold
+    mean_residual: 8.101139030663337e-10
+    residuals: [6.410453668933418e-10, 8.516672558551922e-10, 9.376290864504678e-10]
+    threshold: 1e-09
+  casscf         True        3            energy
+    energy_change: -5.801581437481218e-12
+    gradient_norm: 1.4772736975926914e-06
+    thresholds: {'energy_Eh': 1e-11, 'gradient': 1e-07}
+  Macro       Average energy (Eh)       Delta E (Eh)     Lagged gradient
+      0           -7.938421936936      -7.938422e+00                None
+      1           -7.938421937033      -9.660273e-11 8.045606875192642e-06
+      2           -7.938421937039      -5.801581e-12 1.4772736975926914e-06
+
+  ==> Final state energies (converged) <==
+
+@ Reference energy                     -7.973592361130 Eh
+  State      Total energy (Eh)       Excitation (Eh)
+      0          -8.009937629344        0.000000000000
+      1          -7.902664101221        0.107273528122
+      2          -7.902664080552        0.107273548792
+@ State-average energy                 -7.938421937039 Eh
+
+  ==> Dipole matrix (e bohr; eigenvals states) <==
+
+  Bra   Ket               X                 Y                 Z
+    0     0     -2.3806648479     -0.0000000025     -0.0000053482
+    0     1     -0.9145997554     -0.0000000070     -0.4683668042
+    0     2      0.8187463981      0.0000000066     -0.5231980698
+    1     0      0.0000000000      0.0000000000      0.0000000000
+    1     1      0.1479959563      0.0000000187      0.7325005199
+    1     2     -1.8669343619     -0.0000000179      0.0812592305
+    2     0      0.0000000000      0.0000000000      0.0000000000
+    2     1      0.0000000000      0.0000000000      0.0000000000
+    2     2     -0.2662254277      0.0000000152     -0.7325034302
+
+  ==> Warnings, timing and files <==
+
+  Calculation time: 0.398 s
+  orbital_output_file: /Users/jfoley19/Code/qed-ci/examples/canonical/lih_mecp_orbitals.txt
+  output_file: /Users/jfoley19/Code/qed-ci/examples/canonical/lih_mecp_electronic.out
+  ==> End QED-CI report <==
+  Starting derivative for states 1, 1
+
+  ==> gradient_state_1 (Eh/bohr) <==
+
+  Atom               X                 Y                 Z
+      0     -0.0001198264     -0.0000000000      0.0026654275
+      1      0.0001198264      0.0000000000     -0.0026654275
+  Starting derivative for states 2, 2
+
+  ==> gradient_state_2 (Eh/bohr) <==
+
+  Atom               X                 Y                 Z
+      0     -0.0026330265     -0.0000000000     -0.0026654491
+      1      0.0026330265      0.0000000000      0.0026654491
+  Starting derivative for states 1, 2
+
+  ==> nac_1_2_etf (1/bohr) <==
+
+  Atom               X                 Y                 Z
+      0-548001.2728745672      0.0008324190  14305.2589651754
+      1 548001.2728745686     -0.0008324190 -14305.2589651753

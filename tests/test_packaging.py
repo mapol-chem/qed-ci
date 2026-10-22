@@ -107,7 +107,7 @@ def test_project_metadata_and_version():
         assert any(item.startswith(package) for item in requirements), package
     modules = metadata['tool']['setuptools']['py-modules']
     for module in ('helper_PFCI', 'helper_cqed_rhf', 'nuclear_grad',
-                   'orbital_sigma', 'trust_region_solvers'):
+                   'orbital_sigma', 'trust_region_solvers', 'mecp_optimizer'):
         assert module in modules
     assert metadata['build-system']['build-backend'] == 'setuptools.build_meta'
 
@@ -146,6 +146,7 @@ def test_wheel_is_platform_tagged_and_contains_native_library(tmp_path):
         ).decode()
     assert 'qed_ci/_native/cfunctions.so' in names
     assert 'helper_PFCI.py' in names and 'qed_ci/config.py' in names
+    assert 'mecp_optimizer.py' in names
     assert not any(name.endswith(('.o', '.npy', '.npz', '.dylib')) for name in names)
     assert not any(name.startswith(('src/', 'docs/', 'examples/', 'build/')) for name in names)
     requires_python = next(line for line in metadata.splitlines()
@@ -183,6 +184,16 @@ def test_source_distribution_contents_exclude_artifacts(tmp_path):
     for required in ('src/ci_solver.c', 'src/orbital.c', 'src/qed_blas.h',
                      'tools/build_backend.py', 'docs/installation.md',
                      'docs/configuration-and-output.md',
+                     'examples/canonical/README.md',
+                     'examples/canonical/qed_cis_energy.py',
+                     'examples/canonical/qed_fci_energy.py',
+                     'examples/canonical/qed_casci_energy.py',
+                     'examples/canonical/qed_casscf_energy.py',
+                     'examples/canonical/sa_qed_casscf_energy.py',
+                     'examples/canonical/sa_qed_casscf_energy_gradient.py',
+                     'examples/canonical/sa_qed_casscf_coupling_vectors.py',
+                     'examples/canonical/lih_polaritonic_mecp.py',
+                     'src/mecp_optimizer.py',
                      'examples/quickstart/methods.py', 'tests/test_packaging.py'):
         assert suffix + required in names, required
     assert not any(name.endswith(('.so', '.o', '.npy', '.npz', '.dylib')) for name in names)
