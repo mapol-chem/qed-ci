@@ -7,10 +7,9 @@ recursive-include examples/canonical *.py *.md
 include tests/test_packaging.py
 include tests/test_config.py tests/test_output.py tests/test_results.py tests/test_backend_build.py
 recursive-include docs/audit *.md *.json
-# Never ship environment-specific binaries, outputs, fixtures, or the separate C++ port.
+# Never ship environment-specific binaries, outputs, or fixtures.
 global-exclude *.so *.dylib *.o *.pyc *.npz *.npy *.log *.dat .DS_Store SOURCES.txt
 prune build
-prune src/cpp_casscf
 prune src/qed_ci/_native
 prune src/qed_ci.egg-info
 prune src/qed_ci/__pycache__

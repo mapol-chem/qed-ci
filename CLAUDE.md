@@ -4,10 +4,9 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Repository overview
 
-QED-CI simulates strongly correlated molecules coupled to quantized cavity modes (Pauli-Fierz Hamiltonian), supporting CQED-RHF, QED-FCI, QED-CASCI, and SA-QED-CASSCF (with analytic gradients). The repo contains two largely independent codebases:
+QED-CI simulates strongly correlated molecules coupled to quantized cavity modes (Pauli-Fierz Hamiltonian), supporting CQED-RHF, QED-FCI, QED-CASCI, and SA-QED-CASSCF (with analytic gradients). The package lives in **`src/`** (Python). A performance-critical CI/CASSCF backend is written in C (`ci_solver.c`/`orbital.c`) and called from Python via `ctypes`.
 
-1. **`src/` (Python, primary)** — the original, actively-used package. A performance-critical CI/CASSCF backend is written in C (`ci_solver.c`/`orbital.c`) and called from Python via `ctypes`.
-2. **`src/cpp_casscf/` (C++/Eigen, in progress)** — a standalone port of just the SA-QED-CASSCF orbital-optimization trust-region solvers from `helper_PFCI.py`, intended as a mechanically-portable intermediate step before a collaborator retargets this onto TAMM's distributed tensor API. It links against the *same* `ci_solver.c`/`orbital.c` sources (compiled from tracked source, not the prebuilt `cfunctions.so`).
+A C++/Eigen port of the SA-QED-CASSCF trust-region solvers (`src/cpp_casscf/`) was removed on 2026-10-22; that effort continues in a separate code base. Comments in `helper_PFCI.py` and the solver modules that cite it, and the `CPP_CASSCF_VALIDATION_DIR` dump hook, are leftovers from that work.
 
 The unused `origin_invariant_cqed_rhf/` demos were retired from the working tree;
 their recovery reference is in `docs/audit/retired-origin-demos.md`. Current
@@ -74,7 +73,7 @@ Install the package (`python -m pip install --no-build-isolation --no-deps -e .`
 
 ### Architecture
 - **`helper_PFCI.py`** (~15k lines) is the core of the package: `ctypes` bindings to the C backend (the `c_*`-prefixed wrapper functions near the top, e.g. `c_get_roots`, `c_build_sigma_reduced`, `c_full_transformation_macroiteration`), a `Determinant` class, and the large `PFHamiltonianGenerator` class (from line ~1360 to the end of the file): RHF/CQED-RHF setup, CI string/graph construction, RDM builds, and the SA-QED-CASSCF macro/microiteration skeleton. It is meant to be the SKELETON — the solvers it dispatches to live in the modules below.
-- **Solver and kernel modules**, split out of `helper_PFCI.py` (2026-09). Each takes either a `hess_x` closure or the generator itself as `ctx`; none subclasses it, and every method moved out survives on `PFHamiltonianGenerator` as a delegator so existing call sites and the C++ port's citations still resolve:
+- **Solver and kernel modules**, split out of `helper_PFCI.py` (2026-09). Each takes either a `hess_x` closure or the generator itself as `ctx`; none subclasses it, and every method moved out survives on `PFHamiltonianGenerator` as a delegator so existing call sites still resolve:
   - **`otr_trust_region.py`** — OpenTrustRegion's step (`QED_OTR_TR`).
   - **`lstrs_trust_region.py`** — the LSTRS beta-bisection (`solve_lstrs_microiteration`, `solve_lstrs_internal`), which had been written inline in four places, plus `more_sorensen_dense`.
   - **`davidson_augmented_hessian.py`** — the inner augmented-Hessian Davidson the bisection calls once per beta.
@@ -91,29 +90,3 @@ Install the package (`python -m pip install --no-build-isolation --no-deps -e .`
   **CIS is always solved by full diagonalization** (`np.linalg.eigh` on `H_PF`), as of 2026-09. The old direct path called the Python `Davidson`, which for CIS fell through to a dense `einsum` against that same already-resident `H_PF`. Verified to move no root by more than 2.3e-13 — `validation/cis_full_diagonalization_check.py`. Note the shape change for CIS callers: `CIeigs` is now `(H_dim,)` and `CIvecs` `(H_dim, H_dim)` rather than `davidson_roots`-wide.
 - `ci_solver.c`/`orbital.c` (+ `.h` headers) implement the CI Davidson solver, sigma-vector builds, RDM builds, and 4-index integral transformations; they use MKL (`cblas_*`/`LAPACKE_dsyev`) and OpenMP.
 - `PFHamiltonianGenerator`'s behavior is driven by an `options_dict` (basis, SCF convergence) and a `cavity_dict`/`cavity_options` dict controlling the level of theory (`ci_level`: `fci`/`cas`), cavity coupling (`omega_value`, `lambda_vector`, `number_of_photons`), and basis choice (`coherent_state_basis` vs. photon-number basis) — see `tests/test_helperPFCI.py` for representative option combinations across FCI/CAS, with/without cavity coupling.
-
-## C++ CASSCF port (`src/cpp_casscf/`)
-
-**Read `cpp_casscf/README.md` first.** It is the authoritative, actively-maintained status table (which classes are ported/tested, documented deviations from the Python, validation results) — do not assume this file reflects current state; the README does.
-
-### Build & test
-```sh
-cd src/cpp_casscf
-cmake -S . -B build -DCMAKE_PREFIX_PATH=/home/nvu12/miniforge3/envs/p4dev   # Eigen 3.4 lives in the p4dev conda env
-cmake --build build -j
-cd build && ctest --output-on-failure
-```
-Single test: `ctest -R <test_name>` (e.g. `ctest -R gltr_trust_region_solver`), or run the binary directly (e.g. `./build/test_bfgs_operator`).
-Needs MKL + an OpenMP runtime (`ci_solver.c`/`orbital.c` are compiled from source as part of this build). Set `MKLROOT` if it isn't auto-detected, and `-DCASSCF_C_BACKEND_DIR=/path/to/qed-ci/src` if `ci_solver.c`/`orbital.c` live somewhere other than one directory up.
-
-### Validating against real chemistry
-- `validation/dump_lih_case.py` (needs the `p4dev` conda env for psi4) runs a real Python CASSCF optimization with dump hooks enabled, capturing intermediate/final state to disk.
-- `tools/validate_against_python.cpp` and `tools/run_macroiteration_driver.cpp` replay those dumps through the C++ port; `validation/sweep.sh` and `validation/sweep_macroiterations.sh` run this across a fixed set of systems (the latter reads checked-in `dumps_macro_sweep_*/` fixtures — see its header comment before regenerating them).
-- `validation/compare_macroiterations.sh <case-name> [dump_lih_case.py args]` runs Python and C++ (QN enabled and disabled) side by side and tabulates the energy at each macroiteration.
-
-### Architecture
-- This is a **faithful, line-cited port** of the active Python code path, not a redesign — changes should cite `helper_PFCI.py:LINE` and flag any deviation from the Python explicitly (see existing doc comments for the established style).
-- `CasscfContext` (`casscf_context.hpp`) is the single struct bundling persistent cross-call orbital/integral state (mirrors Python's `self.H_spatial2`/`d_cmo`/`U_total`/`J`/`K`/`occupied_*`/etc.), passed by reference to and shared by every collaborator — there is no per-class private copy.
-- `MacroiterationDriver::run()` (`macroiteration_driver.hpp`) orchestrates 4 collaborator interfaces — `CiStateAverageSolver`, `InternalOptimizationStep`, `MicroiterationOptimizationStep`, `IntegralTransformer` — each with a real `Casscf*`-prefixed implementation.
-- Multiple trust-region subproblem solvers exist because the Python itself dispatches between them by problem structure (see `solver_selector.hpp` and the README's "Confirmed solver dispatch" section): `LstrsSolver`/`DavidsonDrivenLstrsSolver` (LSTRS-style beta-bisection, dense vs. Davidson-subspace), `GltrTrustRegionSolver` (Lanczos), `PcgTrustRegionSolver` (Steihaug-CG).
-- `casscf_c_backend` (the CMake target compiling `ci_solver.c`/`orbital.c`) is linked directly from tracked source rather than the prebuilt `cfunctions.so`, so the C++ port can't silently drift out of sync with an out-of-date build artifact.

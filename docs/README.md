@@ -22,9 +22,7 @@ gradients/derivative couplings, `CQEDConfig`, scoped output, and the version-1
 
 Not part of this stage: a Calculator dispatcher, cqed-scf reference
 wavefunctions, TAMM/distributed backends, support for additional reference
-types, and changes to scientific algorithms/defaults. The C++/TAMM tree under
-`src/cpp_casscf/` is separate and is not distributed in the Python wheel or
-source distribution.
+types, and changes to scientific algorithms/defaults.
 
 ## Recommended first path
 

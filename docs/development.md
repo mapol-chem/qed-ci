@@ -1,8 +1,6 @@
 # Developer setup and testing
 
-This page covers the Python package and its ctypes backend. The separate C++/TAMM
-tree under `src/cpp_casscf/` has its own CMake build and is not part of the Python
-package, wheel, or source distribution.
+This page covers the Python package and its ctypes backend.
 
 ## Environment and editable install
 

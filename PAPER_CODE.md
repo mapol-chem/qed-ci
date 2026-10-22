@@ -42,7 +42,7 @@ The calculation is a chain; each layer uses the one above it.
 | crossing search | `mecp_optimizer.py` (`MECPOptimizer`) | BFGS / trust-radius MECP optimizer on the Bearpark-Robb-Schlegel effective gradient.  Pure numpy, no quantum chemistry. |
 
 Not part of the method: `legacy_python_ci.py` (quarantined dead code, nothing imports it), `examples/` and the
-loose `src/*.py` scripts (old run scripts), `cpp_casscf/` (a C++ port in progress, not used by the paper),
+loose `src/*.py` scripts (old run scripts), and
 `validation/` (finite-difference and invariance checks; useful as references, see section 6).
 
 Map of `nuclear_grad.py` for porting: `compute_grad` (driver, line ~2396) -> `build_Y` (CI/orbital sources of the

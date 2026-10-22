@@ -126,7 +126,7 @@ print(job.result.energies["final"])  # Eh
 The public API loads the engine lazily. The documented legacy imports
 `helper_PFCI`, `helper_cqed_rhf`, and `nuclear_grad` are also installed as
 top-level modules, along with their internal support modules. Standalone scan
-drivers, quarantined `legacy_python_ci`, the C++ port, and the optional Psi4 DPD
+drivers, quarantined `legacy_python_ci`, and the optional Psi4 DPD
 shim are not distributed. Use `CQEDConfig(method="cis", ...)` rather than the
 historical `helper_cs_cqed_cis` module, which is absent from this checkout.
 

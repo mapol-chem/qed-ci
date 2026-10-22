@@ -197,8 +197,7 @@ def test_source_distribution_contents_exclude_artifacts(tmp_path):
                      'examples/quickstart/methods.py', 'tests/test_packaging.py'):
         assert suffix + required in names, required
     assert not any(name.endswith(('.so', '.o', '.npy', '.npz', '.dylib')) for name in names)
-    assert not any('/build/' in name or 'cpp_casscf' in name or 'egg-info' in name
-                   for name in names)
+    assert not any('/build/' in name or 'egg-info' in name for name in names)
     assert not any(name.endswith(('timer.dat', 'output.dat')) for name in names)
     # Check the artifact users receive, not only links in the full checkout.
     unpacked = tmp_path / 'unpacked'

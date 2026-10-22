@@ -18,8 +18,7 @@ mean field and ships a compiled CI/CASSCF kernel for the correlated solve.
   remain available for migration.
 
 Not implemented in this stage: a `Calculator` dispatcher, cqed-scf reference
-wavefunctions, a TAMM/distributed backend, and unrestricted references. The
-separate C++/TAMM work under `src/cpp_casscf/` is not part of the Python package.
+wavefunctions, a TAMM/distributed backend, and unrestricted references.
 
 ## Canonical examples
 

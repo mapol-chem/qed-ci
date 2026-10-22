@@ -4,7 +4,8 @@ src/__pycache__/*
 src/*.pyc
 src/*.swp
 src/output.dat
-src/timer.dat
+timer.dat
+examples/quickstart/lih.out
 src/.ipynb*
 /build/
 /src/cfunctions.so
