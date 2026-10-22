@@ -10,6 +10,7 @@ src/.ipynb*
 /build/
 /src/cfunctions.so
 **/__pycache__/
+.DS_Store
 .pytest_cache/
 
 /dist/
