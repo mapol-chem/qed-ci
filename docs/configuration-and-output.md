@@ -178,6 +178,9 @@ Exceptions are still raised to the caller. Python and native descriptors are
 routed together. Psi4 output is captured separately and included as a labelled
 section at the end of the scope, avoiding multiple writers overwriting a shared
 file. Normal output uses the Stage 4 report; debug/trace also retain engine diagnostics.
+When investigating unexpected behavior, use `verbosity="debug"`: normal mode
+intentionally discards unmarked engine text and is not a complete diagnostic log.
+Use `verbosity="trace"` when native iteration-level detail is also needed.
 
 Every scope restores stdout/stderr, Psi4's output destination (without truncating
 the caller's file), C verbosity, working directory, and scoped solver settings.
