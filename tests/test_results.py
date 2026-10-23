@@ -9,6 +9,9 @@ import pytest
 from qed_ci import CalculationResult
 
 
+SOURCE_ROOT = Path(__file__).resolve().parents[1] / 'src'
+
+
 def test_summary_unknown_and_detached():
     result = CalculationResult({}, {}, {}, {}, {'ci_final': {'converged': None}}, {})
     assert result.converged is None
@@ -33,6 +36,8 @@ config=CQEDConfig(method='casscf', active_electrons=2, active_orbitals=2,
 
 def run(code, tmp_path, **env):
     environment = dict(os.environ, OMP_NUM_THREADS='1', OPENBLAS_NUM_THREADS='1', MKL_NUM_THREADS='1')
+    environment['PYTHONPATH'] = os.pathsep.join(
+        filter(None, (str(SOURCE_ROOT), environment.get('PYTHONPATH'))))
     environment.update(env)
     process = subprocess.run([sys.executable, '-B', '-c', BASE + code], cwd=tmp_path,
                              env=environment, capture_output=True, text=True, timeout=180)

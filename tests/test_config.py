@@ -1,5 +1,6 @@
 """Configuration contract tests: deliberately independent of Psi4/native code."""
 import json
+import os
 from pathlib import Path
 import subprocess
 import sys
@@ -8,10 +9,21 @@ import pytest
 from qed_ci import CQEDConfig, CISolverOptions, CASSCFOptions
 
 
+SOURCE_ROOT = Path(__file__).resolve().parents[1] / 'src'
+
+
+def source_environment():
+    environment = dict(os.environ)
+    environment['PYTHONPATH'] = os.pathsep.join(
+        filter(None, (str(SOURCE_ROOT), environment.get('PYTHONPATH'))))
+    return environment
+
+
 def test_configuration_import_is_lightweight():
     subprocess.run([sys.executable, '-c',
         'import sys; from qed_ci import CQEDConfig; CQEDConfig(); '
-        'assert "psi4" not in sys.modules; assert "helper_PFCI" not in sys.modules'], check=True)
+        'assert "psi4" not in sys.modules; assert "helper_PFCI" not in sys.modules'],
+        env=source_environment(), check=True)
 
 
 @pytest.mark.parametrize('kwargs', [

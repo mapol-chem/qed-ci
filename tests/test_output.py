@@ -10,6 +10,17 @@ from qed_ci import CQEDConfig
 from qed_ci.output import calculation_output
 
 
+SOURCE_ROOT = Path(__file__).resolve().parents[1] / 'src'
+
+
+def source_environment(**updates):
+    environment = dict(os.environ)
+    environment['PYTHONPATH'] = os.pathsep.join(
+        filter(None, (str(SOURCE_ROOT), environment.get('PYTHONPATH'))))
+    environment.update(updates)
+    return environment
+
+
 def emit():
     print('python-output',flush=True)
     os.write(2,b'stderr-output\n')
@@ -76,7 +87,7 @@ assert not pathlib.Path('orbital2.out').exists()
 assert not pathlib.Path('orbital.out').exists()
 pathlib.Path('done.json').write_text(json.dumps(a.CIeigs.tolist()))
 '''
-    env=dict(os.environ,OMP_NUM_THREADS='1',OPENBLAS_NUM_THREADS='1',MKL_NUM_THREADS='1')
+    env=source_environment(OMP_NUM_THREADS='1',OPENBLAS_NUM_THREADS='1',MKL_NUM_THREADS='1')
     r=subprocess.run([sys.executable,'-B','-c',code],cwd=tmp_path,env=env,capture_output=True,text=True,timeout=120)
     assert r.returncode==0,r.stderr+r.stdout
     assert r.stdout==r.stderr==''
@@ -101,7 +112,7 @@ assert after.startswith(before)
 assert 'gradient_state_0 (Eh/bohr)' in after[len(before):]
 assert not Path('orbital2.out').exists()
 '''
-    env=dict(os.environ,OMP_NUM_THREADS='1',OPENBLAS_NUM_THREADS='1',MKL_NUM_THREADS='1')
+    env=source_environment(OMP_NUM_THREADS='1',OPENBLAS_NUM_THREADS='1',MKL_NUM_THREADS='1')
     r=subprocess.run([sys.executable,'-B','-c',code],cwd=tmp_path,env=env,capture_output=True,text=True,timeout=180)
     assert r.returncode==0,r.stdout+r.stderr+(tmp_path/'gradient.out').read_text()[-1500:]
     assert r.stdout==r.stderr==''
