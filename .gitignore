@@ -1,5 +1,4 @@
 .DS_Store
-*/.DS_Store
 data/*
 data.zip
 src/__pycache__/*
@@ -8,11 +7,11 @@ src/*.swp
 src/output.dat
 timer.dat
 examples/quickstart/lih.out
-src/.ipynb*
+.ipynb_checkpoints/
+psi.*.clean
 /build/
 /src/cfunctions.so
 **/__pycache__/
-.DS_Store
 .pytest_cache/
 
 /dist/
