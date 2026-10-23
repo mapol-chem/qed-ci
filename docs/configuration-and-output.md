@@ -186,13 +186,19 @@ are serialized, but unrelated threads' prints can also be redirected. Run concur
 calculations in separate processes. This is an explicit transitional limitation.
 
 New-config calculations keep unsolicited engine files in a private temporary
-working directory retained while the result object is alive. Supply a dedicated
-`scratch_directory` to retain it explicitly. Export/guess/report paths are resolved
-relative to the caller's directory when the config is created. No orbital export
-is requested by default. Do not use the report path as an orbital input/output
-path. Scratch isolation covers execution; Psi4's process-finalization `timer.dat`
-can still appear in the process's exit directory, outside a calculation scope.
-The package does not replace Psi4's global shutdown hooks.
+working directory retained while the returned calculation object is alive. The
+directory may be deleted when that object is released. Export, guess, and report
+paths configured through `CQEDConfig` are resolved relative to the caller's
+directory when the config is created, so those files remain outside the temporary
+workspace. In contrast, relative paths consumed directly by the legacy engine,
+including debug/dump paths from `QED_*` or `CPP_CASSCF_*` environment variables,
+are interpreted inside the workspace and may disappear with it. Use an absolute
+path for a dump that must survive, or supply a dedicated `scratch_directory` to
+retain the complete workspace explicitly. No orbital export is requested by
+default. Do not use the report path as an orbital input/output path. Scratch
+isolation covers execution; Psi4's process-finalization `timer.dat` can still
+appear in the process's exit directory, outside a calculation scope. The package
+does not replace Psi4's global shutdown hooks.
 
 ## Gradients and additional property calls
 
