@@ -1,0 +1,700 @@
+{
+  "source_revision": "f7d48c3968b89d779a472cc9feef96abde0a8de4",
+  "library_sha256": "98084925a3375c3cde93371925ed7786485b27b1f83ffe852d8a290c4430c9a4",
+  "environment": {
+    "OMP_NUM_THREADS": "1",
+    "OPENBLAS_NUM_THREADS": "1",
+    "MKL_NUM_THREADS": "1"
+  },
+  "note": "QED_* and CPP_CASSCF_* removed from child environment; fresh process per case. CIeigs and eigenvals both retained: legacy objects may keep initial and optimized energies separately.",
+  "runs": [
+    {
+      "case": "cis_zero",
+      "repeat": 1,
+      "status": 0,
+      "seconds": 3.7452207919996,
+      "files": [
+        {
+          "name": "arrays.npz",
+          "bytes": 10812,
+          "sha256": "ee61679736e6a212692b1bbf28b96a712a5ef936bfa501a0ef4af8768dc46cdd"
+        },
+        {
+          "name": "input.json",
+          "bytes": 522,
+          "sha256": "25acaa236c2177e62ee66aa3cd673b7412722b9e538f9d3ef54e9a47ff067739"
+        },
+        {
+          "name": "orbital2.out",
+          "bytes": 915,
+          "sha256": "97a6652b2a55f59a8bb8e5f3516053a24789dd8a840d137ad52fc402403491fc"
+        },
+        {
+          "name": "result.json",
+          "bytes": 1543,
+          "sha256": "49b0a403aa836adf84fca08e6b5ce9671ddae580a32e9fb1edf12d7a47f05fc9"
+        },
+        {
+          "name": "stderr.log",
+          "bytes": 884,
+          "sha256": "5670b64127510924e4676063b010a15044e20ac4418ddbc6e3784d75a655ba5d"
+        },
+        {
+          "name": "stdout.log",
+          "bytes": 10586,
+          "sha256": "c7b7cd546a6c86be5eadc6d108d0a8f7e835b169ef9c11e05b872c1a496c1ca9"
+        },
+        {
+          "name": "timer.dat",
+          "bytes": 5248,
+          "sha256": "19ad26b1c3c218e325768f45ac0f3c834f4af62da9fd1e00f7a589e16c304c8e"
+        }
+      ]
+    },
+    {
+      "case": "cis_zero",
+      "repeat": 2,
+      "status": 0,
+      "seconds": 3.7509920000011334,
+      "files": [
+        {
+          "name": "arrays.npz",
+          "bytes": 10812,
+          "sha256": "ee61679736e6a212692b1bbf28b96a712a5ef936bfa501a0ef4af8768dc46cdd"
+        },
+        {
+          "name": "input.json",
+          "bytes": 522,
+          "sha256": "25acaa236c2177e62ee66aa3cd673b7412722b9e538f9d3ef54e9a47ff067739"
+        },
+        {
+          "name": "orbital2.out",
+          "bytes": 915,
+          "sha256": "97a6652b2a55f59a8bb8e5f3516053a24789dd8a840d137ad52fc402403491fc"
+        },
+        {
+          "name": "result.json",
+          "bytes": 1543,
+          "sha256": "49b0a403aa836adf84fca08e6b5ce9671ddae580a32e9fb1edf12d7a47f05fc9"
+        },
+        {
+          "name": "stderr.log",
+          "bytes": 884,
+          "sha256": "231a6a66ba6b263be6e604f6275067fd1aa13bd0cf5d2e8174459a3406b9b36f"
+        },
+        {
+          "name": "stdout.log",
+          "bytes": 10592,
+          "sha256": "123d50787cd8cda79cd22bf92544d6409fd34b21f40191721132b4f8bc41dddb"
+        },
+        {
+          "name": "timer.dat",
+          "bytes": 5248,
+          "sha256": "12d09f54424bb6a30adadfc83e79884bd12e7c9e809bb45a91a5ef9f2b2f1a7c"
+        }
+      ]
+    },
+    {
+      "case": "cis_cavity",
+      "repeat": 1,
+      "status": 0,
+      "seconds": 3.763037540993537,
+      "files": [
+        {
+          "name": "arrays.npz",
+          "bytes": 10812,
+          "sha256": "5e1423e7d897a2ae159e04bbf0c1199c652033c5e0a35c1e62b83996785d6b85"
+        },
+        {
+          "name": "input.json",
+          "bytes": 524,
+          "sha256": "1fd2ff33b9d8f7df329c75f39d95905706697e871d0514e3d3bbc12cf6d32c45"
+        },
+        {
+          "name": "orbital2.out",
+          "bytes": 915,
+          "sha256": "44613946af546c885eb66e96dbdc831173d3e3ce1f4cdf6f939bf447466784aa"
+        },
+        {
+          "name": "result.json",
+          "bytes": 1542,
+          "sha256": "5bf9f9f77589eadc8a56003fd2ebd2a08cc97cc9abb241e54eaa916921b547c7"
+        },
+        {
+          "name": "stderr.log",
+          "bytes": 883,
+          "sha256": "4e3d492df82d1d1fc05fc91707a1eae3a8656e938edcf4db78d27864275b62bc"
+        },
+        {
+          "name": "stdout.log",
+          "bytes": 10685,
+          "sha256": "3ce2cae863d798b8589847540cc3d8c2642ee8e10bca337fd7ba012e156032ab"
+        },
+        {
+          "name": "timer.dat",
+          "bytes": 5248,
+          "sha256": "c6dc1175bf18896db5f7d90b5f680e6ee6a63229333a9b9e4bd605341249b255"
+        }
+      ]
+    },
+    {
+      "case": "cis_cavity",
+      "repeat": 2,
+      "status": 0,
+      "seconds": 3.7321542919962667,
+      "files": [
+        {
+          "name": "arrays.npz",
+          "bytes": 10812,
+          "sha256": "5e1423e7d897a2ae159e04bbf0c1199c652033c5e0a35c1e62b83996785d6b85"
+        },
+        {
+          "name": "input.json",
+          "bytes": 524,
+          "sha256": "1fd2ff33b9d8f7df329c75f39d95905706697e871d0514e3d3bbc12cf6d32c45"
+        },
+        {
+          "name": "orbital2.out",
+          "bytes": 915,
+          "sha256": "44613946af546c885eb66e96dbdc831173d3e3ce1f4cdf6f939bf447466784aa"
+        },
+        {
+          "name": "result.json",
+          "bytes": 1542,
+          "sha256": "5bf9f9f77589eadc8a56003fd2ebd2a08cc97cc9abb241e54eaa916921b547c7"
+        },
+        {
+          "name": "stderr.log",
+          "bytes": 884,
+          "sha256": "5f283363186b083bac28d7312db4c77a77bbaae931eb2b2ffee77fedf5faeb9f"
+        },
+        {
+          "name": "stdout.log",
+          "bytes": 10683,
+          "sha256": "7708fb789fd366fa67121fd136e30c98c60bb0b1b649780ae63a6b9bd243421d"
+        },
+        {
+          "name": "timer.dat",
+          "bytes": 5248,
+          "sha256": "186016618f1ac5a1e34ecc06305b9f1e39eb119b95dd750e80f08e46c4891987"
+        }
+      ]
+    },
+    {
+      "case": "fci_zero",
+      "repeat": 1,
+      "status": 0,
+      "seconds": 3.8979420000105165,
+      "files": [
+        {
+          "name": "arrays.npz",
+          "bytes": 20454,
+          "sha256": "28073beb1ead513dffdad0f29145ef49ce0a24d59027ecad10d9a7dfa59e6ddf"
+        },
+        {
+          "name": "input.json",
+          "bytes": 522,
+          "sha256": "07724447fe6fe67a1919e98e48adcbfaae48768f8e1ff2eadfe1b2b9a9fbafc7"
+        },
+        {
+          "name": "orbital2.out",
+          "bytes": 915,
+          "sha256": "97a6652b2a55f59a8bb8e5f3516053a24789dd8a840d137ad52fc402403491fc"
+        },
+        {
+          "name": "result.json",
+          "bytes": 865,
+          "sha256": "6e8ef8acec3b94c56c2e7cf9c9db4715a237ad36e477a67bc6414fb828a16738"
+        },
+        {
+          "name": "stderr.log",
+          "bytes": 884,
+          "sha256": "bd64f677bdae8cb56e2849773067f5677cc8f7535908d20210cf681ed22f3417"
+        },
+        {
+          "name": "stdout.log",
+          "bytes": 17433,
+          "sha256": "1b54beb7eb2e195ba5fce945c04aa55e71b4abe89912fbb59a1da330d72606c5"
+        },
+        {
+          "name": "timer.dat",
+          "bytes": 5248,
+          "sha256": "e3ab7997354808ea2fa67eace7a2aa368da16f64e062766bfbbfae5ba8c4c97e"
+        }
+      ]
+    },
+    {
+      "case": "fci_zero",
+      "repeat": 2,
+      "status": 0,
+      "seconds": 4.7520088750025025,
+      "files": [
+        {
+          "name": "arrays.npz",
+          "bytes": 20454,
+          "sha256": "28073beb1ead513dffdad0f29145ef49ce0a24d59027ecad10d9a7dfa59e6ddf"
+        },
+        {
+          "name": "input.json",
+          "bytes": 522,
+          "sha256": "07724447fe6fe67a1919e98e48adcbfaae48768f8e1ff2eadfe1b2b9a9fbafc7"
+        },
+        {
+          "name": "orbital2.out",
+          "bytes": 915,
+          "sha256": "97a6652b2a55f59a8bb8e5f3516053a24789dd8a840d137ad52fc402403491fc"
+        },
+        {
+          "name": "result.json",
+          "bytes": 865,
+          "sha256": "6e8ef8acec3b94c56c2e7cf9c9db4715a237ad36e477a67bc6414fb828a16738"
+        },
+        {
+          "name": "stderr.log",
+          "bytes": 884,
+          "sha256": "3399586ca8c1277d49bf7a20d83c534f6e3b9194333a21f92a12ffc2f6d0940c"
+        },
+        {
+          "name": "stdout.log",
+          "bytes": 17441,
+          "sha256": "af38c6bb121c881fab54167dbcb35aa2bbb46919571e10f97c828fdff0a9d592"
+        },
+        {
+          "name": "timer.dat",
+          "bytes": 5248,
+          "sha256": "07a659dcdaa89803e5613889b7faa7abbd3dd2f731a510c9dd806016dce52fcc"
+        }
+      ]
+    },
+    {
+      "case": "fci_cavity",
+      "repeat": 1,
+      "status": 0,
+      "seconds": 4.37268962500093,
+      "files": [
+        {
+          "name": "arrays.npz",
+          "bytes": 27654,
+          "sha256": "0f80bbb05601ac2c317117a6da1a1bf2e2d15581d323642d421bb216bd565945"
+        },
+        {
+          "name": "input.json",
+          "bytes": 524,
+          "sha256": "5ce6a4565a21ba8ce6ed276ac1100e260d5f61e86442b540eab1c62dc4fadadb"
+        },
+        {
+          "name": "orbital2.out",
+          "bytes": 915,
+          "sha256": "44613946af546c885eb66e96dbdc831173d3e3ce1f4cdf6f939bf447466784aa"
+        },
+        {
+          "name": "result.json",
+          "bytes": 865,
+          "sha256": "c7a52d7e9b4efc954bc70d46000f7c1c23d9fe655c21937c95abc2ae86ea3f5b"
+        },
+        {
+          "name": "stderr.log",
+          "bytes": 884,
+          "sha256": "4a0ed55d02ce0c317697b2524287381bb719e5c6fb60401ecacbc84ed31c5ff1"
+        },
+        {
+          "name": "stdout.log",
+          "bytes": 17886,
+          "sha256": "f06766b4603c70728695e8598327aaaf75d1f95e1b42b4dfa1706945cd240f11"
+        },
+        {
+          "name": "timer.dat",
+          "bytes": 5248,
+          "sha256": "03f4d0dff667e7b92962c57916f42700e5ffba004e157778b9470d0f6a452730"
+        }
+      ]
+    },
+    {
+      "case": "fci_cavity",
+      "repeat": 2,
+      "status": 0,
+      "seconds": 5.732632749990444,
+      "files": [
+        {
+          "name": "arrays.npz",
+          "bytes": 27654,
+          "sha256": "0f80bbb05601ac2c317117a6da1a1bf2e2d15581d323642d421bb216bd565945"
+        },
+        {
+          "name": "input.json",
+          "bytes": 524,
+          "sha256": "5ce6a4565a21ba8ce6ed276ac1100e260d5f61e86442b540eab1c62dc4fadadb"
+        },
+        {
+          "name": "orbital2.out",
+          "bytes": 915,
+          "sha256": "44613946af546c885eb66e96dbdc831173d3e3ce1f4cdf6f939bf447466784aa"
+        },
+        {
+          "name": "result.json",
+          "bytes": 865,
+          "sha256": "c7a52d7e9b4efc954bc70d46000f7c1c23d9fe655c21937c95abc2ae86ea3f5b"
+        },
+        {
+          "name": "stderr.log",
+          "bytes": 884,
+          "sha256": "e448e746124bfaa8bc7880718ab7a151c1ed839b8f4bed0b12beb17899dbeb47"
+        },
+        {
+          "name": "stdout.log",
+          "bytes": 17888,
+          "sha256": "6dda57cdb97d08a17a0ed0badb7b9ebeeeeb84ecb4ee0b65a7092175359f07bb"
+        },
+        {
+          "name": "timer.dat",
+          "bytes": 5248,
+          "sha256": "7e7a0a49f546823b52e4070514297a1299241378ccacd50e6d7044c513bdfd44"
+        }
+      ]
+    },
+    {
+      "case": "casci_zero",
+      "repeat": 1,
+      "status": 0,
+      "seconds": 3.5099012500140816,
+      "files": [
+        {
+          "name": "arrays.npz",
+          "bytes": 2630,
+          "sha256": "abd70faa10be92ca7492c01be19f442d19d058b9e75c30a260ef16b2a0469ce7"
+        },
+        {
+          "name": "input.json",
+          "bytes": 608,
+          "sha256": "943bb2da3c2e9e9d109ad85e594b30485c2feb4dcc02763de6ed9af6a419bf8b"
+        },
+        {
+          "name": "orbital2.out",
+          "bytes": 915,
+          "sha256": "97a6652b2a55f59a8bb8e5f3516053a24789dd8a840d137ad52fc402403491fc"
+        },
+        {
+          "name": "result.json",
+          "bytes": 856,
+          "sha256": "81796897152fd3f273d05e4e9baed6f3b3d84f4fd30ee4af6ad7e4dfffe2c90f"
+        },
+        {
+          "name": "stderr.log",
+          "bytes": 883,
+          "sha256": "327fee2b4a5ee9dacc2fe6cbfffdc98a0849973bbeb09368fe721fe8d6dc3282"
+        },
+        {
+          "name": "stdout.log",
+          "bytes": 13160,
+          "sha256": "a12deb4c2da4ac3b450a90d94ec33ebe1cab21a8d86a46ee39a9c138761f329c"
+        },
+        {
+          "name": "timer.dat",
+          "bytes": 5248,
+          "sha256": "7d0ab5ba82e3a8f4039f7aae916a8a277dae98be98aab60aa270a0ce99ab45d5"
+        }
+      ]
+    },
+    {
+      "case": "casci_zero",
+      "repeat": 2,
+      "status": 0,
+      "seconds": 4.074911708987202,
+      "files": [
+        {
+          "name": "arrays.npz",
+          "bytes": 2630,
+          "sha256": "abd70faa10be92ca7492c01be19f442d19d058b9e75c30a260ef16b2a0469ce7"
+        },
+        {
+          "name": "input.json",
+          "bytes": 608,
+          "sha256": "943bb2da3c2e9e9d109ad85e594b30485c2feb4dcc02763de6ed9af6a419bf8b"
+        },
+        {
+          "name": "orbital2.out",
+          "bytes": 915,
+          "sha256": "97a6652b2a55f59a8bb8e5f3516053a24789dd8a840d137ad52fc402403491fc"
+        },
+        {
+          "name": "result.json",
+          "bytes": 856,
+          "sha256": "81796897152fd3f273d05e4e9baed6f3b3d84f4fd30ee4af6ad7e4dfffe2c90f"
+        },
+        {
+          "name": "stderr.log",
+          "bytes": 884,
+          "sha256": "62ceb972a5679fd603379116fa69c779428ead16f74a023657f4bf91ca6ef0cf"
+        },
+        {
+          "name": "stdout.log",
+          "bytes": 13162,
+          "sha256": "1f2d55fae7e950c0e48eaf64da0249331c051392fd5f3fff317142965ffc553b"
+        },
+        {
+          "name": "timer.dat",
+          "bytes": 5248,
+          "sha256": "ba0251f343546ac15463c90988b4dd4b03759367f875465e8035d302182ecc07"
+        }
+      ]
+    },
+    {
+      "case": "casci_cavity",
+      "repeat": 1,
+      "status": 0,
+      "seconds": 3.9827562920108903,
+      "files": [
+        {
+          "name": "arrays.npz",
+          "bytes": 2758,
+          "sha256": "a74f297df1d02698452cc3219a9faa01f88aec791be7b162f902eb14384c0c1b"
+        },
+        {
+          "name": "input.json",
+          "bytes": 610,
+          "sha256": "029f15c57c08fa2b8f39577b9d7a1143cb90d29146aa36a0f96586f08b5766ad"
+        },
+        {
+          "name": "orbital2.out",
+          "bytes": 915,
+          "sha256": "44613946af546c885eb66e96dbdc831173d3e3ce1f4cdf6f939bf447466784aa"
+        },
+        {
+          "name": "result.json",
+          "bytes": 857,
+          "sha256": "336f4dd1e3455a50a44c06bf05bec0bc05870d7f430b5732ba7795f69b15a6cd"
+        },
+        {
+          "name": "stderr.log",
+          "bytes": 884,
+          "sha256": "88a604cd458f340a1adfd8bffdc299c8481db4f9907426c300d8686677b9546b"
+        },
+        {
+          "name": "stdout.log",
+          "bytes": 13931,
+          "sha256": "b1e9dc1b1c62db33584996883851398a7606cab4441e26fdb15a01dbc374c2e3"
+        },
+        {
+          "name": "timer.dat",
+          "bytes": 5248,
+          "sha256": "077ee3e240da0bab731259116f6f72274a16db2241f260b0ff7de55d87878905"
+        }
+      ]
+    },
+    {
+      "case": "casci_cavity",
+      "repeat": 2,
+      "status": 0,
+      "seconds": 3.8424762499926146,
+      "files": [
+        {
+          "name": "arrays.npz",
+          "bytes": 2758,
+          "sha256": "a74f297df1d02698452cc3219a9faa01f88aec791be7b162f902eb14384c0c1b"
+        },
+        {
+          "name": "input.json",
+          "bytes": 610,
+          "sha256": "029f15c57c08fa2b8f39577b9d7a1143cb90d29146aa36a0f96586f08b5766ad"
+        },
+        {
+          "name": "orbital2.out",
+          "bytes": 915,
+          "sha256": "44613946af546c885eb66e96dbdc831173d3e3ce1f4cdf6f939bf447466784aa"
+        },
+        {
+          "name": "result.json",
+          "bytes": 857,
+          "sha256": "336f4dd1e3455a50a44c06bf05bec0bc05870d7f430b5732ba7795f69b15a6cd"
+        },
+        {
+          "name": "stderr.log",
+          "bytes": 884,
+          "sha256": "f63c5f409331c656d2523b7bc83e2547fa6b613e988e15ccfa1d2ea04e9a92e4"
+        },
+        {
+          "name": "stdout.log",
+          "bytes": 13930,
+          "sha256": "47b297d3d59eea029e501d7dc521a1f09de47b497c1a77f7aaa3fba1c4c114f3"
+        },
+        {
+          "name": "timer.dat",
+          "bytes": 5248,
+          "sha256": "ca821fb24ac01410c9ee2971d680624d5d0460f2653ff57a2e86c1620b84225a"
+        }
+      ]
+    },
+    {
+      "case": "casscf_zero",
+      "repeat": 1,
+      "status": 0,
+      "seconds": 3.710217959000147,
+      "files": [
+        {
+          "name": "arrays.npz",
+          "bytes": 3426,
+          "sha256": "3c7c7ea35e448cfd56e3d63ead38d41efc6bb1ad75e556355b6c22a322645b52"
+        },
+        {
+          "name": "input.json",
+          "bytes": 607,
+          "sha256": "2eb89e2269e3ffde5853d82e37dc3eae4da804d1144b0a780bde64fa1bb97a15"
+        },
+        {
+          "name": "orbital2.out",
+          "bytes": 915,
+          "sha256": "97a6652b2a55f59a8bb8e5f3516053a24789dd8a840d137ad52fc402403491fc"
+        },
+        {
+          "name": "result.json",
+          "bytes": 1006,
+          "sha256": "7e2a55a7df9f0ebd43cd3bd411e07c28369e53794e2ef56271bfb8920a770644"
+        },
+        {
+          "name": "stderr.log",
+          "bytes": 884,
+          "sha256": "d1f36ca92bb1405be286661153b38697f4831910ee03dffba39dda8adc297d89"
+        },
+        {
+          "name": "stdout.log",
+          "bytes": 62838,
+          "sha256": "020b5edfcc1ec3af1998449f1f76020977c206035ea4febad8b93ad29b4ed321"
+        },
+        {
+          "name": "timer.dat",
+          "bytes": 5248,
+          "sha256": "b2af01c002cd565dc8ad186eaa206c8a16ff536f6dd84301b042eb296f429403"
+        }
+      ]
+    },
+    {
+      "case": "casscf_zero",
+      "repeat": 2,
+      "status": 0,
+      "seconds": 3.8780298750061775,
+      "files": [
+        {
+          "name": "arrays.npz",
+          "bytes": 3426,
+          "sha256": "7b9f439ea3e90568ff70a332d2fd20cb6ebc51a373448e30f5281ed73bc2f6c9"
+        },
+        {
+          "name": "input.json",
+          "bytes": 607,
+          "sha256": "2eb89e2269e3ffde5853d82e37dc3eae4da804d1144b0a780bde64fa1bb97a15"
+        },
+        {
+          "name": "orbital2.out",
+          "bytes": 915,
+          "sha256": "97a6652b2a55f59a8bb8e5f3516053a24789dd8a840d137ad52fc402403491fc"
+        },
+        {
+          "name": "result.json",
+          "bytes": 1005,
+          "sha256": "0c57ceb487ce120730fd7fafc3e80294734d4107022fd74e1cba3ae4beee255a"
+        },
+        {
+          "name": "stderr.log",
+          "bytes": 884,
+          "sha256": "04ec94b440dcb8e69d108bb99d3bbaa60bf976c98e8fa9203c902d6de6eccee1"
+        },
+        {
+          "name": "stdout.log",
+          "bytes": 62862,
+          "sha256": "157613ed001444418256556e76d213ed7d00b0d77bac48d65aab732ab343d5d3"
+        },
+        {
+          "name": "timer.dat",
+          "bytes": 5248,
+          "sha256": "a795796a1a7a6d0d1a35deb8b0651d05e08593fee46bbc6c397bb635e10a9e27"
+        }
+      ]
+    },
+    {
+      "case": "casscf_cavity",
+      "repeat": 1,
+      "status": 0,
+      "seconds": 3.886248250011704,
+      "files": [
+        {
+          "name": "arrays.npz",
+          "bytes": 3554,
+          "sha256": "b11b1cc7aab0e487d0de9acf041d20e23206456fa5e801da861c260344f5b44a"
+        },
+        {
+          "name": "input.json",
+          "bytes": 609,
+          "sha256": "968a678fec46575b3de5b5cc979f44f9d224b02d3dba4a6c0e3caa65f9ea4339"
+        },
+        {
+          "name": "orbital2.out",
+          "bytes": 915,
+          "sha256": "44613946af546c885eb66e96dbdc831173d3e3ce1f4cdf6f939bf447466784aa"
+        },
+        {
+          "name": "result.json",
+          "bytes": 1006,
+          "sha256": "11529ac7bb8ffe7fe6bb477e316a185198e25a5ded84d18ed6b5e51b845133db"
+        },
+        {
+          "name": "stderr.log",
+          "bytes": 884,
+          "sha256": "31a1f5077f44927878a7221fb053c680cca194f2e4c2794022671eda262c0925"
+        },
+        {
+          "name": "stdout.log",
+          "bytes": 116695,
+          "sha256": "5d39c7bae500df0309e298658a6b530f3ec04667829156dce843b70a51590100"
+        },
+        {
+          "name": "timer.dat",
+          "bytes": 5248,
+          "sha256": "e9dde6db8c10abcf5fef3cc8a8d5069bc3262589d39a62e972ff0fdecc29ffa0"
+        }
+      ]
+    },
+    {
+      "case": "casscf_cavity",
+      "repeat": 2,
+      "status": 0,
+      "seconds": 4.001739875006024,
+      "files": [
+        {
+          "name": "arrays.npz",
+          "bytes": 3554,
+          "sha256": "eeeb928a17c504e2404576f5155a812d2fb1e6c1b807c54d4316614941131bbc"
+        },
+        {
+          "name": "input.json",
+          "bytes": 609,
+          "sha256": "968a678fec46575b3de5b5cc979f44f9d224b02d3dba4a6c0e3caa65f9ea4339"
+        },
+        {
+          "name": "orbital2.out",
+          "bytes": 915,
+          "sha256": "44613946af546c885eb66e96dbdc831173d3e3ce1f4cdf6f939bf447466784aa"
+        },
+        {
+          "name": "result.json",
+          "bytes": 1006,
+          "sha256": "1640af58c824fd0699779436e07b71cf08d9119dce97206171ed78055ff9682d"
+        },
+        {
+          "name": "stderr.log",
+          "bytes": 884,
+          "sha256": "0f16639c0621d16583968445645039b93717785609f98d6d7b0f90c26a3b29b1"
+        },
+        {
+          "name": "stdout.log",
+          "bytes": 116661,
+          "sha256": "eea7856d5c1621b11b022efccbd9b8361fb9c24d809dc6ef3062a392348e77e5"
+        },
+        {
+          "name": "timer.dat",
+          "bytes": 5248,
+          "sha256": "1408062986270e182e26fe5c5864ba4b310499e0aa26508a72cf3cc31fa7e91e"
+        }
+      ]
+    }
+  ]
+}

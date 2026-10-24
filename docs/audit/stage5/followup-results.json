@@ -1,0 +1,91 @@
+{
+  "date": "2026-10-20",
+  "scope": "Focused follow-up to Stages 4 and 5: normal diagnostics, live progress and failure reports, source-distribution documentation.",
+  "scientific_algorithms_changed": false,
+  "native_sources_changed": false,
+  "provenance": {
+    "package": "qed-ci",
+    "package_version": "0.1.0",
+    "python": "3.13.13",
+    "numpy": "2.4.3",
+    "psi4": "1.10",
+    "backend": "/Users/jfoley19/Code/qed-ci/src/cfunctions.so",
+    "backend_sha256": "98084925a3375c3cde93371925ed7786485b27b1f83ffe852d8a290c4430c9a4"
+  },
+  "focused_tests": {
+    "passed": 57,
+    "failed": 0,
+    "xml": "/tmp/qed-ci-followup-focused.xml",
+    "final_warning_checks": {
+      "passed": 2,
+      "notes": "Rechecked after excluding numerical error-column headings and adding Psi4 warning coverage."
+    }
+  },
+  "packaging": {
+    "pytest_passed": 5,
+    "skipped": 1,
+    "deselected": 1,
+    "xml": "/tmp/qed-ci-followup-package.xml",
+    "source": "Unpacked source distribution, with isolated wheel and editable installations.",
+    "sdist_contract": "Passed separately through the test's supported setuptools fallback, including extracted documentation links.",
+    "environment_limitation": "The optional build frontend cannot check dependencies because the local environment lacks the wheel distribution; active environment was not modified.",
+    "skip_reason": "Quickstart source test ran before a native library was built in the unpacked archive.",
+    "documentation_relative_links": 36,
+    "configuration_fields": 48,
+    "linux_executed": false
+  },
+  "baseline_replay": {
+    "runs": 16,
+    "passed": 16,
+    "energy_tolerance": 1e-08,
+    "rdm_tolerance": 1e-07,
+    "max_energy_difference": 2.2364332608049153e-12,
+    "max_rdm_difference": 1.0351211249259862e-08,
+    "raw_directory": "/tmp/qed-ci-followup-replay"
+  },
+  "scientific_suite": {
+    "passed": 174,
+    "failed": 3,
+    "failures": [
+      {
+        "name": "test_lih_fci_sto3g_rdm_builds_no_cavity",
+        "message": "FileNotFoundError: [Errno 2] No such file or directory: '/home/jfoley19/UPDATED_QEDCI/qed-ci/src/tests/LiH_sto3g_fci_d1.npy'"
+      },
+      {
+        "name": "test_lih_fci_sto3g_rdm_builds_with_cavity",
+        "message": "AttributeError: 'PFHamiltonianGenerator' object has no attribute 'total_energy_from_rdms'"
+      },
+      {
+        "name": "test_numerical_nac_matches_analytic[5,2,1]",
+        "message": "AssertionError: expected 3 state pairs, got []\nassert 0 == 3\n +  where 0 = len({})"
+      }
+    ],
+    "xml": "/tmp/qed-ci-followup-science.xml",
+    "seconds": 409.68
+  },
+  "nac_followup": {
+    "test": "test_numerical_nac_matches_analytic[5,2,1]",
+    "unmodified_HEAD": "Failed with expected 3 state pairs, got []; same native library and environment.",
+    "changed_tree_isolated_rerun": "Passed without source or tolerance changes.",
+    "baseline_log": "/tmp/qed-ci-followup-baseline-nac.log",
+    "rerun_log": "/tmp/qed-ci-followup-rerun-nac.log"
+  },
+  "limitations": [
+    "Marked free-text diagnostics are a compatibility bridge; unmarked and multiline context is not reconstructed.",
+    "Normal native CI and canonical Psi4 SCF provide stage notices, not iteration rows.",
+    "Debug/trace retain existing engine text; marked free-text extraction applies to normal mode.",
+    "Process-global output/CWD routing and Psi4 finalization-file limitations remain.",
+    "Raw logs are temporary local files, not bundled evidence."
+  ],
+  "source_sha256": {
+    "MANIFEST.in": "14da2abab27b67ba526950c348948bd253eaae0bb2171247af0e49d22f144519",
+    "src/qed_ci/output.py": "a39f9feabe1b5bfd81aa6bc2a1e3df3eac8077730f011f80454fd7126d7689ab",
+    "src/qed_ci/report.py": "bf7299e4745862673415106157fc66c426be0d1a93c0aaaa612ccbbec04b895b",
+    "src/helper_PFCI.py": "956fc6bebde8f8a2c554ebcb28ce3b31907df144fb07dfe667581c613dc10b2e",
+    "src/helper_cqed_rhf.py": "bc38f891efa001d04ead6014b71b957ac3a72c00c22a5bd52d59d53fa771b5f0",
+    "src/nuclear_grad.py": "14a06b5ddb84f438cf689e986fe255a32c05d4ace722aef4315a46ae3fdc0778",
+    "tests/test_output.py": "885e05a27a6d8e68f555b166b8f0188059cddf8ad4d27108114f7366083d36a6",
+    "tests/test_results.py": "6000afa6383124024183c7fe740fda3701cb75bc42c010c9eb53296940de1e9c",
+    "tests/test_packaging.py": "0535ea0557cf657ce51e11e003fd281c7987affe6948e507021dbd987940a483"
+  }
+}

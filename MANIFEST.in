@@ -1,0 +1,18 @@
+include LICENSE README.md pyproject.toml setup.py
+include tools/build_backend.py tools/check_docs.py
+include src/ci_solver.c src/ci_solver.h src/orbital.c src/orbital.h src/qed_blas.h
+recursive-include docs *.md *.json
+recursive-include examples/quickstart *.py *.md
+recursive-include examples/canonical *.py *.md
+recursive-include tests *.py
+include tests/data/lstrs_hard_case_lih.npz
+recursive-include validation *.py *.sh *.md
+# Never ship environment-specific binaries or outputs. The one explicitly
+# included NPZ above is a stable scientific regression fixture.
+global-exclude *.so *.dylib *.o *.pyc *.npy *.log *.dat .DS_Store SOURCES.txt
+prune build
+prune src/qed_ci/_native
+prune src/qed_ci.egg-info
+prune src/qed_ci/__pycache__
+prune src/__pycache__
+prune tests/__pycache__

@@ -1,0 +1,208 @@
+{
+  "date": "2026-10-22",
+  "method": "SA-QED-CASSCF(4e,9o)/6-311G",
+  "target_roots": [
+    1,
+    2
+  ],
+  "spin": "singlet",
+  "lambda_au": [
+    0,
+    0,
+    0.05
+  ],
+  "omega_eV": 3.086,
+  "default_weights": [
+    1,
+    1,
+    1
+  ],
+  "initial_geometry": {
+    "r_angstrom": 1.88,
+    "theta_degrees": 85
+  },
+  "optimizer": "existing mecp_optimizer.MECPOptimizer, unchanged",
+  "optimizer_sha256": "f50a91ab03cee39a673c799e2f4350fc2ce14295c54a1c79235eafb7e33778a1",
+  "results": {
+    "three_root_average": {
+      "evaluations": 5,
+      "bond_length_angstrom": 1.857129008909759,
+      "theta_degrees": 89.99988472078567,
+      "final_gap_eV": 5.79452e-07,
+      "final_seam_norm": 5.676e-17,
+      "positions_angstrom": [
+        [
+          0.001974121179,
+          -0.0,
+          0.020580098964
+        ],
+        [
+          1.859103130085,
+          -0.0,
+          0.020583835511
+        ]
+      ],
+      "trace": [
+        {
+          "step": 0,
+          "r_angstrom": 1.88,
+          "theta_degrees": 85.0,
+          "mean_energy_Eh": -7.9025514119,
+          "gap_eV": 0.0526416,
+          "seam_norm": 9.307e-17
+        },
+        {
+          "step": 1,
+          "r_angstrom": 1.872172,
+          "theta_degrees": 86.704954,
+          "mean_energy_Eh": -7.9026019053,
+          "gap_eV": 0.0345615,
+          "seam_norm": 1.431e-17
+        },
+        {
+          "step": 2,
+          "r_angstrom": 1.863001,
+          "theta_degrees": 88.848455,
+          "mean_energy_Eh": -7.9026457559,
+          "gap_eV": 0.0124143,
+          "seam_norm": 4.308e-17
+        },
+        {
+          "step": 3,
+          "r_angstrom": 1.857409,
+          "theta_degrees": 89.991482,
+          "mean_energy_Eh": -7.9026633556,
+          "gap_eV": 0.000336683,
+          "seam_norm": 1.209e-14
+        },
+        {
+          "step": 4,
+          "r_angstrom": 1.857129,
+          "theta_degrees": 89.999885,
+          "mean_energy_Eh": -7.9026640909,
+          "gap_eV": 5.79452e-07,
+          "seam_norm": 5.676e-17
+        }
+      ]
+    },
+    "target_pair_average": {
+      "evaluations": 5,
+      "bond_length_angstrom": 1.8511264090900812,
+      "theta_degrees": 89.99998304485733,
+      "final_gap_eV": 3.79735e-07,
+      "final_seam_norm": 9.379e-17,
+      "positions_angstrom": [
+        [
+          0.002728071787,
+          -0.0,
+          0.020580499485
+        ],
+        [
+          1.853854480877,
+          -0.0,
+          0.020581047276
+        ]
+      ],
+      "trace": [
+        {
+          "step": 0,
+          "r_angstrom": 1.88,
+          "theta_degrees": 85.0,
+          "mean_energy_Eh": -7.9026055314,
+          "gap_eV": 0.0562776,
+          "seam_norm": 2.215e-14
+        },
+        {
+          "step": 1,
+          "r_angstrom": 1.870026,
+          "theta_degrees": 86.695444,
+          "mean_energy_Eh": -7.9026626533,
+          "gap_eV": 0.0369142,
+          "seam_norm": 1.812e-17
+        },
+        {
+          "step": 2,
+          "r_angstrom": 1.85831,
+          "theta_degrees": 88.831149,
+          "mean_energy_Eh": -7.9027111936,
+          "gap_eV": 0.0133521,
+          "seam_norm": 7.708e-17
+        },
+        {
+          "step": 3,
+          "r_angstrom": 1.851417,
+          "theta_degrees": 89.989305,
+          "mean_energy_Eh": -7.902729303,
+          "gap_eV": 0.00035392,
+          "seam_norm": 1.814e-15
+        },
+        {
+          "step": 4,
+          "r_angstrom": 1.851126,
+          "theta_degrees": 89.999983,
+          "mean_energy_Eh": -7.902729913,
+          "gap_eV": 3.79735e-07,
+          "seam_norm": 9.379e-17
+        }
+      ]
+    }
+  },
+  "neighborhood": [
+    {
+      "delta_r_angstrom": -0.002,
+      "delta_theta_degrees": 0,
+      "gap_Eh": 8.615591586824678e-05,
+      "energies": [
+        -8.0100033302193,
+        -7.902712223024392,
+        -7.902626067108524
+      ]
+    },
+    {
+      "delta_r_angstrom": 0.002,
+      "delta_theta_degrees": 0,
+      "gap_Eh": 8.611948717263118e-05,
+      "energies": [
+        -8.00987159612919,
+        -7.902701799513196,
+        -7.902615680026023
+      ]
+    },
+    {
+      "delta_r_angstrom": 0,
+      "delta_theta_degrees": -0.2,
+      "gap_Eh": 6.576263720159403e-05,
+      "energies": [
+        -8.009937639792147,
+        -7.902696913859469,
+        -7.902631151222267
+      ]
+    },
+    {
+      "delta_r_angstrom": 0,
+      "delta_theta_degrees": 0.2,
+      "gap_Eh": 6.568814656215949e-05,
+      "energies": [
+        -8.009937639745543,
+        -7.902696876759375,
+        -7.902631188612813
+      ]
+    }
+  ],
+  "validation": {
+    "electronic_convergence_checked": true,
+    "finite_derivatives_checked": true,
+    "source_and_wheel_contracts": "passed; optimizer included",
+    "documentation_links": 50,
+    "existing_optimizer_analytic_script": "completed successfully",
+    "scientific_engine_changed": false
+  },
+  "notes": [
+    "All three roots averaged equally reproduce the supplied approximately 1.857 A / 90 degree reference; target-pair averaging gives a different crossing.",
+    "Near-crossing tests used orbital reuse with explicit Psi4 restricted_docc=[0], active=[9], required by the existing orbital orthogonalizer.",
+    "A cold-start prototype was interrupted after slow progress; an orbital-reuse prototype without explicit Psi4 spaces exited unsuccessfully. Neither is the final example.",
+    "Four small displaced calculations converge and reopen the gap; these checks are not a complete topological or photon-character analysis.",
+    "The singular gap-divided coupling is not evaluated at an exactly zero gap.",
+    "No Linux execution in this validation."
+  ]
+}
