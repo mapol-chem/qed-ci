@@ -1,0 +1,153 @@
+{
+  "date": "2026-10-20",
+  "scope": "Stage 5 only; Stage 6 not started",
+  "package_version": "0.1.0",
+  "environment": {
+    "platform": "native arm64 macOS",
+    "python": "3.12.13",
+    "psi4": "1.10.1",
+    "numpy": "2.4.6",
+    "scipy": "1.17.1",
+    "numba": "0.66.0",
+    "backend_sha256": "63deb238c8a641e91195a72de1870a8a0b451decdf692763f29bc35eabc4a4ef",
+    "native_build": "Apple Clang with LP64 OpenBLAS and LLVM OpenMP",
+    "native_prefix": "selected with QED_BUILD_PREFIX because the validation Python environment did not contain the LAPACKE headers",
+    "linux_execution": "not executed; inspected only"
+  },
+  "packaging": {
+    "build_system": "setuptools.build_meta with setuptools>=77 and wheel",
+    "python_requires": ">=3.12,<3.14",
+    "wheel": {
+      "name": "qed_ci-0.1.0-py3-none-macosx_15_0_arm64.whl",
+      "sha256": "f20ceee4dfe921f9828ca3dafcaf40b1c334935a41e3a8225e19251881e2e452",
+      "tag": "py3-none-macosx_15_0_arm64",
+      "root_is_purelib": false,
+      "contains_native_library": true,
+      "contains_no_object_fixtures_or_run_outputs": true
+    },
+    "sdist": {
+      "name": "qed_ci-0.1.0.tar.gz",
+      "sha256": "133915489edc75bb85a3485926764eb8ceaf38b50fd50f88a554ea4e299353fa",
+      "contains_c_sources_and_build_helper": true,
+      "contains_user_docs_and_examples": true,
+      "contains_no_prebuilt_libraries_objects_fixtures_or_build_tree": true,
+      "installed_and_calculation_run": true
+    },
+    "installed_wheel": {
+      "imports_outside_checkout": ["qed_ci", "helper_PFCI", "helper_cqed_rhf", "nuclear_grad"],
+      "backend_path": "site-packages/qed_ci/_native/cfunctions.so",
+      "working_directory_independent": true,
+      "small_calculation": "CASCI LiH/STO-3G, 2 electrons in 2 orbitals, 2 roots, max_photons=0"
+    },
+    "editable_install": {
+      "source_import": true,
+      "backend_path": "src/qed_ci/_native/cfunctions.so",
+      "small_calculation": true
+    },
+    "source_distribution_install": {
+      "imports_outside_checkout": true,
+      "backend_path": "site-packages/qed_ci/_native/cfunctions.so",
+      "small_calculation": true
+    }
+  },
+  "documentation": {
+    "checker": "tools/check_docs.py",
+    "relative_links_checked": 36,
+    "configuration_fields_checked": 48,
+    "result": "passed",
+    "authoritative_option_reference": "docs/configuration-and-output.md",
+    "no_additional_documentation_framework_introduced": true
+  },
+  "examples": {
+    "source": "examples/quickstart",
+    "methods_run": ["cis", "fci", "casci", "casscf", "sa"],
+    "analytic_gradient_run": true,
+    "all_return_codes": 0,
+    "expected_result_fields_used": ["result.energies.final", "result.converged", "result.energies.state_average", "result.properties.gradient_state_0.value"]
+  },
+  "focused_tests": {
+    "tests": 65,
+    "passed": 65,
+    "failed": 0,
+    "skipped": 0,
+    "raw_xml": "build/stage5/focused.xml",
+    "includes_packaging_installs_and_documentation_checks": true
+  },
+  "scientific_suite": {
+    "tests": 177,
+    "passed": 175,
+    "failed": 2,
+    "skipped": 0,
+    "raw_xml": "build/stage5/scientific.xml",
+    "failures": [
+      {
+        "name": "test_lih_fci_sto3g_rdm_builds_no_cavity",
+        "message": "FileNotFoundError: hardcoded /home/jfoley19/UPDATED_QEDCI/.../LiH_sto3g_fci_d1.npy"
+      },
+      {
+        "name": "test_lih_fci_sto3g_rdm_builds_with_cavity",
+        "message": "AttributeError: PFHamiltonianGenerator has no attribute total_energy_from_rdms"
+      }
+    ],
+    "new_failures_attributable_to_stage5": 0,
+    "note": "The intermittent GLTR finite-difference scaling failure recorded in Stage 4 passed in this run; the two Stage 1 baseline failures remain unchanged."
+  },
+  "replay": {
+    "runs": 16,
+    "passed": 16,
+    "energy_tolerance": 1e-08,
+    "rdm_tolerance": 1e-07,
+    "max_energy_difference": 3.3786307085392764e-12,
+    "max_rdm_difference": 8.726800393432654e-09,
+    "raw_directory": "build/stage5/replay",
+    "package_version_in_replayed_results": "0.1.0"
+  },
+  "other_checks": [
+    "git diff --check passed after restoring tracked run artifacts modified by the scientific suite",
+    "pytest collection from the repository root found 242 tests using pyproject configuration",
+    "docs checker passed",
+    "source distribution and wheel listings inspected for prohibited artifacts",
+    "existing timer.dat user modification preserved"
+  ],
+  "compatibility": {
+    "legacy_imports_preserved": ["helper_PFCI", "helper_cqed_rhf", "nuclear_grad"],
+    "legacy_constructor_preserved": true,
+    "source_checkout_pythonpath_workflow_preserved": true,
+    "pytest_configuration": "moved from pytest.ini to [tool.pytest.ini_options] in pyproject.toml",
+    "public_calculate_entry_point": true,
+    "calculator_dispatcher_added": false,
+    "cqed_scf_integration_added": false,
+    "tamm_integration_added": false
+  },
+  "limitations": [
+    "Linux native build/install and calculation execution were not performed on available hardware; only inspection is claimed.",
+    "The wheel is a local platform/runtime wheel, not a portable binary release; BLAS, OpenMP, MKL, compiler runtime, and Psi4 are not bundled.",
+    "The macOS wheel tag reflects the validation host deployment target; no portable macOS wheel is claimed.",
+    "Dependency lower bounds are declarations; only the exact macOS validation versions were exercised for packaging.",
+    "Psi4 is supplied by conda, not pip, and is not declared as a pip dependency.",
+    "Editable installs copy a native library into src/qed_ci/_native; rerun the editable install after native changes.",
+    "Output/Psi4/CWD routing remains process-global, and Psi4 can write timer.dat at process finalization outside the calculation scope.",
+    "Existing tracked run artifacts are excluded from distributions but remain in the repository working tree."
+  ],
+  "source_sha256": {
+    "pyproject.toml": "905edce5289dc74097632e1f419673331dcee183e3e3162092d45941f59985fe",
+    "setup.py": "72f7e3e08590cf652e1696c38d76b688cce47a881376bd2e2f3c95bd560a7f85",
+    "MANIFEST.in": "e383c3758f7730299647f377235f40a12898614a167fc3d8531453988505fbc9",
+    "README.md": "6e52ff4474d0f1d6ac378c82a0bc278a0e1fe48f4383fbca8a7fd3db12e86008",
+    "docs/README.md": "b6a137b0b785b48990928530ddf298c61380bff43e8910edda3a47465d668c7c",
+    "docs/installation.md": "404339894eb92797d08b966edadedcd01b7ca89ca6db2bfb718296cbe9ba6d06",
+    "docs/methods.md": "e0ac2eb5848c4c6e5da872772c4d29f50bc1a79f73ed8db6a0a06d67e477bdf6",
+    "docs/development.md": "c3e02c0b84f37e064ca14f739d1e78552cf34506e10968d7d0f2a9464ff33eec",
+    "docs/configuration-and-output.md": "a3c575ac724d7370c25857699e1037f4c65f20e841124675c7534376c3aa2ce5",
+    "examples/quickstart/README.md": "d59d6f2032a2d5b9c5d89f599dcfa3ce20564eb84758c7d645df542c70ce0881",
+    "examples/quickstart/methods.py": "3e62f74096348fae53857d60e898771211061a3c80cb2463420153d3ca805c30",
+    "examples/quickstart/gradient.py": "e4a00a81529f159057462bb23f34a818eeaf44e5f6d938be0e2b3672453757c3",
+    "src/qed_ci/backend.py": "35b0d4feb1a59921bbf804e60372251168b73c905ff1e11ac33657b345ef0db0",
+    "src/qed_ci/__init__.py": "ec5737caa328368c57b27fac3f08aa05fa93c78359bdfef04173f1914c78ad81",
+    "src/qed_ci/results.py": "5f9980d4f569c61c1a4d3467de5a719611795858b8050a6c0ec023ce0b06fbf1",
+    "tools/check_docs.py": "775adefb481799a17a4e064896c1f3fef64bed9b45f417acb076222236f7c01c",
+    "tools/build_backend.py": "f29d71e2b3f787c344df3cbcb7f3187e46eaf5625d660ff6012f9bb47aba9003",
+    "tests/test_packaging.py": "caa99f29a5efcc7e2ae0853d6cf35102f78bff50a3470248d19cd67782f3979c",
+    "src/helper_PFCI.py": "8775235a134c6c09b119488de7a512ae5bd692864ad3864c4aa350f431e45ac1"
+  }
+}

@@ -1,0 +1,126 @@
+{
+  "legacy_suite": {
+    "tests": 177,
+    "passed": 175,
+    "failures": [
+      {
+        "name": "test_lih_fci_sto3g_rdm_builds_no_cavity",
+        "message": "FileNotFoundError: [Errno 2] No such file or directory: '/home/jfoley19/UPDATED_QEDCI/qed-ci/src/tests/LiH_sto3g_fci_d1.npy'"
+      },
+      {
+        "name": "test_lih_fci_sto3g_rdm_builds_with_cavity",
+        "message": "AttributeError: 'PFHamiltonianGenerator' object has no attribute 'total_energy_from_rdms'"
+      }
+    ],
+    "errors": 0
+  },
+  "new_tests": {
+    "tests": 41,
+    "passed": 41,
+    "failures": [],
+    "errors": 0
+  },
+  "replay": {
+    "runs": [
+      {
+        "case": "casci_cavity",
+        "api": "legacy",
+        "status": 0
+      },
+      {
+        "case": "casci_cavity",
+        "api": "config",
+        "status": 0
+      },
+      {
+        "case": "casci_zero",
+        "api": "legacy",
+        "status": 0
+      },
+      {
+        "case": "casci_zero",
+        "api": "config",
+        "status": 0
+      },
+      {
+        "case": "casscf_cavity",
+        "api": "legacy",
+        "status": 0
+      },
+      {
+        "case": "casscf_cavity",
+        "api": "config",
+        "status": 0
+      },
+      {
+        "case": "casscf_zero",
+        "api": "legacy",
+        "status": 0
+      },
+      {
+        "case": "casscf_zero",
+        "api": "config",
+        "status": 0
+      },
+      {
+        "case": "cis_cavity",
+        "api": "legacy",
+        "status": 0
+      },
+      {
+        "case": "cis_cavity",
+        "api": "config",
+        "status": 0
+      },
+      {
+        "case": "cis_zero",
+        "api": "legacy",
+        "status": 0
+      },
+      {
+        "case": "cis_zero",
+        "api": "config",
+        "status": 0
+      },
+      {
+        "case": "fci_cavity",
+        "api": "legacy",
+        "status": 0
+      },
+      {
+        "case": "fci_cavity",
+        "api": "config",
+        "status": 0
+      },
+      {
+        "case": "fci_zero",
+        "api": "legacy",
+        "status": 0
+      },
+      {
+        "case": "fci_zero",
+        "api": "config",
+        "status": 0
+      }
+    ],
+    "energy_tolerance": 1e-08,
+    "rdm_tolerance": 1e-07,
+    "max_energy_difference": 8.757439218243235e-13,
+    "max_rdm_difference": 6.1614894714123736e-09
+  },
+  "scope": "Stages 2 and 3; Stage 4 not started",
+  "limitations": [
+    "Other experimental environment controls retain their original timing semantics",
+    "Descriptor/Psi4/CWD routing is process-global; concurrent jobs require separate processes",
+    "Psi4 shutdown timer.dat is outside calculation scopes",
+    "Existing two baseline test failures unchanged"
+  ],
+  "source_sha256": {
+    "src/qed_ci/config.py": "dc5cb852fe7265512b817e5bf26e6fd7e6d07a7c90f232d31e2066b1342a74ec",
+    "src/qed_ci/__init__.py": "a4f3f0adbfdd2174382042e30b79b9938d3f9295b64861ad5f7c542e13914c4a",
+    "src/qed_ci/runtime.py": "e9919e8c88bdd526104d0004566cbd75899391173ff2c41aabf2c8d119eb24cd",
+    "src/qed_ci/output.py": "7deb842c56d305ab99f0a82ce3b844f34d9336dd59598662545b19e5f47fe7b0",
+    "src/helper_PFCI.py": "67cf9b1fbde27969377da5496adaa8c8212090102d41942402f650c9b7e8ab8c",
+    "src/nuclear_grad.py": "989bb2f7637f5786ed9f29526a0693c242e466e9eb5a7f26c65dc2668a284ccb"
+  }
+}

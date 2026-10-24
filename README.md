@@ -1,51 +1,119 @@
-# Utilizes the psi4numpy helper_CI machinery to do QED-CI up to QED-FCI.
+# QED-CI
 
-Within the src/ directory:
+QED-CI simulates strongly correlated molecules coupled to quantized cavity
+modes using the Pauli-Fierz Hamiltonian. It is built on Psi4 for the molecular
+mean field and ships a compiled CI/CASSCF kernel for the correlated solve.
 
-- helper_cqed_rhf.py provides restricted hartree fock for the Pauli-Fierz Hamiltonian in the coherent state basis
-- helper_cs_cqed_cis.py provides spin-adapted QED-CIS for Pauli-Fierz Hamiltonian in the coherent state basis
-- helper_PFCI.py provides helper functions for arbitrary CI with Pauli-Fierz Hamiltonian, should be adapted to build PF Hamiltonian
+## Implemented capabilities
 
-## Description
-Updates to helper_PFCI towards PF-CASCI calculations in different orbital bases
+- Restricted RHF and CQED-RHF references (coherent-state transformation for
+  CQED-RHF). UHF, ROHF, RKS/UKS, and unrestricted references are not supported.
+- QED-CIS, QED-FCI, QED-CASCI, and state-averaged QED-CASSCF.
+- Coherent-state and photon-number representations with documented limitations.
+- State averaging with unequal weights.
+- Analytic nuclear gradients and derivative couplings for supported
+  SA-QED-CASSCF calculations.
+- A validated `CQEDConfig` API, scoped quiet/file output, versioned structured
+  results, and conventional reports. The historical constructor and imports
+  remain available for migration.
 
-## Todos
-The generation of determinant lists has been broken up into two methods based on the appropriate CI Level.  Keywords for the CI level can now be passed to methods for building the PF Hamiltonian. A method for computing the 1RDM from the CIS determinants based on @nhv17 's  implementation has been added.
-  - [X]  generateCISDeterminants will create the CIS determinants and store associated information to attributes with "CIS" in the name, e.g. .CISdets"
-  - [X] .CISexcitation_index and .CISsingdetsign for use in computing the CIS 1RDM is computed by generateCISDeterminants
-  - [X] generateCASDeterminants will create the CASCI determinants and associated information to attributes with "CAS" in the name, e.g. .CASdets
-  - [X] buildConstantMatrices now takes a keyword for the CI Level (e.g. "CIS" or "CAS") and will build numDet x numDet constant matrices appropriately
-  - [X] generatePFHMatrix now takes a keyword for the CI level (e.g. "CIS" or "CAS") and will use the appropriate determinant list to build the CI matrix
-  - [X] calc1RDMfromCIS(c_vec) will compute the 1-RDM from a given CIS vector using the CISsingdetssign information determined by the generateCISDeterminants method.  It must be supplied a CIS vector for a desired state following diagonalizing H_CIS
-  - [ ] Code still needs to be added to form the natural orbitals
-  - [ ] Code still needs to be added to form the CASCI Hamiltonian in a desired orbital basis
-  - [ ] Unit tests for things like the trace of the 1RDMs and the 1e energy should be added sooner than later
+Not implemented in this stage: a `Calculator` dispatcher, cqed-scf reference
+wavefunctions, a TAMM/distributed backend, and unrestricted references.
 
+## Canonical examples
 
-## Getting Started
-**0.  Clone repo** 
+Start with the [canonical Python examples](examples/canonical/README.md) for
+QED-CIS, QED-FCI, QED-CASCI, ground-state and state-averaged QED-CASSCF, and
+analytic gradients. Each script sets up one calculation and prints its key results.
 
-**1.  Install psi4** 
+## Requirements
 
-Using Conda (easy option):
-- conda install psi4 python=3.10 -c conda-forge
+- Python 3.12 or 3.13. Stage 5 packaging validation used Python 3.12.13 on native
+  arm64 macOS; Stage 1 also observed Python 3.13.
+- Psi4 1.10 (installed from conda, not from pip).
+- NumPy, SciPy, Numba (with llvmlite), and psutil.
+- Native build dependencies:
+  - macOS: Apple Clang, LP64 OpenBLAS/LAPACKE, and LLVM OpenMP.
+  - Linux: Intel oneAPI/HPC kit with `icx`, MKL, and Intel OpenMP.
+- Linux execution and Windows are not validated by Stage 5. Windows is
+  unsupported.
 
-or
+Exact tested versions and platform notes are in
+[Installation and troubleshooting](docs/installation.md).
 
-From source (harder option):
-- Follow directions [here](https://psicode.org/installs/v191/)
+## Install
 
-**2. Install numba and pytest:**
-- pip install numba pytest
+Create or activate a compatible Psi4 environment, then install the package into
+it. On macOS with Miniforge:
 
-Note other python dependencies should be installed if you used the Conda option.  Other dependencies include numpy and scipy.
+```sh
+conda create -n qed-ci -c conda-forge python=3.12 psi4=1.10.1 numpy scipy numba psutil openblas liblapacke llvm-openmp pip setuptools wheel
+conda activate qed-ci
+python -m pip install --no-build-isolation --no-deps .
+```
 
-**3. Install intel oneapi**
+For development, replace `.` with `-e .`. If the compiler headers and libraries
+are in a different prefix from the Python environment, set
+`QED_BUILD_PREFIX=/path/to/prefix` before installing. The build uses
+`tools/build_backend.py`, records provenance under `build/backend/`, and does not
+require `PYTHONPATH`. See [installation](docs/installation.md) for Linux, source
+distributions, wheel limits, and troubleshooting.
 
-**4. Compile the code with intel compiler:**
-- icx -fPIC -Wall -Wextra -qopenmp -c ci_solver.c orbital.c 
-- icx -shared -o cfunctions.so ci_solver.o orbital.o
+The historical source-checkout workflow still works:
 
-**5. Run tests** 
-- From the main repository directory (qed-ci), move into the source directory with `cd src/`
-- run tests with `pytest -v`
+```sh
+python tools/build_backend.py
+export PYTHONPATH="$PWD/src${PYTHONPATH:+:$PYTHONPATH}"
+```
+
+An installed or editable package takes precedence in the documented install
+workflow. Do not mix a source `PYTHONPATH` with an installed wheel while
+diagnosing native-loading problems.
+
+## First calculation
+
+```python
+from qed_ci import CQEDConfig, CISolverOptions, calculate
+
+config = CQEDConfig(
+    method="casci",
+    active_electrons=2,
+    active_orbitals=2,
+    n_roots=2,
+    max_photons=0,                  # fixed-orbital calculation without cavity photons
+    psi4_options={"basis": "sto-3g",
+                  "e_convergence": 1e-10, "d_convergence": 1e-10},
+    ci_solver=CISolverOptions(threshold=1e-9),
+    quiet=True,
+)
+job = calculate("Li\nH 1 1.4\nsymmetry c1", config)
+print(job.result.energies["final"])   # Eh
+print(job.result.converged)
+```
+
+`calculate()` returns the established calculation object with a new
+`result: qed_ci.CalculationResult` attribute. Large CI/RDM tensors remain on the
+calculation object. See the [user guide](docs/README.md) for the result schema.
+
+## Documentation
+
+- [User guide index](docs/README.md)
+- [Installation and troubleshooting](docs/installation.md)
+- [Supported methods and limitations](docs/methods.md)
+- [Configuration, output, results, and migration](docs/configuration-and-output.md)
+- [Runnable examples](examples/quickstart/README.md)
+- [Developer setup and testing](docs/development.md)
+
+## Tests
+
+```sh
+python -m pytest -q
+```
+
+Packaging, documentation, and isolated-install checks live in
+`tests/test_packaging.py`; see [development](docs/development.md) for the
+scientific suite, native rebuilds, and known baseline failures.
+
+## License
+
+GPL-3.0-only. See [LICENSE](LICENSE).
