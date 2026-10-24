@@ -55,5 +55,5 @@ py-modules = [
 ]
 
 [tool.pytest.ini_options]
-testpaths = ["tests", "src/tests"]
+testpaths = ["tests"]
 pythonpath = ["src"]

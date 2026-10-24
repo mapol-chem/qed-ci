@@ -148,7 +148,9 @@ def test_wheel_is_platform_tagged_and_contains_native_library(tmp_path):
     assert 'helper_PFCI.py' in names and 'qed_ci/config.py' in names
     assert 'mecp_optimizer.py' in names
     assert not any(name.endswith(('.o', '.npy', '.npz', '.dylib')) for name in names)
-    assert not any(name.startswith(('src/', 'docs/', 'examples/', 'build/')) for name in names)
+    assert not any(name.startswith(
+        ('src/', 'docs/', 'examples/', 'tests/', 'validation/', 'build/')
+    ) for name in names)
     requires_python = next(line for line in metadata.splitlines()
                            if line.startswith('Requires-Python:'))
     assert '3.12' in requires_python and '3.14' in requires_python
@@ -164,7 +166,9 @@ def test_source_distribution_contents_exclude_artifacts(tmp_path):
     output = tmp_path / 'sdist'
     output.mkdir()
     spec = importlib.util.find_spec('build')
-    if spec is not None and spec.origin is not None:
+    wheel_spec = importlib.util.find_spec('wheel')
+    if (spec is not None and spec.origin is not None and
+            wheel_spec is not None and wheel_spec.origin is not None):
         command = [sys.executable, '-m', 'build', '--sdist', '--no-isolation',
                    '--outdir', str(output), str(ROOT)]
         cwd = tmp_path
@@ -187,6 +191,7 @@ def test_source_distribution_contents_exclude_artifacts(tmp_path):
                      'examples/canonical/README.md',
                      'examples/canonical/qed_cis_energy.py',
                      'examples/canonical/qed_fci_energy.py',
+                     'examples/canonical/lih_polariton_surface_scan.py',
                      'examples/canonical/qed_casci_energy.py',
                      'examples/canonical/qed_casscf_energy.py',
                      'examples/canonical/sa_qed_casscf_energy.py',
@@ -194,9 +199,17 @@ def test_source_distribution_contents_exclude_artifacts(tmp_path):
                      'examples/canonical/sa_qed_casscf_coupling_vectors.py',
                      'examples/canonical/lih_polaritonic_mecp.py',
                      'src/mecp_optimizer.py',
-                     'examples/quickstart/methods.py', 'tests/test_packaging.py'):
+                     'examples/quickstart/methods.py', 'tests/test_packaging.py',
+                     'tests/test_helperPFCI.py',
+                     'tests/data/lstrs_hard_case_lih.npz',
+                     'validation/numerical_nac_check.py',
+                     'validation/benchmarks/c10h8_casscf.py',
+                     'validation/drivers/ethylene_mecp_scan.py',
+                     'docs/theory/numerical_nac_method.md'):
         assert suffix + required in names, required
-    assert not any(name.endswith(('.so', '.o', '.npy', '.npz', '.dylib')) for name in names)
+    assert not any(name.endswith(('.so', '.o', '.npy', '.dylib')) for name in names)
+    npz_files = [name for name in names if name.endswith('.npz')]
+    assert npz_files == [suffix + 'tests/data/lstrs_hard_case_lih.npz']
     assert not any('/build/' in name or 'egg-info' in name for name in names)
     assert not any(name.endswith(('timer.dat', 'output.dat')) for name in names)
     # Check the artifact users receive, not only links in the full checkout.

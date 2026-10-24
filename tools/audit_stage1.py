@@ -93,7 +93,7 @@ def main():
                     data['cavity_options'].append(record(node.lineno, ast.unparse(node), name=test.left.value,
                         default_branch=[ast.unparse(n) for n in node.orelse],
                         note='Default may be conditional or overridden later; expression is authoritative.'))
-    for path in sorted((ROOT / 'src/tests').glob('test_*.py')):
+    for path in sorted((ROOT / 'tests').glob('test_*.py')):
         tree = ast.parse(path.read_text())
         data['tests'].append(dict(file=str(path.relative_to(ROOT)),
             functions=[n.name for n in ast.walk(tree) if isinstance(n, ast.FunctionDef) and n.name.startswith('test_')]))

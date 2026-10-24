@@ -15,6 +15,7 @@ are not convergence recommendations for production calculations.
 |---|---|
 | [qed_cis_energy.py](qed_cis_energy.py) | QED-CIS total and excitation energies for the first two states |
 | [qed_fci_energy.py](qed_fci_energy.py) | QED-FCI in the full molecular orbital space, within the chosen photon cutoff |
+| [lih_polariton_surface_scan.py](lih_polariton_surface_scan.py) | Three LiH QED-FCI polaritonic surfaces over a bond-length scan, with archival JSON and plot-ready CSV output |
 | [qed_casci_energy.py](qed_casci_energy.py) | QED-CASCI(2,2) with fixed CQED-RHF orbitals |
 | [qed_casscf_energy.py](qed_casscf_energy.py) | Ground-state QED-CASSCF(2,2); two roots calculated, weights `(1, 0)` for orbital optimization |
 | [sa_qed_casscf_energy.py](sa_qed_casscf_energy.py) | Equal-weight two-state SA-QED-CASSCF(2,2), individual and weighted energies |
@@ -44,6 +45,21 @@ roots. Inspect the printed convergence status and warnings before using results.
 CIS computes a full spectrum internally; the example prints only two states.
 Psi4 can still create `timer.dat` at process exit; run in a scratch directory if
 you want to keep example folders free of run artifacts.
+
+The LiH surface scan is deliberately more substantial than the single-point
+examples. It uses QED-FCI/6-311G at ten bond lengths from 1.0 to 3.0 angstrom,
+with three singlet roots, a z-polarized coupling of 0.05 atomic units and cavity
+frequency 0.12086 Eh. Run it from the directory where you want its output:
+
+```sh
+python /path/to/qed-ci/examples/canonical/lih_polariton_surface_scan.py
+```
+
+It writes `lih_qed_fci_scan.json` and `lih_qed_fci_scan.csv` after every
+completed geometry. The JSON contains the full configuration and versioned
+structured result for each point; the CSV has one row per geometry and state
+for direct plotting. Root indices are energy ordered and this compact example
+does not perform overlap-based state tracking through crossings.
 
 The coupling-vector example uses `deriv_type="full"`, including the CSF/overlap
 contribution, in the engine's working photon frame. Its derivative coupling has

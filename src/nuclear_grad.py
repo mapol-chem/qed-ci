@@ -140,7 +140,7 @@ _QED_YZ_SIGN = float(os.environ.get("QED_YZ_SIGN", "1"))
 # the existing kappa / X^HF machinery supplies its orbital response.
 #
 # Derivation, conventions and the finite-difference validation:
-#   validation/NUMERICAL_NAC_METHOD.md  (appendices A and C)
+#   docs/theory/numerical_nac_method.md  (appendices A and C)
 _QED_PHOTON_FRAME = os.environ.get("QED_PHOTON_FRAME", "0") not in ("0", "", "false")
 
 # Degeneracy tolerance for the CI-response null space, Hartree.  The MECP runs

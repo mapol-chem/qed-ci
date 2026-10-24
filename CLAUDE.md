@@ -67,7 +67,9 @@ It links nothing — psi4's symbols are resolved at `dlopen` time out of the alr
 ```sh
 python -m pytest -v
 ```
-Single test: `pytest -v tests/test_helperPFCI.py::test_name`. Note: `test_lih_fci_sto3g_rdm_builds_no_cavity` loads reference `.npy` files via a hardcoded absolute path (`/home/jfoley19/UPDATED_QEDCI/qed-ci/src/tests/...`) rather than a relative one — it will fail with `FileNotFoundError` unless that exact path exists.
+Single test: `pytest -v tests/test_helperPFCI.py::test_name`. Contract and
+scientific tests are consolidated under `tests/`; the scientific suite and its
+stable trust-region fixture ship in the source distribution but not the wheel.
 
 Install the package (`python -m pip install --no-build-isolation --no-deps -e .`) for imports from any directory; the public API and documented legacy helpers no longer need `PYTHONPATH`. The historical source-checkout build (`python tools/build_backend.py`, `PYTHONPATH=src`) remains supported for compatibility. See `docs/installation.md` and `src/README.md`.
 

@@ -53,14 +53,19 @@ installed and editable packages prefer `_native`.
 From the repository root:
 
 ```sh
-python -m pytest -q                         # tests/ and src/tests/
+python -m pytest -q                         # contract and scientific tests
 python tools/check_docs.py                  # links and documented options
 python -m pytest tests/test_packaging.py -q # metadata, sdist/wheel, installs, examples
 ```
 
-The scientific suite under `src/tests/` is the numerical correctness check. The
-focused contract tests are `tests/test_config.py`, `tests/test_output.py`, and
-`tests/test_results.py`. Stage 1 baseline replay is:
+The top-level `tests/` directory contains both focused interface tests and the
+scientific numerical correctness suite. The latter deliberately ships in the
+source distribution: QED electronic-structure methods do not yet have a single
+widely accepted reference package, so the reference comparisons and regression
+fixtures are part of the reproducibility record. Tests are not installed into
+the runtime package or included in wheels. The focused contract tests are
+`tests/test_config.py`, `tests/test_output.py`, and `tests/test_results.py`.
+Stage 1 baseline replay is:
 
 ```sh
 python tools/validate_stage23.py --output build/stage23/replay-new
@@ -72,13 +77,23 @@ Use one thread for reproducible comparisons:
 OMP_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 MKL_NUM_THREADS=1 python -m pytest -q
 ```
 
-Known baseline failures are recorded in
-[Stage 1](audit/stage1/README.md) and [Stage 4](audit/stage4/README.md). They
-include a test with a hardcoded Linux fixture path and a test requesting the
-absent `total_energy_from_rdms` attribute. One finite-difference scaling test has
-shown an intermittent GLTR tridiagonal-solver failure that passed an unchanged
-isolated rerun. Do not repair these by weakening scientific assertions or
-changing tolerances as part of packaging work.
+Known historical baseline failures are recorded in
+[Stage 1](audit/stage1/README.md) and [Stage 4](audit/stage4/README.md). The two
+tests for an unfinished public FCI/CAS RDM contract and their `.npy` references
+were retired when the suites were consolidated. One finite-difference scaling
+test has shown an intermittent GLTR tridiagonal-solver failure that passed an
+unchanged isolated rerun. Do not repair scientific failures by weakening
+assertions or changing tolerances as part of packaging work.
+
+## Deferred RDM API
+
+QED-CI still builds internal density matrices needed by its numerical kernels,
+but it does not yet promise a stable public RDM result contract. Future work
+should define per-root one- and two-particle RDM access, orbital/spin indexing
+and normalization conventions, photon-sector handling, energy reconstruction,
+serialization boundaries, focused regression tests, and canonical examples.
+Until that contract exists, large RDM tensors remain on calculation objects and
+are not part of `CalculationResult`.
 
 Packaging tests create isolated temporary virtual environments with
 `--system-site-packages` to reuse Psi4/SciPy and install the wheel or editable

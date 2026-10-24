@@ -201,7 +201,7 @@ if _QED_RANDOM_SEED != "":
 # Davidson iterations; if it does not, the loop cannot exit however small the
 # internal-internal orbital gradient becomes, and runs all 20 iterations.
 #
-# MEASURED IN MOLPRO (src/examples/c10h8.out, 10 "Starting internal optimizaton"
+# MEASURED IN MOLPRO (historical c10h8.out, 10 "Starting internal optimizaton"
 # blocks; NOTE every row of those blocks has 10 fields -- the 8-field first row
 # hazard applies to the MICRO-ITERATION blocks, not these):
 #   * CI RES / ORB GRAD at the SAME step has median 0.46 over the well-behaved
