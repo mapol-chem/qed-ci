@@ -313,6 +313,9 @@ the calculation under their existing names/layouts. Small energy/geometry lists
 and property arrays are copied. Gradients are (natom, 3) in Eh/bohr under
 `gradient_state_<i>`; NACs are (natom, 3) in 1/bohr under
 `nac_<i>_<j>_<full|etf>`, with the existing phase and derivative conventions.
+Each NAC calculation also stores its energy-scaled coupling in Eh/bohr under
+`h0_<i>_<j>_<full|etf>`. This is `(E_j - E_i) * NAC`; the property records the
+energy gap used, and the ETF form is the branching-plane vector used for MECP.
 Each property survives subsequent calls for other states. Dipoles are
 (nroot, nroot, 3) in e bohr, indexed by bra, ket, xyz; their `energy_source`
 identifies initial versus optimized states. A capped CASSCF can still have only

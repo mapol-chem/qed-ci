@@ -2414,11 +2414,22 @@ class nuclear_grad(PFHamiltonianGenerator):
             except Exception as exc:
                 print(f'  Derivative failed: {type(exc).__name__}: {exc}', flush=True)
                 raise
-            key = f'gradient_state_{state1}' if state1 == state2 else f'nac_{state1}_{state2}_{deriv_type or "etf"}'
+            convention = deriv_type or "etf"
+            key = (f'gradient_state_{state1}' if state1 == state2 else
+                   f'nac_{state1}_{state2}_{convention}')
             array = self.total_gradient if state1 == state2 else self.h_vector
             prop = dict(states=[state1, state2], units='Eh/bohr' if state1 == state2 else '1/bohr',
                         value=array.reshape(self.n_atoms, 3).copy(), deriv_type=deriv_type)
             self.result.properties[key] = prop
+            if state1 != state2:
+                energy_gap = float(self.eigenvals[state2] - self.eigenvals[state1])
+                h0_key = f'h0_{state1}_{state2}_{convention}'
+                self.result.properties[h0_key] = dict(
+                    states=[state1, state2], units='Eh/bohr',
+                    value=self.h0.reshape(self.n_atoms, 3).copy(),
+                    deriv_type=deriv_type, energy_gap=energy_gap,
+                    energy_gap_units='Eh',
+                    definition='nac * (E[state2] - E[state1])')
             self.result.timings[key] = time.perf_counter()-started
             property_report(key, prop)
             return value

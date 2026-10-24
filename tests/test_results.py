@@ -125,6 +125,13 @@ np.testing.assert_array_equal(obj.total_gradient.reshape(-1,3),obj.result.proper
 obj.compute_grad(0,1,deriv_type='full')
 np.testing.assert_array_equal(obj.h_vector.reshape(-1,3),obj.result.properties['nac_0_1_full']['value'])
 assert obj.result.properties['nac_0_1_full']['units']=='1/bohr'
+h0=obj.result.properties['h0_0_1_full']
+np.testing.assert_array_equal(obj.h0.reshape(-1,3),h0['value'])
+assert h0['units']=='Eh/bohr'
+assert h0['energy_gap']==obj.eigenvals[1]-obj.eigenvals[0]
+assert h0['energy_gap_units']=='Eh'
+np.testing.assert_allclose(h0['value'],
+    obj.result.properties['nac_0_1_full']['value']*h0['energy_gap'],rtol=2e-15,atol=0)
 json.dumps(obj.result.summary(),allow_nan=False)
 assert 'gradient_state_1 (Eh/bohr)' in pathlib.Path('grad.out').read_text()
 ''', tmp_path)

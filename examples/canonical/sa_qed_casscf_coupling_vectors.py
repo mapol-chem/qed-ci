@@ -67,6 +67,9 @@ with calculation_output(config):
     calculation.compute_grad(0, 0)
     calculation.compute_grad(1, 1)
     calculation.compute_grad(0, 1, deriv_type="full")  # Include the CSF/overlap term.
+    # using calculation.compute_grad(0, 1) (default) to use electronic translation factor convention for NAC
+    # then results will populate properties["nac_0_1_etc"] and properties["h0_0_1_etf"] 
+    # instead of properties["nac_0_1_full"] and properties["h0_0_1_full"]
 
 result = calculation.result
 gradient_0 = result.properties["gradient_state_0"]["value"]
@@ -74,6 +77,7 @@ gradient_1 = result.properties["gradient_state_1"]["value"]
 gradient_difference = gradient_1 - gradient_0  # grad(E1 - E0), no factor of 1/2.
 derivative_coupling = result.properties["nac_0_1_full"]["value"]
 energy_gap = result.energies["final"][1] - result.energies["final"][0]
+h0 = result.properties["h0_0_1_full"]["value"]
 
 print("\nEqual-weight SA-QED-CASSCF: states 0 and 1")
 print("========================================")
@@ -86,6 +90,10 @@ print("Gradient difference grad(E1)-grad(E0) / Eh bohr^-1:")
 print(gradient_difference)
 print("Derivative coupling d_01 (full, with CSF) / bohr^-1:")
 print(derivative_coupling)
+print("h0 vector used by MECP Search, E bohr^-1:")
+print(h0)
+
+#print(h0)
 # The NAC sign depends on the relative phases of the two CI states.
 # This finite-gap example does not evaluate the singular NAC at a degeneracy.
 for warning in result.warnings:
