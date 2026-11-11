@@ -16,6 +16,7 @@ are not convergence recommendations for production calculations.
 | [qed_cis_energy.py](qed_cis_energy.py) | QED-CIS total and excitation energies for the first two states |
 | [qed_fci_energy.py](qed_fci_energy.py) | QED-FCI in the full molecular orbital space, within the chosen photon cutoff |
 | [lih_polariton_surface_scan.py](lih_polariton_surface_scan.py) | Three LiH QED-FCI polaritonic surfaces over a bond-length scan, with archival JSON and plot-ready CSV output |
+| [mghplus_casscf_orbital_restart.py](mghplus_casscf_orbital_restart.py) | MgH+ SA-QED-CASSCF stretch with converged orbital checkpoints passed to each neighboring geometry |
 | [qed_casci_energy.py](qed_casci_energy.py) | QED-CASCI(2,2) with fixed CQED-RHF orbitals |
 | [qed_casscf_energy.py](qed_casscf_energy.py) | Ground-state QED-CASSCF(2,2); two roots calculated, weights `(1, 0)` for orbital optimization |
 | [sa_qed_casscf_energy.py](sa_qed_casscf_energy.py) | Equal-weight two-state SA-QED-CASSCF(2,2), individual and weighted energies |
@@ -74,7 +75,108 @@ See the [configuration and results reference](../../docs/configuration-and-outpu
 for options and restrictions, and the [quickstart scripts](../quickstart/README.md)
 for command-line selection of methods.
 
+## MgH+ orbital restart scan
+
+Run the self-contained example in a directory where you want its output:
+
+```sh
+python /path/to/qed-ci/examples/canonical/mghplus_casscf_orbital_restart.py
+```
+
+The example uses MgH+ (charge +1, singlet, 12 electrons), cc-pVDZ, CAS(4,4),
+three equally weighted singlet roots, and 20 bond lengths from 1.0 to 3.5 angstrom.
+The cavity frequency and coupling are illustrative. Change these settings,
+the active space, weights and grid to match your own calculation; this is a
+restart demonstration, not a reproduction of a published potential curve.
+CAS(8,12) is more expensive and can be selected by changing the two active-space
+counts. The inactive count is derived as `(12 - active_electrons) // 2`.
+
+The first geometry starts from CQED-RHF orbitals. Each subsequent geometry
+sets `orbital_guess_file` to the preceding converged point's
+`orbital_output_file`. Every point has a separate checkpoint and detailed log
+inside a newly created `mghplus_restart_*` directory. `energies.csv` contains
+the final optimized energies; `scan.json` retains configurations and structured
+results, including an unconverged result if the scan stops. Only converged
+points go into the CSV or supply the next guess. For a new invocation starting
+from an existing checkpoint, set `previous_orbitals` to its absolute path and
+edit `bond_lengths` to begin at the next geometry. Keep the basis, atom order,
+orientation, active space and calculation settings compatible with that file.
+
+The example also requires Matplotlib (`python -m pip install matplotlib`).
+After the scan completes, it writes `surfaces.png` alongside the CSV: all
+computed roots on a shared total-energy scale, with a marker at each geometry
+and straight segments between neighbors. No smoothing is applied, so jumps
+remain visible. Open the saved image to inspect the surfaces. The plotting
+block reads `energies.csv` and can be rerun separately by setting `run_directory`
+to an existing output folder and `n_roots` to the number of computed roots.
+
+**Both active-space specifications are required.** `active_electrons` and
+`active_orbitals` configure QED-CI; `restricted_docc` and `active` in
+`psi4_options` configure the existing Psi4-based orthogonalizer. For this
+12-electron molecule CAS(4,4) needs `[4]` / `[4]`, while CAS(8,12) needs
+`[2]` / `[12]`. These settings are passed to Psi4 by the calculation; no separate
+`psi4.set_options` call is needed with this example. Use C1 symmetry and zero
+frozen orbital counts. The restart file contains the full MO coefficient
+matrix in text format, not a Psi4 wavefunction file or CI-vector checkpoint.
+
+The orthogonalizer uses the **new geometry's overlap matrix**: it orthogonalizes
+the inactive orbitals, projects them out of the active orbitals, then projects
+both spaces out of the virtual orbitals. It orthogonalizes each space and
+semicanonicalizes within the spaces using the new reference Fock matrix.
+The loaded orbitals therefore need not be identical column by column to the
+starting orbitals actually used. It does not perform a cross-basis projection;
+use the same basis and small geometry steps.
+
+Orbital continuation helps retain an orbital solution, but the roots remain
+energy ordered. It does not guarantee smooth curves or follow an electronic
+state by character through a crossing. Inspect state character and convergence,
+keep the state-average weights and root count fixed, and try smaller steps and
+scans in both directions if discontinuities remain. A different root entering
+the averaged set can also change the optimized solution. For a character-following
+curve, additional state tracking is needed; this script does not implement it.
+
+### Compatibility with the older dictionary interface
+
+The restart check in `ortho_script.py` must count frozen orbitals by summing
+the entries of Psi4's `Dimension`. Older code used `Dimension.n()`, which counts
+symmetry blocks and rejects even `[0]` frozen spaces with Psi4 1.10. The fix
+accompanying this example uses `sum(nfdoccpi) + sum(nfuoccpi)`; installations
+with the older check need this correction before the example can restart.
+
+The refactored code still accepts `"use_orbital_guess": True` and
+`"save_orbital": True` in the legacy cavity dictionary. They default to reading
+and writing `orbital.out`, respectively. Both can be enabled together: the input
+is read during setup and the optimized orbitals are written on CASSCF convergence.
+That overwrites the prior checkpoint. Explicit `orbital_guess_file` and
+`orbital_output_file` paths can also be supplied in the legacy dictionary.
+The new `CQEDConfig` interface uses the paths directly and requests no orbital
+exports by default. Optimized orbital export is a CASSCF feature; a CASCI run
+does not produce a new optimized checkpoint.
+
+The coherent-state dipole expectation is taken from a fresh CQED-RHF calculation
+at **each geometry**, then kept fixed during that geometry's CASSCF solve. Loading
+orbitals updates `d_cmo = C.T @ d_ao @ C` and does not replace that reference
+expectation with the dipole of the loaded orbitals. It does not carry the prior
+geometry's dipole constant along the scan.
+
+The older suggestion to uncomment a random orbital rotation is unnecessary in
+the current code: `QED_RANDOM_ORBITAL_SEED` already enables a seeded random
+rotation in `parseArrays`. This is a separate tool for exploring initial guesses,
+not state tracking. Leave it unset for ordinary continuation. An external
+orbital guess is loaded after that rotation and supersedes it.
+
 ## Validation
+
+The MgH+ restart example was run on native macOS with Psi4 1.10 on
+2026-11-11. All three coupled CAS(4,4)/cc-pVDZ points (1.60, 1.65 and 1.70
+angstrom) reported convergence, and the latter two exercised the orbital
+restart path. The default grid was subsequently extended to 20 points from
+1.0 to 3.5 angstrom; that full grid has not been validated here. The plotting
+block was checked using the saved three-point results. This validates the
+demonstration, not a production active space or a longer stretch.
+The orthogonalizer regression checks orthonormality at
+the new geometry with and without semicanonicalization, and verifies that
+nonzero frozen occupied or virtual counts are still rejected.
 
 All six scripts were run from separate scratch directories on native macOS in
 the local `p4dev` environment on 2026-10-21. Every script completed successfully
