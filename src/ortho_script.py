@@ -23,7 +23,8 @@ def ortho_orbs(wfn1, wfn2, semi = True):
     nirrep = wfn2.nirrep()
     nfdoccpi = psi4.core.Dimension.from_list(psi4.core.get_option("DETCI","FROZEN_DOCC"))
     nfuoccpi = psi4.core.Dimension.from_list(psi4.core.get_option("DETCI","FROZEN_UOCC"))
-    nf = nfdoccpi.n() + nfuoccpi.n()
+    # Dimension.n() counts irreps, not orbitals (even Dimension([0]).n() == 1).
+    nf = sum(nfdoccpi) + sum(nfuoccpi)
     if nf != 0:
         psi4.core.print_out("False")
         raise ValueError("I am too lazy to consider frozen orbitals.")

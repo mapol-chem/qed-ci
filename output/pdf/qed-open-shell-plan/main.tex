@@ -1,0 +1,472 @@
+\documentclass[11pt]{article}
+\usepackage[letterpaper,margin=0.9in]{geometry}
+\usepackage[T1]{fontenc}
+\usepackage{lmodern,microtype}
+\usepackage{amsmath,amssymb,booktabs,tabularx,longtable,array}
+\usepackage{enumitem,xcolor,hyperref,fancyhdr,titlesec}
+
+\definecolor{navy}{HTML}{17365D}
+\definecolor{blue}{HTML}{2F75B5}
+\definecolor{lightblue}{HTML}{EAF2F8}
+\definecolor{darkgray}{HTML}{444444}
+\definecolor{green}{HTML}{2E7D32}
+\definecolor{amber}{HTML}{A65F00}
+\hypersetup{colorlinks=true,linkcolor=navy,urlcolor=blue,citecolor=navy,
+  pdftitle={Enabling Open-Shell References in QED-CI}}
+\pagestyle{fancy}\fancyhf{}
+\lhead{\textcolor{darkgray}{Open-Shell QED-CI Development Plan}}
+\rhead{\textcolor{darkgray}{\thepage}}
+\renewcommand{\headrulewidth}{0.4pt}
+\titleformat{\section}{\Large\bfseries\color{navy}}{\thesection}{0.65em}{}
+\titleformat{\subsection}{\large\bfseries\color{blue}}{\thesubsection}{0.65em}{}
+\setlist[itemize]{leftmargin=1.4em,itemsep=0.25em,topsep=0.35em}
+\setlist[enumerate]{leftmargin=1.6em,itemsep=0.3em,topsep=0.35em}
+\renewcommand{\arraystretch}{1.18}
+\newcommand{\code}[1]{\texttt{\small #1}}
+\newcommand{\riskhigh}{\textcolor{amber}{\textbf{High}}}
+\newcommand{\riskmed}{\textcolor{blue}{\textbf{Medium}}}
+\newcommand{\risklow}{\textcolor{green}{\textbf{Low}}}
+
+\title{\vspace{-1cm}\textbf{\textcolor{navy}{Enabling Open-Shell References in\\QED-FCI, QED-CASCI, and QED-CASSCF}}}
+\author{Architecture Assessment and Implementation Plan}
+\date{October 25, 2026}
+
+\begin{document}
+\maketitle
+
+\begin{abstract}
+This document assesses the work required to extend QED-CI from closed-shell
+CQED-RHF references to open-shell systems. The recommended design is to
+implement QED-ROHF and generalize the CI solver to unequal alpha and beta
+electron populations while retaining one common spatial-orbital basis. Direct
+propagation of distinct QED-UHF alpha and beta orbitals would instead be a
+separate unrestricted CASCI/UCASSCF method and a substantially larger rewrite.
+\end{abstract}
+
+\begin{center}
+\colorbox{lightblue}{\parbox{0.91\textwidth}{
+\textbf{\textcolor{navy}{Primary recommendation.}}
+Implement a common-orbital open-shell path based on QED-ROHF. Generalize the
+determinant and tensor algebra from a square alpha/beta string space to a
+rectangular space. Treat native UQED-CASCI/UCASSCF as a later, separately
+scoped method.}}
+\end{center}
+
+\tableofcontents
+\newpage
+
+\section{Executive Decision}
+
+The recommended sequence is:
+\begin{enumerate}
+  \item Implement QED-ROHF in \code{cqed-scf}.
+  \item Generalize QED-FCI and QED-CASCI to arbitrary \(N_\alpha,N_\beta\)
+  in one common spatial-orbital basis.
+  \item Generalize the RDM and total-spin machinery to the rectangular
+  alpha/beta string space.
+  \item Enable QED-CASSCF after the CI and RDM layers are validated.
+  \item Optionally convert QED-UHF densities to quasi-restricted starting
+  orbitals.
+  \item Defer native unrestricted CASCI/UCASSCF unless it is an explicit
+  scientific requirement.
+\end{enumerate}
+
+ROHF does not eliminate the open-shell determinant work. It supplies the
+shared spatial basis required by the existing spin-free Hamiltonian and
+common-orbital optimizer.
+
+\section{Reference Choice}
+
+\subsection{Why QED-ROHF is preferred}
+
+The current code assumes a single spatial coefficient matrix \(C\), from which
+it transforms the one-electron Hamiltonian, dipole operator, and two-electron
+integrals. ROHF preserves that structure while allowing
+\(N_\alpha\ne N_\beta\). It provides:
+\begin{itemize}
+  \item one orthonormal spatial-orbital basis;
+  \item compatibility with spin-free integrals and spin targeting;
+  \item a doubly occupied inactive core when all singly occupied orbitals are
+  active;
+  \item one orbital-rotation matrix for CASSCF;
+  \item alignment with conventional CI and MCSCF implementations.
+\end{itemize}
+
+\subsection{Why QED-UHF is not a drop-in reference}
+
+A UHF determinant has independent orbitals,
+\[
+C^\alpha\ne C^\beta.
+\]
+Using both sets directly requires \(h^\alpha,h^\beta,d^\alpha,d^\beta\),
+separate same-spin integral actions, an alpha-beta integral action, and
+independent alpha and beta orbital rotations in CASSCF. Choosing only one set,
+or averaging the two without a defined projection, discards part of the UHF
+reference. FCI in a complete common space is orbital invariant, but CASCI is
+not because the selected active subspace depends on the orbitals.
+
+QED-UHF is therefore best used initially as a generator of quasi-restricted
+common orbitals, not as the native CAS representation.
+
+\subsection{Practice in established packages}
+
+\begin{table}[htbp]
+\centering
+\caption{Representative open-shell CI and CAS conventions.}
+\label{tab:packages}
+\begin{tabularx}{\textwidth}{>{\bfseries}p{0.13\textwidth} X X}
+\toprule
+Package & Standard behavior & Design lesson \\
+\midrule
+Psi4 & DETCI accepts RHF and ROHF; documented FCI, CASCI, and CASSCF use
+RHF/ROHF rather than UHF. & QED-ROHF is the closest external oracle. \\
+PySCF & Ordinary CASCI/CASSCF converts incoming UHF to a common-orbital
+representation. Separate UCASCI/UCASSCF implementations retain different
+alpha and beta orbitals. & Native UHF-based CAS is a distinct solver family. \\
+NWChem & MCSCF uses one ordered orbital set, active-electron count, and an
+enforced multiplicity. & Represent open shell through \(N_\alpha,N_\beta\)
+and multiplicity. \\
+ORCA & CASSCF uses spin-adapted CSFs from common spatial orbitals; QROs from
+unrestricted calculations can be starting guesses. & QED-UHF can seed, rather
+than define, the CAS basis. \\
+Molpro, GAMESS, Gaussian & Traditional multiconfigurational workflows specify
+spin and optimize common spatial orbitals, often seeded by ROHF, GVB, or MCSCF
+orbitals. & A QED-ROHF path is the interoperable default. \\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+\section{Current Closed-Shell Assumptions}
+
+\subsection{Public configuration}
+
+The public configuration in \path{src/qed_ci/config.py} currently accepts only
+RHF and multiplicity one, requires an even number of active electrons, and
+computes a square alpha-string dimension. For open shell, define
+\[
+N_\alpha^{\rm act}+N_\beta^{\rm act}=N_{\rm act},\qquad
+N_\alpha^{\rm act}-N_\beta^{\rm act}=2M_S.
+\]
+For a high-spin \(M_S=S\) calculation of multiplicity \(\mathcal M=2S+1\),
+\[
+N_\alpha^{\rm act}=\frac{N_{\rm act}+\mathcal M-1}{2},\qquad
+N_\beta^{\rm act}=\frac{N_{\rm act}-\mathcal M+1}{2}.
+\]
+The CI dimension is
+\[
+D_{\rm CI}=\binom{n_{\rm act}}{N_\alpha^{\rm act}}
+\binom{n_{\rm act}}{N_\beta^{\rm act}}(N_p+1).
+\]
+The input should accept arbitrary multiplicity or numeric \(S\), rather than a
+fixed singlet/triplet/quintet list.
+
+\subsection{Reference-SCF integration}
+
+The driver in \path{src/helper_PFCI.py} currently calls the local
+\code{cqed\_rhf()} helper, consumes RHF-specific dictionary keys, assigns the
+same matrix to \code{Ca} and \code{Cb}, and derives occupations from
+\code{doccpi()}.
+
+The QED-UHF result in \code{cqed-scf} supplies \code{Ca}, \code{Cb},
+\code{Da}, \code{Db}, \code{nalpha}, and \code{nbeta}, but not the complete
+integral and cavity-property contract expected by QED-CI. Before integration:
+\begin{itemize}
+  \item replace its current \code{s\_squared = nalpha - nbeta} placeholder
+  with an actual \(\langle S^2\rangle\);
+  \item confirm that reported orbital energies correspond to the final
+  converged QED-UHF Fock matrices.
+\end{itemize}
+
+\subsection{Determinants and the C backend}
+
+The direct and dense paths both set
+\(N_\alpha^{\rm act}=N_\beta^{\rm act}=N_{\rm act}/2\). The C backend builds
+one graph and one family of replacement, creation, annihilation, and spin tables
+and reuses them for both spins. It repeatedly assumes
+\[
+N_{\rm det}=(N_\alpha^{\rm str})^2,\qquad
+I=i_\alpha N_\alpha^{\rm str}+i_\beta.
+\]
+The assumption occurs in Hamiltonian diagonals, \code{sigma12},
+\code{sigma3}, \code{sigma\_dipole}, Davidson dimensions, all live RDM
+builders, and the \(\hat S^2\) machinery.
+
+\section{Required Common-Orbital Generalization}
+
+\subsection{Metadata and vector layout}
+
+Introduce explicit fields
+\[
+n_\alpha^{\rm act},\quad n_\beta^{\rm act},\quad n_{\rm inactive},
+\quad N_\alpha^{\rm str},\quad N_\beta^{\rm str}.
+\]
+For each photon sector, view the CI coefficients as
+\[
+C^{(n)}\in\mathbb R^{N_\alpha^{\rm str}\times N_\beta^{\rm str}},
+\qquad I(i_\alpha,i_\beta)=i_\alpha N_\beta^{\rm str}+i_\beta.
+\]
+This should be the common representation in the C backend and TAMM port.
+
+\subsection{Separate string tables}
+
+Build independent alpha and beta graph families:
+\[
+(Y_\alpha,T_\alpha,T_\alpha^{+},T_\alpha^{-},B_\alpha),\qquad
+(Y_\beta,T_\beta,T_\beta^{+},T_\beta^{-},B_\beta).
+\]
+The sectors share the active orbital count but generally differ in electron
+count, string count, and link count.
+
+\subsection{Hamiltonian action}
+
+The one-body and same-spin actions become left and right operations on the
+rectangular CI matrix:
+\[
+\sigma^{(n)}=H_\alpha C^{(n)}+C^{(n)}H_\beta^{\mathsf T}
++H_{\alpha\beta}[C^{(n)}]+H_{\rm photon}[C].
+\]
+The mixed-spin \code{sigma3} contraction is the largest isolated kernel change
+because its intermediates currently assume equal string dimensions. The
+light-matter term remains a spin-free one-electron operator and is applied in
+both spin sectors between adjacent photon blocks.
+
+\subsection{Solver interface}
+
+The current Davidson ABI packs nine integers and six doubles into flat arrays.
+It carries only one active-electron count. Before the TAMM port, replace it with
+a versioned named C structure containing independent populations, string and
+link counts, and table pointers. This avoids extending an already fragile
+positional interface with distributed tiling metadata.
+
+\section{RDM and Spin Adaptation}
+
+Compute spin-resolved one-particle densities,
+\[
+D^\alpha_{pq},\qquad D^\beta_{pq},\qquad
+D_{pq}=D^\alpha_{pq}+D^\beta_{pq},
+\]
+and distinguish \(\alpha\alpha\), \(\beta\beta\), and \(\alpha\beta\)
+two-particle contributions internally. The common-orbital optimizer may
+continue consuming their spin-summed spatial form. Required invariants include
+\[
+\mathrm{Tr}(D^\alpha)=N_\alpha,\qquad
+\mathrm{Tr}(D^\beta)=N_\beta.
+\]
+Photon-electron and transition RDMs require the same generalization.
+
+A fixed \(M_S\) sector contains all states with \(S\ge |M_S|\); multiplicity
+alone does not guarantee total spin. Implement a rectangular-space
+\(\hat S^2\) action, report \(\langle S^2\rangle\), classify roots by spin,
+and restore explicit Davidson spin projection if root targeting requires it.
+
+\section{Implications for QED-CASSCF}
+
+For the recommended formulation, every singly occupied reference orbital is
+active, leaving a doubly occupied inactive core. The existing core Fock form,
+\[
+f^{\rm core}_{pq}=h_{pq}+\sum_i^{\rm inactive}
+\left[2(pq|ii)-(pi|iq)\right],
+\]
+remains valid. The optimizer already consumes spin-summed active RDMs and uses
+one common rotation, so much of its trust-region and Hessian infrastructure is
+reusable.
+
+Required changes are:
+\begin{itemize}
+  \item replace every square CI dimension;
+  \item feed generalized state and photon RDMs into the intermediates;
+  \item audit factors of two for inactive-core versus accidental active-space
+  assumptions;
+  \item generalize determinant and excitation-rank reporting;
+  \item verify orbital gradients and Hessian-vector products by finite
+  differences;
+  \item add doublet, triplet, and higher-multiplicity convergence tests.
+\end{itemize}
+
+Analytic nuclear gradients are a separate milestone. Native UCASSCF would also
+need independent \(U^\alpha,U^\beta\), coupled Hessian blocks, spin-dependent
+integrals, and major changes to \path{src/orbital.c} and
+\path{src/orbital_sigma.py}.
+
+\section{Reference-SCF Contract}
+
+\begin{table}[htbp]
+\centering
+\caption{Proposed reference-neutral SCF result contract.}
+\begin{tabularx}{\textwidth}{>{\ttfamily\small}p{0.28\textwidth} X}
+\toprule
+Field & Meaning \\
+\midrule
+reference\_type & \code{rhf}, \code{rohf}, or \code{uhf}. \\
+nalpha, nbeta & Total occupied counts by spin. \\
+C & Common spatial orbitals for RHF/ROHF. \\
+Ca, Cb & Spin orbitals for UHF; optional otherwise. \\
+Da, Db & Unscaled spin-resolved AO densities. \\
+Fa, Fb & Final converged Fock matrices. \\
+orbital\_energies\_a/b & Eigenvalues of the final Fock matrices. \\
+energy\_reference & Canonical or cavity-modified reference energy. \\
+s\_squared & Actual \(\langle S^2\rangle\). \\
+T\_ao, V\_ao & AO one-electron matrices. \\
+dipole/quadrupole data & Cartesian and cavity-projected operators. \\
+d\_expectation & Coherent-state electronic displacement. \\
+nuclear data & Repulsion, dipole, molecule, and basis metadata. \\
+psi4\_wfn & Wavefunction used for basis and integral services. \\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+For ROHF, \code{C} is authoritative. For UHF, an explicitly named conversion
+routine should produce quasi-restricted common orbitals when requested.
+
+\section{Implementation Work Packages}
+
+\begin{longtable}{>{\bfseries}p{0.07\textwidth} p{0.22\textwidth} p{0.51\textwidth} p{0.10\textwidth}}
+\caption{Recommended implementation sequence.}\label{tab:wp}\\
+\toprule WP & Scope & Exit criterion & Risk \\
+\midrule\endfirsthead
+\toprule WP & Scope & Exit criterion & Risk \\
+\midrule\endhead
+1 & Configuration & Independent spin populations and rectangular dimensions;
+closed-shell behavior unchanged. & \risklow \\
+2 & Dense oracle & Dense FCI/CASCI supports unequal populations and matches
+small external references. & \riskmed \\
+3 & String graphs & Separate alpha/beta tables match explicit enumeration. &
+\riskmed \\
+4 & Direct sigma & Random-vector sigma agrees with dense \(Hc\) for several
+\(N_\alpha,N_\beta,N_p\). & \riskhigh \\
+5 & Davidson & Roots, residuals, guesses, and determinant decoding match dense
+diagonalization. & \riskmed \\
+6 & RDMs & Spin-resolved RDM traces, energies, dipoles, and transitions match
+brute-force contractions. & \riskhigh \\
+7 & Total spin & Correct \(\langle S^2\rangle\) for doublet, triplet, quartet,
+and mixed-spin spaces. & \riskhigh \\
+8 & Production CI & Zero-coupling external agreement and nonzero-coupling
+dense/direct agreement. & \riskmed \\
+9 & CASSCF & Orbital derivatives pass finite differences and benchmarks
+converge. & \riskhigh \\
+10 & QED-ROHF & Reference-neutral contract supplies common orbitals and cavity
+operators. & \riskhigh \\
+11 & TAMM & Distributed rectangular tensors reproduce captured C-backend
+fixtures. & \riskhigh \\
+\bottomrule
+\end{longtable}
+
+QED-ROHF can be developed in parallel with work packages 1--7, using ordinary
+ROHF and zero coupling as the initial CI oracle.
+
+\section{TAMM Design Guidance}
+
+Expose the mathematical modes rather than flattening early:
+\[
+\texttt{alpha-string}\times\texttt{beta-string}\times
+\texttt{photon}\times\texttt{davidson-vector}.
+\]
+This makes alpha and beta actions contractions on distinct modes, represents
+unequal string counts naturally, retains nearest-neighbor photon coupling, and
+allows distribution over the larger string mode. Closed shell is simply the
+case where the two string dimensions happen to be equal.
+
+Keep the validated C implementation as the oracle. Capture and replay
+integrals, cavity constants, both table families, Hamiltonian diagonals, random
+sigma vectors, converged roots and residuals, and state/transition RDMs.
+
+\section{Validation Plan}
+
+\subsection{Electronic and QED benchmarks}
+
+At \(\boldsymbol\lambda=0\), test H or Li doublet FCI, OH doublet FCI/CASCI,
+NH or O$_2$ triplet CASCI/CASSCF, at least one quartet, and multiple allowed
+\(M_S\) sectors of the same total-spin state. Compare ROHF cases with Psi4
+DETCI. If unrestricted methods are later implemented, compare with PySCF
+UCASCI/UCASSCF.
+
+At nonzero coupling, compare dense and direct QED-CI, verify photon-block
+normalization and RDM energy reconstruction, and test the \(\lambda\to0\)
+limit.
+
+\subsection{Kernel and derivative gates}
+
+For small spaces require
+\[
+\|\sigma_{\rm direct}-Hc\|_\infty<\epsilon
+\]
+for isolated alpha one-body, beta one-body, alpha-alpha, beta-beta,
+alpha-beta, diagonal, photon, and dipole-coupling terms. For CASSCF, compare
+the analytic orbital gradient with central finite differences and the
+Hessian-vector product with finite differences of gradients. Retain the entire
+closed-shell regression suite.
+
+\section{Risks and Scope Boundaries}
+
+\begin{table}[htbp]
+\centering
+\caption{Principal risks and mitigations.}
+\begin{tabularx}{\textwidth}{>{\bfseries}p{0.25\textwidth} X}
+\toprule Risk & Mitigation \\
+\midrule
+Missed square assumptions & Search for squared string counts, modulo/division
+by \code{num\_alpha}, and shared tables. Test strongly rectangular cases. \\
+Mixed-spin sigma errors & Require dense random-vector agreement before enabling
+Davidson. \\
+Wrong-spin roots & Implement \(\hat S^2\) early and test multiple \(M_S\)
+sectors. \\
+Incorrect inactive factors & Require all singly occupied orbitals to be active
+before auditing factors of two. \\
+Blurred UHF semantics & Use distinct names such as \code{qed\_rohf},
+\code{qro\_from\_qed\_uhf}, and \code{uqed\_casscf}. \\
+CASSCF regressions & Land CI and RDM work first, preserve closed-shell gates,
+then enable orbital optimization. \\
+TAMM divergence & Compare sigma vectors and RDMs, not only final energies. \\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+Outside the first milestone are native UCASCI/UCASSCF, unrestricted analytic
+nuclear gradients, unrestricted response properties, automatic active-space
+selection, and specialized low-spin open-shell reference procedures.
+
+\section{Definition of Done}
+
+The common-orbital open-shell implementation is complete when:
+\begin{enumerate}
+  \item the API accepts ROHF, charge, multiplicity, and valid active spaces;
+  \item dense and direct QED-FCI/QED-CASCI agree for unequal populations;
+  \item zero-coupling energies agree with external references;
+  \item spin-resolved RDMs have correct traces and reconstruct the energy;
+  \item \(\langle S^2\rangle\) identifies the intended spin;
+  \item QED-CASSCF orbital derivatives pass finite differences;
+  \item representative doublet, triplet, and quartet calculations converge;
+  \item all closed-shell tests continue to pass;
+  \item TAMM replay tests reproduce the C backend.
+\end{enumerate}
+
+\section{Conclusion}
+
+QED-ROHF is the ideal next reference. It provides the common spatial basis
+expected by the Hamiltonian and CASSCF optimizer while supporting open-shell
+populations and spin-targeted states. The central task is the generalization
+from one square string space to separate alpha and beta spaces. Once the
+Hamiltonian action, RDMs, and \(\hat S^2\) support that representation, much of
+the existing common-orbital CASSCF framework remains reusable. Native
+QED-UHF-based CASCI or UCASSCF should be treated as a later method.
+
+\begin{thebibliography}{9}
+\bibitem{psi4detci} Psi4 Developers, \emph{CI: Configuration Interaction}.
+\url{https://psicode.org/psi4manual/master/detci.html}
+\bibitem{psi4cap} Psi4 Developers, \emph{Psi4 Capabilities Table}.
+\url{https://psicode.org/psi4manual/master/introduction.html}
+\bibitem{pyscfmcscf} PySCF Developers, \emph{Multi-configuration SCF}.
+\url{https://pyscf.org/user/mcscf.html}
+\bibitem{pyscfsource} PySCF Developers, \emph{MCSCF Factory Source}.
+\url{https://pyscf.org/_modules/pyscf/mcscf.html}
+\bibitem{nwchem} NWChem Developers, \emph{Multiconfiguration SCF}.
+\url{https://nwchemgit.github.io/Multiconfiguration_SCF.html}
+\bibitem{orca} FACCTs, \emph{ORCA 6.1 CASSCF Manual}.
+\url{https://www.faccts.de/docs/orca/6.1/manual/contents/modelchemistries/CASSCF.html}
+\bibitem{orcahf} FACCTs, \emph{ORCA 6.1 Wavefunction Types}.
+\url{https://www.faccts.de/docs/orca/6.1/manual/contents/modelchemistries/hftype.html}
+\bibitem{gamess} GAMESS Developers, \emph{GAMESS Input Description}.
+\url{https://www.msg.chem.iastate.edu/GAMESS/GAMESS_Manual/input.pdf}
+\end{thebibliography}
+
+\end{document}
