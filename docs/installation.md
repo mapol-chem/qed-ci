@@ -36,6 +36,7 @@ Install Xcode Command Line Tools (`xcode-select --install`) and Miniforge, then:
 
 ```sh
 conda create -n qed-ci -c conda-forge python=3.12 psi4=1.10.1 \
+    einsums=1.1.5 libxc-c=7.0.0 \
     numpy scipy numba psutil openblas liblapacke llvm-openmp \
     pip setuptools wheel
 conda activate qed-ci
@@ -43,7 +44,10 @@ conda activate qed-ci
 
 The build uses Apple Clang, LP64 OpenBLAS/LAPACKE, and LLVM OpenMP. All components
 must match Python's architecture; do not mix Rosetta/x86 libraries with an arm64
-Python. Intel MKL is not used on macOS.
+Python. Intel MKL is not used on macOS. The `einsums` and `libxc-c` pins keep
+Psi4 1.10.1 compatible with current conda-forge package updates: newer Einsums
+removes a symbol Psi4 1.10.1 expects, and LibXC 7.1 reclassifies a functional
+name used by that Psi4 release.
 
 ### Linux (Intel oneAPI)
 
@@ -121,6 +125,15 @@ job = calculate(
                psi4_options={"basis": "sto-3g"}),
 )
 print(job.result.energies["final"])  # Eh
+```
+
+If Numba reports `no locator available` for a function in `site-packages`, its
+cache directory is not writable. Point its cache at a writable per-user path
+before running pytest or calculations:
+
+```sh
+export NUMBA_CACHE_DIR="$HOME/.cache/qed-ci-numba"
+mkdir -p "$NUMBA_CACHE_DIR"
 ```
 
 The public API loads the engine lazily. The documented legacy imports

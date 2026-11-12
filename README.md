@@ -47,7 +47,7 @@ Create or activate a compatible Psi4 environment, then install the package into
 it. On macOS with Miniforge:
 
 ```sh
-conda create -n qed-ci -c conda-forge python=3.12 psi4=1.10.1 numpy scipy numba psutil openblas liblapacke llvm-openmp pip setuptools wheel
+conda create -n qed-ci -c conda-forge python=3.12 psi4=1.10.1 einsums=1.1.5 libxc-c=7.0.0 numpy scipy numba psutil openblas liblapacke llvm-openmp pip setuptools wheel
 conda activate qed-ci
 python -m pip install --no-build-isolation --no-deps .
 ```
