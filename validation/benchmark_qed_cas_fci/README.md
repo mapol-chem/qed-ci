@@ -129,3 +129,35 @@ Frobenius error ratios were 1.000, 0.998, and 0.987 at |λ|=0.01, 0.05, and
 points beside resonant ground/LP/UP points in the parity panel. Its ratio
 panel includes resonant and blue-detuned ground states plus only the
 blue-detuned bright-connected states.
+
+## v2 follow-up
+
+Run in the `qed-ci` conda environment from this directory:
+
+```sh
+OMP_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 conda run --no-capture-output -n qed-ci python run_coherent_v2.py
+MPLCONFIGDIR=/tmp/qed-mpl-v2 conda run --no-capture-output -n qed-ci python finalize_v2.py
+conda run -n qed-ci python -m pytest -q test_v2.py
+```
+
+The coherent runner validates H2 first and resumes completed production
+geometry/coupling groups from its **v2** CSVs. `--validate-only` runs the gate
+without production. The benchmark-local `coherent_v2.py` adapter keeps
+canonical cavity-free RHF orbitals while using the package's coherent photon
+Hamiltonian; the current public config couples these choices otherwise.
+Photon-number expectations are blank for coherent calculations. The saved
+LP/UP assignment projections use physical number-state targets transformed
+into the displaced basis.
+
+`finalize_v2.py` merges only complete converged groups, creates
+`results/full_v2_metrics.csv`, the summary/report/outlier/recovery tables,
+and both A/B PDF and 300-dpi PNG variants for Frobenius and natural-occupation
+errors. It checks original result/figure hashes against
+`results/original_checksums_v2.json`. `plot_combined.py` and
+`plot_results.py --prefix full` call this same finalizer.
+Both panels in A, panel (b) in B, and every statistic use only resonant
+ground plus blue-detuned bright-connected states. B additionally shows gray
+resonant LP/UP in parity. Existing number-state caches are never rewritten by
+these v2 entry points. See `results/full_v2_report.md` for the completed
+rerun's convergence limitations and `results/full_v2_summary.md` for the
+full outlier list and caption statistics.

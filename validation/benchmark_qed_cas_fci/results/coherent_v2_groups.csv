@@ -1,0 +1,16 @@
+system,geometry,lambda_value,photon_basis,photon_states,converged,reason
+LiH,equilibrium,0.01,coherent_state,6,True,converged
+LiH,equilibrium,0.05,coherent_state,10,True,converged
+LiH,equilibrium,0.1,coherent_state,10,False,photon_truncation
+BeH2,equilibrium,0.01,coherent_state,10,False,ambiguous_polariton_assignment
+BeH2,equilibrium,0.05,coherent_state,10,False,ambiguous_polariton_assignment
+BeH2,equilibrium,0.1,coherent_state,10,False,ambiguous_polariton_assignment
+Li2,equilibrium,0.01,coherent_state,6,True,converged
+Li2,equilibrium,0.05,coherent_state,10,False,ambiguous_polariton_assignment
+Li2,equilibrium,0.1,coherent_state,10,False,assignment_gate_no_valid_previous
+LiH,LiH_2re,0.01,coherent_state,6,True,converged
+LiH,LiH_2re,0.05,coherent_state,10,False,photon_truncation
+LiH,LiH_2re,0.1,coherent_state,10,False,photon_truncation
+Li2,Li2_1p5re,0.01,coherent_state,6,True,converged
+Li2,Li2_1p5re,0.05,coherent_state,10,False,ambiguous_polariton_assignment
+Li2,Li2_1p5re,0.1,coherent_state,10,False,assignment_gate_no_valid_previous

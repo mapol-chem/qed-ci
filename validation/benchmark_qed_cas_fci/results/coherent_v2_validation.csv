@@ -1,0 +1,14 @@
+check,photon_basis,photon_states,max_C_diff,passed,state,energy_abs_diff,rdm_frobenius
+canonical_orbitals,number,6,0.0,True,,,
+canonical_orbitals,number,10,0.0,True,,,
+canonical_orbitals,coherent,6,0.0,True,,,
+canonical_orbitals,coherent,10,0.0,True,,,
+basis_agreement,,,,True,ground,8.881784197001252e-16,5.418589707166031e-15
+number_truncation,,,,True,ground,1.822764161829582e-12,2.039577367226187e-11
+coherent_truncation,,,,True,ground,1.8196555373606316e-12,2.0400073359289494e-11
+basis_agreement,,,,True,LP,9.992007221626409e-16,4.0131389569828024e-15
+number_truncation,,,,True,LP,7.230631648980079e-10,5.685388262842315e-09
+coherent_truncation,,,,True,LP,7.230648302325449e-10,5.685388033049476e-09
+basis_agreement,,,,True,UP,2.55351295663786e-15,9.303960551627419e-15
+number_truncation,,,,True,UP,1.8622403619161787e-10,5.914363160981895e-09
+coherent_truncation,,,,True,UP,1.8622081654484646e-10,5.914366119020213e-09

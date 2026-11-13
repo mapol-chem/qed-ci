@@ -35,3 +35,8 @@ STRETCHED = {
     "LiH_2re": {"system": "LiH", "scale": 2.0},
     "Li2_1p5re": {"system": "Li2", "scale": 1.5},
 }
+
+
+def lambda_key(value):
+    """Canonical four-decimal coupling key for selections and group joins."""
+    return round(float(value), 4)

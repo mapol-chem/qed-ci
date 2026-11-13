@@ -6,7 +6,7 @@ from pathlib import Path
 
 import numpy as np
 
-from config import RESULTS
+from config import RESULTS, lambda_key
 from run_pilot import geom_variant, match_qed_state, rdm, root_vector, run_calc
 
 
@@ -90,9 +90,10 @@ def main():
     conv = [r for r in records if r.get("state") == "photon_convergence"]
     grouped = {}
     for rec in conv:
-        grouped.setdefault((rec["system"], rec["geometry"], tuple(rec["lambda_vector"])), []).append(rec)
+        grouped.setdefault((rec["system"], rec["geometry"], lambda_key(np.linalg.norm(rec["lambda_vector"]))), []).append(rec)
     conv_rows = []
-    for (system, geometry, lam), group in sorted(grouped.items()):
+    for (system, geometry, magnitude), group in sorted(grouped.items()):
+        lam = group[0]["lambda_vector"]
         group.sort(key=lambda r: r["photon_states"])
         prev = None
         first_converged = ""
@@ -123,7 +124,7 @@ def main():
             writer.writerows(conv_rows)
         status_map = {}
         for row in conv_rows:
-            key = (row["system"], row["geometry"], round(row["lambda_magnitude"], 8))
+            key = (row["system"], row["geometry"], lambda_key(row["lambda_magnitude"]))
             if row["first_converged_photon_states"]:
                 status_map[key] = "converged"
             else:
@@ -135,7 +136,7 @@ def main():
             state = rec.get("state")
             if state not in {"photon_convergence", "polariton_roots"}:
                 continue
-            lam_value = round(float(np.linalg.norm(rec.get("lambda_vector", [0, 0, 0]))), 8)
+            lam_value = lambda_key(np.linalg.norm(rec.get("lambda_vector", [0, 0, 0])))
             key = (rec["system"], rec["geometry"], lam_value,
                    int(rec.get("active_electrons", rec["n_el"])),
                    int(rec.get("active_orbitals", rec["nmo"])))
@@ -148,7 +149,7 @@ def main():
         for row in metric_rows:
             lam_value = float(row["lambda_value"] or 0)
             if lam_value:
-                key = (row["system"], row["geometry"], round(lam_value, 8))
+                key = (row["system"], row["geometry"], lambda_key(lam_value))
                 row["status"] = status_map.get(key, "unknown")
                 if row["state"] in {"LP", "UP"}:
                     assignment_key = (*key, int(row["active_electrons"]), int(row["active_orbitals"]))

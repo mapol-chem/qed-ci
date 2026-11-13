@@ -1,5 +1,6 @@
 """Run the H2/LiH pilot, including their stretched geometries."""
 import csv
+from contextlib import nullcontext
 import argparse
 import json
 import math
@@ -36,7 +37,7 @@ def geom_variant(name, scale=1.0):
     return "\n".join(lines)
 
 
-def run_calc(mol, basis, method, active_e, active_o, omega, lam, nstates, nroots=ROOTS):
+def run_calc(mol, basis, method, active_e, active_o, omega, lam, nstates, nroots=ROOTS, photon_basis="number"):
     # The public max_photons setting is the highest occupation; nstates counts
     # the number-state basis functions, including vacuum.
     ci_dim = (math.comb(active_o, active_e // 2) ** 2 if method == "casci"
@@ -55,7 +56,8 @@ def run_calc(mol, basis, method, active_e, active_o, omega, lam, nstates, nroots
     cfg = CQEDConfig(
         method=method, psi4_options={"basis": basis, "scf_type": "pk",
                                      "e_convergence": 1e-10, "d_convergence": 1e-10},
-        reference_orbitals="canonical", photon_basis="number",
+        reference_orbitals="canonical" if photon_basis == "number" else "qed_rhf",
+        photon_basis=photon_basis,
         max_photons=max_photons, active_electrons=active_e if method == "casci" else None,
         active_orbitals=active_o if method == "casci" else None,
         lambda_vector=tuple(float(x) for x in lam), omega=float(omega),
@@ -65,7 +67,10 @@ def run_calc(mol, basis, method, active_e, active_o, omega, lam, nstates, nroots
                                   max_iterations=200),
         quiet=True, scratch_directory=str(RESULTS / "scratch"))
     started = time.perf_counter()
-    owner = calculate(mol, cfg)
+    from coherent_v2 import canonical_coherent_reference
+    with canonical_coherent_reference() if photon_basis == "coherent" else nullcontext():
+        owner = calculate(mol, cfg)
+    owner.benchmark_photon_basis = photon_basis
     return owner, time.perf_counter() - started
 
 
@@ -76,6 +81,8 @@ def root_vector(owner, root):
 
 
 def photon_number(owner, root):
+    if getattr(owner, "benchmark_photon_basis", "number") == "coherent":
+        return None  # Displaced-sector occupation is not physical photon number.
     vector = root_vector(owner, root)
     n_det = int(owner.num_det)
     expectation = 0.0
@@ -117,11 +124,20 @@ def match_qed_state(owner, bare_vector, photon_sector=0):
 def polariton_roots(owner, bare_ground, bare_bright):
     n_det = int(owner.num_det)
     vectors = np.asarray(owner.CIvecs)
-    ground_char = np.abs(vectors[:, :n_det] @ bare_ground) ** 2
-    bright_char = np.abs(vectors[:, :n_det] @ bare_bright) ** 2
-    photon_ground_char = np.zeros(len(vectors))
-    if owner.N_p >= 1:
-        photon_ground_char = np.abs(vectors[:, n_det:2 * n_det] @ bare_ground) ** 2
+    if getattr(owner, "benchmark_photon_basis", "number") == "coherent":
+        from coherent_v2 import displacement
+        alpha = displacement(owner)
+        n = int(owner.N_p) + 1
+        vacuum = np.array([np.exp(-alpha**2/2)*(-alpha)**p/np.sqrt(float(math.factorial(p))) for p in range(n)])
+        one = alpha*vacuum
+        one[1:] += np.sqrt(np.arange(1,n))*vacuum[:-1]
+        bright_char = np.abs(vectors @ np.kron(vacuum, bare_bright))**2
+        photon_ground_char = np.abs(vectors @ np.kron(one, bare_ground))**2
+    else:
+        bright_char = np.abs(vectors[:, :n_det] @ bare_bright) ** 2
+        photon_ground_char = np.zeros(len(vectors))
+        if owner.N_p >= 1:
+            photon_ground_char = np.abs(vectors[:, n_det:2 * n_det] @ bare_ground) ** 2
     score = bright_char + photon_ground_char
     score[0] = -1.0
     chosen = np.argsort(score)[-2:]
@@ -160,7 +176,8 @@ def cache_calc(owner, meta, seconds):
             "frozen_core_orbitals": max(0, (n_el_total - int(active_e)) // 2),
             "active_space": f"CAS({active_e},{active_o})",
             "n_el_total": n_el_total, "n_orb_active": int(active_o),
-            "photon_basis": "bare_number_state", "timing_s": seconds, "photon_states": nstates,
+            "photon_basis": "coherent_state" if getattr(owner, "benchmark_photon_basis", "number") == "coherent" else "bare_number_state",
+            "electronic_orbitals": "canonical_cavity_free_rhf", "timing_s": seconds, "photon_states": nstates,
             "energies": np.asarray(owner.CIeigs).tolist(), "roots": roots,
             "dipoles": np.asarray(owner.electronic_dipole_array).tolist(),
             "nmo": int(owner.nmo), "n_el": n_el_total,

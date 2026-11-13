@@ -1,0 +1,70 @@
+  Threads set to 1 by Python driver.
+H2 VALIDATION PASSED
+LiH equilibrium 0.01 2 delta None ambiguous False passed False
+LiH equilibrium 0.01 4 delta 7.935994608754271e-05 ambiguous False passed False
+LiH equilibrium 0.01 6 delta 1.1414371670070977e-09 ambiguous False passed True
+LiH equilibrium 0.05 2 delta None ambiguous False passed False
+LiH equilibrium 0.05 4 delta 0.004214769933702733 ambiguous False passed False
+LiH equilibrium 0.05 6 delta 4.906134849136379e-05 ambiguous False passed False
+LiH equilibrium 0.05 10 delta 3.632662215480309e-07 ambiguous False passed True
+LiH equilibrium 0.1 2 delta None ambiguous False passed False
+LiH equilibrium 0.1 4 delta 0.024794676924334347 ambiguous False passed False
+LiH equilibrium 0.1 6 delta 0.0041333272523038644 ambiguous False passed False
+LiH equilibrium 0.1 10 delta 0.0004985665472378997 ambiguous False passed False
+Traceback (most recent call last):
+  File "/Users/jfoley19/Code/qed-ci/validation/benchmark_qed_cas_fci/run_coherent_v2.py", line 100, in <module>
+    if __name__=='__main__':main()
+                            ^^^^^^
+  File "/Users/jfoley19/Code/qed-ci/validation/benchmark_qed_cas_fci/run_coherent_v2.py", line 63, in main
+    bright=next(i for i in range(1,len(norms)) if norms[i]>.05)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+StopIteration
+ERROR conda.cli.main_run:execute(47): `conda run python run_coherent_v2.py` failed. (See above for error)
+  Threads set to 1 by Python driver.
+H2 VALIDATION PASSED
+BeH2 equilibrium 0.01 2 delta None ambiguous True passed False
+BeH2 equilibrium 0.01 4 delta None ambiguous True passed False
+BeH2 equilibrium 0.01 6 delta None ambiguous True passed False
+BeH2 equilibrium 0.01 10 delta None ambiguous True passed False
+BeH2 equilibrium 0.05 2 delta None ambiguous True passed False
+BeH2 equilibrium 0.05 4 delta None ambiguous True passed False
+BeH2 equilibrium 0.05 6 delta None ambiguous True passed False
+BeH2 equilibrium 0.05 10 delta None ambiguous True passed False
+BeH2 equilibrium 0.1 2 delta None ambiguous True passed False
+BeH2 equilibrium 0.1 4 delta None ambiguous True passed False
+BeH2 equilibrium 0.1 6 delta None ambiguous True passed False
+BeH2 equilibrium 0.1 10 delta None ambiguous True passed False
+Li2 equilibrium 0.01 2 delta None ambiguous False passed False
+Li2 equilibrium 0.01 4 delta 0.0003388827676218398 ambiguous False passed False
+Li2 equilibrium 0.01 6 delta 4.2971711522454825e-08 ambiguous False passed True
+Li2 equilibrium 0.05 2 delta None ambiguous False passed False
+Li2 equilibrium 0.05 4 delta 0.017349421883382732 ambiguous True passed False
+Li2 equilibrium 0.05 6 delta None ambiguous True passed False
+Li2 equilibrium 0.05 10 delta None ambiguous True passed False
+Li2 equilibrium 0.1 2 delta None ambiguous True passed False
+Li2 equilibrium 0.1 4 delta None ambiguous True passed False
+Li2 equilibrium 0.1 6 delta None ambiguous True passed False
+Li2 equilibrium 0.1 10 delta None ambiguous False passed False
+LiH LiH_2re 0.01 2 delta None ambiguous False passed False
+LiH LiH_2re 0.01 4 delta 0.0005397496548527059 ambiguous False passed False
+LiH LiH_2re 0.01 6 delta 2.1012955286892065e-07 ambiguous False passed True
+LiH LiH_2re 0.05 2 delta None ambiguous False passed False
+LiH LiH_2re 0.05 4 delta 0.013271550648944697 ambiguous False passed False
+LiH LiH_2re 0.05 6 delta 0.009923453068109822 ambiguous False passed False
+LiH LiH_2re 0.05 10 delta 0.0007292582722175922 ambiguous False passed False
+LiH LiH_2re 0.1 2 delta None ambiguous True passed False
+LiH LiH_2re 0.1 4 delta None ambiguous False passed False
+LiH LiH_2re 0.1 6 delta 0.054735571876941336 ambiguous False passed False
+LiH LiH_2re 0.1 10 delta 0.011158031665017276 ambiguous False passed False
+Li2 Li2_1p5re 0.01 2 delta None ambiguous False passed False
+Li2 Li2_1p5re 0.01 4 delta 0.0004979244908636105 ambiguous False passed False
+Li2 Li2_1p5re 0.01 6 delta 1.8553671132792715e-07 ambiguous False passed True
+Li2 Li2_1p5re 0.05 2 delta None ambiguous True passed False
+Li2 Li2_1p5re 0.05 4 delta None ambiguous True passed False
+Li2 Li2_1p5re 0.05 6 delta None ambiguous True passed False
+Li2 Li2_1p5re 0.05 10 delta None ambiguous True passed False
+Li2 Li2_1p5re 0.1 2 delta None ambiguous True passed False
+Li2 Li2_1p5re 0.1 4 delta None ambiguous True passed False
+Li2 Li2_1p5re 0.1 6 delta None ambiguous True passed False
+Li2 Li2_1p5re 0.1 10 delta None ambiguous False passed False
+PRODUCTION COMPLETE

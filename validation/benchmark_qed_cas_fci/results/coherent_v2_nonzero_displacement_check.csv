@@ -1,0 +1,4 @@
+system,geometry,lambda_value,state,displacement_alpha,energy_abs_diff,rdm_frobenius,passed
+LiH,equilibrium,0.01,ground,0.04861755876248128,7.105427357601002e-15,5.047297969899342e-12,True
+LiH,equilibrium,0.01,LP,0.04861755876248128,1.7763568394002505e-15,1.711881098082496e-11,True
+LiH,equilibrium,0.01,UP,0.04861755876248128,7.105427357601002e-15,1.9577216152742762e-11,True
