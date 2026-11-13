@@ -1,0 +1,16 @@
+system,geometry_definition,source,verification_status
+H2,equilibrium r=0.7414 Angstrom,NIST CCCBDB experimental geometry https://cccbdb.nist.gov/expgeom2x.asp?casno=1333740,verified for pilot
+HeH+,optimized r=0.772 Angstrom,NIST CCCBDB calculated bond-length model https://cccbdb.nist.gov/bondlengthmodel2x.asp?basis=3&method=2,verified calculated geometry
+H3+,equilateral Re=0.87275 Angstrom,CCSD(T) equilibrium distance reported by Quantal Chemistry paper https://onlinelibrary.wiley.com/doi/10.1002/qua.27015,verified calculated geometry
+LiH,equilibrium r=1.595 Angstrom,NIST CCCBDB experimental diatomic bond-length data https://cccbdb.nist.gov/diatomicexpbondx.asp,verified for pilot
+He2,equilibrium Re=2.965 Angstrom,Helium-dimer potential minimum reported in J. Braz. Chem. Soc. https://www.scielo.br/j/jbchs/a/Yvth8tBrzSMGsf9bHhKvHFL/,verified literature geometry
+BH,equilibrium r=1.232 Angstrom,NIST CCCBDB experimental diatomic bond lengths https://cccbdb.nist.gov/diatomicexpbondx.asp,verified experimental geometry
+BeH2,linear rBeH=1.3264 Angstrom,NIST CCCBDB experimental geometry https://cccbdb.nist.gov/expgeom2x.asp?casno=7787522,verified experimental geometry
+Li2,equilibrium r=2.673 Angstrom,NIST CCCBDB experimental diatomic bond lengths https://cccbdb.nist.gov/diatomicexpbondx.asp,verified experimental geometry
+HF,equilibrium r=0.917 Angstrom,NIST CCCBDB experimental diatomic bond lengths https://cccbdb.nist.gov/diatomicexpbondx.asp,verified experimental geometry
+H2O,experimental re=0.958 Angstrom and angle=104.4776 degrees,NIST CCCBDB experimental geometry https://cccbdb.nist.gov/expgeom2x.asp?casno=7732185,verified experimental geometry
+NH3,experimental rNH=1.0124 Angstrom and angle=106.67 degrees,NIST CCCBDB experimental geometry https://cccbdb.nist.gov/expgeom2x.asp?casno=7664417,verified experimental geometry
+CH4,tetrahedral rCH=1.087 Angstrom,NIST CCCBDB bond-length model https://cccbdb.nist.gov/bondlengthmodel2x.asp?basis=3&method=2,verified experimental geometry
+H2_2re,2.0 times H2 equilibrium geometry,H2 source above with bond scaled by 2.0,derived from pilot equilibrium geometry
+LiH_2re,2.0 times LiH equilibrium geometry,LiH source above with bond scaled by 2.0,derived from pilot equilibrium geometry
+Li2_1p5re,1.5 times Li2 equilibrium geometry,Li2 source above with bond scaled by 1.5,derived from verified Li2 equilibrium geometry

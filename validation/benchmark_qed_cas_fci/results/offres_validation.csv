@@ -1,0 +1,13 @@
+system,geometry,check,state,omega,energy_abs_diff,rdm_frobenius,passed
+H2,equilibrium,offres_lambda0_identity,ground,0.823365942778129,6.661338147750939e-16,6.591640277026725e-16,True
+H2,equilibrium,offres_lambda0_identity,bright_dressed,0.823365942778129,5.551115123125783e-16,3.053266657573242e-14,True
+HeH+,equilibrium,offres_lambda0_identity,ground,1.885886816055573,2.6645352591003757e-15,1.2859225241740413e-15,True
+HeH+,equilibrium,offres_lambda0_identity,bright_dressed,1.885886816055573,1.3322676295501878e-15,2.0241764256848247e-15,True
+He2,equilibrium,offres_lambda0_identity,ground,1.5828897890060563,7.993605777301127e-15,5.643595189868285e-13,True
+He2,equilibrium,offres_lambda0_identity,bright_dressed,1.5828897890060563,1.7763568394002505e-15,3.4899786266306247e-12,True
+HF,equilibrium,offres_lambda0_identity,ground,0.4305462317696196,4.263256414560601e-14,1.2949415273656591e-11,True
+HF,equilibrium,offres_lambda0_identity,bright_dressed,0.4305462317696196,1.4210854715202004e-14,0.9382473246426974,False
+H2O,equilibrium,offres_lambda0_identity,ground,0.5096992850907829,4.263256414560601e-14,4.168181637630649e-12,True
+H2O,equilibrium,offres_lambda0_identity,bright_dressed,0.5096992850907829,0.0,1.796882602710855e-11,True
+H2,H2_2re,offres_lambda0_identity,ground,0.7643575342236041,6.661338147750939e-16,3.0952130822313628e-15,True
+H2,H2_2re,offres_lambda0_identity,bright_dressed,0.7643575342236041,1.1102230246251565e-16,2.1064040273155488e-14,True
