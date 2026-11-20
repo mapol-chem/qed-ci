@@ -1,0 +1,9 @@
+metric,system,geometry,active_space,state,lambda_value,photon_basis,cavity_free_error,qed_error,ratio
+1-RDM Frobenius,H2,H2_2re,"CAS(2,2)",bright_dressed,0.1,bare_number_state,0.10145047159213029,0.03988788961006452,0.3931759900577801
+Natural occupations,H2,equilibrium,"CAS(2,2)",bright_dressed,0.01,bare_number_state,0.00022833722766146813,0.0004336983249797477,1.8993763278178497
+Natural occupations,H2,equilibrium,"CAS(2,2)",bright_dressed,0.05,bare_number_state,0.00022833722766146813,0.006035628525862146,26.43295877626466
+Natural occupations,H2,equilibrium,"CAS(2,4)",bright_dressed,0.05,bare_number_state,0.00022803450643826828,0.00047208790686092955,2.0702476753829777
+Natural occupations,H2,equilibrium,"CAS(2,2)",bright_dressed,0.1,bare_number_state,0.00022833722766146813,0.02168783440670352,94.98159642569462
+Natural occupations,H2,equilibrium,"CAS(2,4)",bright_dressed,0.1,bare_number_state,0.00022803450643826828,0.0012618791880592006,5.5337203468406075
+Natural occupations,H2,H2_2re,"CAS(2,2)",bright_dressed,0.1,bare_number_state,0.009439316157544342,0.012825834003808545,1.358767286712559
+Natural occupations,H2,H2_2re,"CAS(2,4)",bright_dressed,0.1,bare_number_state,0.0008913253009636968,0.0013812181229015952,1.549622928248787

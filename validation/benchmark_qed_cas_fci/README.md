@@ -161,3 +161,48 @@ resonant LP/UP in parity. Existing number-state caches are never rewritten by
 these v2 entry points. See `results/full_v2_report.md` for the completed
 rerun's convergence limitations and `results/full_v2_summary.md` for the
 full outlier list and caption statistics.
+
+## v3 ground-state acceptance rule
+
+Resonant ground rows enter only the ratio/parity sets, so v3 decides their
+acceptance without reference to LP/UP assignment. For every resonant
+(system, geometry, λ) group, number-state and coherent runs alike, the ground
+rows are accepted if, between the two largest photon-ladder rungs that
+group reached (its QED-CAS rows are computed at the larger one):
+
+- the QED-FCI ground-state energy changes by ≤ 1e-6 Eh, and
+- the QED-FCI ground-state electronic 1-RDM changes by ≤ 1e-6 (Frobenius),
+
+with both CI solves converged. The ground root is tracked by character, not
+index: at each rung it is the root with the largest squared projection onto
+the physical photon vacuum ⊗ cavity-free ground vector. For coherent runs the
+vacuum is transformed into the displaced oscillator. Separate Psi4 runs can
+rotate degenerate MOs, so the two RDMs are compared in one orbital frame.
+This uniform rule replaces the earlier special-case acceptance of He2 and CH4
+ground rows; both still pass on their own numbers. LP/UP acceptance and the
+assignment gate are unchanged, and LP/UP appear only in variant B parity.
+Bases are never mixed within a group. Where number-state and coherent groups
+both pass, the number-state rows are kept.
+
+The caches store no CI vectors, so `ground_rule_v3.py` recomputes the two
+rungs per group, plus the final-rung QED-CAS ground roots. It writes
+`results/ground_rule_v3_recompute.jsonl`, which can be resumed.
+`finalize_v3.py` applies the rule and writes `ground_rule_v3.csv`,
+`ground_rule_v3_cas_check.csv`, `full_v3_metrics.csv`,
+`full_v3_summary.{csv,md}`, `full_v3_outliers.csv`, and
+`figures/full_v3_{rdm,natural_occupations}_variant_{A,B}.{pdf,png}`. It
+verifies that every pre-v3 result and figure is unchanged against
+`results/original_checksums_v3.json`.
+
+```sh
+OMP_NUM_THREADS=2 conda run --no-capture-output -n qed-ci python ground_rule_v3.py
+MPLCONFIGDIR=/tmp/qed-mpl-v3 conda run --no-capture-output -n qed-ci python finalize_v3.py
+conda run -n qed-ci python -m pytest -q test_v3.py
+```
+
+The committed recompute was run on Linux x86_64 with psi4 1.11 and a
+gcc/OpenBLAS build of the backend. Its ground energies reproduce the cached
+values to ≤ 1.6e-13 Eh. See `results/full_v3_summary.md` for the per-group
+outcome, the remaining omissions and their causes, and a known caveat: BH
+CAS(4,7) and BeH2 CAS(4,8) end inside a degenerate π pair, so those rows are
+sensitive to the orbital rotation.
